@@ -1,0 +1,331 @@
+# ==================================================
+# Developer Intelligence Platform - .gitignore
+# ==================================================
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Spring Boot local / secret configuration
+application-local.yml
+application-local.yaml
+application-secret.yml
+application-secret.yaml
+application-prod-secret.yml
+application-prod-secret.yaml
+**/application-local.yml
+**/application-local.yaml
+**/application-secret.yml
+**/application-secret.yaml
+**/application-prod-secret.yml
+**/application-prod-secret.yaml
+
+# Secrets / certificates / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# JetBrains
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf
+.idea/**/aws.xml
+.idea/**/contentModel.xml
+.idea/**/dataSources/
+.idea/**/dataSources.ids
+.idea/**/dataSources.local.xml
+.idea/**/sqlDataSources.xml
+.idea/**/dynamic.xml
+.idea/**/uiDesigner.xml
+.idea/**/dbnavigator.xml
+.idea/**/gradle.xml
+.idea/**/libraries
+.idea/**/mongoSettings.xml
+.idea/**/sonarlint/
+.idea/**/sonarIssues.xml
+.idea/**/markdown-navigator.xml
+.idea/**/markdown-navigator-enh.xml
+.idea/**/markdown-navigator/
+.idea/**/azureSettings.xml
+.idea/httpRequests
+.idea/caches/build_file_checksums.ser
+.idea/replstate.xml
+.idea/codestream.xml
+.idea/$CACHE_FILE$
+.idea_modules/
+*.iws
+atlassian-ide-plugin.xml
+cmake-build-*/
+out/
+
+# VS Code / Cursor
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+.history/
+.ionide
+*.vsix
+.cursor/
+
+# Java / JVM
+*.class
+*.ctxt
+hs_err_pid*
+replay_pid*
+*.hprof
+*.jar
+*.war
+*.nar
+*.ear
+!gradle-wrapper.jar
+
+# Gradle
+.gradle/
+**/build/
+!src/**/build/
+gradle-app.setting
+.gradletasknamecache
+.project
+.classpath
+
+# Node / React / Vite
+node_modules/
+jspm_packages/
+web_modules/
+dist/
+.next/
+.nuxt/
+.svelte-kit/
+.vuepress/dist/
+.docusaurus/
+.vite/
+.cache/
+.parcel-cache/
+.webpack/
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+.fusebox/
+*.tsbuildinfo
+.npm/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+coverage/
+.nyc_output/
+*.lcov
+pids/
+*.pid
+*.seed
+*.pid.lock
+.eslintcache
+.stylelintcache
+.node_repl_history
+.tern-port
+.vscode-test/
+.serverless/
+.dynamodb/
+*.tgz
+
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+pip-selfcheck.json
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+.ropeproject/
+.spyderproject
+.spyproject
+cython_debug/
+.pybuilder/
+target/
+.pdm.toml
+poetry.toml
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+instance/
+.webassets-cache/
+.scrapy/
+docs/_build/
+site/
+celerybeat-schedule
+celerybeat.pid
+
+# AI / ML model artifacts
+*.gguf
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.onnx
+.cache/huggingface/
+huggingface/
+models/cache/
+ollama-data/
+
+# Spark / Hadoop local runtime
+metastore_db/
+derby.log
+spark-warehouse/
+.sparkStaging/
+hadoop-tmp/
+spark-events/
+
+# Kafka / ZooKeeper local runtime
+kafka-logs/
+kraft-combined-logs/
+zookeeper-data/
+zookeeper-logs/
+
+# Redis local runtime
+dump.rdb
+appendonly.aof
+appendonlydir/
+redis-data/
+
+# PostgreSQL local volume data
+postgres-data/
+pgdata/
+
+# MinIO local volume data
+minio-data/
+.minio.sys/
+
+# OpenSearch / Elasticsearch local volume data
+opensearch-data/
+elasticsearch-data/
+
+# Docker / Compose local-only overrides
+# Keep Dockerfile and compose files tracked.
+docker-compose.override.yml
+compose.override.yml
+volumes/
+
+# Logs / temp
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+*.temp
+reports/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+*.icloud
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Archives / generated exports
+*.zip
+*.tar.gz
+*.rar
+
+# Intentionally tracked:
+# Dockerfile
+# docker-compose.yml / compose.yml
+# gradlew / gradlew.bat / gradle-wrapper.properties
+# package-lock.json / pnpm-lock.yaml / yarn.lock
+# requirements.txt / pyproject.toml / poetry.lock
+# .env.example
+# application.yml / application.yaml
+# DB migrations
+# Technology Registry seed/config files
