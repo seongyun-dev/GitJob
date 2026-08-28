@@ -6,6 +6,10 @@
 .env
 .env.*
 !.env.example
+!.env.ci.example
+
+# Local infrastructure data and generated backups
+/.local/
 
 # Spring Boot local / secret configuration
 application-local.yml

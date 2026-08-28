@@ -1,0 +1,32 @@
+# Jenkins Configuration as Code.
+# Real passwords/tokens come from the container environment or a secret file;
+# no credential value is committed here.
+
+jenkins:
+  systemMessage: "GitJob CI/CD - managed as code"
+  numExecutors: 0
+  mode: EXCLUSIVE
+  remotingSecurity:
+    enabled: true
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+  nodes:
+    - permanent:
+        name: "${JENKINS_AGENT_NAME}"
+        remoteFS: "/home/jenkins/agent"
+        labelString: "docker linux"
+        mode: EXCLUSIVE
+        launcher:
+          inbound:
+            webSocket: true
+
+unclassified:
+  location:
+    url: "${JENKINS_URL}"

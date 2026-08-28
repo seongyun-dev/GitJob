@@ -1,0 +1,114 @@
+# WSL-only exposure. Every host port is bound to loopback so the services are
+# reachable from WSL/Windows tooling without becoming a LAN/public endpoint.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+  kafka:
+    environment:
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:9092,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-9094}
+    ports:
+      - "127.0.0.1:${KAFKA_EXTERNAL_PORT:-9094}:9094"
+
+  # WSL builds application images from the repository. EC2 uses the image
+  # references from .env.ec2 and does not build on the server.
+  backend:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/backend/Dockerfile
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Infra/docker/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_WS_URL: ${VITE_WS_URL:-/ws}
+
+  collector:
+    depends_on:
+      kafka:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+
+  worker:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      hdfs-namenode:
+        condition: service_healthy
+      spark-master:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+
+  jenkins:
+    build:
+      context: .
+      dockerfile: Infra/docker/jenkins/Dockerfile
+    ports:
+      - "127.0.0.1:${JENKINS_HTTP_PORT:-8081}:8080"
+      - "127.0.0.1:${JENKINS_AGENT_PORT:-50000}:50000"
+
+  jenkins-agent:
+    build:
+      context: .
+      dockerfile: Infra/docker/jenkins/agent.Dockerfile
+
+  nginx:
+    ports:
+      - "127.0.0.1:${NGINX_HTTP_PORT:-8080}:80"
+
+  hdfs-namenode:
+    ports:
+      - "127.0.0.1:${HDFS_NAMENODE_WEB_PORT:-9870}:9870"
+
+  hdfs-datanode:
+    ports:
+      - "127.0.0.1:${HDFS_DATANODE_WEB_PORT:-9864}:9864"
+
+  spark-master:
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    ports:
+      - "127.0.0.1:${SPARK_MASTER_WEB_PORT:-8083}:8080"
+
+  spark-worker:
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+
+  kafka-ui:
+    ports:
+      - "127.0.0.1:${KAFKA_UI_PORT:-8082}:8080"
+
+  redis-insight:
+    ports:
+      - "127.0.0.1:${REDIS_INSIGHT_PORT:-8001}:5540"

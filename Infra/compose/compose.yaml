@@ -1,0 +1,535 @@
+# GitJob shared Compose definition.
+#
+# Profiles are deliberately explicit so WSL can start core first and add
+# application/data/CI services as their source contracts become available:
+#   core, app, data, ci, observability
+# Local cross-profile startup dependencies are added by the WSL/single-host
+# overrides. Keeping them out of this base also allows the HA app overlay to
+# use external state services without enabling local core containers.
+#
+# Host ports are kept in compose.wsl.yaml and compose.ec2.yaml. This base file
+# therefore keeps databases, brokers, CI, and management UIs private.
+
+name: ${COMPOSE_PROJECT_NAME:-gitjob}
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    profiles: [core]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  redis:
+    image: redis:7.4.0-alpine
+    profiles: [core]
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - >-
+        if [ -n "$${REDIS_PASSWORD}" ]; then
+          exec redis-server --appendonly yes --save 60 1 --requirepass "$${REDIS_PASSWORD}";
+        else
+          exec redis-server --appendonly yes --save 60 1;
+        fi
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+            redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG;
+          else
+            redis-cli ping | grep -q PONG;
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging: *default-logging
+
+  kafka:
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+    image: apache/kafka:4.0.0
+    hostname: kafka
+    profiles: [core]
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:?KAFKA_CLUSTER_ID must be set}
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    expose:
+      - "9092"
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 20s
+    logging: *default-logging
+
+  # The official Kafka image runs as uid 1000. A fresh named volume is
+  # created by Docker as root-owned, so initialize its ownership once before
+  # the broker starts instead of running the broker itself as root.
+  kafka-data-init:
+    image: apache/kafka:4.0.0
+    profiles: [core]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /tmp/kraft-combined-logs && chown -R 1000:1000 /tmp/kraft-combined-logs"]
+    restart: "no"
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    logging: *default-logging
+
+  backend:
+    image: ${BACKEND_IMAGE:-gitjob/backend:local}
+    profiles: [app]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      SERVER_PORT: "8080"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${DB_HOST:-postgres}:${DB_PORT:-5432}/${POSTGRES_DB:-gitjob}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-gitjob}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-}
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${JPA_DDL_AUTO:-update}
+      SPRING_JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8080/api/v1/auth/github/callback}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      KAFKA_TOPIC_SOURCE_EVENTS: ${KAFKA_TOPIC_SOURCE_EVENTS:-gitjob.source.events}
+      KAFKA_TOPIC_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_ANALYSIS_REQUESTS:-gitjob.analysis.requests}
+      KAFKA_TOPIC_ANALYSIS_RESULTS: ${KAFKA_TOPIC_ANALYSIS_RESULTS:-gitjob.analysis.results}
+      KAFKA_TOPIC_ANALYSIS_DLQ: ${KAFKA_TOPIC_ANALYSIS_DLQ:-gitjob.analysis.dlq}
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-gitjob/frontend:local}
+    profiles: [app]
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.27.1-alpine
+    profiles: [app]
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    volumes:
+      - ./Infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./Infra/nginx/conf.d:/etc/nginx/conf.d:ro
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health >/dev/null && wget -qO- http://localhost/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  collector:
+    image: ${COLLECTOR_IMAGE:-gitjob/collector:local}
+    profiles: [data]
+    restart: unless-stopped
+    command: ["python", "-m", "collector"]
+    environment:
+      APP_ENV: ${APP_ENV:-docker}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC_SOURCE_EVENTS: ${KAFKA_TOPIC_SOURCE_EVENTS:-gitjob.source.events}
+      KAFKA_CONSUMER_GROUP: ${COLLECTOR_CONSUMER_GROUP:-gitjob-collector}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      GITHUB_API_RATE_LIMIT_MIN_REMAINING: ${GITHUB_API_RATE_LIMIT_MIN_REMAINING:-100}
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  worker:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    restart: unless-stopped
+    command: ["python", "-m", "worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-docker}
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-gitjob}
+      POSTGRES_USER: ${POSTGRES_USER:-gitjob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_ANALYSIS_REQUESTS:-gitjob.analysis.requests}
+      KAFKA_TOPIC_ANALYSIS_RESULTS: ${KAFKA_TOPIC_ANALYSIS_RESULTS:-gitjob.analysis.results}
+      KAFKA_TOPIC_ANALYSIS_DLQ: ${KAFKA_TOPIC_ANALYSIS_DLQ:-gitjob.analysis.dlq}
+      KAFKA_CONSUMER_GROUP: ${WORKER_CONSUMER_GROUP:-gitjob-analysis-worker}
+      HDFS_URI: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      PARQUET_ROOT: ${PARQUET_ROOT:-hdfs:///gitjob/parquet}
+      SPARK_MASTER_URL: ${SPARK_MASTER_URL:-spark://spark-master:7077}
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  # The apache/hadoop image runs as user hadoop. Docker creates a fresh named
+  # volume as root, so prepare the mount before the NameNode/DataNode starts.
+  hdfs-namenode-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-namenode-data:/data
+    logging: *default-logging
+
+  hdfs-datanode-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode-data:/data
+    logging: *default-logging
+
+  hdfs-namenode:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-namenode
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.namenode.rpc-address: hdfs-namenode:8020
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+      HDFS-SITE.XML_dfs.namenode.name.dir: file:///data/name
+      ENSURE_NAMENODE_DIR: /data/name
+    command: ["hdfs", "namenode"]
+    depends_on:
+      hdfs-namenode-data-init:
+        condition: service_completed_successfully
+    expose:
+      - "8020"
+      - "9870"
+    volumes:
+      - hdfs-namenode-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  hdfs-datanode:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-datanode
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode-data-init:
+        condition: service_completed_successfully
+      hdfs-namenode:
+        condition: service_healthy
+    expose:
+      - "9864"
+    volumes:
+      - hdfs-datanode-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  hdfs-bootstrap:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        hdfs dfs -mkdir -p /gitjob /gitjob/parquet
+        && hdfs dfs -chown spark:supergroup /gitjob
+        && hdfs dfs -chown spark:supergroup /gitjob/parquet
+    restart: "no"
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+    logging: *default-logging
+
+  spark-master:
+    image: ${SPARK_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    hostname: spark-master
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    expose:
+      - "7077"
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/localhost/8080'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  spark-worker:
+    image: ${SPARK_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      SPARK_MASTER_URL: ${SPARK_MASTER_URL:-spark://spark-master:7077}
+      SPARK_WORKER_WEBUI_PORT: "8081"
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2G}
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "${SPARK_WORKER_CORES:-2}"
+      - --memory
+      - "${SPARK_WORKER_MEMORY:-2G}"
+      - --webui-port
+      - "8081"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/localhost/8081'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  jenkins:
+    image: ${JENKINS_IMAGE:-gitjob/jenkins:local}
+    profiles: [ci]
+    restart: unless-stopped
+    environment:
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc_configs/jenkins.yaml
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-}
+      JENKINS_AGENT_NAME: ${JENKINS_AGENT_NAME:-docker-agent}
+      JENKINS_URL: ${JENKINS_URL:-http://localhost:8081}
+      JAVA_OPTS: ${JENKINS_JAVA_OPTS:--Djenkins.install.runSetupWizard=false}
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      - ./Infra/jenkins/casc:/var/jenkins_home/casc_configs:ro
+    expose:
+      - "8080"
+      - "50000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    logging: *default-logging
+
+  # Docker socket access is restricted to the build/deploy agent. It is
+  # convenient for WSL validation but must be replaced or isolated before EC2
+  # is exposed to untrusted jobs.
+  jenkins-agent:
+    image: ${JENKINS_AGENT_IMAGE:-gitjob/jenkins-agent:local}
+    profiles: [ci]
+    entrypoint: ["/usr/local/bin/gitjob-jenkins-agent"]
+    restart: unless-stopped
+    depends_on:
+      jenkins:
+        condition: service_healthy
+    environment:
+      JENKINS_URL: http://jenkins:8080
+      JENKINS_AGENT_NAME: ${JENKINS_AGENT_NAME:-docker-agent}
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - jenkins-agent-workspace:/home/jenkins/agent
+      - ${JENKINS_AGENT_SECRET_FILE:-.local/jenkins/docker-agent.secret}:/run/secrets/jenkins_agent_secret:ro
+    logging: *default-logging
+
+  kafka-ui:
+    image: ${KAFKA_UI_IMAGE:-provectuslabs/kafka-ui:v0.7.2}
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "false"
+      KAFKA_CLUSTERS_0_NAME: gitjob
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_READONLY: ${KAFKA_UI_READONLY:-false}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080 >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  redis-insight:
+    image: ${REDIS_INSIGHT_IMAGE:-redis/redisinsight:2.68.0}
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      RI_APP_HOST: 0.0.0.0
+      RI_APP_PORT: "5540"
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "5540"
+    volumes:
+      - redis-insight-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5540 >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+volumes:
+  # No explicit `name` is intentional: Compose prefixes these with the
+  # project name, keeping local and CI data independent.
+  postgres-data:
+  redis-data:
+  kafka-data:
+  hdfs-namenode-data:
+  hdfs-datanode-data:
+  jenkins-home:
+  jenkins-agent-workspace:
+  redis-insight-data:
