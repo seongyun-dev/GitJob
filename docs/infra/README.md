@@ -8,6 +8,7 @@
 
 | 문서 | 내용 |
 |---|---|
+| [지급 서버 사양·네트워크 실측](2026-08-31-server-inspection.md) | J15E102/J15E102A 실제 사양, runtime, UFW, private network 점검 결과 |
 | [MR !3 수정·검증 기록](2026-08-28-mr3-fix-validation.md) | 검토 항목별 수정 내용과 실제 검증 결과 |
 | [인프라 준비도](2026-08-27-infra-readiness.md) | 현재 구현·검증·미완료 항목 |
 | [배포 준비 계획](2026-08-27-infra-deployment-plan.md) | Compose profile, CI/CD, WSL→EC2 전환 |
