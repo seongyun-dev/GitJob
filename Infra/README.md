@@ -237,7 +237,7 @@ EC2가 발급되면 다음 순서로 이관한다.
 1. WSL `core`, `app`, `data`의 health·자원 사용량을 기록
 2. EC2 instance type, EBS 크기, data 분리 여부 결정
 3. Docker Engine/Compose plugin/Git/Tailscale 설치
-4. `/opt/gitjob` 배포 경로와 deploy user 생성
+4. `/home/ubuntu/workspace/S15P21E102` 배포 경로와 deploy user 생성
 5. `develop`을 각 EC2의 배포 checkout으로 지정하고 로컬 build를 사용
 6. Security Group은 80/443과 제한 SSH만 허용(현재 UFW는 변경하지 않음)
 7. `compose.ec2.yaml`로 Nginx HTTP만 publish하고 DB/Redis/Kafka/Jenkins는 비공개 유지

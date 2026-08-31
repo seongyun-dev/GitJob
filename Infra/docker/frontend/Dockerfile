@@ -1,6 +1,5 @@
-# Assumed contract: FE is an npm-based React application whose production
-# output is written to dist/. Adjust the package manager/output directory when
-# the frontend repository contract is finalized.
+# FE is an npm-based React/Vite application whose production output is written
+# to dist/.
 
 FROM node:22.12-alpine AS build
 

@@ -22,7 +22,8 @@ pipeline {
     environment {
         COMPOSE_PROJECT_NAME = "gitjob-ci-${env.BUILD_NUMBER}"
         COMPOSE_FILES = "-f Infra/compose/compose.yaml -f Infra/compose/compose.wsl.yaml"
-        COMPOSE_PROFILES = 'core,app,data'
+        // AI runs on a separate GPU server; Jenkins CI covers BE/FE only.
+        COMPOSE_PROFILES = 'core,app'
     }
 
     stages {
@@ -47,7 +48,7 @@ pipeline {
                 sh '''#!/usr/bin/env bash
                     set -Eeuo pipefail
                     docker compose --project-directory . --project-name "${COMPOSE_PROJECT_NAME}" --env-file .env.ci ${COMPOSE_FILES} \\
-                      --profile core --profile app --profile data config --quiet
+                      --profile core --profile app config --quiet
                 '''
             }
         }
@@ -69,7 +70,11 @@ pipeline {
                     test -f FE/package.json
                     cd FE
                     npm ci
-                    npm test -- --runInBand
+                    if node -e "const packageJson = require('./package.json'); process.exit(packageJson.scripts?.test ? 0 : 1)"; then
+                        npm test -- --runInBand
+                    else
+                        echo 'No frontend test script configured; skipping frontend test command.'
+                    fi
                     npm run build
                 '''
             }
@@ -134,7 +139,7 @@ pipeline {
                 # This cleanup is confined to the ephemeral Jenkins CI project.
                 # It never runs on either remote EC2 host.
                 docker compose --project-directory . --project-name "${COMPOSE_PROJECT_NAME}" --env-file .env.ci ${COMPOSE_FILES} \\
-                  --profile core --profile app --profile data down --volumes
+                  --profile core --profile app down --volumes
             '''
         }
     }

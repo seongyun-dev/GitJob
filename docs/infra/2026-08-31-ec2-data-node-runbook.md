@@ -40,7 +40,7 @@ Hadoop/Spark 관리 포트와 Collector/Worker health port는 public에 publish�
 |---|---|
 | SERVICE_PRIVATE_IP | <J15E102-private-ip> |
 | DATA_PRIVATE_IP | <J15E102A-private-ip> |
-| DEPLOY_PATH | /opt/gitjob |
+| DEPLOY_PATH | /home/ubuntu/workspace/S15P21E102 |
 | DEPLOY_REF | develop |
 | 관리자 CIDR | <admin-cidr> |
 
@@ -77,16 +77,16 @@ sudo usermod -aG docker ubuntu
 배포 디렉터리를 만들고 `develop` 브랜치를 받는다.
 
 ~~~bash
-sudo mkdir -p /opt/gitjob
-sudo chown ubuntu:ubuntu /opt/gitjob
-git clone --branch develop https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21E102.git /opt/gitjob
-cd /opt/gitjob
+sudo mkdir -p /home/ubuntu/workspace/S15P21E102
+sudo chown ubuntu:ubuntu /home/ubuntu/workspace/S15P21E102
+git clone --branch develop https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21E102.git /home/ubuntu/workspace/S15P21E102
+cd /home/ubuntu/workspace/S15P21E102
 ~~~
 
 이미 checkout되어 있으면 삭제하지 말고 fast-forward만 사용한다.
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 git fetch origin
 git switch develop
 git pull --ff-only origin develop
@@ -95,7 +95,7 @@ git pull --ff-only origin develop
 ## 5. .env.data 작성
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 cp .env.example .env.data
 chmod 600 .env.data
 ~~~
@@ -184,7 +184,7 @@ Registry를 사용하지 않는다. 서비스 core가 먼저 healthy가 된 것�
 이 서버에서는 반드시 `compose.ec2-data.yaml`을 사용한다.
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 git pull --ff-only origin develop
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
@@ -235,11 +235,11 @@ DEPLOYMENT_MODE=split
 EC2_DEPLOY_REF=develop
 EC2_SERVICE_HOST=j15e102.p.ssafy.io
 EC2_SERVICE_USER=ubuntu
-EC2_SERVICE_PATH=/opt/gitjob
+EC2_SERVICE_PATH=/home/ubuntu/workspace/S15P21E102
 EC2_SERVICE_ENV_FILE=.env.service
 EC2_DATA_HOST=j15e102a.p.ssafy.io
 EC2_DATA_USER=ubuntu
-EC2_DATA_PATH=/opt/gitjob
+EC2_DATA_PATH=/home/ubuntu/workspace/S15P21E102
 EC2_DATA_ENV_FILE=.env.data
 EC2_SSH_PORT=22
 EC2_SSH_CREDENTIAL_ID=gitjob-ec2-ssh

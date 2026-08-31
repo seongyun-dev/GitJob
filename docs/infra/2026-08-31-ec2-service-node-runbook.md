@@ -38,7 +38,7 @@ bind한다. J15E102A의 private IP에서만 5432, 6379, 9094로 접근하도록 
 | SERVICE_PUBLIC_HOST | j15e102.p.ssafy.io |
 | SERVICE_PRIVATE_IP | <J15E102-private-ip> |
 | DATA_PRIVATE_IP | <J15E102A-private-ip> |
-| DEPLOY_PATH | /opt/gitjob |
+| DEPLOY_PATH | /home/ubuntu/workspace/S15P21E102 |
 | DEPLOY_REF | develop |
 | Jenkins trigger | Poll SCM (5분 주기) |
 | 관리자 CIDR | <admin-cidr> |
@@ -80,16 +80,16 @@ sudo usermod -aG docker ubuntu
 배포 디렉터리를 만들고 저장소를 받을 때는 `develop` 브랜치를 사용한다.
 
 ~~~bash
-sudo mkdir -p /opt/gitjob
-sudo chown ubuntu:ubuntu /opt/gitjob
-git clone --branch develop https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21E102.git /opt/gitjob
-cd /opt/gitjob
+sudo mkdir -p /home/ubuntu/workspace/S15P21E102
+sudo chown ubuntu:ubuntu /home/ubuntu/workspace/S15P21E102
+git clone --branch develop https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21E102.git /home/ubuntu/workspace/S15P21E102
+cd /home/ubuntu/workspace/S15P21E102
 ~~~
 
 이미 디렉터리가 있으면 삭제하지 말고 다음처럼 fast-forward만 사용한다.
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 git fetch origin
 git switch develop
 git pull --ff-only origin develop
@@ -100,7 +100,7 @@ git pull --ff-only origin develop
 저장소의 샘플을 복사하되 실제 secret은 직접 입력한다.
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 cp .env.example .env.service
 chmod 600 .env.service
 ~~~
@@ -171,7 +171,7 @@ Registry를 사용하지 않는다. `develop`을 pull한 뒤 EC2에서 Backend�
 이미지를 직접 build한다. core가 먼저 healthy가 된 뒤 app을 기동한다.
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 git pull --ff-only origin develop
 docker compose --project-directory . --env-file .env.service \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2.yaml \
@@ -218,7 +218,7 @@ JENKINS_EC2_BIND와 JENKINS_URL을 확정한 뒤 JENKINS_ADMIN_PASSWORD를 secre
 Jenkins 이미지를 이 서버에서 직접 build한다. Jenkins는 public port로 열지 않는다.
 
 ~~~bash
-cd /opt/gitjob
+cd /home/ubuntu/workspace/S15P21E102
 docker compose --project-directory . --env-file .env.service \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2.yaml \
   --profile ci build jenkins jenkins-agent
@@ -238,11 +238,11 @@ DEPLOYMENT_MODE=split
 EC2_DEPLOY_REF=develop
 EC2_SERVICE_HOST=j15e102.p.ssafy.io
 EC2_SERVICE_USER=ubuntu
-EC2_SERVICE_PATH=/opt/gitjob
+EC2_SERVICE_PATH=/home/ubuntu/workspace/S15P21E102
 EC2_SERVICE_ENV_FILE=.env.service
 EC2_DATA_HOST=j15e102a.p.ssafy.io
 EC2_DATA_USER=ubuntu
-EC2_DATA_PATH=/opt/gitjob
+EC2_DATA_PATH=/home/ubuntu/workspace/S15P21E102
 EC2_DATA_ENV_FILE=.env.data
 EC2_SSH_PORT=22
 EC2_SSH_CREDENTIAL_ID=gitjob-ec2-ssh
