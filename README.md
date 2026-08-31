@@ -75,7 +75,7 @@ Trend · Pain Topic · FAQ · 근거 기반 RAG Q&A
 | Database | PostgreSQL, Redis |
 | Edge | Nginx |
 | Infrastructure | Docker Compose, AWS EC2, Tailscale |
-| CI/CD | Jenkins, GitLab Webhook |
+| CI/CD | Jenkins, GitLab Poll SCM |
 
 ## 저장소 구조
 
@@ -159,7 +159,9 @@ docker compose --env-file .env.wsl --project-directory . \
 `.env.example`은 변수명과 기본 구조만 제공합니다. `init-wsl.sh`는 `.env.wsl`을 만들고 로컬용 임시 secret을 생성합니다.
 
 - 실제 `.env`, GitHub OAuth secret, GitHub Token, JWT secret, DB password를 커밋하지 않습니다.
-- PEM key와 GitLab webhook/registry credential은 Git에서 제외하고 Jenkins Credentials 또는 AWS SSM/Secrets Manager에 보관합니다.
+- PEM key와 GitLab pull/SCM credential은 Git에서 제외하고 Jenkins Credentials 또는
+  각 EC2의 Git credential store에 보관합니다. 현재 split 배포는 Registry와
+  inbound webhook을 사용하지 않습니다.
 - WSL에서는 DB·Redis·Kafka·관리 UI를 loopback에만 노출합니다.
 - 운영에서는 외부 진입점을 ALB/Nginx 80·443으로 제한하고 관리 경로는 Tailscale/private network 또는 SSM을 사용합니다.
 - 운영 DB schema는 `JPA_DDL_AUTO=update` 대신 명시적 migration과 `validate`를 사용합니다.

@@ -1,10 +1,11 @@
 # Jenkins jobs
 
-The root `Jenkinsfile` is the pipeline entrypoint. A multibranch Pipeline or a
-GitLab webhook job should point at the repository root. Job-specific secrets
-belong in Jenkins Credentials, not in this directory.
+The root `Jenkinsfile` is the pipeline entrypoint. Create a Pipeline from SCM
+job that points at the repository root, uses the `develop` branch, and polls
+SCM. GitLab's Jenkins Integration is not required for this job. Job-specific
+secrets belong in Jenkins Credentials, not in this directory.
 
-For a two-EC2 deployment, set `DEPLOYMENT_MODE=ha`, provide both node targets and
-`ALB_HEALTHCHECK_URL`, and keep `EC2_DEPLOY_STRATEGY=rolling`. The pipeline contract
-is node-a → ALB health check → node-b; the actual SSH/deploy wrapper is intentionally
-left for the EC2 credential and image registry setup.
+For the current split deployment, set `DEPLOYMENT_MODE=split` and
+`EC2_DEPLOY_REF=develop`. The pipeline contract is service core health → data
+server build/up → service app build/up. The deploy wrapper uses `gitjob-ec2-ssh`
+to pull the source and build locally on each EC2; no image registry is involved.

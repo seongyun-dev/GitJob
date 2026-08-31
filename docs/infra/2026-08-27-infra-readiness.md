@@ -15,8 +15,10 @@ Redis, Kafka core는 WSL에서 실제 기동·healthcheck·송수신·재시작 
 등록, put/get, NameNode 재시작 영속성, Parquet smoke를 검증했다. Backend/Frontend/
 Collector/Worker/Jenkins 전체 흐름은 소스와 운영 credential이 아직 저장소에
 들어오지 않았으므로 Compose·Dockerfile·Nginx·JCasC·Jenkinsfile의 골격과 연결
-계약까지 준비한 상태다. EC2 2대에 앱을 나누어 실행할
-`compose.ec2-ha.yaml`과 ALB 기반 장애 조치 설계도 추가했다.
+계약까지 준비한 상태다. 현재 지급된 EC2 2대는 서비스/core와 Hadoop/Spark data로
+분리할 수 있도록 `compose.ec2.yaml`, `compose.ec2-data.yaml`, split 배포 wrapper를
+추가했으며, 향후 공유 상태 저장소가 준비되면 `compose.ec2-ha.yaml`과 ALB 기반
+장애 조치로 전환한다.
 
 ## 2. 구현한 범위
 
@@ -43,9 +45,12 @@ Collector/Worker/Jenkins 전체 흐름은 소스와 운영 credential이 아직 
   - host 포트는 모두 `127.0.0.1`에만 바인딩
   - Kafka는 컨테이너 내부 `kafka:9092`, WSL host `localhost:9094`의 두 listener 사용
 - `compose.ec2.yaml`
-  - registry image를 사용하는 base 구성을 유지
-  - Nginx HTTP 80만 public boundary로 지정
-  - DB/Redis/Kafka/Jenkins/관리 UI 포트는 publish하지 않음
+  - registry image를 사용하는 서비스/core EC2 구성을 제공
+  - Nginx HTTP 80과 data EC2가 접근할 private core listener를 지정
+  - DB/Redis/Kafka는 설정한 private IP에만 bind하고 Jenkins는 loopback/private IP에만 publish하며 관리 UI 포트는 publish하지 않음
+- `compose.ec2-data.yaml`
+  - Hadoop single-node와 Spark를 data EC2에 유지
+  - Collector/Worker의 DB·Redis·Kafka 의존성을 서비스 EC2 endpoint로 분리
 - `compose.ec2-ha.yaml`
   - EC2-A/B에서 `app` 프로파일만 실행하는 무상태 노드용 override
   - DB/Redis/Kafka는 양쪽 local volume이 아니라 RDS/ElastiCache/MSK 등 공유 endpoint 사용
@@ -55,6 +60,7 @@ Collector/Worker/Jenkins 전체 흐름은 소스와 운영 credential이 아직 
 - `Infra/scripts/init-wsl.sh`: `.env.wsl` 생성 및 로컬 임시 secret 생성
 - `up.sh`, `down.sh`, `healthcheck.sh`: profile 기반 기동/종료/상태 확인
 - `bootstrap-jenkins-agent.sh`: controller가 발급한 inbound agent secret 조회·주입·online 확인
+- `deploy.sh`: commit-tag image를 서비스 EC2와 data EC2에 각각 배포
 - `spark-smoke.sh`: 고정 입력의 Parquet job과 Spark version/worker 수 기록
 - `spark-benchmark.sh`: Worker 1/2/4·dataset 1x/2x/4x 반복 실행과 p50/p95/throughput TSV 기록
 - `kafka-smoke.sh`: Kafka topic 생성과 producer/consumer 확인
@@ -136,10 +142,10 @@ Collector/Worker/Jenkins 전체 흐름은 소스와 운영 credential이 아직 
 3. Kafka topic envelope와 상태 전이(`QUEUED → RUNNING → ...`)를 고정한다.
 4. `PROFILES=core,app,data`로 Collector/Worker를 포함한 최소 수집·분석 흐름을 실행한다.
 5. Jenkins Credentials와 GitLab webhook을 연결하고 SHA image tag pipeline을 실행한다.
-6. EC2가 2대면 서로 다른 AZ의 ALB target으로 `app`만 먼저 올린다.
-7. RDS·ElastiCache·MSK 등 공유 상태 endpoint와 secret을 두 노드에 동일하게 주입한다.
-8. ALB 장애 조치와 rolling deploy를 검증한 뒤 data/CI 배치 위치를 확정한다.
-9. EC2 발급 후 TLS, Tailscale, backup, rollback, systemd를 적용한다.
+6. EC2 2대의 private IP와 UFW/보안그룹을 확정하고 서비스/data split 구성을 기동한다.
+7. Jenkins Credentials·Registry와 remote `.env.service`/`.env.data`를 연결해 split deploy를 검증한다.
+8. HDFS/Parquet·PostgreSQL backup과 systemd/log rotation을 EC2 운영 정책에 맞춘다.
+9. 향후 HA가 필요해지면 RDS·ElastiCache·MSK·ALB와 `compose.ec2-ha.yaml` 전환을 검증한다.
 
 ## 7. 검증 명령
 
@@ -162,6 +168,6 @@ docker compose --env-file .env.wsl --project-directory . \
 ```
 
 전체 profile 기동은 소스/image와 WSL 자원이 준비된 후 수행한다. 현재 문서에서는
-core 실제 결과, 2-EC2 HA app-only config 결과, AWS 리소스가 아직 미생성인 사실을
+core 실제 결과, 2-EC2 split/HA Compose config 결과, AWS 리소스가 아직 미생성인 사실을
 구분해서 기록한다. 상세 절차는
 [2대 EC2 고가용성 설계 문서](2026-08-27-ec2-high-availability-design.md)에 있다.

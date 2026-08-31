@@ -1,8 +1,8 @@
 # Infrastructure 문서 목차
 
-> 상태: WSL 실행 골격 구현, EC2 운영 전환 준비
+> 상태: WSL 실행 골격 구현, EC2 split 직접 pull/build 전환 준비
 >
-> 기준일: 2026-08-28
+> 기준일: 2026-08-31
 
 ## 1. 문서 안내
 
@@ -11,6 +11,8 @@
 | [MR !3 수정·검증 기록](2026-08-28-mr3-fix-validation.md) | 검토 항목별 수정 내용과 실제 검증 결과 |
 | [인프라 준비도](2026-08-27-infra-readiness.md) | 현재 구현·검증·미완료 항목 |
 | [배포 준비 계획](2026-08-27-infra-deployment-plan.md) | Compose profile, CI/CD, WSL→EC2 전환 |
+| [J15E102 서비스 서버 문서](2026-08-31-ec2-service-node-runbook.md) | 서비스·core·Jenkins EC2 접속·기동·보안 |
+| [J15E102A 데이터 서버 문서](2026-08-31-ec2-data-node-runbook.md) | Hadoop/HDFS·Spark·Collector/Worker EC2 접속·기동·점검 |
 | [2대 EC2 HA 설계](2026-08-27-ec2-high-availability-design.md) | ALB, 무상태 app node, 공유 상태 저장소, failover |
 | [실제 Infra 실행 안내](../../Infra/README.md) | 명령어와 운영 스크립트 사용법 |
 
@@ -42,10 +44,15 @@ Kafka → Collector·Worker → HDFS/Parquet·Spark
 | 파일 | 특징 |
 |---|---|
 | `Infra/compose/compose.wsl.yaml` | 저장소에서 image build, 모든 host binding loopback |
-| `Infra/compose/compose.ec2.yaml` | EC2 single-host, Nginx HTTP 80만 publish |
+| `Infra/compose/compose.ec2.yaml` | 서비스/core EC2, 저장소 image build, Nginx HTTP 80과 private core listener |
+| `Infra/compose/compose.ec2-data.yaml` | Hadoop/Spark data EC2, 저장소 image build, remote core endpoint |
 | `Infra/compose/compose.ec2-ha.yaml` | EC2-A/B에서 `app`만 실행, 외부 HA state 사용 |
 
-2대 구성에서는 각 EC2의 local named volume이 공유되지 않는다. 양쪽에서 PostgreSQL·Redis·Kafka를 동시에 실행하지 않고 RDS Multi-AZ, ElastiCache failover, MSK/동등한 외부 HA endpoint를 사용한다.
+현재 2대 구성에서는 `J15E102`에 `core + app`과 Jenkins를, `J15E102A`에
+`data`와 Hadoop single-node를 배치한다. 각 EC2의 local named volume이 공유되지
+않으므로 데이터 서버는 서비스 서버의 private PostgreSQL·Redis·Kafka endpoint를
+사용한다. 향후 HA로 전환할 때는 양쪽에서 PostgreSQL·Redis·Kafka를 동시에 실행하지
+않고 RDS Multi-AZ, ElastiCache failover, MSK/동등한 외부 HA endpoint를 사용한다.
 
 ## 4. 로컬 실행
 
@@ -120,13 +127,11 @@ ALB가 TLS를 종료하는 경우 `X-Forwarded-Proto`를 Backend에 전달해 OA
 ## 7. CI/CD 흐름
 
 ```text
-GitLab webhook
+Jenkins Poll SCM (develop)
   → Jenkins Validate
   → Backend test
-  → Frontend test/build
-  → image build
-  → (승인된 branch/tag) image push
-  → EC2 deploy
+  → Frontend test
+  → split EC2 SSH deploy (각 EC2 git pull/build/up)
   → healthcheck / rollback
 ```
 
@@ -150,7 +155,7 @@ GitLab webhook
 
 - Backend·Frontend·AI source가 추가된 뒤 실제 image build와 통합 연결
 - Collector/Worker를 포함한 전체 data pipeline과 full benchmark/resource 측정
-- GitLab webhook·registry push·EC2 credential 기반 배포
+- Jenkins Poll SCM job·EC2 credential 기반 실제 split 배포
 - Jenkins controller 실제 기동·agent online·Pipeline 실행
 - AWS ALB·TLS·Route53·RDS/ElastiCache/MSK
 - 실제 장애 주입, failover, rolling rollback

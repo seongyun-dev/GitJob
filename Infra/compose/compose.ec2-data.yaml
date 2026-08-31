@@ -1,0 +1,49 @@
+# EC2 data-node override.
+#
+# Run this file with the shared Compose definition and PROFILES=data only.
+# Unlike compose.ec2.yaml, this file does not add dependencies on local
+# PostgreSQL, Redis, or Kafka. Collector and Worker use the remote private core
+# endpoints from the data node's environment file, while HDFS and Spark remain
+# on this host and use Compose service names.
+
+services:
+  collector:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+
+  worker:
+    restart: unless-stopped
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+
+  hdfs-namenode:
+    restart: unless-stopped
+
+  hdfs-datanode:
+    restart: unless-stopped
+
+  spark-master:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+
+  spark-worker:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}

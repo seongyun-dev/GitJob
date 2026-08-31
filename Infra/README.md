@@ -9,12 +9,16 @@
 
 Compose 파일 하나를 공통 진입점으로 사용하고, 프로파일로 무거운 서비스를
 분리했다. WSL에서는 `compose.wsl.yaml`이 소스 기반 build와 loopback 포트를
-추가하고, 단일 EC2에서는 `compose.ec2.yaml`이 registry image와 public Nginx
-경계를 추가한다. EC2 2대가 제공되면 `compose.ec2-ha.yaml`을 각 노드에서
-독립적으로 실행하고 AWS ALB가 두 Nginx를 분산한다.
+추가하고, 현재 지급된 2대 EC2에서는 `compose.ec2.yaml`을 서비스 노드에,
+`compose.ec2-data.yaml`을 데이터 노드에 적용한다. 두 EC2 override 모두
+원격 checkout의 소스 기반 build를 제공하며, `compose.ec2.yaml`은 public Nginx
+경계와 core의 private listener를 열고 `compose.ec2-data.yaml`은 HDFS/Spark와
+원격 core를 사용하는 Collector/Worker를 구성한다. 향후 공유 상태 저장소가
+준비되면 `compose.ec2-ha.yaml`을 각 app
+노드에서 독립적으로 실행하고 AWS ALB가 두 Nginx를 분산한다.
 
 ```text
-GitLab ── webhook ──▶ Jenkins controller ──▶ restricted build/deploy agent
+GitLab ── Poll SCM ──▶ Jenkins controller ──▶ restricted SSH deploy agent
                                │
 Browser ── 127.0.0.1:8080 / EC2:80 ──▶ Nginx
                                         ├─▶ Frontend static
@@ -22,6 +26,7 @@ Browser ── 127.0.0.1:8080 / EC2:80 ──▶ Nginx
                                                     ├─ Redis
                                                     └─ Kafka
 
+Jenkins ── SSH ──▶ EC2 git pull/build/up (service → data)
 Collector ── Kafka ── Worker ── HDFS/Parquet + Spark
 ```
 
@@ -60,7 +65,8 @@ Infra/
 ├── compose/
 │   ├── compose.yaml          # 서비스, profiles, 내부 DNS, healthcheck, volumes
 │   ├── compose.wsl.yaml      # WSL build와 127.0.0.1 포트
-│   ├── compose.ec2.yaml      # 단일 EC2 fallback
+│   ├── compose.ec2.yaml      # 서비스/core EC2 + 단일 EC2 fallback
+│   ├── compose.ec2-data.yaml # 분리된 Hadoop/Spark data EC2
 │   └── compose.ec2-ha.yaml   # 2대 EC2 app 노드용 override
 ├── docker/
 │   ├── backend/Dockerfile    # Java 21 + Gradle + Spring Boot 가정
@@ -76,9 +82,9 @@ Infra/
 루트의 `Jenkinsfile`은 아래 흐름을 위한 골격이다.
 
 ```text
-validate Compose → backend test → frontend test/build
-→ backend/frontend/worker/spark image build → 조건부 registry tag/push
-→ 조건부 EC2 deploy → healthcheck/rollback 확장 지점
+validate Compose → backend test → frontend test
+→ split EC2 SSH deploy (각 EC2 git pull/build/up)
+→ service core health → data up → service app health
 ```
 
 ## 4. WSL 실행
@@ -101,9 +107,8 @@ core를 실행한다.
 ```
 
 처음 생성되는 `.env.wsl`은 Git에 포함되지 않으며, 초기화 스크립트가 PostgreSQL,
-Redis, JWT, Jenkins, webhook용 임시 secret을 생성한다. OAuth client secret,
-GitHub token, registry password는 직접 입력하지 말고 로컬 secret 또는 Jenkins
-Credentials에 둔다.
+Redis, JWT, Jenkins, webhook용 임시 secret을 생성한다. OAuth client secret과
+GitHub token은 직접 입력하지 말고 로컬 secret 또는 Jenkins Credentials에 둔다.
 
 ### 실행 범위 선택
 
@@ -214,14 +219,14 @@ Docker socket을 받는다. `PROFILES=...,ci ./Infra/scripts/up.sh`는 controlle
 읽히며 Compose의 `Config.Env`나 `.env.example`에는 넣지 않는다. 이 방식은 WSL 검증용이며 socket을 가진
 agent가 침해되면 호스트 권한으로 이어질 수 있다.
 
-EC2 전환 전에 다음 순서로 보완한다.
+현재 split EC2 전환은 다음 원칙으로 보완한다.
 
-1. GitLab webhook secret·registry credential·EC2 SSH key를 Jenkins Credentials에 등록
-2. `Jenkinsfile`의 `gitjob-registry`/`gitjob-ec2-ssh` credential ID를 실제 credential과 연결
-3. agent 전용 deploy user와 별도 build host 또는 rootless builder 검토
-4. Jenkins는 public inbound에서 제외하고 Tailscale/private network로 접근
-5. 이미지 tag는 `latest`가 아니라 commit SHA/release tag 사용
-6. 배포 전 `docker compose config`, 배포 후 healthcheck, 실패 시 이전 tag rollback 연결
+1. GitLab pull token을 각 EC2의 Git credential store에 별도로 등록
+2. `gitjob-gitlab-scm`과 `gitjob-ec2-ssh` Credential을 Jenkins에 등록
+3. Jenkins Job을 `develop` Pipeline from SCM + Poll SCM으로 설정
+4. Jenkins는 public inbound에서 제외하고 SSH로 EC2에 접근
+5. 배포 전 `docker compose config`, 배포 후 healthcheck를 실행
+6. HDFS volume을 삭제하지 않고 실패 시 이전 checkout/이미지로 수동 복구
 
 `.env.example`에는 변수명과 형식만 두며 실제 credential을 넣지 않는다.
 
@@ -233,8 +238,8 @@ EC2가 발급되면 다음 순서로 이관한다.
 2. EC2 instance type, EBS 크기, data 분리 여부 결정
 3. Docker Engine/Compose plugin/Git/Tailscale 설치
 4. `/opt/gitjob` 배포 경로와 deploy user 생성
-5. registry의 commit-tag image를 `.env.ec2`에 지정
-6. Security Group은 80/443과 제한 SSH만 허용
+5. `develop`을 각 EC2의 배포 checkout으로 지정하고 로컬 build를 사용
+6. Security Group은 80/443과 제한 SSH만 허용(현재 UFW는 변경하지 않음)
 7. `compose.ec2.yaml`로 Nginx HTTP만 publish하고 DB/Redis/Kafka/Jenkins는 비공개 유지
 8. TLS 인증서와 443 Nginx server block 추가
 9. GitHub OAuth callback, domain, cookie secure, CORS를 운영값으로 변경
@@ -250,10 +255,115 @@ PROFILES=core,app \
 ./Infra/scripts/up.sh
 ```
 
-현재 EC2 override에는 HTTP 80만 있다. HTTPS 443, DNS, 인증서, SSM/Secrets
-Manager, systemd 자동기동은 서버 발급 후 운영 정보가 확정되면 추가한다.
+현재 EC2 override는 Nginx HTTP 80과 split 배포에 필요한 core의 private
+binding을 제공한다. HTTPS 443, DNS, 인증서, SSM/Secrets Manager,
+systemd 자동기동은 서버 발급 후 운영 정보가 확정되면 추가한다.
 
-## 10. EC2 2대 고가용성 구성
+## 10. EC2 서비스/data 분리 구성
+
+현재 지급된 두 EC2는 고가용 app 노드로 사용하지 않고, 서비스 계층과 데이터
+처리 계층을 분리한다. `J15E102`에는 `core + app`을, `J15E102A`에는 `data`를
+실행한다. `data` 프로파일은 Collector·Worker·HDFS·Spark를 함께 포함한다.
+
+```text
+J15E102
+  Nginx → Frontend → Backend → PostgreSQL/Redis/Kafka
+                                      ▲
+                                      │ private endpoint
+J15E102A
+  Collector/Worker ───────────────────┘
+  HDFS NameNode/DataNode + Spark master/worker (local)
+```
+
+### 서비스 서버
+
+`.env.service`는 다음 값을 기준으로 만든다.
+
+```dotenv
+COMPOSE_PROJECT_NAME=gitjob-service
+COMPOSE_PROFILES=core,app,ci
+DEPLOYMENT_MODE=split
+EC2_CORE_BIND_ADDRESS=<J15E102-private-ip>
+EC2_KAFKA_ADVERTISED_HOST=<J15E102-private-ip>
+EC2_KAFKA_EXTERNAL_PORT=9094
+DB_HOST=postgres
+REDIS_HOST=redis
+KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+```
+
+실행 명령은 다음과 같다. Jenkins가 아직 필요하지 않으면 `ci`를 빼고 먼저
+`core,app`만 기동한다.
+
+```bash
+ENV_FILE=.env.service \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml \
+PROFILES=core,app,ci \
+./Infra/scripts/up.sh
+```
+
+`EC2_CORE_BIND_ADDRESS`는 public IP가 아니라 서비스 EC2의 private IP로 두고,
+SSAFY 제공 네트워크 경계에서 `J15E102A`의 private IP만 5432·6379·9094에 접근할 수
+있도록 확인한다. 현재 작업에서는 UFW를 변경하지 않는다. Kafka는 컨테이너 내부
+Backend용 `kafka:9092`와 데이터 서버용
+private listener를 분리한다.
+
+서비스 EC2의 UFW/보안 경계 변경은 현재 작업 범위가 아니다. 관리자 CIDR과 private
+IP가 확정되고 별도 승인을 받은 뒤에만 방화벽 정책을 검토한다.
+
+```text
+현재는 UFW 명령을 실행하지 않는다.
+```
+
+데이터 EC2는 외부에 Hadoop/Spark 포트를 열지 않고 SSH 관리망만 허용한다.
+`J15E102A`의 주소를 서비스 EC2에서 접근해야 하는 별도 운영 요구가 있을 때만
+그 목적의 private rule을 추가한다.
+
+### 데이터 서버
+
+`.env.data`는 서비스 서버의 private endpoint와 데이터 서버의 local endpoint를
+함께 사용한다.
+
+```dotenv
+COMPOSE_PROJECT_NAME=gitjob-data
+COMPOSE_PROFILES=data
+DEPLOYMENT_MODE=split
+DB_HOST=<J15E102-private-ip>
+REDIS_HOST=<J15E102-private-ip>
+KAFKA_BOOTSTRAP_SERVERS=<J15E102-private-ip>:9094
+HDFS_URI=hdfs://hdfs-namenode:8020
+PARQUET_ROOT=hdfs:///gitjob/parquet
+SPARK_MASTER_URL=spark://spark-master:7077
+HDFS_REPLICATION_FACTOR=1
+```
+
+`J15E102A`에서는 반드시 `compose.ec2-data.yaml`을 사용한다. `compose.ec2.yaml`
+은 local core 의존성을 추가하므로 data 프로파일만 실행할 때 사용할 수 없다.
+
+```bash
+ENV_FILE=.env.data \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml \
+PROFILES=data \
+./Infra/scripts/up.sh
+```
+
+초기에는 HDFS/Spark를 먼저 확인하고, AI 소스와 이미지가 준비된 뒤 Collector와
+Worker를 실행한다. 일반 애플리케이션 배포에서는 HDFS volume을 삭제하거나
+재생성하지 않는다.
+
+### split Jenkins 배포
+
+루트 `Jenkinsfile`은 `DEPLOYMENT_MODE=split`과 `develop` 기준으로 동작한다.
+Jenkins는 Registry push를 수행하지 않고 `gitjob-ec2-ssh` Credential로 각 EC2에
+SSH하여 `git pull --ff-only origin develop` 후 로컬 Docker build와 Compose 실행을
+순서대로 수행한다. 각 서버에는 secret을 포함한 `.env.service` 또는 `.env.data`를
+미리 배치하고, Jenkins는 secret env 파일·GitLab token·PEM을 서버 간에 복사하지
+않는다. GitLab Integration webhook은 사용하지 않고 Poll SCM을 사용한다.
+
+현재 구성은 서비스와 데이터의 역할 분리이며 HA가 아니다. Kafka single broker,
+HDFS replication 1, local named volume은 각각 단일 장애점이다. PostgreSQL dump와
+HDFS/중요 설정은 별도 EBS 또는 S3로 백업한다.
+
+## 11. EC2 2대 고가용성 구성
 
 ### 실행 원칙
 
@@ -317,7 +427,7 @@ HDFS NameNode HA를 모두 완성할 수는 없다. managed HA 서비스를 사�
 앱 계층만 HA로 표시하고, 상태 계층은 백업·수동 failover가 필요한 단일 장애점이라고
 운영 문서에 명시한다. 상세 장애 테스트와 롤링 배포 순서는 [EC2 고가용성 설계 문서](../docs/infra/2026-08-27-ec2-high-availability-design.md)를 따른다.
 
-## 11. 준비도 판단
+## 12. 준비도 판단
 
 | 항목 | 준비도 | 근거 |
 |---|---|---|
@@ -325,7 +435,7 @@ HDFS NameNode HA를 모두 완성할 수는 없다. managed HA 서비스를 사�
 | 핵심 저장소 기동 | 검증됨 | WSL에서 core health/smoke/영속성 통과 |
 | 앱 Compose 연결 | 골격 준비 | Dockerfile·env·Nginx·health 계약 작성, 실제 소스 대기 |
 | 데이터 파이프라인 | 부분 검증 | HDFS/Spark 최소 cluster·Parquet smoke와 Worker 1/2/4 확장 검증, Collector/Worker 통합·benchmark 대기 |
-| Jenkins CI/CD | 실행 골격 준비 | JCasC·controller-first agent bootstrap·Jenkinsfile 작성, credentials/registry 대기 |
+| Jenkins CI/CD | 실행 골격 준비 | JCasC·controller-first agent bootstrap·direct-build Jenkinsfile 작성, Jenkins Credentials/job 설정 대기 |
 | EC2 운영 | 단일 노드 골격 / HA 설계 준비 | 서버·ALB·상태 저장소·도메인·TLS·보안그룹·백업 정책 필요 |
 
 현재 “무엇이 동작하는가”는 `core` 실행 결과로 확인하고, 2대 구성은

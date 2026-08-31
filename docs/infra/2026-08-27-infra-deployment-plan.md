@@ -2,9 +2,9 @@
 
 - 작성일: 2026-08-27
 - 프로젝트: S15P21E102 / GitJob
-- 상태: 전체 Compose/Dockerfile 및 2-EC2 app HA 골격 구현 / 애플리케이션 통합·AWS 운영 검증 대기
+- 상태: 전체 Compose/Dockerfile 및 2-EC2 서비스/data 분리 골격 구현 / 애플리케이션 통합·AWS 운영 검증 대기
 - 범위: WSL에서 검증 가능한 Docker Compose·Jenkins 기반 실행 환경을 준비하고, 이후 EC2에 동일한 방식으로 이관
-- 이번 단계: core/app/data/ci/observability Compose 프로파일, WSL·단일 EC2·2-EC2 HA override, Dockerfile·Nginx·Jenkins 골격과 준비도 문서를 구현함. 실제 애플리케이션 소스·credential·EC2가 준비되면 통합 검증함
+- 이번 단계: core/app/data/ci/observability Compose 프로파일, WSL·서비스 EC2·data EC2·2-EC2 HA override, Dockerfile·Nginx·Jenkins 골격과 split 배포 wrapper를 구현함. 실제 애플리케이션 소스·credential·EC2가 준비되면 통합 검증함
 
 ## 1. 목적
 
@@ -28,7 +28,7 @@ GitLab(develop/main)
 ### 2.1 저장소 현황
 
 - 현재 저장소는 `BE/`, `FE/`, `AI/`, `Infra/`, `docs/` 초기 골격으로 구성되어 있다.
-- 애플리케이션 소스는 아직 없지만, Dockerfile·Compose·Nginx·Jenkinsfile/JCasC 및 2-EC2 app HA overlay 골격은 이번 단계에서 추가했다.
+- 애플리케이션 소스는 초기 골격만 있지만, Dockerfile·Compose·Nginx·Jenkinsfile/JCasC 및 서비스/data 분리·2-EC2 app HA overlay 골격은 이번 단계에서 추가했다.
 - 기본 브랜치는 `develop`이며 원격 저장소는 SSAFY GitLab이다.
 - 인프라 문서는 `docs/infra/`, 실제 인프라 관련 파일은 기존 `Infra/` 아래에 배치한다.
 
@@ -116,13 +116,19 @@ GitLab(develop/main)
   운영자 ── Tailscale/private access ──▶ Jenkins·Kafka UI·운영 지표
 ```
 
-### 4.1 2대 EC2 목표 구조
+### 4.1 현재 2대 EC2 구조와 향후 HA 전환
 
-EC2가 2대이면 각 서버에 동일한 commit SHA의 `Backend`, `Frontend`, `Nginx`를
-올리고 AWS ALB target group이 `/health` 결과를 기준으로 분산한다.
-`compose.ec2-ha.yaml`은 각 서버에서 `PROFILES=app`만 실행하는 overlay다.
-두 서버의 local Compose network/volume은 공유되지 않으므로 PostgreSQL·Redis·Kafka는
-RDS·ElastiCache·MSK 같은 공유 HA endpoint를 사용한다.
+현재 지급된 2대는 `J15E102`에 `core + app + Jenkins`, `J15E102A`에
+`Collector + Worker + HDFS single-node + Spark`를 배치한다. 데이터 서버는 서비스
+서버의 private PostgreSQL·Redis·Kafka listener를 사용하고, HDFS/Spark volume은
+데이터 서버에만 둔다. 루트 `Jenkinsfile`의 split deploy wrapper는 같은 commit SHA의
+서비스 이미지와 data 이미지를 각 서버에 순서대로 반영한다.
+
+향후 공유 상태 저장소와 ALB가 준비되면 각 서버에 동일한 commit SHA의 `Backend`,
+`Frontend`, `Nginx`를 올리고 AWS ALB target group이 `/health` 결과를 기준으로
+분산한다. `compose.ec2-ha.yaml`은 그때 각 서버에서 `PROFILES=app`만 실행하는
+overlay다. 두 서버의 local Compose network/volume은 공유되지 않으므로
+PostgreSQL·Redis·Kafka는 RDS·ElastiCache·MSK 같은 공유 HA endpoint를 사용한다.
 
 상세 구성, ALB, 장애 테스트와 rolling deploy는
 [2대 EC2 고가용성 설계 문서](2026-08-27-ec2-high-availability-design.md)에 기록한다.
@@ -152,7 +158,7 @@ RDS·ElastiCache·MSK 같은 공유 HA endpoint를 사용한다.
 - `ci`: Jenkins controller와 제한된 권한의 build/deploy agent
 - `observability`: Kafka 관리 화면, 애플리케이션 지표 수집 등 선택 구성
 
-WSL에서는 먼저 `core` → `app` 순서로 검증하고, 대용량 파이프라인은 `data`를 별도로 실행한다. 단일 EC2 fallback은 `core + app`을 사용하고, 2대 HA에서는 두 노드에 `app`만 실행한 뒤 data/CI와 상태 저장소를 별도로 배치한다.
+WSL에서는 먼저 `core` → `app` 순서로 검증하고, 대용량 파이프라인은 `data`를 별도로 실행한다. 현재 2대 EC2에서는 서비스 노드에 `core + app + ci`, data 노드에 `data`를 배치한다. 향후 HA에서는 두 노드에 `app`만 실행한 뒤 data/CI와 상태 저장소를 별도로 배치한다.
 
 ## 5. 파일 구조 계획
 
@@ -163,7 +169,8 @@ Infra/
 ├── compose/
 │   ├── compose.yaml          # 공통 서비스·네트워크·볼륨·healthcheck
 │   ├── compose.wsl.yaml      # WSL 개발용 override
-│   ├── compose.ec2.yaml      # 단일 EC2 fallback override
+│   ├── compose.ec2.yaml      # 서비스/core EC2 + 단일 EC2 fallback override
+│   ├── compose.ec2-data.yaml # Hadoop/Spark data EC2 override
 │   └── compose.ec2-ha.yaml   # 2대 EC2 app 노드 override
 ├── docker/
 │   ├── backend/Dockerfile    # Java multi-stage build
@@ -187,6 +194,7 @@ Infra/
 │   ├── replay.sh
 │   ├── spark-smoke.sh
 │   ├── spark-benchmark.sh
+│   ├── deploy.sh
 │   └── ha-preflight.sh
 └── README.md                 # 실행·운영·장애 대응 안내
 

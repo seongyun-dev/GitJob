@@ -1,8 +1,15 @@
-# EC2 production entrypoint for the P1 core services.
+# EC2 service-node entrypoint for the GitJob service stack.
 #
-# compose.yaml does not publish database/cache/Kafka ports. Keeping this
-# explicit file in the command makes the intended EC2 boundary obvious and
-# leaves room for the future nginx-only 80/443 exposure.
+# The default core bind address is loopback. For the split topology, set
+# EC2_CORE_BIND_ADDRESS to the service node's private IP and set
+# EC2_KAFKA_ADVERTISED_HOST to the same private address. The provided network
+# boundary must restrict these ports to the data node only; the current setup
+# does not modify UFW.
+#
+# This override is for the service node, where core and app run together. Do
+# not use it with PROFILES=data on the data node: its worker dependencies are
+# intentionally for the local-core/single-host topology. Use
+# compose.ec2-data.yaml for the data-only node.
 
 services:
   # These dependencies are for the single-host fallback where core is also
@@ -16,6 +23,17 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/backend/Dockerfile
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Infra/docker/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_WS_URL: ${VITE_WS_URL:-/ws}
 
   collector:
     depends_on:
@@ -41,9 +59,33 @@ services:
 
   postgres:
     restart: unless-stopped
+    ports:
+      - "${EC2_CORE_BIND_ADDRESS:-127.0.0.1}:${EC2_POSTGRES_PORT:-5432}:5432"
 
   redis:
     restart: unless-stopped
+    ports:
+      - "${EC2_CORE_BIND_ADDRESS:-127.0.0.1}:${EC2_REDIS_PORT:-6379}:6379"
+
+  jenkins:
+    build:
+      context: .
+      dockerfile: Infra/docker/jenkins/Dockerfile
+    ports:
+      - "${JENKINS_EC2_BIND:-127.0.0.1}:${JENKINS_EC2_HTTP_PORT:-8081}:8080"
+
+  jenkins-agent:
+    build:
+      context: .
+      dockerfile: Infra/docker/jenkins/agent.Dockerfile
 
   kafka:
     restart: unless-stopped
+    environment:
+      # Keep the Docker-network listener for Backend and add a private host
+      # listener for Collector/Worker running on the other EC2 instance.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:9092,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://${EC2_KAFKA_ADVERTISED_HOST:-127.0.0.1}:${EC2_KAFKA_EXTERNAL_PORT:-9094}
+    ports:
+      - "${EC2_CORE_BIND_ADDRESS:-127.0.0.1}:${EC2_KAFKA_EXTERNAL_PORT:-9094}:9094"
