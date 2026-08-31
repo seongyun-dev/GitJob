@@ -216,7 +216,88 @@ GitHub 공개 활동 추세는 GitHub Innovation Graph KR의 분기 Programming 
 6. quality result·DLQ·replay·lineage API 연결
 7. worker/partition 벤치마크와 복원력 실험 기록
 
-## 13. 원문 출처
+## 13. GitHub raw 요청 Core primary rate limit 실측
+
+> Jira: `S15P21E102-95`
+>
+> 측정 시각: 2026-08-31 17:02 KST (08:02 UTC)
+>
+> 상태: 소량 실측 완료 / 수집·분석 기능 구현 없음
+
+### 측정 방법
+
+1. 환경에 설정된 `GITHUB_TOKEN`으로 `GET https://api.github.com/rate_limit`을
+   인증 호출해 `resources.core` 상태를 두 번 확인했다.
+2. token을 보내지 않고 공개 repository의 작은 파일 3개를
+   `raw.githubusercontent.com`에서 GET 요청했다.
+3. raw 본문은 메모리에서 응답 크기만 확인하고 파일이나 Git repository에
+   저장하지 않았다.
+4. raw 요청 후 같은 인증 정보로 Core 상태를 두 번 다시 확인했다.
+5. 인증값은 명령 출력, 응답 기록, 문서에 남기지 않았다.
+
+전후 조회를 두 번씩 수행한 것은 `/rate_limit` 조회 자체 또는 동시 사용에 따른
+관측값 변화를 확인하기 위한 control이다.
+
+### 실측 결과
+
+Core 상태:
+
+| 단계 | HTTP | Core limit | Core remaining | Core used |
+|---|---:|---:|---:|---:|
+| 요청 전 control 1 | 200 | 5,000 | 5,000 | 0 |
+| 요청 전 control 2 | 200 | 5,000 | 5,000 | 0 |
+| raw 3회 후 control 1 | 200 | 5,000 | 5,000 | 0 |
+| raw 3회 후 control 2 | 200 | 5,000 | 5,000 | 0 |
+
+API 응답의 `x-ratelimit-resource`는 `core`였고 전후
+`x-ratelimit-remaining`도 `5000`이었다.
+
+Raw 요청:
+
+| 순서 | 공개 파일 | HTTP | 응답 크기 | rate-limit 관련 헤더 |
+|---|---|---:|---:|---|
+| 1 | `octocat/Hello-World`의 `README` | 200 | 13 bytes | 없음 |
+| 2 | `github/gitignore`의 `Python.gitignore` | 200 | 4,657 bytes | 없음 |
+| 3 | `github/gitignore`의 `Node.gitignore` | 200 | 2,165 bytes | 없음 |
+
+- raw 요청 수: 3회
+- raw 성공: 3/3
+- 관측된 Core remaining 변화: `5000 → 5000`, delta 0
+- 확인한 raw rate-limit 헤더: `x-ratelimit-*`, `ratelimit-*`, `retry-after`
+- 위 헤더는 세 응답 모두 존재하지 않았다.
+
+### 실측 결론
+
+이번 조건에서는 공개 파일에 대한 비인증 `raw.githubusercontent.com` GET 3회가
+같은 시점의 인증된 GitHub REST API Core primary rate limit remaining을 감소시키지
+않았다. 따라서 **이번에 측정한 public raw GET은 인증된 Core bucket에 포함되지
+않은 것으로 관측됐다.**
+
+이는 소량 public 파일 요청에 대한 실측 결론이다. raw domain에 별도 제한이 없거나
+모든 repository·인증·파일 유형에서 항상 같은 결과가 나온다는 정책 결론으로
+일반화하지 않는다.
+
+### S15P21E102-104 Repo Mapping 호출 비용에 주는 영향
+
+- public file 본문을 raw URL로 직접 가져오는 요청은 이번 실측 기준 Core primary
+  호출 비용에서 제외할 수 있다.
+- repository metadata, branch/commit, tree, Contents API 등 `api.github.com` 요청은
+  기존대로 Core 호출 비용에 포함해 계산해야 한다.
+- raw URL을 얻기 위해 Contents API 등을 먼저 호출한다면 그 **URL 조회 API 호출**은
+  Core 비용이며, 이후 **public raw 본문 GET**만 별도 요청으로 구분한다.
+- Core 비용과 별개로 raw 요청 수, 전송량, timeout/retry, CDN·abuse/secondary 제한
+  가능성은 별도 budget과 관측 지표로 관리한다.
+
+### 아직 확인되지 않은 사항
+
+- private repository의 raw 파일과 인증 방식
+- Git LFS, 대용량 파일, redirect가 있는 URL
+- 장시간·고동시성 요청에서의 제한과 secondary/abuse 제한
+- raw domain 자체의 별도 quota 또는 throttle 정책
+- 다른 token 종류, 계정, GitHub Enterprise 환경에서의 결과
+- API와 raw 요청을 다른 네트워크·지역에서 수행했을 때의 차이
+
+## 14. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
 - [기능 명세서 작성](https://app.notion.com/p/d700dff912cf822ebaa981630e77682c)
