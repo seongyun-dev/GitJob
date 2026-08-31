@@ -1,0 +1,279 @@
+{
+  "schema_version": "job-analysis-input/v1",
+  "dataset_snapshot_id": "fixture-job-snapshot-20260831",
+  "pipeline_run_id": "fixture-pipeline-run-001",
+  "collector_version": "fixture-a-collector-v1",
+  "records": [
+    {
+      "source_record_id": "jobkorea:fixture-1001",
+      "canonical_job_id": "fixture-job-001",
+      "source_site": "JOBKOREA",
+      "source_posting_id": "fixture-1001",
+      "source_url": "https://example.invalid/jobs/fixture-1001",
+      "company_name": "Fixture Labs",
+      "title": "C# 백엔드 개발자",
+      "raw_job_category": "백엔드 개발",
+      "career_level": "경력 3년 이상",
+      "region": "서울",
+      "description_text": "자격요건: C# 실무 경험",
+      "body_status": "TEXT_AVAILABLE",
+      "posting_status": "ACTIVE",
+      "posted_at": "2026-08-20T00:00:00+09:00",
+      "deadline": "2026-09-20T23:59:59+09:00",
+      "collected_at": "2026-08-31T00:00:00Z",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "technology_mentions": [
+        {
+          "raw_technology": "C#",
+          "technology_id": "c#",
+          "requirement_type": "REQUIRED",
+          "source_surface": "BODY",
+          "evidence_section": "자격요건",
+          "evidence_text": "C# 실무 경험",
+          "extraction_method": "FIXTURE_RULE"
+        }
+      ]
+    },
+    {
+      "source_record_id": "wanted:fixture-1002",
+      "canonical_job_id": "fixture-job-002",
+      "source_site": "WANTED",
+      "source_posting_id": "fixture-1002",
+      "source_url": "https://example.invalid/jobs/fixture-1002",
+      "company_name": "Example Systems",
+      "title": "웹 플랫폼 개발자",
+      "description_text": "우대사항: Node.js 프로젝트 경험. Next.js, Vue.js, Python 사용",
+      "body_status": "TEXT_AVAILABLE",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:01:00Z",
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "technology_mentions": [
+        {
+          "raw_technology": "Node.js",
+          "technology_id": "node.js",
+          "requirement_type": "PREFERRED",
+          "source_surface": "BODY",
+          "evidence_section": "우대사항",
+          "evidence_text": "Node.js 프로젝트 경험",
+          "extraction_method": "FIXTURE_RULE"
+        },
+        {
+          "raw_technology": "Next.js",
+          "technology_id": "next.js",
+          "requirement_type": "MENTIONED",
+          "source_surface": "BODY",
+          "evidence_section": "기술스택",
+          "evidence_text": "Next.js 사용",
+          "extraction_method": "FIXTURE_RULE"
+        },
+        {
+          "raw_technology": "Vue.js",
+          "technology_id": "vue.js",
+          "requirement_type": "MENTIONED",
+          "source_surface": "BODY",
+          "evidence_section": "기술스택",
+          "evidence_text": "Vue.js 사용",
+          "extraction_method": "FIXTURE_RULE"
+        },
+        {
+          "raw_technology": "Python",
+          "technology_id": "python",
+          "requirement_type": "MENTIONED",
+          "source_surface": "BODY",
+          "evidence_section": "기술스택",
+          "evidence_text": "Python 사용",
+          "extraction_method": "FIXTURE_RULE"
+        }
+      ]
+    },
+    {
+      "source_record_id": "saramin:fixture-1003",
+      "canonical_job_id": "fixture-job-003",
+      "source_site": "SARAMIN",
+      "source_posting_id": "fixture-1003",
+      "source_url": "https://example.invalid/jobs/fixture-1003",
+      "company_name": "Sample Data",
+      "title": "C·R·Go 데이터 플랫폼 엔지니어",
+      "description_text": "플랫폼 서비스 개발자를 모집합니다.",
+      "body_status": "TEXT_AVAILABLE",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:02:00Z",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "technology_mentions": [
+        {
+          "raw_technology": "C",
+          "technology_id": null,
+          "requirement_type": "MENTIONED",
+          "source_surface": "TITLE",
+          "evidence_section": "공고 제목",
+          "evidence_text": "C·R·Go 데이터 플랫폼 엔지니어",
+          "extraction_method": "FIXTURE_TITLE_CANDIDATE"
+        },
+        {
+          "raw_technology": "R",
+          "technology_id": null,
+          "requirement_type": "MENTIONED",
+          "source_surface": "TITLE",
+          "evidence_section": "공고 제목",
+          "evidence_text": "C·R·Go 데이터 플랫폼 엔지니어",
+          "extraction_method": "FIXTURE_TITLE_CANDIDATE"
+        },
+        {
+          "raw_technology": "Go",
+          "technology_id": null,
+          "requirement_type": "MENTIONED",
+          "source_surface": "TITLE",
+          "evidence_section": "공고 제목",
+          "evidence_text": "C·R·Go 데이터 플랫폼 엔지니어",
+          "extraction_method": "FIXTURE_TITLE_CANDIDATE"
+        }
+      ]
+    },
+    {
+      "source_record_id": "jobkorea:fixture-1004",
+      "canonical_job_id": "fixture-job-004",
+      "source_site": "JOBKOREA",
+      "source_posting_id": "fixture-1004",
+      "source_url": "https://example.invalid/jobs/fixture-1004",
+      "company_name": "Unknown Tech Co",
+      "title": "데이터 엔지니어",
+      "description_text": "QuantumDB 경험이 있으면 좋습니다.",
+      "body_status": "TEXT_AVAILABLE",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:03:00Z",
+      "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "technology_mentions": [
+        {
+          "raw_technology": "QuantumDB",
+          "technology_id": null,
+          "requirement_type": "MENTIONED",
+          "source_surface": "BODY",
+          "evidence_section": "기술스택",
+          "evidence_text": "QuantumDB 경험",
+          "extraction_method": "FIXTURE_RULE"
+        }
+      ]
+    },
+    {
+      "source_record_id": "wanted:fixture-2001",
+      "canonical_job_id": "fixture-job-001",
+      "source_site": "WANTED",
+      "source_posting_id": "fixture-2001",
+      "source_url": "https://example.invalid/jobs/fixture-2001",
+      "company_name": "Fixture Labs Inc.",
+      "title": "백엔드 개발자 채용",
+      "description_text": "자격요건: C++ 서버 개발 경험",
+      "body_status": "TEXT_AVAILABLE",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:04:00Z",
+      "content_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "technology_mentions": [
+        {
+          "raw_technology": "C++",
+          "technology_id": "c++",
+          "requirement_type": "REQUIRED",
+          "source_surface": "BODY",
+          "evidence_section": "자격요건",
+          "evidence_text": "C++ 서버 개발 경험",
+          "extraction_method": "FIXTURE_RULE"
+        }
+      ]
+    },
+    {
+      "source_record_id": "jobkorea:fixture-1007",
+      "canonical_job_id": "fixture-job-007",
+      "source_site": "JOBKOREA",
+      "source_posting_id": "fixture-1007",
+      "source_url": "https://example.invalid/jobs/fixture-1007",
+      "company_name": "Dotnet Fixture Co",
+      "title": ".NET 애플리케이션 개발자",
+      "description_text": "기술스택: .NET, .NET MAUI",
+      "body_status": "TEXT_AVAILABLE",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:04:30Z",
+      "content_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "technology_mentions": [
+        {
+          "raw_technology": ".NET",
+          "technology_id": ".net",
+          "requirement_type": "MENTIONED",
+          "source_surface": "BODY",
+          "evidence_section": "기술스택",
+          "evidence_text": ".NET",
+          "extraction_method": "FIXTURE_RULE"
+        },
+        {
+          "raw_technology": ".NET MAUI",
+          "technology_id": ".net-maui",
+          "requirement_type": "MENTIONED",
+          "source_surface": "BODY",
+          "evidence_section": "기술스택",
+          "evidence_text": ".NET MAUI",
+          "extraction_method": "FIXTURE_RULE"
+        }
+      ]
+    },
+    {
+      "source_record_id": "jobplanet:fixture-1005",
+      "canonical_job_id": "fixture-job-005",
+      "source_site": "JOBPLANET",
+      "source_posting_id": "fixture-1005",
+      "source_url": "https://example.invalid/jobs/fixture-1005",
+      "company_name": "Image Posting Co",
+      "title": "소프트웨어 엔지니어",
+      "description_text": null,
+      "raw_artifact_uri": "fixture://job-artifacts/fixture-1005.png",
+      "body_status": "IMAGE_ONLY",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:05:00Z",
+      "content_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "technology_mentions": []
+    },
+    {
+      "source_record_id": "jobkorea:fixture-1006",
+      "canonical_job_id": "fixture-job-006",
+      "source_site": "JOBKOREA",
+      "source_posting_id": "fixture-1006",
+      "source_url": "https://example.invalid/jobs/fixture-1006",
+      "company_name": "Closed Posting Co",
+      "title": "마감된 개발자 공고",
+      "description_text": null,
+      "body_status": "MISSING",
+      "posting_status": "CLOSED",
+      "collected_at": "2026-08-31T00:06:00Z",
+      "content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "technology_mentions": []
+    },
+    {
+      "source_record_id": "wanted:fixture-1008",
+      "canonical_job_id": "fixture-job-008",
+      "source_site": "WANTED",
+      "source_posting_id": "fixture-1008",
+      "source_url": "https://example.invalid/jobs/fixture-1008",
+      "company_name": "Blocked Posting Co",
+      "title": "접근 제한 공고",
+      "description_text": null,
+      "body_status": "BLOCKED",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:07:00Z",
+      "content_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "technology_mentions": []
+    },
+    {
+      "source_record_id": "saramin:fixture-1009",
+      "canonical_job_id": "fixture-job-009",
+      "source_site": "SARAMIN",
+      "source_posting_id": "fixture-1009",
+      "source_url": "https://example.invalid/jobs/fixture-1009",
+      "company_name": "Parse Failed Posting Co",
+      "title": "본문 파싱 실패 공고",
+      "description_text": null,
+      "raw_artifact_uri": "fixture://job-artifacts/fixture-1009.html",
+      "body_status": "PARSE_FAILED",
+      "posting_status": "ACTIVE",
+      "collected_at": "2026-08-31T00:08:00Z",
+      "content_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "technology_mentions": []
+    }
+  ]
+}

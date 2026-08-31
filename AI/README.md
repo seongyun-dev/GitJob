@@ -2,8 +2,10 @@
 
 This directory contains the Python 3.12 runtime boundaries for GitJob's
 collector and analysis worker. Both processes currently expose only a
-liveness endpoint. Technology normalization, job analysis, GitHub trend,
-Stack Overflow, and LLM behavior belong to their own follow-up issues.
+liveness endpoint. The A-to-C job-analysis input contract is also available
+as a library boundary. Technology Registry matching, requirement
+classification, demand aggregation, GitHub trend, Stack Overflow, and LLM
+behavior belong to their own follow-up issues.
 
 ## Package boundaries
 
@@ -53,6 +55,94 @@ $python = "..\.venv\Scripts\python.exe"
 & $python -m ruff check .
 & $python -m ruff format --check .
 ```
+
+## A-to-C job-analysis input contract
+
+Issue `S15P21E102-90` defines the strict batch contract in
+`job/contracts.py`. The version is `job-analysis-input/v1`; unsupported
+versions and unknown fields fail validation instead of being guessed or
+silently discarded.
+
+Required batch metadata:
+
+- `schema_version`, `dataset_snapshot_id`, `pipeline_run_id`
+- `collector_version`
+
+`registry_version` and requirement-rule versions are C-team result metadata,
+not A-team collection input. The expected fixture carries synthetic values for
+the later Mapper/classifier tests; production analysis results must attach the
+actual versions used for that run.
+
+Each source record keeps `source_record_id`, the source posting ID and URL,
+raw company/title/job/career/region fields, collection time, and a SHA-256
+`content_hash`. `TEXT_AVAILABLE` requires `description_text`, while `IMAGE_ONLY`
+requires `raw_artifact_uri`. `MISSING`, `BLOCKED`, and `PARSE_FAILED` remain
+valid observable states. The boundary uses the existing shared data-contract
+term `TEXT_AVAILABLE` from `docs/data/README.md`.
+
+Technology mentions preserve the source spelling, source `technology_id`,
+input requirement type, source surface, and Evidence. External payloads must
+use `technology_id`; the internal Python name is not accepted or serialized at
+this boundary. The adapter exposes the internal field as `tech_id` and only
+applies the agreed legacy-ID mappings:
+
+| A boundary `technology_id` | Internal `tech_id` |
+|---|---|
+| `c#` | `csharp` |
+| `c++` | `cpp` |
+| `.net` | `dotnet` |
+| `.net-maui` | `dotnet-maui` |
+| `node.js` | `nodejs` |
+| `next.js` | `nextjs` |
+| `vue.js` | `vuejs` |
+
+Already-safe lowercase slugs pass through. Any other unsafe ID fails
+input validation explicitly. A null `technology_id` is retained with its raw
+spelling and Evidence, so later Registry work can classify it as `AMBIGUOUS`
+or `UNKNOWN`. The input `MENTIONED` value is a source observation; the expected
+fixture separately records the later classifier result as `SKILL` or
+`REVIEW_REQUIRED`. This adapter implements neither decision.
+
+`canonical_job_id` is treated only as an upstream semantic-duplicate candidate
+key. Groups contain at least two distinct `source_record_id` values and are
+exposed without removing either source record. Repeated delivery of the same
+source record is not reported as a semantic duplicate. Kafka redelivery,
+consumer restart, Spark retry, and replay idempotency remain A-team
+responsibilities and are not inferred from this key.
+
+Reusable synthetic fixtures are under `job/fixtures/`:
+
+- `job_analysis_input_v1.json`: all five body states, closed, duplicate,
+  C/R/Go ambiguity, every agreed legacy alias, pass-through, and unknown cases
+- `job_analysis_expected_v1.json`: expected outcomes for the later Registry
+  mapper/classifier issues plus synthetic expected result versions; it is not
+  production inference output
+- `invalid_job_analysis_input_v1.json`: unsupported schema, missing metadata,
+  wrong ID type, missing body, invalid enum, unsafe ID, and internal-field-name
+  cases
+
+All fixture URLs and identifiers are synthetic. They are not copied from the
+local A-team snapshot or production data. Generate a tool-neutral JSON Schema
+from the authoritative Pydantic model when sharing the contract:
+
+```powershell
+$python = "..\.venv\Scripts\python.exe"
+& $python -c `
+  "from job.contracts import JobAnalysisInputBatch; import json; print(json.dumps(JobAnalysisInputBatch.model_json_schema(by_alias=True), ensure_ascii=False, indent=2))"
+```
+
+Run only the contract suite with:
+
+```powershell
+& $python -m pytest tests/test_job_contracts.py -q
+```
+
+A-team handoff still needs confirmation of actual Parquet/JSON types and
+locations, real `schema_version`/collector version production values,
+`raw_artifact_uri` availability, and revision/closed-posting policy. C-team
+owns contract validation, semantic duplicate adjudication, Registry matching,
+requirement classification, and downstream facts. No B-team online API is
+introduced by this issue.
 
 ## Run locally
 

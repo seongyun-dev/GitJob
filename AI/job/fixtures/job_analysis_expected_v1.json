@@ -1,0 +1,117 @@
+{
+  "fixture_only": true,
+  "expected_versions": {
+    "registry_version": "fixture-registry-v1",
+    "requirement_rule_version": "fixture-requirement-rules-v1"
+  },
+  "cases": [
+    {
+      "case_id": "alias-csharp-required",
+      "source_record_id": "jobkorea:fixture-1001",
+      "raw_technology": "C#",
+      "expected_tech_id": "csharp",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "REQUIRED",
+      "expected_requirement_class": "REQUIRED"
+    },
+    {
+      "case_id": "alias-nodejs-preferred",
+      "source_record_id": "wanted:fixture-1002",
+      "raw_technology": "Node.js",
+      "expected_tech_id": "nodejs",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "PREFERRED",
+      "expected_requirement_class": "PREFERRED"
+    },
+    {
+      "case_id": "alias-nextjs-mentioned",
+      "source_record_id": "wanted:fixture-1002",
+      "raw_technology": "Next.js",
+      "expected_tech_id": "nextjs",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "SKILL"
+    },
+    {
+      "case_id": "alias-vuejs-mentioned",
+      "source_record_id": "wanted:fixture-1002",
+      "raw_technology": "Vue.js",
+      "expected_tech_id": "vuejs",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "SKILL"
+    },
+    {
+      "case_id": "pass-through-python-mentioned",
+      "source_record_id": "wanted:fixture-1002",
+      "raw_technology": "Python",
+      "expected_tech_id": "python",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "SKILL"
+    },
+    {
+      "case_id": "ambiguous-c-title",
+      "source_record_id": "saramin:fixture-1003",
+      "raw_technology": "C",
+      "expected_tech_id": null,
+      "expected_match_status": "AMBIGUOUS",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "REVIEW_REQUIRED"
+    },
+    {
+      "case_id": "ambiguous-r-title",
+      "source_record_id": "saramin:fixture-1003",
+      "raw_technology": "R",
+      "expected_tech_id": null,
+      "expected_match_status": "AMBIGUOUS",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "REVIEW_REQUIRED"
+    },
+    {
+      "case_id": "ambiguous-go-title",
+      "source_record_id": "saramin:fixture-1003",
+      "raw_technology": "Go",
+      "expected_tech_id": null,
+      "expected_match_status": "AMBIGUOUS",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "REVIEW_REQUIRED"
+    },
+    {
+      "case_id": "unknown-quantumdb",
+      "source_record_id": "jobkorea:fixture-1004",
+      "raw_technology": "QuantumDB",
+      "expected_tech_id": null,
+      "expected_match_status": "UNKNOWN",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "REVIEW_REQUIRED"
+    },
+    {
+      "case_id": "duplicate-cpp-required",
+      "source_record_id": "wanted:fixture-2001",
+      "raw_technology": "C++",
+      "expected_tech_id": "cpp",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "REQUIRED",
+      "expected_requirement_class": "REQUIRED"
+    },
+    {
+      "case_id": "alias-dotnet-mentioned",
+      "source_record_id": "jobkorea:fixture-1007",
+      "raw_technology": ".NET",
+      "expected_tech_id": "dotnet",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "SKILL"
+    },
+    {
+      "case_id": "alias-dotnet-maui-mentioned",
+      "source_record_id": "jobkorea:fixture-1007",
+      "raw_technology": ".NET MAUI",
+      "expected_tech_id": "dotnet-maui",
+      "expected_match_status": "MATCHED",
+      "input_requirement_type": "MENTIONED",
+      "expected_requirement_class": "SKILL"
+    }
+  ]
+}
