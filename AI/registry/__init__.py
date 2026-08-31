@@ -1,0 +1,1 @@
+"""Technology Registry analysis boundary."""
