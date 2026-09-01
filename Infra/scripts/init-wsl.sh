@@ -28,7 +28,6 @@ if command -v openssl >/dev/null 2>&1; then
   replace_value REDIS_PASSWORD "$(openssl rand -hex 24)"
   replace_value JWT_SECRET "$(openssl rand -hex 32)"
   replace_value JENKINS_ADMIN_PASSWORD "$(openssl rand -hex 24)"
-  replace_value GITLAB_WEBHOOK_SECRET "$(openssl rand -hex 24)"
 else
   echo "warning: openssl is unavailable; replace all change-me values manually" >&2
 fi

@@ -74,11 +74,11 @@ Pipeline은 다음 단계로 구성한다.
 
 ```text
 Prepare CI environment → Validate → Backend test → Frontend test/build
-→ Build images → (조건부) Push → (조건부) Deploy
+→ (조건부) Deploy
 ```
 
-`PUBLISH_IMAGES=false`, `DEPLOY_ENABLED=false`가 기본값이며, deploy wrapper가
-저장소에 추가되기 전에는 Deploy를 활성화할 수 없다.
+`DEPLOY_ENABLED=false`가 기본값이며, Deploy는 develop 브랜치에서 명시적으로
+활성화했을 때만 실행된다.
 
 ## 4. 검증 결과
 
