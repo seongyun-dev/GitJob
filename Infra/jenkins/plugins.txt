@@ -5,3 +5,5 @@ git
 gitlab-plugin
 job-dsl
 workflow-aggregator
+timestamper
+pipeline-stage-view
