@@ -139,10 +139,11 @@ pipeline {
 
         stage('Deploy') {
             when {
-                allOf {
-                    branch 'develop'
-                    expression { params.DEPLOY_ENABLED }
-                }
+                // This is a single Pipeline job, not a Multibranch Pipeline.
+                // The job's SCM branch is configured in Jenkins; validate the
+                // checked-out commit against origin/develop below instead of
+                // relying on the Multibranch-only branch condition.
+                expression { params.DEPLOY_ENABLED }
             }
             steps {
                 script {
@@ -150,6 +151,17 @@ pipeline {
                         error('DEPLOY_ENABLED=true but Infra/scripts/deploy.sh is not implemented')
                     }
                 }
+                sh '''#!/usr/bin/env bash
+                    set -Eeuo pipefail
+                    git show-ref --verify --quiet refs/remotes/origin/develop || {
+                        echo 'Deploy requires origin/develop to be available in the checkout.' >&2
+                        exit 2
+                    }
+                    git merge-base --is-ancestor HEAD refs/remotes/origin/develop || {
+                        echo 'Deploy requires the checked-out commit to be reachable from origin/develop.' >&2
+                        exit 2
+                    }
+                '''
                 withCredentials([
                     sshUserPrivateKey(
                         credentialsId: 'gitjob-ec2-ssh',
