@@ -25,6 +25,10 @@ snapshot 또는 S3 backup 정책을 추가해야 한다.
 | HDFS DataNode | data | local volume | HDFS block 저장 |
 | Spark master | data | spark-master:7077 | Spark job scheduler |
 | Spark worker | data | spark-worker:8081 | Spark executor |
+| HDFS NameNode UI | data | Tailscale 100.70.66.38:9870 | HDFS 운영 확인 |
+| HDFS DataNode UI | data | Tailscale 100.70.66.38:9864 | HDFS 운영 확인 |
+| Spark master UI | data | Tailscale 100.70.66.38:8083 | Spark 운영 확인 |
+| Spark worker UI | data | Tailscale 100.70.66.38:8084 | Spark 운영 확인 |
 
 Hadoop/Spark 관리 포트와 Collector/Worker health port는 public에 publish하지
 않는다. 필요한 운영 점검은 SSH, Tailscale 또는 별도 private tunnel로 수행한다.
@@ -106,6 +110,11 @@ chmod 600 .env.data
 COMPOSE_PROJECT_NAME=gitjob-data
 COMPOSE_PROFILES=data
 DEPLOYMENT_MODE=split
+DATA_ADMIN_BIND_ADDRESS=100.70.66.38
+HDFS_NAMENODE_WEB_PORT=9870
+HDFS_DATANODE_WEB_PORT=9864
+SPARK_MASTER_WEB_PORT=8083
+SPARK_WORKER_WEB_PORT=8084
 
 COLLECTOR_IMAGE=gitjob/collector:local
 WORKER_IMAGE=gitjob/worker:local
@@ -140,9 +149,9 @@ secret store에서 주입한다. Token은 .env.data 외의 파일·로그·Git�
 
 ## 6. UFW와 Security Group (현재 미실행)
 
-현재 작업에서는 UFW를 변경하지 않는다. 데이터 서버는 외부에 Hadoop/Spark 포트를
-열지 않는 구성을 유지하되, SSAFY 제공 EC2의 네트워크 경계는 별도 확인 대상으로
-남긴다. 아래 방화벽 명령은 실행하지 않는다.
+데이터 서버는 외부에 Hadoop/Spark 포트를 열지 않는다. 관리 UI는 데이터 서버의
+Tailscale IPv4 100.70.66.38에만 bind하고, UFW에서도 tailscale0 인터페이스
+에서만 허용한다. 서비스 서버의 80/443 정책과 혼동하지 않는다.
 
 ~~~text
 현재는 UFW 명령을 실행하지 않는다.
@@ -152,6 +161,7 @@ Security Group은 다음만 허용한다.
 
 - 22/tcp: 관리자 IP, SSM 또는 Tailscale 경로
 - public 80, 8020, 8080, 8081, 9870, 9864: 허용하지 않음
+- Tailscale tailscale0에서만 9870, 9864, 8083, 8084 관리 접속 허용
 - 서비스 core port inbound: 필요하지 않음. data 서버는 서비스 서버로 outbound 연결만 수행
 
 ## 7. 서비스 서버 연결 확인

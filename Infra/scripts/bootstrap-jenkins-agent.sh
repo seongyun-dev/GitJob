@@ -51,7 +51,9 @@ encoded_node_name="${node_name// /%20}"
 jnlp_xml="$(curl --config "$auth_file" --fail --silent --show-error \
   "$controller_url/computer/${encoded_node_name}/jenkins-agent.jnlp")"
 agent_secret="$(printf '%s' "$jnlp_xml" \
-  | sed -n 's:.*<argument>\([^<]*\)</argument>.*:\1:p' | head -n 1)"
+  | sed 's#<argument>#\n<argument>#g' \
+  | sed -n 's:.*<argument>\([^<]*\)</argument>.*:\1:p' \
+  | head -n 1)"
 [[ -n "$agent_secret" ]] || die "Jenkins did not return a secret for node ${node_name}"
 
 safe_node_name="${node_name//[^a-zA-Z0-9_.-]/_}"
@@ -65,7 +67,7 @@ chmod 600 "$secret_file"
 # not placed in the agent container's Config.Env (and is never put in
 # .env.example or the build log).
 export JENKINS_AGENT_SECRET_FILE="$secret_file"
-compose up -d jenkins-agent
+compose up -d --force-recreate jenkins-agent
 
 agent_online=false
 for _ in $(seq 1 "${JENKINS_AGENT_ONLINE_ATTEMPTS:-60}"); do

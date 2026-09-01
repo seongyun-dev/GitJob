@@ -54,8 +54,27 @@ services:
         condition: service_healthy
 
   nginx:
+    volumes:
+      - ./Infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./Infra/nginx/conf.d/default.ec2.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${LETSENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
+      - ${CERTBOT_WEBROOT_HOST_PATH:-.local/certbot/www}:/var/www/certbot:ro
+    expose:
+      - "80"
+      - "443"
     ports:
       - "${NGINX_EC2_BIND:-0.0.0.0}:${NGINX_EC2_HTTP_PORT:-80}:80"
+      - "${NGINX_EC2_BIND:-0.0.0.0}:${NGINX_EC2_HTTPS_PORT:-443}:443"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -qO- http://127.0.0.1/health >/dev/null
+          && wget --no-check-certificate -qO- https://127.0.0.1/nginx-health >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   postgres:
     restart: unless-stopped
@@ -74,10 +93,22 @@ services:
     ports:
       - "${JENKINS_EC2_BIND:-127.0.0.1}:${JENKINS_EC2_HTTP_PORT:-8081}:8080"
 
+  kafka-ui:
+    ports:
+      - "${SERVICE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${KAFKA_UI_EC2_PORT:-8082}:8080"
+
+  redis-insight:
+    ports:
+      - "${SERVICE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${REDIS_INSIGHT_EC2_PORT:-8001}:5540"
+
   jenkins-agent:
     build:
       context: .
       dockerfile: Infra/docker/jenkins/agent.Dockerfile
+    # The EC2 Docker socket is root:docker (GID 988). Keep the mapping
+    # configurable for hosts that assign a different numeric group ID.
+    group_add:
+      - "${DOCKER_GID:-988}"
 
   kafka:
     restart: unless-stopped

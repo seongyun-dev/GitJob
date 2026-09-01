@@ -1,9 +1,11 @@
 # Jenkins jobs
 
 The root `Jenkinsfile` is the pipeline entrypoint. Create a Pipeline from SCM
-job that points at the repository root, uses the `develop` branch, and polls
-SCM. GitLab's Jenkins Integration is not required for this job. Job-specific
-secrets belong in Jenkins Credentials, not in this directory.
+job that points at the repository root and polls SCM. For the one-time
+infrastructure test, use `infra/S15P21E102-75-infra-ec2`; switch the job back
+to `develop` before enabling production deployment. GitLab's Jenkins
+Integration is not required for this job. Job-specific secrets belong in
+Jenkins Credentials, not in this directory.
 
 For the current split deployment, set `DEPLOYMENT_MODE=split` and
 `EC2_DEPLOY_REF=develop`. The pipeline contract is service core health → data

@@ -20,7 +20,7 @@ Compose 파일 하나를 공통 진입점으로 사용하고, 프로파일로 �
 ```text
 GitLab ── Poll SCM ──▶ Jenkins controller ──▶ restricted SSH deploy agent
                                │
-Browser ── 127.0.0.1:8080 / EC2:80 ──▶ Nginx
+Browser ── 127.0.0.1:8080 / EC2:80,443 ──▶ Nginx
                                         ├─▶ Frontend static
                                         └─▶ Backend ── PostgreSQL
                                                     ├─ Redis
@@ -162,8 +162,8 @@ Compose는 여러 `-f` 파일을 순서대로 병합한다. 공통 파일을 먼
 | PostgreSQL | `127.0.0.1:5432` | `postgres:5432` | WSL loopback only |
 | Redis | `127.0.0.1:6379` | `redis:6379` | WSL loopback only |
 | Kafka host listener | `127.0.0.1:9094` | `kafka:9092` | WSL loopback only |
-| Nginx | `127.0.0.1:8080` | `nginx:80` | WSL loopback / EC2 public HTTP |
-| Jenkins | `127.0.0.1:8081` | `jenkins:8080` | WSL loopback; EC2 Tailscale 예정 |
+| Nginx | `127.0.0.1:8080` | `nginx:80` (EC2:443 추가) | WSL loopback / EC2 public HTTP→HTTPS |
+| Jenkins | `127.0.0.1:8081` | `jenkins:8080` | WSL loopback / EC2 Tailscale:8081 |
 | Kafka UI | `127.0.0.1:8082` | `kafka-ui:8080` | WSL loopback; EC2 Tailscale 예정 |
 | Spark master UI | `127.0.0.1:8083` | `spark-master:8080` | WSL loopback |
 | Redis Insight | `127.0.0.1:8001` | `redis-insight:5540` | WSL loopback |
@@ -239,9 +239,9 @@ EC2가 발급되면 다음 순서로 이관한다.
 3. Docker Engine/Compose plugin/Git/Tailscale 설치
 4. `/home/ubuntu/workspace/S15P21E102` 배포 경로와 deploy user 생성
 5. `develop`을 각 EC2의 배포 checkout으로 지정하고 로컬 build를 사용
-6. Security Group은 80/443과 제한 SSH만 허용(현재 UFW는 변경하지 않음)
-7. `compose.ec2.yaml`로 Nginx HTTP만 publish하고 DB/Redis/Kafka/Jenkins는 비공개 유지
-8. TLS 인증서와 443 Nginx server block 추가
+6. Security Group/UFW는 80/443과 제한 SSH만 허용
+7. `compose.ec2.yaml`로 Nginx HTTP/HTTPS만 publish하고 DB/Redis/Kafka/Jenkins는 비공개 유지
+8. `/etc/letsencrypt` 인증서를 Nginx에 read-only mount하고 443 server block을 사용
 9. GitHub OAuth callback, domain, cookie secure, CORS를 운영값으로 변경
 10. PostgreSQL dump·Parquet·EBS backup과 디스크/log rotation 설정
 11. Jenkins deploy 후 smoke test와 rollback을 실행
@@ -255,9 +255,44 @@ PROFILES=core,app \
 ./Infra/scripts/up.sh
 ```
 
-현재 EC2 override는 Nginx HTTP 80과 split 배포에 필요한 core의 private
-binding을 제공한다. HTTPS 443, DNS, 인증서, SSM/Secrets Manager,
-systemd 자동기동은 서버 발급 후 운영 정보가 확정되면 추가한다.
+현재 EC2 override는 Nginx HTTP 80/HTTPS 443과 split 배포에 필요한 core의
+private binding을 제공한다. 서비스 서버에는
+`/etc/letsencrypt/live/j15e102.p.ssafy.io/fullchain.pem`과
+`privkey.pem`이 있어야 하며, 인증서가 없을 때는 Nginx app을 재기동하지
+않는다. HTTP는 ACME challenge와 health endpoint만 유지하고 나머지는 HTTPS로
+redirect한다.
+
+서비스 서버에서 최초 인증서를 발급할 때는 DNS가
+`j15e102.p.ssafy.io`를 서비스 EC2로 가리키고 80/tcp가 외부에서 도달 가능해야
+한다. 인증서 발급 후 다음 명령으로 app을 재기동한다.
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes certbot
+sudo certbot certonly --standalone --preferred-challenges http --cert-name j15e102.p.ssafy.io -d j15e102.p.ssafy.io
+ENV_FILE=.env.service COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml PROFILES=core,app ./Infra/scripts/up.sh
+```
+
+`certbot --standalone` 실행 전에는 Docker Nginx가 80번을 사용하지 않도록
+`docker compose ... stop nginx`로 잠시 중지하고, 발급 직후 반드시 다시
+기동한다. 갱신 시에도 Nginx reload hook을 설정한다. 인증서와 개인키는 저장소나
+다른 EC2로 복사하지 않는다.
+
+관리 UI는 다음 Tailscale 주소만 사용한다.
+
+| 서버 | UI | 접속 주소 |
+|---|---|---|
+| J15E102 | Jenkins | http://100.71.215.74:8081 |
+| J15E102 | Kafka UI | http://100.71.215.74:8082 |
+| J15E102 | Redis Insight | http://100.71.215.74:8001 |
+| J15E102A | HDFS NameNode | http://100.70.66.38:9870 |
+| J15E102A | HDFS DataNode | http://100.70.66.38:9864 |
+| J15E102A | Spark master | http://100.70.66.38:8083 |
+| J15E102A | Spark worker | http://100.70.66.38:8084 |
+
+이 주소들은 Tailscale에 연결된 기기에서만 접근하며, public IP로 관리자 UI를
+열지 않는다. Collector/Worker health port와 PostgreSQL·Redis·Kafka broker
+포트도 host에 publish하지 않는다.
 
 ## 10. EC2 서비스/data 분리 구성
 

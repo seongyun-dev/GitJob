@@ -19,17 +19,20 @@ volume을 사용하고 Kafka는 single broker다. 장애 조치는 백업·수�
 
 | 대상 | Compose profile | 주소/포트 | 용도 |
 |---|---|---|---|
-| Nginx | app | public 80 | Frontend, /api, /ws 진입점 |
+| Nginx | app | public 80/443 | HTTP→HTTPS redirect, Frontend, /api, /ws 진입점 |
 | Backend | app | Compose 내부 backend:8080 | API 및 분석 Job API |
 | PostgreSQL | core | 서비스 private IP:5432 | Backend·Worker DB |
 | Redis | core | 서비스 private IP:6379 | Backend·Worker cache/session |
 | Kafka | core | 서비스 private IP:9094 | data 서버용 external listener |
 | Jenkins | ci | public 공개 금지 | CI/CD controller |
+| Kafka UI | observability | Tailscale 100.71.215.74:8082 | Kafka 운영 확인 |
+| Redis Insight | observability | Tailscale 100.71.215.74:8001 | Redis 운영 확인 |
 
 서비스 EC2의 core 포트는 EC2_CORE_BIND_ADDRESS에 지정한 private IP에만
 bind한다. J15E102A의 private IP에서만 5432, 6379, 9094로 접근하도록 제공된
-네트워크 경계를 확인한다. 현재 작업에서는 UFW를 변경하지 않는다. Nginx의 80은 초기에는 public HTTP로
-사용하고, TLS/ALB 도입 후 inbound 범위를 ALB 또는 private 운영망으로 줄인다.
+네트워크 경계를 확인한다. 서비스 서버의 UFW/Security Group은 public 80/443을
+허용한다. HTTP는 ACME challenge와 health endpoint를 제외하고 HTTPS로 redirect하며,
+데이터 서버에는 80/443을 열지 않는다.
 
 ## 2. 먼저 확정할 값
 
@@ -109,17 +112,23 @@ chmod 600 .env.service
 
 ~~~dotenv
 COMPOSE_PROJECT_NAME=gitjob-service
-COMPOSE_PROFILES=core,app
+COMPOSE_PROFILES=core,app,ci,observability
 DEPLOYMENT_MODE=split
-JENKINS_EC2_BIND=127.0.0.1
+JENKINS_EC2_BIND=100.71.215.74
 JENKINS_EC2_HTTP_PORT=8081
-JENKINS_URL=http://127.0.0.1:8081
+JENKINS_URL=http://100.71.215.74:8081
 
 BACKEND_IMAGE=gitjob/backend:local
 FRONTEND_IMAGE=gitjob/frontend:local
 
 NGINX_EC2_BIND=0.0.0.0
 NGINX_EC2_HTTP_PORT=80
+NGINX_EC2_HTTPS_PORT=443
+LETSENCRYPT_DIR=/etc/letsencrypt
+CERTBOT_WEBROOT_HOST_PATH=.local/certbot/www
+SERVICE_ADMIN_BIND_ADDRESS=100.71.215.74
+KAFKA_UI_EC2_PORT=8082
+REDIS_INSIGHT_EC2_PORT=8001
 EC2_CORE_BIND_ADDRESS=<J15E102-private-ip>
 EC2_POSTGRES_PORT=5432
 EC2_REDIS_PORT=6379
@@ -147,20 +156,21 @@ POSTGRES_USER, POSTGRES_DB, Kafka cluster/topic 값은 data 서버와 애플리�
 계약에 맞춰 동일하게 유지한다. JPA_DDL_AUTO=update는 초기 개발용이며 운영
 schema migration이 정해지면 validate 또는 팀이 합의한 migration 설정을 사용한다.
 
-## 6. UFW와 Security Group (현재 미실행)
+## 6. UFW와 Security Group
 
-현재 작업에서는 UFW를 변경하지 않는다. 이 서버는 SSAFY가 제공한 EC2이며,
-AWS 콘솔·Security Group을 직접 변경할 권한도 없으므로 아래 방화벽 명령은 실행하지
-않는다. 실제 운영 전 네트워크 경계가 확인되고 별도 승인이 있을 때만 작성된
-정책을 검토한다.
+서비스 서버에는 public 80/443과 SSH만 허용한다. 데이터 서버에는 80/443을
+열지 않는다. AWS Security Group은 사용자가 콘솔에서 변경할 수 없으므로 현재
+확인 가능한 Ubuntu UFW 정책만 관리한다.
 
 ~~~text
-현재는 UFW 명령을 실행하지 않는다.
+서비스 서버 UFW: 22/tcp, 80/tcp, 443/tcp 허용
+데이터 서버 UFW: public 80/443 미허용
 ~~~
 
 Security Group에서도 같은 경계를 적용한다.
 
-- 80/tcp: 초기 public HTTP 또는 지정한 ALB 경로
+- 80/tcp: ACME challenge, health endpoint, HTTPS redirect
+- 443/tcp: public HTTPS 서비스
 - 22/tcp: 관리자 IP, SSM 또는 Tailscale 경로만
 - 5432, 6379, 9094: J15E102A private IP만
 - Jenkins·HDFS·Spark 관리 포트: public inbound 금지
@@ -205,10 +215,14 @@ spring-boot-starter-actuator와 application 설정이 함께 배포되어야 한
 
 ## 8. Jenkins 운영
 
-Jenkins는 이 서버에만 배치하고 public port로 열지 않는다. compose.ec2.yaml은
-Jenkins를 기본 loopback 8081에 publish하므로 서버 내부 bootstrap과 SSH tunnel에
-사용할 수 있다. Tailscale/private network에서 직접 접근해야 하면
-JENKINS_EC2_BIND를 해당 private IP로 바꾼다.
+Jenkins는 이 서버에만 배치하고 public port로 열지 않는다. JENKINS_EC2_BIND를
+이 서버의 Tailscale IPv4 100.71.215.74로 지정하면 다음 주소로 접속한다.
+
+http://100.71.215.74:8081
+
+Kafka UI와 Redis Insight는 observability profile을 켰을 때만 실행되며 각각
+http://100.71.215.74:8082, http://100.71.215.74:8001로 접속한다. 이 주소들은
+Tailscale에 연결된 기기에서만 사용한다.
 
 - Tailscale/private IP에 Jenkins 포트를 bind하고 JENKINS_URL을 그 주소로 설정
 - private reverse proxy를 두고 Jenkins URL을 내부 DNS로 제공

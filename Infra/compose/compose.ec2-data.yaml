@@ -28,9 +28,13 @@ services:
 
   hdfs-namenode:
     restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_NAMENODE_WEB_PORT:-9870}:9870"
 
   hdfs-datanode:
     restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE_WEB_PORT:-9864}:9864"
 
   spark-master:
     restart: unless-stopped
@@ -39,6 +43,8 @@ services:
       dockerfile: Infra/docker/spark/Dockerfile
       args:
         SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${SPARK_MASTER_WEB_PORT:-8083}:8080"
 
   spark-worker:
     restart: unless-stopped
@@ -47,3 +53,5 @@ services:
       dockerfile: Infra/docker/spark/Dockerfile
       args:
         SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${SPARK_WORKER_WEB_PORT:-8084}:8081"

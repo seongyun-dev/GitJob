@@ -53,12 +53,64 @@ pipeline {
             }
         }
 
+        stage('Start CI dependencies') {
+            steps {
+                sh '''#!/usr/bin/env bash
+                    set -Eeuo pipefail
+
+                    ci_compose() {
+                        docker compose --project-directory . --project-name "${COMPOSE_PROJECT_NAME}" \\
+                          --env-file .env.ci ${COMPOSE_FILES} "$@"
+                    }
+
+                    # Backend tests run directly in the Jenkins agent, so attach
+                    # that agent to the isolated CI network after PostgreSQL is
+                    # started. The production service database is never used.
+                    ci_compose --profile core up -d --wait --wait-timeout 60 postgres
+
+                    ci_network="${COMPOSE_PROJECT_NAME}_default"
+                    agent_container="$(hostname)"
+                    if ! docker network connect "$ci_network" "$agent_container" 2>/dev/null; then
+                        docker network inspect "$ci_network" --format '{{json .Containers}}' \\
+                          | grep -q "$agent_container" || {
+                            echo "Failed to connect Jenkins agent to CI network: $ci_network" >&2
+                            exit 1
+                        }
+                    fi
+                '''
+            }
+        }
+
         stage('Backend test') {
             steps {
                 sh '''#!/usr/bin/env bash
                     set -Eeuo pipefail
-                    test -x BE/gradlew
-                    (cd BE && ./gradlew --no-daemon test)
+
+                    env_value() {
+                        local key="$1"
+                        sed -n "s/^${key}=//p" .env.ci | tail -n 1
+                    }
+
+                    db_host="$(env_value DB_HOST)"
+                    db_port="$(env_value DB_PORT)"
+                    db_name="$(env_value POSTGRES_DB)"
+                    db_user="$(env_value POSTGRES_USER)"
+                    db_password="$(env_value POSTGRES_PASSWORD)"
+                    test -n "$db_host" && test -n "$db_port" && test -n "$db_name" \\
+                      && test -n "$db_user" && test -n "$db_password"
+
+                    # .env.ci is a Compose input file; copying it does not export
+                    # its values to the Gradle process. Pass only the Spring
+                    # datasource settings needed by the context-load test.
+                    (
+                        export SPRING_PROFILES_ACTIVE=docker
+                        export SPRING_DATASOURCE_URL="jdbc:postgresql://${db_host}:${db_port}/${db_name}"
+                        export SPRING_DATASOURCE_USERNAME="$db_user"
+                        export SPRING_DATASOURCE_PASSWORD="$db_password"
+                        cd BE
+                        test -x ./gradlew
+                        ./gradlew --no-daemon test
+                    )
                 '''
             }
         }
@@ -138,6 +190,9 @@ pipeline {
                 esac
                 # This cleanup is confined to the ephemeral Jenkins CI project.
                 # It never runs on either remote EC2 host.
+                ci_network="${COMPOSE_PROJECT_NAME}_default"
+                agent_container="$(hostname)"
+                docker network disconnect "$ci_network" "$agent_container" >/dev/null 2>&1 || true
                 docker compose --project-directory . --project-name "${COMPOSE_PROJECT_NAME}" --env-file .env.ci ${COMPOSE_FILES} \\
                   --profile core --profile app down --volumes
             '''

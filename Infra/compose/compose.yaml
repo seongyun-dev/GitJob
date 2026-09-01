@@ -189,7 +189,7 @@ services:
         condition: service_healthy
     volumes:
       - ./Infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./Infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./Infra/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
     expose:
       - "80"
     healthcheck:
@@ -515,7 +515,7 @@ services:
     volumes:
       - redis-insight-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5540 >/dev/null"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5540 >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 12
