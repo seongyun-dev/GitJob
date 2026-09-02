@@ -832,6 +832,13 @@ C조 범위다.
 | `S15P21E102-144` | P1 신규 Collector가 `historical_cutoff`를 하한으로 사용해 수집 구간 중복 방지 |
 | `S15P21E102-105` | Historical Bootstrap 완료. Dataset 잔여 작업 없음 |
 
+## Repo Activity Aggregation
+
+- Jira: S15P21E102-109
+- 입력: GH Archive Historical 2026-08 (744 files, 87,516,869 events)
+- 처리: Spark Repo Activity / Top-N / Coverage (5,711,133 unique repos; Top-20,000 valid coverage 24.5638%)
+- 상세: [S15P21E102-109 Repo Activity Top-N 검증 보고서](2026-09-02-repo-activity-topn-validation.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
