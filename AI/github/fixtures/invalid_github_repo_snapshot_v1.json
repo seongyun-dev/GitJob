@@ -1,0 +1,163 @@
+{
+  "cases": [
+    {
+      "name": "unsupported_schema_version",
+      "expected_error": "github-repo-snapshot/v1",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v2",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": []
+      }
+    },
+    {
+      "name": "missing_pinned_commit_sha",
+      "expected_error": "pinned_commit_sha",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/missing-commit", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "tree_sha": null, "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []}]
+      }
+    },
+    {
+      "name": "invalid_tree_sha",
+      "expected_error": "tree_sha",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/invalid-tree", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": "not-a-sha", "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []}]
+      }
+    },
+    {
+      "name": "non_positive_policy_limit",
+      "expected_error": "greater than 0",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 0, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": []
+      }
+    },
+    {
+      "name": "partial_without_issue",
+      "expected_error": "collection issue",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/partial-no-issue", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "PARTIAL", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []}]
+      }
+    },
+    {
+      "name": "rate_limited_without_checkpoint",
+      "expected_error": "checkpoint_uri",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/rate-limited", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "PARTIAL", "collection_issues": ["RATE_LIMITED"], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []}]
+      }
+    },
+    {
+      "name": "reused_without_source_snapshot",
+      "expected_error": "reused_from_snapshot_id",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/reused-no-source", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "REUSED", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []}]
+      }
+    },
+    {
+      "name": "unsafe_artifact_path",
+      "expected_error": "relative POSIX",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/unsafe-path", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 1, "artifacts": [{"artifact_type": "MANIFEST", "path": "../package.json", "uri": "hdfs://namenode:9000/invalid/package.json", "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size_bytes": 100}]}]
+      }
+    },
+    {
+      "name": "artifact_file_limit_exceeded",
+      "expected_error": "max_artifact_files",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/file-limit", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 2, "artifacts": [{"artifact_type": "MANIFEST", "path": "package.json", "uri": "hdfs://namenode:9000/invalid/package.json", "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size_bytes": 100}, {"artifact_type": "MANIFEST", "path": "pyproject.toml", "uri": "hdfs://namenode:9000/invalid/pyproject.toml", "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size_bytes": 100}]}]
+      }
+    },
+    {
+      "name": "duplicate_github_repo_id",
+      "expected_error": "duplicate github_repo_id",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 2, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [
+          {"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/duplicate-one", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []},
+          {"repo_snapshot_id": "invalid-repo-2", "github_repo_id": 200001, "repo_full_name": "fixture-owner/duplicate-two", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 9, "activity_rank": 2, "pinned_commit_sha": "2222222222222222222222222222222222222222", "tree_sha": null, "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": []}
+        ]
+      }
+    },
+    {
+      "name": "numeric_generated_at",
+      "expected_error": "ISO 8601",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": 0,
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": []
+      }
+    },
+    {
+      "name": "unknown_record_field",
+      "expected_error": "Extra inputs",
+      "payload": {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "invalid-snapshot",
+        "pipeline_run_id": "invalid-run",
+        "collector_version": "invalid-collector-v1",
+        "generated_at": "2026-09-02T03:00:00Z",
+        "collection_policy": {"policy_version": "fixture-v1", "top_n_limit": 1, "max_api_calls": 10, "max_runtime_seconds": 60, "max_tree_entries": 100, "max_artifact_files": 1, "max_artifact_bytes": 1000},
+        "records": [{"repo_snapshot_id": "invalid-repo-1", "github_repo_id": 200001, "repo_full_name": "fixture-owner/unknown-field", "activity_metric": "gh_archive_event_count", "activity_period_start": "2026-08-01", "activity_period_end": "2026-08-31", "activity_count": 10, "activity_rank": 1, "pinned_commit_sha": "1111111111111111111111111111111111111111", "tree_sha": null, "collection_status": "COMPLETE", "collection_issues": [], "checkpoint_uri": null, "reused_from_snapshot_id": null, "tree_truncated": false, "observed_tree_entries": 0, "artifacts": [], "head_sha": "1111111111111111111111111111111111111111"}]
+      }
+    }
+  ]
+}

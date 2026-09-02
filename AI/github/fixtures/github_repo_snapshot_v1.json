@@ -1,0 +1,144 @@
+{
+  "schema_version": "github-repo-snapshot/v1",
+  "dataset_snapshot_id": "fixture-github-repo-snapshot-20260902",
+  "pipeline_run_id": "fixture-github-repo-run-001",
+  "collector_version": "fixture-a-github-collector-v1",
+  "generated_at": "2026-09-02T03:00:00Z",
+  "collection_policy": {
+    "policy_version": "fixture-repo-collection-policy-v1",
+    "top_n_limit": 5,
+    "max_api_calls": 1000,
+    "max_runtime_seconds": 3600,
+    "max_tree_entries": 100000,
+    "max_artifact_files": 3,
+    "max_artifact_bytes": 1000000
+  },
+  "records": [
+    {
+      "repo_snapshot_id": "fixture-repo-snapshot-complete",
+      "github_repo_id": 100001,
+      "repo_full_name": "fixture-owner/complete-repository",
+      "activity_metric": "gh_archive_event_count",
+      "activity_period_start": "2026-08-01",
+      "activity_period_end": "2026-08-31",
+      "activity_count": 500,
+      "activity_rank": 1,
+      "pinned_commit_sha": "1111111111111111111111111111111111111111",
+      "tree_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "collection_status": "COMPLETE",
+      "collection_issues": [],
+      "checkpoint_uri": null,
+      "reused_from_snapshot_id": null,
+      "tree_truncated": false,
+      "observed_tree_entries": 250,
+      "artifacts": [
+        {
+          "artifact_type": "MANIFEST",
+          "path": "backend/build.gradle",
+          "uri": "hdfs://namenode:9000/gitjob/github/100001/build.gradle",
+          "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size_bytes": 4096
+        },
+        {
+          "artifact_type": "SOURCE",
+          "path": "backend/src/main/java/example/App.java",
+          "uri": "hdfs://namenode:9000/gitjob/github/100001/App.java",
+          "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "size_bytes": 8192
+        }
+      ]
+    },
+    {
+      "repo_snapshot_id": "fixture-repo-snapshot-tree-partial",
+      "github_repo_id": 100002,
+      "repo_full_name": "fixture-owner/tree-partial-repository",
+      "activity_metric": "gh_archive_event_count",
+      "activity_period_start": "2026-08-01",
+      "activity_period_end": "2026-08-31",
+      "activity_count": 400,
+      "activity_rank": 2,
+      "pinned_commit_sha": "2222222222222222222222222222222222222222",
+      "tree_sha": null,
+      "collection_status": "PARTIAL",
+      "collection_issues": ["TREE_TRUNCATED"],
+      "checkpoint_uri": null,
+      "reused_from_snapshot_id": null,
+      "tree_truncated": true,
+      "observed_tree_entries": 100000,
+      "artifacts": [
+        {
+          "artifact_type": "MANIFEST",
+          "path": "package.json",
+          "uri": "hdfs://namenode:9000/gitjob/github/100002/package.json",
+          "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size_bytes": 2048
+        }
+      ]
+    },
+    {
+      "repo_snapshot_id": "fixture-repo-snapshot-rate-limited",
+      "github_repo_id": 100003,
+      "repo_full_name": "fixture-owner/rate-limited-repository",
+      "activity_metric": "gh_archive_event_count",
+      "activity_period_start": "2026-08-01",
+      "activity_period_end": "2026-08-31",
+      "activity_count": 300,
+      "activity_rank": 3,
+      "pinned_commit_sha": "3333333333333333333333333333333333333333",
+      "tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "collection_status": "PARTIAL",
+      "collection_issues": ["RATE_LIMITED"],
+      "checkpoint_uri": "hdfs://namenode:9000/gitjob/checkpoints/github/run-001/repo-100003",
+      "reused_from_snapshot_id": null,
+      "tree_truncated": false,
+      "observed_tree_entries": 120,
+      "artifacts": []
+    },
+    {
+      "repo_snapshot_id": "fixture-repo-snapshot-reused",
+      "github_repo_id": 100004,
+      "repo_full_name": "fixture-owner/reused-repository",
+      "activity_metric": "gh_archive_event_count",
+      "activity_period_start": "2026-08-01",
+      "activity_period_end": "2026-08-31",
+      "activity_count": 200,
+      "activity_rank": 4,
+      "pinned_commit_sha": "4444444444444444444444444444444444444444",
+      "tree_sha": null,
+      "collection_status": "REUSED",
+      "collection_issues": [],
+      "checkpoint_uri": null,
+      "reused_from_snapshot_id": "production-repo-snapshot-previous",
+      "tree_truncated": false,
+      "observed_tree_entries": 80,
+      "artifacts": [
+        {
+          "artifact_type": "MANIFEST",
+          "path": "pyproject.toml",
+          "uri": "hdfs://namenode:9000/gitjob/github/100004/pyproject.toml",
+          "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "size_bytes": 1024
+        }
+      ]
+    },
+    {
+      "repo_snapshot_id": "fixture-repo-snapshot-failed",
+      "github_repo_id": 100005,
+      "repo_full_name": "fixture-owner/failed-repository",
+      "activity_metric": "gh_archive_event_count",
+      "activity_period_start": "2026-08-01",
+      "activity_period_end": "2026-08-31",
+      "activity_count": 100,
+      "activity_rank": 5,
+      "pinned_commit_sha": "5555555555555555555555555555555555555555",
+      "tree_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "collection_status": "FAILED",
+      "collection_issues": ["ARTIFACT_FETCH_FAILED"],
+      "checkpoint_uri": null,
+      "reused_from_snapshot_id": null,
+      "tree_truncated": false,
+      "observed_tree_entries": 12,
+      "artifacts": []
+    }
+  ]
+}

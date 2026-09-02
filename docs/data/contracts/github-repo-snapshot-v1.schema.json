@@ -1,0 +1,295 @@
+{
+  "$defs": {
+    "GitHubRepoSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_snapshot_id": {
+          "title": "Repo Snapshot Id",
+          "type": "string"
+        },
+        "github_repo_id": {
+          "exclusiveMinimum": 0,
+          "title": "Github Repo Id",
+          "type": "integer"
+        },
+        "repo_full_name": {
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]+$",
+          "title": "Repo Full Name",
+          "type": "string"
+        },
+        "activity_metric": {
+          "title": "Activity Metric",
+          "type": "string"
+        },
+        "activity_period_start": {
+          "format": "date",
+          "title": "Activity Period Start",
+          "type": "string"
+        },
+        "activity_period_end": {
+          "format": "date",
+          "title": "Activity Period End",
+          "type": "string"
+        },
+        "activity_count": {
+          "minimum": 0,
+          "title": "Activity Count",
+          "type": "integer"
+        },
+        "activity_rank": {
+          "exclusiveMinimum": 0,
+          "title": "Activity Rank",
+          "type": "integer"
+        },
+        "pinned_commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Pinned Commit Sha",
+          "type": "string"
+        },
+        "tree_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tree Sha"
+        },
+        "collection_status": {
+          "$ref": "#/$defs/RepoCollectionStatus"
+        },
+        "collection_issues": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RepoCollectionIssue"
+          },
+          "title": "Collection Issues",
+          "type": "array"
+        },
+        "checkpoint_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Uri"
+        },
+        "reused_from_snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reused From Snapshot Id"
+        },
+        "tree_truncated": {
+          "title": "Tree Truncated",
+          "type": "boolean"
+        },
+        "observed_tree_entries": {
+          "minimum": 0,
+          "title": "Observed Tree Entries",
+          "type": "integer"
+        },
+        "artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RepoArtifact"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repo_snapshot_id",
+        "github_repo_id",
+        "repo_full_name",
+        "activity_metric",
+        "activity_period_start",
+        "activity_period_end",
+        "activity_count",
+        "activity_rank",
+        "pinned_commit_sha",
+        "collection_status",
+        "tree_truncated",
+        "observed_tree_entries"
+      ],
+      "title": "GitHubRepoSnapshot",
+      "type": "object"
+    },
+    "RepoArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/RepoArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "uri",
+        "content_hash",
+        "size_bytes"
+      ],
+      "title": "RepoArtifact",
+      "type": "object"
+    },
+    "RepoArtifactType": {
+      "enum": [
+        "MANIFEST",
+        "SOURCE"
+      ],
+      "title": "RepoArtifactType",
+      "type": "string"
+    },
+    "RepoCollectionIssue": {
+      "enum": [
+        "TREE_TRUNCATED",
+        "TREE_LIMIT_REACHED",
+        "FILE_LIMIT_REACHED",
+        "BYTE_LIMIT_REACHED",
+        "RATE_LIMITED",
+        "ARTIFACT_FETCH_FAILED",
+        "REPOSITORY_UNAVAILABLE"
+      ],
+      "title": "RepoCollectionIssue",
+      "type": "string"
+    },
+    "RepoCollectionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "top_n_limit": {
+          "exclusiveMinimum": 0,
+          "title": "Top N Limit",
+          "type": "integer"
+        },
+        "max_api_calls": {
+          "exclusiveMinimum": 0,
+          "title": "Max Api Calls",
+          "type": "integer"
+        },
+        "max_runtime_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Runtime Seconds",
+          "type": "integer"
+        },
+        "max_tree_entries": {
+          "exclusiveMinimum": 0,
+          "title": "Max Tree Entries",
+          "type": "integer"
+        },
+        "max_artifact_files": {
+          "exclusiveMinimum": 0,
+          "title": "Max Artifact Files",
+          "type": "integer"
+        },
+        "max_artifact_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Artifact Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy_version",
+        "top_n_limit",
+        "max_api_calls",
+        "max_runtime_seconds",
+        "max_tree_entries",
+        "max_artifact_files",
+        "max_artifact_bytes"
+      ],
+      "title": "RepoCollectionPolicy",
+      "type": "object"
+    },
+    "RepoCollectionStatus": {
+      "enum": [
+        "COMPLETE",
+        "PARTIAL",
+        "FAILED",
+        "REUSED"
+      ],
+      "title": "RepoCollectionStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "github-repo-snapshot/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "dataset_snapshot_id": {
+      "title": "Dataset Snapshot Id",
+      "type": "string"
+    },
+    "pipeline_run_id": {
+      "title": "Pipeline Run Id",
+      "type": "string"
+    },
+    "collector_version": {
+      "title": "Collector Version",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "collection_policy": {
+      "$ref": "#/$defs/RepoCollectionPolicy"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/GitHubRepoSnapshot"
+      },
+      "title": "Records",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "dataset_snapshot_id",
+    "pipeline_run_id",
+    "collector_version",
+    "generated_at",
+    "collection_policy",
+    "records"
+  ],
+  "title": "GitHubRepoSnapshotBatch",
+  "type": "object"
+}
