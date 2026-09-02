@@ -1,0 +1,690 @@
+{
+  "schema_version": "technology-registry/v1",
+  "registry_version": "registry-20260901.1",
+  "technologies": [
+    {
+      "tech_id": "c",
+      "display_name": "C",
+      "categories": ["BACKEND", "AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "cpp",
+      "display_name": "C++",
+      "categories": ["BACKEND", "AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#duplicate-cpp-required"]
+    },
+    {
+      "tech_id": "csharp",
+      "display_name": "C#",
+      "categories": ["BACKEND", "MOBILE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#alias-csharp-required"]
+    },
+    {
+      "tech_id": "r",
+      "display_name": "R",
+      "categories": ["AI_DATA"],
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "go",
+      "display_name": "Go",
+      "categories": ["BACKEND", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "python",
+      "display_name": "Python",
+      "categories": ["BACKEND", "AI_DATA"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#pass-through-python-mentioned"]
+    },
+    {
+      "tech_id": "javascript",
+      "display_name": "JavaScript",
+      "categories": ["FRONTEND", "BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#type"]
+    },
+    {
+      "tech_id": "typescript",
+      "display_name": "TypeScript",
+      "categories": ["FRONTEND", "BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "java",
+      "display_name": "Java",
+      "categories": ["BACKEND", "AI_DATA"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#JavaLanguageVersion.of(21)"]
+    },
+    {
+      "tech_id": "nodejs",
+      "display_name": "Node.js",
+      "categories": ["BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#alias-nodejs-preferred"]
+    },
+    {
+      "tech_id": "dotnet",
+      "display_name": ".NET",
+      "categories": ["BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#alias-dotnet-mentioned"]
+    },
+    {
+      "tech_id": "dotnet-maui",
+      "display_name": ".NET MAUI",
+      "categories": ["MOBILE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#alias-dotnet-maui-mentioned"]
+    },
+    {
+      "tech_id": "react",
+      "display_name": "React",
+      "categories": ["FRONTEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#react"]
+    },
+    {
+      "tech_id": "react-dom",
+      "display_name": "React DOM",
+      "categories": ["FRONTEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#react-dom"]
+    },
+    {
+      "tech_id": "nextjs",
+      "display_name": "Next.js",
+      "categories": ["FRONTEND", "BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#alias-nextjs-mentioned"]
+    },
+    {
+      "tech_id": "vuejs",
+      "display_name": "Vue.js",
+      "categories": ["FRONTEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_expected_v1.json#alias-vuejs-mentioned"]
+    },
+    {
+      "tech_id": "vite",
+      "display_name": "Vite",
+      "categories": ["FRONTEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#vite"]
+    },
+    {
+      "tech_id": "oxlint",
+      "display_name": "Oxlint",
+      "categories": ["FRONTEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#oxlint"]
+    },
+    {
+      "tech_id": "spring-boot",
+      "display_name": "Spring Boot",
+      "categories": ["BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.springframework.boot"]
+    },
+    {
+      "tech_id": "spring-data-jpa",
+      "display_name": "Spring Data JPA",
+      "categories": ["BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#spring-boot-starter-data-jpa"]
+    },
+    {
+      "tech_id": "spring-actuator",
+      "display_name": "Spring Boot Actuator",
+      "categories": ["BACKEND", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#spring-boot-starter-actuator"]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "display_name": "Apache Kafka",
+      "categories": ["BACKEND", "AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#kafka:"]
+    },
+    {
+      "tech_id": "kafka-streams",
+      "display_name": "Kafka Streams",
+      "categories": ["BACKEND", "AI_DATA"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.apache.kafka:kafka-streams"]
+    },
+    {
+      "tech_id": "postgresql",
+      "display_name": "PostgreSQL",
+      "categories": ["BACKEND", "AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#postgres:"]
+    },
+    {
+      "tech_id": "lombok",
+      "display_name": "Project Lombok",
+      "categories": ["BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.projectlombok:lombok"]
+    },
+    {
+      "tech_id": "gradle",
+      "display_name": "Gradle",
+      "categories": ["BACKEND", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle"]
+    },
+    {
+      "tech_id": "junit",
+      "display_name": "JUnit",
+      "categories": ["BACKEND"],
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.junit.platform:junit-platform-launcher"]
+    },
+    {
+      "tech_id": "fastapi",
+      "display_name": "FastAPI",
+      "categories": ["BACKEND", "AI_DATA"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/requirements.txt#fastapi"]
+    },
+    {
+      "tech_id": "pydantic",
+      "display_name": "Pydantic",
+      "categories": ["BACKEND", "AI_DATA"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/requirements.txt#pydantic"]
+    },
+    {
+      "tech_id": "uvicorn",
+      "display_name": "Uvicorn",
+      "categories": ["BACKEND", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/requirements.txt#uvicorn"]
+    },
+    {
+      "tech_id": "redis",
+      "display_name": "Redis",
+      "categories": ["BACKEND", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#redis:"]
+    },
+    {
+      "tech_id": "hadoop",
+      "display_name": "Apache Hadoop",
+      "categories": ["AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#HDFS_IMAGE"]
+    },
+    {
+      "tech_id": "hdfs",
+      "display_name": "HDFS",
+      "categories": ["AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#hdfs-namenode:"]
+    },
+    {
+      "tech_id": "apache-spark",
+      "display_name": "Apache Spark",
+      "categories": ["AI_DATA", "INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#spark-master:"]
+    },
+    {
+      "tech_id": "docker",
+      "display_name": "Docker",
+      "categories": ["INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml"]
+    },
+    {
+      "tech_id": "nginx",
+      "display_name": "NGINX",
+      "categories": ["INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#nginx:"]
+    },
+    {
+      "tech_id": "jenkins",
+      "display_name": "Jenkins",
+      "categories": ["INFRASTRUCTURE"],
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#jenkins:"]
+    }
+  ],
+  "mappings": [
+    {
+      "tech_id": "c",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "C",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "cpp",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "C++",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#C++"]
+    },
+    {
+      "tech_id": "csharp",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "C#",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#C#"]
+    },
+    {
+      "tech_id": "r",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "R",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "go",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "Go",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "python",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Python",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#Python"]
+    },
+    {
+      "tech_id": "javascript",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "JavaScript",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "typescript",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "TypeScript",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "java",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "Java",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"]
+    },
+    {
+      "tech_id": "nodejs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Node.js",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#Node.js"]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": ".NET",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#.NET"]
+    },
+    {
+      "tech_id": "dotnet-maui",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": ".NET MAUI",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#.NET MAUI"]
+    },
+    {
+      "tech_id": "dotnet-maui",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NUGET",
+      "value": "Microsoft.Maui.Controls",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://www.nuget.org/packages/Microsoft.Maui.Controls"]
+    },
+    {
+      "tech_id": "dotnet-maui",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "DOTNET",
+      "value": "Microsoft.Maui",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://learn.microsoft.com/dotnet/maui/"]
+    },
+    {
+      "tech_id": "react",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "react",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#react"]
+    },
+    {
+      "tech_id": "react",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "react",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/src/main.jsx#react"]
+    },
+    {
+      "tech_id": "react-dom",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "react-dom",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#react-dom"]
+    },
+    {
+      "tech_id": "nextjs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Next.js",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#Next.js"]
+    },
+    {
+      "tech_id": "nextjs",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "next",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://www.npmjs.com/package/next"]
+    },
+    {
+      "tech_id": "vuejs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Vue.js",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/fixtures/job_analysis_input_v1.json#Vue.js"]
+    },
+    {
+      "tech_id": "vuejs",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "vue",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://www.npmjs.com/package/vue"]
+    },
+    {
+      "tech_id": "vite",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "vite",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#vite"]
+    },
+    {
+      "tech_id": "oxlint",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "oxlint",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["FE/package.json#oxlint"]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-webmvc",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#spring-boot-starter-webmvc"]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.boot",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/src/main/java/com/example/git_job/GitJobApplication.java"]
+    },
+    {
+      "tech_id": "spring-data-jpa",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-data-jpa",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#spring-boot-starter-data-jpa"]
+    },
+    {
+      "tech_id": "spring-actuator",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-actuator",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#spring-boot-starter-actuator"]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["Infra/compose/compose.yaml#kafka:"]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "apache-kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/apache-kafka"]
+    },
+    {
+      "tech_id": "kafka-streams",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.kafka:kafka-streams",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.apache.kafka:kafka-streams"]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.postgresql:postgresql",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.postgresql:postgresql"]
+    },
+    {
+      "tech_id": "lombok",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.projectlombok:lombok",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.projectlombok:lombok"]
+    },
+    {
+      "tech_id": "gradle",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Gradle",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle"]
+    },
+    {
+      "tech_id": "junit",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.junit.platform:junit-platform-launcher",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["BE/build.gradle#org.junit.platform:junit-platform-launcher"]
+    },
+    {
+      "tech_id": "fastapi",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "fastapi",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/requirements.txt#fastapi"]
+    },
+    {
+      "tech_id": "fastapi",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "fastapi",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/common/server.py#from fastapi import FastAPI"]
+    },
+    {
+      "tech_id": "pydantic",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "pydantic",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/requirements.txt#pydantic"]
+    },
+    {
+      "tech_id": "pydantic",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "pydantic",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/job/contracts.py#from pydantic import"]
+    },
+    {
+      "tech_id": "uvicorn",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "uvicorn",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/requirements.txt#uvicorn"]
+    },
+    {
+      "tech_id": "uvicorn",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "uvicorn",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": ["AI/common/server.py#import uvicorn"]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "redis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/redis"]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "hadoop",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/hadoop"]
+    },
+    {
+      "tech_id": "hdfs",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "hdfs",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/hdfs"]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "apache-spark",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/apache-spark"]
+    },
+    {
+      "tech_id": "docker",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "docker",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/docker"]
+    },
+    {
+      "tech_id": "nginx",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "nginx",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/nginx"]
+    },
+    {
+      "tech_id": "jenkins",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "jenkins",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": ["https://stackoverflow.com/questions/tagged/jenkins"]
+    }
+  ]
+}

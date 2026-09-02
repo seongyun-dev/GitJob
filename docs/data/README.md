@@ -127,18 +127,18 @@ raw body
 
 Registry는 기술의 canonical record와 변형 표현을 관리한다.
 
+구현 가능한 v1 필드·정규화·버전 계약과 초기 Seed는 [Technology Registry v1 계약](2026-09-01-technology-registry-v1.md)을 따른다.
+
 | 구성 | 예시 |
 |---|---|
-| canonical key | `tech_id=kafka` |
+| canonical key | `tech_id=apache-kafka` |
 | display name | Apache Kafka |
-| aliases | Kafka, kafka-clients |
-| package/tag | Maven artifact, Stack Overflow tag |
-| category | backend, database, infrastructure 등 |
-| requirement type | REQUIRED, PREFERRED, SKILL |
+| approved mapping | `ALIAS=Kafka`, `STACKOVERFLOW_TAG=apache-kafka` |
+| category | `BACKEND`, `AI_DATA`, `INFRASTRUCTURE` |
+| status | `ACTIVE`, `DEPRECATED` |
 | version | `registry_version` |
-| review state | approved, ambiguous, unknown |
 
-정확한 alias/package/tag match를 우선하고, 모호하거나 처음 보는 표현은 `AMBIGUOUS`/`UNKNOWN`으로 review queue에 보낸다. AI가 Registry 항목을 자동 확정하지 않는다. Registry 변경은 C2 replay를 발생시키며 과거 분석 Snapshot을 덮어쓰지 않는다.
+`REQUIRED`, `PREFERRED`, `SKILL`, `REVIEW_REQUIRED`는 Registry 필드가 아니라 `S15P21E102-82`가 담당하는 채용공고 후보의 후속 요구조건 분류다. 정확한 alias/package/tag match를 우선하고, 모호하거나 처음 보는 표현은 조회 결과 `AMBIGUOUS`/`UNKNOWN`으로 판정해 `S15P21E102-88`의 별도 review queue에 보낸다. AI가 Registry 항목을 자동 확정하지 않는다. Registry 변경 시 새 버전을 발행하고 소비 결과에 사용 버전을 기록하며, provenance source 검증 자체는 배포 승인을 뜻하지 않는다. 승인 manifest·artifact hash·배포와 Replay 정책은 `S15P21E102-143`에서 결정한다.
 
 ## 8. GitHub 분석 데이터
 
@@ -179,11 +179,11 @@ GitHub 공개 활동 추세는 GitHub Innovation Graph KR의 분기 Programming 
 - 품질 통과 여부와 경고
 - 실패 event와 DLQ 위치
 
-재처리 규칙:
+재처리 초안(`S15P21E102-143` 확정 전):
 
 1. consumer는 수동 commit과 checkpoint를 사용한다.
 2. 일시적 외부 오류는 backoff와 최대 retry 후 DLQ로 보낸다.
-3. Registry만 바뀌면 raw를 재수집하지 않고 C2 replay를 실행한다.
+3. Registry만 바뀌면 raw 재수집 없이 C2 replay 후보로 기록하고, 실행 승인·범위는 `S15P21E102-143` 정책을 따른다.
 4. 전체 사용자 분석 재실행은 새 analysis Snapshot과 이력을 만든다.
 5. C1/C3를 멈추지 않고 가능한 consumer만 rewind한다.
 6. 결과에서 `GET /api/v1/analyses/{analysisId}/lineage`로 dataset·event·quality를 역추적한다.
