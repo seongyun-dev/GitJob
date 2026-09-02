@@ -213,6 +213,11 @@ services:
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
       GITHUB_API_RATE_LIMIT_MIN_REMAINING: ${GITHUB_API_RATE_LIMIT_MIN_REMAINING:-100}
+      # GH Archive Raw is published over WebHDFS: this image is a slim Python
+      # runtime with no Hadoop CLI and no JRE (S15P21E102-105).
+      WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
+      WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      RAW_ROOT: ${RAW_ROOT:-hdfs:///gitjob/raw}
     expose:
       - "8080"
     healthcheck:
