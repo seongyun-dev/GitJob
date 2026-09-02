@@ -6,6 +6,13 @@
 >
 > 현재 레포의 `AI/`에는 소스가 없으므로, 아래 내용은 Notion의 요구사항·C조 기능명세·API 명세를 구현 계약으로 정리한 것이다.
 
+## 관련 문서
+
+- [외부 조사 도구 연동 설계](external-research-tools.md): GitHub API·Tavily·비동기 Research 단계 설계
+- [기술명 정규화·대표 기술 집계 설계안](technology-normalization-design.md): 기술 alias·Registry·LLM fallback 기반 정규화 설계
+- [기술 Evidence Level 평가·LLM 연동 설계안](technology-level-llm-handoff.md): Backend Fact Pack 분석과 LLM 역할·검증·저장 설계
+- [노트북 로컬 LLM GPU 런북](../infra/local-llm-runbook.md): WSL2·Docker Desktop·Ollama 실행 계약
+
 ## 1. AI의 역할
 
 GitJob에서 AI는 분석 결과를 임의로 만드는 주체가 아니라, Registry·파이프라인·Evidence가 확정한 사실을 사용자에게 설명하고 검색하는 보조 계층이다.
