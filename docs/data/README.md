@@ -839,6 +839,18 @@ C조 범위다.
 - 처리: Spark Repo Activity / Top-N / Coverage (5,711,133 unique repos; Top-20,000 valid coverage 24.5638%)
 - 상세: [S15P21E102-109 Repo Activity Top-N 검증 보고서](2026-09-02-repo-activity-topn-validation.md)
 
+## Repo Fetch Cost Benchmark
+
+- Jira: S15P21E102-104
+- 결론: 2026-08 1개월 Historical Dataset을 활동량 순 Offline Batch로 Enrichment한다. Top-N은 영구 cutoff가 아니라 처리 우선순위이며, Top 20k → 50k → 100k로 확장한 뒤 C조 기술 Mapping이 충분해지는 시점에 2026-08 FINAL Snapshot 하나를 고정한다
+- 실측: 수집 Repo 1개 = core 3.00회 / 2.47MB / 2.63s, 404 Repo = core 1.00회, 동일 SHA 재검증 = core 1.00회(-66.7%)
+- checkpoint/resume: 재실행 시 fetch 요청 0건, rate limit 도달 시 reset 대기 후 재개
+- 404: 50개 중 22개(44%). rename이 아니라 Repository·계정 소멸이며 `repo_id` 회수 0/22 → production에 fallback 미적용
+- Tree 병목: recursive tree가 응답량의 98.63%. root manifest probe가 tree와 27/27 일치, REST core 0회, 전송량 -99.9% → 후속 -150 적용 권고
+- 기간 확장: `--input-root`로 다른 period 재사용 가능, checkpoint는 `dataset_key`로 기간 간 혼용 차단
+- 판정: A — MR 가능
+- 상세: [S15P21E102-104 GitHub Repo Fetch 비용 검증 보고서](2026-09-02-repo-fetch-cost-benchmark.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
