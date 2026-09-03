@@ -1,12 +1,47 @@
 spring:
-  application:
-    name: git_job
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
 
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
-  endpoint:
-    health:
-      show-details: never
+  application:
+    name: gitjob
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:gitjob}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+    # show-sql은 logback을 거치지 않고 stdout에 직접 출력하므로 JSON 로그 사이에
+    # 파싱 불가능한 줄을 섞는다(1582). SQL이 필요하면 show-sql 대신
+    # LOG_LEVEL_SQL=debug로 logger를 통해 남긴다.
+    show-sql: ${JPA_SHOW_SQL:false}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:2s}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+
+
+
+jwt:
+  secret: ${JWT_SECRET:gitjob-local-jwt-secret-key-change-me}
+  issuer: ${JWT_ISSUER:gitjob}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:30m}
+  refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:14d}
+
