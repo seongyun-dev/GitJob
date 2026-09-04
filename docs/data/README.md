@@ -851,6 +851,17 @@ C조 범위다.
 - 판정: A — MR 가능
 - 상세: [S15P21E102-104 GitHub Repo Fetch 비용 검증 보고서](2026-09-02-repo-fetch-cost-benchmark.md)
 
+## GitHub Repo Fetch Orchestrator
+
+- Jira: S15P21E102-150
+- 입력: `repo-fetch-candidates/v1` Repo Activity 우선순위
+- 출력: C조 `github-repo-snapshot/v1` 계약을 그대로 재사용
+- 처리: metadata → pinned Commit → recursive Tree → manifest/source → checksum·URI
+- 재사용: 전체 policy fingerprint + `github_repo_id` + pinned SHA Cache
+- 재개: dataset-bound checkpoint, `RATE_LIMITED` Repo부터 재시작
+- 상태: 구현·Unit Test·공개 GitHub 표본 Runtime 검증 완료 / HDFS Runtime 검증 전
+- 상세: [S15P21E102-150 GitHub Repo Fetch Orchestrator](2026-09-03-repo-fetch-orchestrator.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

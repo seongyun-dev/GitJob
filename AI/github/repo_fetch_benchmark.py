@@ -13,9 +13,7 @@ import math
 import os
 import statistics
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -23,37 +21,31 @@ from datetime import datetime, timezone
 from enum import Enum
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-API_ROOT = "https://api.github.com"
-RAW_ROOT = "https://raw.githubusercontent.com"
+from github.client import (
+    RAW_ROOT,
+    GitHubClient,
+    HttpResponse,
+    RateLimitState,
+    RequestOutcome,
+    RequestRecord,
+)
+from github.repo_fetch_policy import MANIFEST_BASENAMES
+
+__all__ = (
+    "GitHubClient",
+    "HttpResponse",
+    "RequestRecord",
+)
+
 CHECKPOINT_VERSION = 1
 DEFAULT_SAFETY_THRESHOLD = 200
-DEFAULT_TIMEOUT_SECONDS = 30.0
-DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_MAX_MANIFESTS = 10
 # Bootstrap phases for the 2026-08 MVP.  Rank is a processing priority, not a
 # permanent cutoff: each phase is just "--limit N" against the same rank-ordered
 # candidate list, and the checkpoint makes the next phase pay only for new repos.
 MVP_PHASE_SIZES = (20_000, 50_000, 100_000)
-
-# No repository-local manifest filename contract exists yet.  This bounded,
-# benchmark-only list covers the package ecosystems already represented in the
-# Technology Registry without making any technology determination.
-MANIFEST_BASENAMES = (
-    "package.json",
-    "pyproject.toml",
-    "requirements.txt",
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "settings.gradle",
-    "settings.gradle.kts",
-    "go.mod",
-    "Cargo.toml",
-    "composer.json",
-    "Gemfile",
-)
 
 
 class CollectionStatus(str, Enum):
@@ -88,91 +80,6 @@ class RepoCandidate:
     repo_name: str
     rank: int
     stratum: str = "unspecified"
-
-
-@dataclass(frozen=True)
-class RateLimitState:
-    limit: int | None
-    remaining: int | None
-    used: int | None
-    reset: int | None
-    resource: str | None
-
-    @classmethod
-    def from_headers(cls, headers: Mapping[str, str]) -> RateLimitState:
-        lowered = {key.lower(): value for key, value in headers.items()}
-        return cls(
-            limit=_optional_int(lowered.get("x-ratelimit-limit")),
-            remaining=_optional_int(lowered.get("x-ratelimit-remaining")),
-            used=_optional_int(lowered.get("x-ratelimit-used")),
-            reset=_optional_int(lowered.get("x-ratelimit-reset")),
-            resource=lowered.get("x-ratelimit-resource"),
-        )
-
-
-@dataclass(frozen=True)
-class HttpResponse:
-    status: int
-    headers: Mapping[str, str]
-    body: bytes
-
-
-class HttpTransport(Protocol):
-    def request(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str],
-        timeout: float,
-    ) -> HttpResponse: ...
-
-
-class UrllibTransport:
-    """stdlib transport that returns HTTP error responses without logging headers."""
-
-    def request(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str],
-        timeout: float,
-    ) -> HttpResponse:
-        request = urllib.request.Request(url, headers=dict(headers))
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(
-                    status=int(response.status),
-                    headers=dict(response.headers.items()),
-                    body=response.read(),
-                )
-        except urllib.error.HTTPError as exc:
-            return HttpResponse(
-                status=int(exc.code),
-                headers=dict(exc.headers.items()) if exc.headers else {},
-                body=exc.read(),
-            )
-
-
-@dataclass(frozen=True)
-class RequestRecord:
-    stage: str
-    endpoint_category: str
-    http_status: int
-    response_bytes: int
-    elapsed_seconds: float
-    is_core: bool
-    rate_limit_limit: int | None = None
-    rate_limit_remaining: int | None = None
-    rate_limit_used: int | None = None
-    rate_limit_reset: int | None = None
-    error: str | None = None
-
-
-@dataclass(frozen=True)
-class RequestOutcome:
-    response: HttpResponse | None
-    records: tuple[RequestRecord, ...]
-    payload: Mapping[str, Any] | None
 
 
 @dataclass
@@ -315,156 +222,6 @@ class RepoResult:
             _api_calls=_optional_int(value.get("api_calls")),
             _response_bytes=_optional_int(value.get("response_bytes")),
             _elapsed_seconds=_nested_or_float(value.get("elapsed_seconds")),
-        )
-
-
-class GitHubClient:
-    """Small benchmark client; credentials are kept only in request memory."""
-
-    def __init__(
-        self,
-        token: str,
-        *,
-        transport: HttpTransport | None = None,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
-        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-        backoff_seconds: float = 1.0,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        if not token:
-            raise ValueError("a GitHub token is required")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
-        if max_attempts < 1:
-            raise ValueError("max_attempts must be at least 1")
-        if backoff_seconds < 0:
-            raise ValueError("backoff_seconds cannot be negative")
-        self._token = token
-        self.transport = transport or UrllibTransport()
-        self.timeout = timeout
-        self.max_attempts = max_attempts
-        self.backoff_seconds = backoff_seconds
-        self.sleep = sleep
-
-    def core_rate_limit(self) -> tuple[RateLimitState, tuple[RequestRecord, ...]]:
-        outcome = self._request_json(
-            f"{API_ROOT}/rate_limit",
-            stage=Stage.CONTROL,
-            endpoint_category="rest_core_rate_limit",
-            is_core=True,
-        )
-        payload = outcome.payload or {}
-        core = payload.get("resources", {}).get("core", {})
-        if isinstance(core, Mapping):
-            state = RateLimitState(
-                limit=_optional_int(core.get("limit")),
-                remaining=_optional_int(core.get("remaining")),
-                used=_optional_int(core.get("used")),
-                reset=_optional_int(core.get("reset")),
-                resource="core",
-            )
-        elif outcome.response is not None:
-            state = RateLimitState.from_headers(outcome.response.headers)
-        else:
-            state = RateLimitState(None, None, None, None, None)
-        return state, outcome.records
-
-    def get_json(
-        self,
-        path: str,
-        *,
-        stage: Stage,
-        endpoint_category: str,
-    ) -> RequestOutcome:
-        return self._request_json(
-            f"{API_ROOT}{path}",
-            stage=stage,
-            endpoint_category=endpoint_category,
-            is_core=True,
-        )
-
-    def get_raw(self, url: str) -> RequestOutcome:
-        return self._request_json(
-            url,
-            stage=Stage.MANIFEST,
-            endpoint_category="manifest_raw",
-            is_core=False,
-            expect_json=False,
-        )
-
-    def _request_json(
-        self,
-        url: str,
-        *,
-        stage: Stage,
-        endpoint_category: str,
-        is_core: bool,
-        expect_json: bool = True,
-    ) -> RequestOutcome:
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "GitJob-Repo-Fetch-Benchmark/1.0",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        if is_core:
-            headers["Authorization"] = f"Bearer {self._token}"
-
-        records: list[RequestRecord] = []
-        response: HttpResponse | None = None
-        for attempt in range(self.max_attempts):
-            started = time.perf_counter()
-            try:
-                response = self.transport.request(
-                    url,
-                    headers=headers,
-                    timeout=self.timeout,
-                )
-            except (OSError, TimeoutError) as exc:
-                records.append(
-                    RequestRecord(
-                        stage=stage.value,
-                        endpoint_category=endpoint_category,
-                        http_status=0,
-                        response_bytes=0,
-                        elapsed_seconds=time.perf_counter() - started,
-                        is_core=is_core,
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-                )
-                if attempt + 1 >= self.max_attempts:
-                    break
-                self.sleep(self.backoff_seconds * (2**attempt))
-                continue
-
-            rate = RateLimitState.from_headers(response.headers)
-            records.append(
-                RequestRecord(
-                    stage=stage.value,
-                    endpoint_category=endpoint_category,
-                    http_status=response.status,
-                    response_bytes=len(response.body),
-                    elapsed_seconds=time.perf_counter() - started,
-                    is_core=is_core,
-                    rate_limit_limit=rate.limit,
-                    rate_limit_remaining=rate.remaining,
-                    rate_limit_used=rate.used,
-                    rate_limit_reset=rate.reset,
-                )
-            )
-            if response.status < 500 or attempt + 1 >= self.max_attempts:
-                break
-            self.sleep(self.backoff_seconds * (2**attempt))
-
-        payload: Mapping[str, Any] | None = None
-        if response is not None and expect_json and response.body:
-            try:
-                decoded = json.loads(response.body)
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                decoded = None
-            if isinstance(decoded, Mapping):
-                payload = decoded
-        return RequestOutcome(
-            response=response, records=tuple(records), payload=payload
         )
 
 

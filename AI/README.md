@@ -17,13 +17,14 @@ AI/
 ├── registry/        # Technology Registry analysis
 ├── job/             # job-posting analysis
 ├── stackoverflow/   # Stack Overflow analysis
-├── github/          # GitHub analysis
+├── github/          # GitHub 수집 경계와 A→C Repo Snapshot 계약
 ├── llm/             # Fact-grounded LLM behavior
 └── tests/
 ```
 
-The domain packages are boundaries only. They do not contain placeholder
-results or external-system clients.
+The domain packages do not contain placeholder results. The `github` package
+contains the bounded GitHub collection client used by the Repo Fetch
+Orchestrator; semantic technology analysis remains outside that client.
 
 ## Windows and PowerShell setup
 
