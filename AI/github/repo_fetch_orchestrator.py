@@ -38,6 +38,7 @@ from github.repo_fetch_store import (
     FileArtifactStore,
     RepoFetchCheckpoint,
     RepoSnapshotCache,
+    WebHdfsArtifactStore,
 )
 
 COLLECTOR_VERSION = "gitjob-repo-fetch-orchestrator/v1"
@@ -116,6 +117,8 @@ class RepoFetchRun:
     rate_limit_before: RateLimitState
     control_requests: tuple[RequestRecord, ...]
     checkpoint_rows: list[dict[str, Any]]
+    rate_limit_after: RateLimitState | None = None
+    active_runtime_seconds: float = 0.0
 
     def summary(self) -> dict[str, Any]:
         statuses = Counter(str(row["status"]) for row in self.checkpoint_rows)
@@ -138,6 +141,11 @@ class RepoFetchRun:
             ),
             "control_core_calls": sum(
                 request.is_core for request in self.control_requests
+            ),
+            "active_runtime_seconds": self.active_runtime_seconds,
+            "core_rate_limit_before": _rate_limit_payload(self.rate_limit_before),
+            "core_rate_limit_after": _rate_limit_payload(
+                self.rate_limit_after or self.rate_limit_before
             ),
             "core_rate_limit": {
                 "limit": self.rate_limit_before.limit,
@@ -165,6 +173,7 @@ class RepoFetchOrchestrator:
         collector_version: str = COLLECTOR_VERSION,
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         monotonic: Callable[[], float] = time.monotonic,
+        progress: Callable[[RepoExecution, int, int], None] | None = None,
     ) -> None:
         metadata = {
             "dataset_snapshot_id": dataset_snapshot_id,
@@ -184,8 +193,17 @@ class RepoFetchOrchestrator:
         self.collector_version = collector_version
         self.now = now
         self.monotonic = monotonic
+        self.progress = progress
 
-    def run(self, candidates: Sequence[RepoActivityCandidate]) -> RepoFetchRun:
+    def run(
+        self,
+        candidates: Sequence[RepoActivityCandidate],
+        *,
+        prior_active_seconds: float = 0.0,
+        prior_control_core_calls: int = 0,
+    ) -> RepoFetchRun:
+        if prior_active_seconds < 0 or prior_control_core_calls < 0:
+            raise ValueError("prior run accounting cannot be negative")
         ordered = _validate_candidates(candidates, self.policy.top_n_limit)
         generated_at = self.now().astimezone(UTC).isoformat().replace("+00:00", "Z")
         self.checkpoint.bind(
@@ -208,7 +226,12 @@ class RepoFetchOrchestrator:
         self.checkpoint.save()
 
         rate_before, control_requests = self.client.core_rate_limit()
-        used_core_calls = sum(request.is_core for request in control_requests)
+        rate_after = rate_before
+        used_core_calls = (
+            prior_control_core_calls
+            + sum(int(row["core_calls"]) for row in self.checkpoint.summary_rows())
+            + sum(request.is_core for request in control_requests)
+        )
         started = self.monotonic()
         stopped_reason: str | None = None
         if (
@@ -216,6 +239,10 @@ class RepoFetchOrchestrator:
             and rate_before.remaining < self.policy.rate_limit_safety_threshold
         ):
             stopped_reason = "RATE_LIMIT_SAFETY_THRESHOLD"
+        terminal_count = sum(
+            self.checkpoint.status(candidate.repo_id) in TERMINAL_STATUSES
+            for candidate in ordered
+        )
 
         for candidate in ordered:
             if stopped_reason is not None:
@@ -225,11 +252,15 @@ class RepoFetchOrchestrator:
             if used_core_calls >= self.policy.max_api_calls:
                 stopped_reason = "API_CALL_BUDGET"
                 break
-            if self.monotonic() - started >= self.policy.max_runtime_seconds:
+            if (
+                prior_active_seconds + self.monotonic() - started
+                >= self.policy.max_runtime_seconds
+            ):
                 stopped_reason = "RUNTIME_BUDGET"
                 break
 
             result = self.fetch_repo(candidate)
+            rate_after = _latest_rate_limit(result.requests, rate_after)
             used_core_calls += result.core_calls
             self.checkpoint.record(
                 repo_id=candidate.repo_id,
@@ -253,6 +284,10 @@ class RepoFetchOrchestrator:
                 stopped_reason = "RATE_LIMIT_RESPONSE"
             elif used_core_calls >= self.policy.max_api_calls:
                 stopped_reason = "API_CALL_BUDGET"
+            if result.status.value in TERMINAL_STATUSES:
+                terminal_count += 1
+            if self.progress is not None:
+                self.progress(result, terminal_count, len(ordered))
 
         self.cache.save()
         self.checkpoint.save()
@@ -269,8 +304,10 @@ class RepoFetchOrchestrator:
             batch=batch,
             stopped_reason=stopped_reason,
             rate_limit_before=rate_before,
+            rate_limit_after=rate_after,
             control_requests=control_requests,
             checkpoint_rows=self.checkpoint.summary_rows(),
+            active_runtime_seconds=max(0.0, self.monotonic() - started),
         )
 
     def fetch_repo(self, candidate: RepoActivityCandidate) -> RepoExecution:
@@ -682,7 +719,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-output", type=Path)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
-    parser.add_argument("--artifact-root", type=Path, required=True)
+    artifact_group = parser.add_mutually_exclusive_group(required=True)
+    artifact_group.add_argument("--artifact-root", type=Path)
+    artifact_group.add_argument("--webhdfs-artifact-root")
+    parser.add_argument(
+        "--artifact-store",
+        choices=("file", "webhdfs"),
+        default="file",
+    )
+    parser.add_argument("--webhdfs-url")
+    parser.add_argument("--webhdfs-user", default="hadoop")
+    parser.add_argument("--webhdfs-timeout", type=float, default=120.0)
     parser.add_argument("--dataset-snapshot-id", required=True)
     parser.add_argument("--pipeline-run-id", required=True)
     parser.add_argument("--collector-version", default=COLLECTOR_VERSION)
@@ -718,31 +765,7 @@ def main(argv: list[str] | None = None) -> int:
         period_end=arguments.period_end,
         limit=arguments.limit,
     )
-    policy = RepoFetchPolicy(
-        policy_version=arguments.policy_version,
-        top_n_limit=arguments.limit,
-        max_api_calls=arguments.max_api_calls,
-        max_runtime_seconds=arguments.max_runtime_seconds,
-        max_tree_entries=arguments.max_tree_entries,
-        max_artifact_files=arguments.max_artifact_files,
-        max_artifact_bytes=arguments.max_artifact_bytes,
-        max_manifest_files=arguments.max_manifest_files,
-        max_source_files=arguments.max_source_files,
-        max_file_bytes=arguments.max_file_bytes,
-        max_depth=arguments.max_depth,
-        source_prefix_bytes=arguments.source_prefix_bytes,
-        rate_limit_safety_threshold=arguments.rate_limit_safety_threshold,
-    )
-    run = RepoFetchOrchestrator(
-        client=GitHubClient(token),
-        policy=policy,
-        artifact_store=FileArtifactStore(arguments.artifact_root),
-        cache=RepoSnapshotCache(arguments.cache),
-        checkpoint=RepoFetchCheckpoint(arguments.checkpoint),
-        dataset_snapshot_id=arguments.dataset_snapshot_id,
-        pipeline_run_id=arguments.pipeline_run_id,
-        collector_version=arguments.collector_version,
-    ).run(candidates)
+    run = create_orchestrator(arguments, token=token).run(candidates)
     if run.stopped_reason is None:
         _immutable_payload_write(arguments.output, run.batch.model_dump(mode="json"))
     if arguments.summary_output is not None:
@@ -761,6 +784,96 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def create_policy(arguments: argparse.Namespace) -> RepoFetchPolicy:
+    return RepoFetchPolicy(
+        policy_version=arguments.policy_version,
+        top_n_limit=arguments.limit,
+        max_api_calls=arguments.max_api_calls,
+        max_runtime_seconds=arguments.max_runtime_seconds,
+        max_tree_entries=arguments.max_tree_entries,
+        max_artifact_files=arguments.max_artifact_files,
+        max_artifact_bytes=arguments.max_artifact_bytes,
+        max_manifest_files=arguments.max_manifest_files,
+        max_source_files=arguments.max_source_files,
+        max_file_bytes=arguments.max_file_bytes,
+        max_depth=arguments.max_depth,
+        source_prefix_bytes=arguments.source_prefix_bytes,
+        rate_limit_safety_threshold=arguments.rate_limit_safety_threshold,
+    )
+
+
+def create_orchestrator(
+    arguments: argparse.Namespace,
+    *,
+    token: str,
+    progress: Callable[[RepoExecution, int, int], None] | None = None,
+) -> RepoFetchOrchestrator:
+    return RepoFetchOrchestrator(
+        client=GitHubClient(token),
+        policy=create_policy(arguments),
+        artifact_store=create_artifact_store(arguments),
+        cache=RepoSnapshotCache(arguments.cache),
+        checkpoint=RepoFetchCheckpoint(arguments.checkpoint),
+        dataset_snapshot_id=arguments.dataset_snapshot_id,
+        pipeline_run_id=arguments.pipeline_run_id,
+        collector_version=arguments.collector_version,
+        progress=progress,
+    )
+
+
+def create_artifact_store(arguments: argparse.Namespace) -> ArtifactStore:
+    if arguments.artifact_store == "file":
+        if arguments.artifact_root is None:
+            raise ValueError("--artifact-root is required for --artifact-store file")
+        return FileArtifactStore(arguments.artifact_root)
+    if not arguments.webhdfs_url:
+        raise ValueError("--webhdfs-url is required for --artifact-store webhdfs")
+    if arguments.webhdfs_artifact_root is None:
+        raise ValueError(
+            "--webhdfs-artifact-root is required for --artifact-store webhdfs"
+        )
+    return WebHdfsArtifactStore(
+        base_url=arguments.webhdfs_url,
+        root=arguments.webhdfs_artifact_root,
+        user=arguments.webhdfs_user,
+        timeout=arguments.webhdfs_timeout,
+    )
+
+
+def _rate_limit_payload(state: RateLimitState) -> dict[str, int | str | None]:
+    return {
+        "limit": state.limit,
+        "remaining": state.remaining,
+        "used": state.used,
+        "reset": state.reset,
+        "resource": state.resource,
+    }
+
+
+def _latest_rate_limit(
+    requests: Sequence[RequestRecord],
+    fallback: RateLimitState,
+) -> RateLimitState:
+    for request in reversed(requests):
+        if any(
+            value is not None
+            for value in (
+                request.rate_limit_limit,
+                request.rate_limit_remaining,
+                request.rate_limit_used,
+                request.rate_limit_reset,
+            )
+        ):
+            return RateLimitState(
+                limit=request.rate_limit_limit,
+                remaining=request.rate_limit_remaining,
+                used=request.rate_limit_used,
+                reset=request.rate_limit_reset,
+                resource="core" if request.is_core else None,
+            )
+    return fallback
 
 
 def _request_state(

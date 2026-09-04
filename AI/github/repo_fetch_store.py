@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from common.webhdfs import WebHdfsClient, WebHdfsTransport, normalize_hdfs_path
+
 from github.contracts import GitHubRepoSnapshot, RepoCollectionStatus
 
 STORE_VERSION = 1
@@ -73,6 +75,49 @@ class FileArtifactStore:
         finally:
             temporary.unlink(missing_ok=True)
         return destination.as_uri()
+
+
+class WebHdfsArtifactStore:
+    """Immutable shared artifact store for bootstrap and C-team read-back."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        root: str,
+        user: str = "hadoop",
+        timeout: float = 120.0,
+        transport: WebHdfsTransport | None = None,
+    ) -> None:
+        self.root = normalize_hdfs_path(root)
+        client_arguments: dict[str, Any] = {
+            "base_url": base_url,
+            "user": user,
+            "timeout": timeout,
+        }
+        if transport is not None:
+            client_arguments["transport"] = transport
+        self.client = WebHdfsClient(**client_arguments)
+
+    def store(
+        self,
+        *,
+        policy_version: str,
+        repo_id: int,
+        pinned_commit_sha: str,
+        path: str,
+        content: bytes,
+    ) -> str:
+        relative = _safe_relative_path(path)
+        policy_key = hashlib.sha256(policy_version.encode("utf-8")).hexdigest()[:16]
+        destination = (
+            self.root
+            / f"policy={policy_key}"
+            / f"repo_id={repo_id}"
+            / f"commit={pinned_commit_sha}"
+            / relative
+        )
+        return self.client.store_immutable(destination, content)
 
 
 class RepoSnapshotCache:
@@ -255,10 +300,10 @@ class RepoFetchCheckpoint:
             status=status,
             attempts=int(entry.get("attempts", 0)) + 1,
             last_error=last_error,
-            api_calls=api_calls,
-            core_calls=core_calls,
-            raw_calls=raw_calls,
-            http_statuses=http_statuses,
+            api_calls=int(entry.get("api_calls", 0)) + api_calls,
+            core_calls=int(entry.get("core_calls", 0)) + core_calls,
+            raw_calls=int(entry.get("raw_calls", 0)) + raw_calls,
+            http_statuses=[*entry.get("http_statuses", []), *http_statuses],
             contract_record=(
                 contract_record.model_dump(mode="json")
                 if contract_record is not None

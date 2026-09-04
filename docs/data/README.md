@@ -862,6 +862,15 @@ C조 범위다.
 - 상태: 구현·Unit Test·공개 GitHub 표본 Runtime 검증 완료 / HDFS Runtime 검증 전
 - 상세: [S15P21E102-150 GitHub Repo Fetch Orchestrator](2026-09-03-repo-fetch-orchestrator.md)
 
+## GitHub Repo Snapshot 부트스트랩 배치
+
+- Jira: S15P21E102-114
+- Phase 1: Repo Activity 연속 rank Top 20,000
+- 실행: checkpoint/resume, 진행률·throughput·ETA, Rate Limit wait/restart
+- 전달: `github-repo-snapshot/v1`과 Artifact를 WebHDFS shared namespace에 publish
+- 책임 경계: A조 Snapshot 생성까지이며 Technology Registry/Evidence 의미 분석 제외
+- 상세: [S15P21E102-114 Repo Snapshot 부트스트랩 배치](2026-09-04-repo-snapshot-bootstrap-batch.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

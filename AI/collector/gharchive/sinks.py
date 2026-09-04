@@ -17,15 +17,22 @@ from __future__ import annotations
 
 import json
 import subprocess
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+from common.webhdfs import (
+    UrllibWebHdfsTransport as CommonUrllibWebHdfsTransport,
+)
+from common.webhdfs import (
+    WebHdfsError,
+    WebHdfsResponse,
+    WebHdfsTransport,
+)
 
 from collector.gharchive.historical import (
     ArchiveValidationError,
@@ -47,7 +54,24 @@ class RawSink(Protocol):
 
 
 class HdfsSinkError(RuntimeError):
-    """Raised when an HDFS CLI operation cannot preserve a Raw object."""
+    """Raised when an HDFS operation cannot preserve a Raw object."""
+
+
+class UrllibWebHdfsTransport(CommonUrllibWebHdfsTransport):
+    """Backward-compatible GH Archive transport error boundary."""
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        body: Path | bytes | None = None,
+        timeout: float,
+    ) -> WebHdfsResponse:
+        try:
+            return super().request(method, url, body=body, timeout=timeout)
+        except WebHdfsError as exc:
+            raise HdfsSinkError(str(exc)) from exc
 
 
 DEFAULT_RAW_ROOT = "/gitjob/raw"
@@ -160,80 +184,6 @@ class HdfsCliSink:
 
 DEFAULT_WEBHDFS_USER = "hadoop"
 _WEBHDFS_OK = (200, 201)
-
-
-@dataclass(frozen=True)
-class WebHdfsResponse:
-    """One WebHDFS HTTP response. Error statuses are returned, not raised."""
-
-    status: int
-    headers: Mapping[str, str]
-    body: bytes
-
-
-class WebHdfsTransport(Protocol):
-    def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        body: Path | None = None,
-        timeout: float,
-    ) -> WebHdfsResponse: ...
-
-
-class UrllibWebHdfsTransport:
-    """Small stdlib transport so runtime dependencies stay unchanged."""
-
-    def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        body: Path | None = None,
-        timeout: float,
-    ) -> WebHdfsResponse:
-        headers: dict[str, str] = {}
-        stream = None
-        if body is not None:
-            headers["Content-Length"] = str(body.stat().st_size)
-            headers["Content-Type"] = "application/octet-stream"
-            stream = body.open("rb")
-        request = urllib.request.Request(
-            url,
-            data=stream,
-            headers=headers,
-            method=method,
-        )
-        try:
-            with urllib.request.urlopen(
-                request, timeout=self._positive(timeout)
-            ) as response:
-                return WebHdfsResponse(
-                    status=response.status,
-                    headers=dict(response.headers),
-                    body=response.read(),
-                )
-        except urllib.error.HTTPError as exc:
-            # WebHDFS answers CREATE with 307 and urllib does not follow a
-            # redirect for PUT, so the status is classified by the caller.
-            with exc:
-                return WebHdfsResponse(
-                    status=exc.code,
-                    headers=dict(exc.headers),
-                    body=exc.read(),
-                )
-        except urllib.error.URLError as exc:
-            raise HdfsSinkError(f"WebHDFS request failed: {exc.reason}") from exc
-        finally:
-            if stream is not None:
-                stream.close()
-
-    @staticmethod
-    def _positive(timeout: float) -> float:
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
-        return timeout
 
 
 @dataclass
@@ -352,11 +302,14 @@ class WebHdfsSink:
             {"op": operation, "user.name": self.user, **parameters}
         )
         quoted = urllib.parse.quote(path, safe="/=")
-        return self.transport.request(
-            method,
-            f"{self.base_url}{quoted}?{query}",
-            timeout=self.timeout,
-        )
+        try:
+            return self.transport.request(
+                method,
+                f"{self.base_url}{quoted}?{query}",
+                timeout=self.timeout,
+            )
+        except WebHdfsError as exc:
+            raise HdfsSinkError(str(exc)) from exc
 
 
 def _boolean_result(response: WebHdfsResponse) -> bool:

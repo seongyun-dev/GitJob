@@ -14,6 +14,7 @@ DEFAULT_INPUT_ROOT = (
     "snapshot=s15p21e102-109-20260902"
 )
 DEFAULT_COVERAGE_N = (20_000, 50_000, 100_000, 200_000, 300_000, 500_000)
+DEFAULT_PHASE_TOP_N = 20_000
 DEFAULT_STRATA = (
     ("rank_1_100", 1, 100),
     ("around_1k", 951, 1_050),
@@ -99,9 +100,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
     from pyspark.sql import SparkSession
     from pyspark.sql import functions as F
 
-    spark = SparkSession.builder.appName(
-        "gitjob-s15p21e102-104-repo-fetch-candidates"
-    ).getOrCreate()
+    spark = SparkSession.builder.appName("gitjob-repo-fetch-candidates").getOrCreate()
     try:
         input_root = arguments.input_root.rstrip("/")
         activity = spark.read.parquet(f"{input_root}/repo_activity")
@@ -137,19 +136,37 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             total_event_count=total_events,
         )
 
-        targets = stratified_target_ranks(arguments.sample_size)
-        target_to_stratum = {rank: stratum for stratum, rank in targets}
-        target_ranks = sorted(target_to_stratum)
-        rows = (
-            activity.where(F.col("rank").isin(target_ranks))
-            .select("repo_id", "repo_name", "activity_count", "rank")
-            .orderBy("rank")
-            .collect()
-        )
-        if len(rows) != len(target_ranks):
-            found = {int(row["rank"]) for row in rows}
-            missing = [rank for rank in target_ranks if rank not in found]
-            raise RuntimeError(f"missing sampled ranks: {missing}")
+        if arguments.candidate_mode == "top-n":
+            target_to_stratum = {
+                rank: f"phase_top_{arguments.phase_top_n}"
+                for rank in range(1, arguments.phase_top_n + 1)
+            }
+            rows = (
+                activity.where(F.col("rank") <= F.lit(arguments.phase_top_n))
+                .select("repo_id", "repo_name", "activity_count", "rank")
+                .orderBy("rank")
+                .collect()
+            )
+            actual_ranks = [int(row["rank"]) for row in rows]
+            expected_ranks = list(range(1, arguments.phase_top_n + 1))
+            if actual_ranks != expected_ranks:
+                raise RuntimeError(
+                    "Top-N candidates must contain each contiguous rank exactly once"
+                )
+        else:
+            targets = stratified_target_ranks(arguments.sample_size)
+            target_to_stratum = {rank: stratum for stratum, rank in targets}
+            target_ranks = sorted(target_to_stratum)
+            rows = (
+                activity.where(F.col("rank").isin(target_ranks))
+                .select("repo_id", "repo_name", "activity_count", "rank")
+                .orderBy("rank")
+                .collect()
+            )
+            if len(rows) != len(target_ranks):
+                found = {int(row["rank"]) for row in rows}
+                missing = [rank for rank in target_ranks if rank not in found]
+                raise RuntimeError(f"missing sampled ranks: {missing}")
 
         return {
             "schema_version": "repo-fetch-candidates/v1",
@@ -185,12 +202,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=",".join(str(value) for value in DEFAULT_COVERAGE_N),
     )
     parser.add_argument("--sample-size", type=int, default=50)
+    parser.add_argument(
+        "--candidate-mode",
+        choices=("stratified", "top-n"),
+        default="stratified",
+    )
+    parser.add_argument("--phase-top-n", type=int, default=DEFAULT_PHASE_TOP_N)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    if arguments.candidate_mode == "stratified" and arguments.sample_size < 1:
+        raise SystemExit("--sample-size must be positive")
+    if arguments.phase_top_n < 1:
+        raise SystemExit("--phase-top-n must be positive")
     payload = run(arguments)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     with arguments.output.open("w", encoding="utf-8", newline="\n") as stream:

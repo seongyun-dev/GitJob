@@ -27,6 +27,9 @@ from github.root_manifest_probe import (
     targets_from_checkpoint,
 )
 from repo_fetch_candidates import (
+    build_parser as build_candidate_parser,
+)
+from repo_fetch_candidates import (
     coverage_rows_from_counts,
     parse_positive_ints,
     stratified_target_ranks,
@@ -39,6 +42,21 @@ RATE_HEADERS = {
     "x-ratelimit-reset": "2000000000",
     "x-ratelimit-resource": "core",
 }
+
+
+def test_candidate_cli_supports_contiguous_phase_top_n(tmp_path: Path) -> None:
+    arguments = build_candidate_parser().parse_args(
+        [
+            "--candidate-mode",
+            "top-n",
+            "--phase-top-n",
+            "20000",
+            "--output",
+            str(tmp_path / "candidates.json"),
+        ]
+    )
+    assert arguments.candidate_mode == "top-n"
+    assert arguments.phase_top_n == 20_000
 
 
 class ScriptedTransport:

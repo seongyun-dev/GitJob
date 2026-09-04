@@ -5,7 +5,6 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
-
 from github.client import GitHubClient, HttpResponse
 from github.contracts import (
     GitHubRepoSnapshotBatch,
@@ -17,6 +16,7 @@ from github.repo_fetch_orchestrator import (
     RepoActivityCandidate,
     RepoExecutionStatus,
     RepoFetchOrchestrator,
+    build_parser,
     load_candidates,
 )
 from github.repo_fetch_policy import RepoFetchPolicy, select_artifacts
@@ -156,6 +156,34 @@ def policy(**overrides: object) -> RepoFetchPolicy:
     return RepoFetchPolicy(**values)  # type: ignore[arg-type]
 
 
+def test_existing_file_artifact_cli_remains_path_based(tmp_path: Path) -> None:
+    arguments = build_parser().parse_args(
+        [
+            "--candidates",
+            str(tmp_path / "candidates.json"),
+            "--output",
+            str(tmp_path / "output.json"),
+            "--checkpoint",
+            str(tmp_path / "checkpoint.json"),
+            "--cache",
+            str(tmp_path / "cache.json"),
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+            "--dataset-snapshot-id",
+            "snapshot-001",
+            "--pipeline-run-id",
+            "run-001",
+            "--period-start",
+            "2026-08-01",
+            "--period-end",
+            "2026-08-31",
+        ]
+    )
+    assert arguments.artifact_store == "file"
+    assert arguments.artifact_root == tmp_path / "artifacts"
+    assert arguments.webhdfs_artifact_root is None
+
+
 def orchestrator(
     tmp_path: Path,
     transport: ScriptedTransport,
@@ -224,6 +252,18 @@ def test_complete_repo_uses_recursive_tree_and_emits_v1_contract(
     assert urls[4].startswith("https://raw.githubusercontent.com/")
     assert "Authorization" in transport.calls[1][1]
     assert "Authorization" not in transport.calls[4][1]
+
+
+def test_progress_callback_reports_terminal_count(tmp_path: Path) -> None:
+    events: list[tuple[str, int, int]] = []
+    runner = orchestrator(tmp_path, ScriptedTransport(success_outcomes()))
+    runner.progress = lambda result, terminal, total: events.append(
+        (result.status.value, terminal, total)
+    )
+
+    runner.run([candidate()])
+
+    assert events == [("COMPLETE", 1, 1)]
 
 
 def test_source_prefix_is_fetched_only_when_no_manifest_exists(
@@ -370,6 +410,8 @@ def test_rate_limit_before_pin_resumes_same_repo(tmp_path: Path) -> None:
     first_run = orchestrator(tmp_path, first).run([candidate()])
 
     assert first_run.stopped_reason == "RATE_LIMIT_RESPONSE"
+    assert first_run.rate_limit_after is not None
+    assert first_run.rate_limit_after.remaining == 0
     assert first_run.batch.records == ()
     assert first_run.checkpoint_rows[0]["status"] == "RATE_LIMITED"
 
@@ -379,6 +421,40 @@ def test_rate_limit_before_pin_resumes_same_repo(tmp_path: Path) -> None:
         second_run.batch.records[0].collection_status is RepoCollectionStatus.COMPLETE
     )
     assert second_run.checkpoint_rows[0]["attempts"] == 2
+    assert second_run.checkpoint_rows[0]["api_calls"] == 5
+    assert second_run.checkpoint_rows[0]["http_statuses"] == [
+        403,
+        200,
+        200,
+        200,
+        200,
+    ]
+
+
+def test_resumed_checkpoint_counts_prior_calls_against_api_budget(
+    tmp_path: Path,
+) -> None:
+    limited_headers = {**RATE_HEADERS, "X-RateLimit-Remaining": "0"}
+    fetch_policy = policy(max_api_calls=2)
+    first = orchestrator(
+        tmp_path,
+        ScriptedTransport(
+            [rate_control(), response(status=403, headers=limited_headers)]
+        ),
+        fetch_policy=fetch_policy,
+    ).run([candidate()])
+    assert first.stopped_reason == "RATE_LIMIT_RESPONSE"
+
+    replay_transport = ScriptedTransport([rate_control()])
+    replay = orchestrator(
+        tmp_path,
+        replay_transport,
+        fetch_policy=fetch_policy,
+    ).run([candidate()])
+
+    assert replay.stopped_reason == "API_CALL_BUDGET"
+    assert len(replay_transport.calls) == 1
+    assert replay.checkpoint_rows[0]["attempts"] == 1
 
 
 def test_rate_limit_after_pin_emits_partial_checkpoint_then_resumes(

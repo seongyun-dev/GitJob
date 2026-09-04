@@ -261,6 +261,17 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  repo-snapshot-bootstrap:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [tools]
+    restart: "no"
+    command: ["python", "-m", "github.repo_snapshot_bootstrap", "--help"]
+    environment:
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
+      WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+    logging: *default-logging
+
   # The apache/hadoop image runs as user hadoop. Docker creates a fresh named
   # volume as root, so prepare the mount before the NameNode/DataNode starts.
   hdfs-namenode-data-init:
