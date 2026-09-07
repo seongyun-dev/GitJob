@@ -882,6 +882,15 @@ C조 범위다.
 - 판정: Top 20,000 Bootstrap 진행 blocker 없음 (표본은 공개 Repo 1건)
 - 상세: [S15P21E102-163 Repo Snapshot Production Canary 검증](2026-09-07-repo-snapshot-production-canary.md)
 
+## MVP 데이터 파이프라인 멱등성·Replay 검증
+
+- Jira: S15P21E102-111
+- GH Archive: UTC hour Raw 재사용·불변 publish, Repo Activity snapshot overwrite 거부
+- Repo Snapshot: dataset checkpoint와 policy fingerprint + repo ID + pinned SHA cache 재사용
+- Jobs: `(source_site, source_posting_id)` 업무 키, 같은 run 원자적 replacement
+- Streaming: producer replay/smoke만 구현; application checkpoint·offset·sink 멱등성은 후속
+- 상세: [S15P21E102-111 MVP 데이터 파이프라인 멱등성 및 Replay 검증](2026-09-07-mvp-pipeline-idempotency-replay.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

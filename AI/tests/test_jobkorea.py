@@ -301,3 +301,33 @@ def test_no_detail_run_writes_contract_outputs(tmp_path: Path) -> None:
         ]
         == "49872974"
     )
+
+
+def test_same_run_replay_replaces_outputs_without_duplicate_records(
+    tmp_path: Path,
+) -> None:
+    config = CrawlConfig(
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        request_delay=0,
+        detail_delay=0,
+        fetch_details=False,
+        now=datetime(2026, 9, 3, 12, 0, tzinfo=SEOUL),
+    )
+    result = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+
+    first_paths = write_outputs(result, tmp_path)
+    first_payloads = {
+        name: path.read_bytes() for name, path in first_paths.items()
+    }
+    replay_paths = write_outputs(result, tmp_path)
+    replay_batch = json.loads(replay_paths["json"].read_text(encoding="utf-8"))
+
+    assert replay_paths == first_paths
+    assert {
+        name: path.read_bytes() for name, path in replay_paths.items()
+    } == first_payloads
+    assert [
+        (record["source_site"], record["source_posting_id"])
+        for record in replay_batch["records"]
+    ] == [("JOBKOREA", "49872974")]
