@@ -874,11 +874,12 @@ C조 범위다.
 ## Repo Snapshot Production Canary
 
 - Jira: S15P21E102-163
-- 대상: `pallets/flask` (`repo_id=596892`) 1건, Production image 기준
-- 결과: `collection_status=COMPLETE`, `github-repo-snapshot/v1`, Artifact 5개, 실패 0
+- 대상: `pallets/flask` (`repo_id=596892`) 1건, Canary 당시 배포 image 기준(현재 image와 동일하다고 추정하지 않음)
+- 결과: `collection_status=COMPLETE`, `record_count=1`, `github-repo-snapshot/v1`, Artifact 5개, 실패 0
 - 요청량: Repo Core 3 / raw 5, control Core 1 (S15P21E102-114 canary 실측과 동일)
-- HDFS: `snapshot_id=s15p21e102-163-canary-20260907` publish 후 read-back 5/5, SHA-256 5/5 일치
+- HDFS: `snapshot_id=s15p21e102-163-canary-20260907` publish 후 read-back 5/5, SHA-256 5/5 일치; checkpoint 재실행 후 read-only listing에서도 Artifact 5개·checksum 5/5 동일
 - 재실행: 동일 checkpoint에서 terminal 결과 재사용, `attempts=1` 유지, 추가 fetch 0건
+- 제한: Canary 당시 full image digest는 기존 기록에 없어 확정 불가; Spark Top-N output → `candidates.json` → `load_candidates()` → Bootstrap 경로와 Top 20,000 rate-limit wait/resume은 이번 1 Repo Canary에서 대표되지 않음
 - 판정: Top 20,000 Bootstrap 진행 blocker 없음 (표본은 공개 Repo 1건)
 - 상세: [S15P21E102-163 Repo Snapshot Production Canary 검증](2026-09-07-repo-snapshot-production-canary.md)
 
