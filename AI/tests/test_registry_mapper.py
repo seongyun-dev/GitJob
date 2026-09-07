@@ -153,6 +153,58 @@ def test_short_language_display_name_matches_with_explicit_language_context(
     assert result.evidence.context_rule == "SHORT_LANGUAGE_CONTEXT_CONFIRMED"
 
 
+@pytest.mark.parametrize(
+    "context",
+    [
+        "Go 개발자 경력 3년 이상",
+        "Go 개발자를 우대합니다",
+        "Go 언어를 활용한 서버 개발 경험",
+        "Go 서버 개발 경험",
+        "Go 개발.",
+    ],
+)
+def test_go_display_name_matches_scoped_korean_programming_context(
+    mapper: RegistryMapper,
+    context: str,
+) -> None:
+    result = mapper.map(
+        MapperInput(
+            source=MapperSource.DISPLAY_NAME,
+            raw_value="Go",
+            context=context,
+        )
+    )
+
+    assert result.status is MatchStatus.MATCHED
+    assert result.tech_id == "go"
+    assert result.evidence.context_rule == "SHORT_LANGUAGE_CONTEXT_CONFIRMED"
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "Go 개발도상국 시장 분석 경험",
+        "Go 언어학 연구 보조",
+        "Go 사업 개발 경험",
+        "Go to market 전략 담당",
+    ],
+)
+def test_go_display_name_rejects_korean_lookalike_or_business_context(
+    mapper: RegistryMapper,
+    context: str,
+) -> None:
+    result = mapper.map(
+        MapperInput(
+            source=MapperSource.DISPLAY_NAME,
+            raw_value="Go",
+            context=context,
+        )
+    )
+
+    assert result.status is MatchStatus.AMBIGUOUS
+    assert result.tech_id is None
+
+
 def test_unknown_value_preserves_normalized_reason(mapper: RegistryMapper) -> None:
     result = mapper.map(
         MapperInput(

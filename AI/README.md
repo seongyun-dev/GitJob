@@ -170,9 +170,14 @@ the original evidence text, section, source surface, character location, and
 mapping context. Each output record also preserves the canonical/source job
 identity, source URL, job/category/company/region dimensions, posting state and
 dates, collection time, and source content hash required by a later demand
-aggregation job. Registry and `job-requirement-rules/v1` parser versions remain
-explicit. Conflicting section and input requirement signals, plus unresolved
-Registry matches, become `REVIEW_REQUIRED` instead of being guessed.
+aggregation job. Registry and `job-requirement-rules/v2` parser versions remain
+explicit. Under the agreed v2 policy, responsibilities (`담당업무`, `주요업무`,
+`업무내용`, `responsibilities`) count as `REQUIRED`, including when the collector
+carried `PREFERRED` from an earlier section. The original input type and label
+remain unchanged in the output alongside the parsed section and correction reason.
+Unrecognized source labels no longer suppress section correction at the evidence
+offset. Other conflicting section/input signals and unresolved Registry matches
+remain `REVIEW_REQUIRED`.
 
 C also scans the original body through the evidence offset for complete
 required/preferred/general headings, without a fixed preceding-line window.

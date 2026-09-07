@@ -88,6 +88,16 @@ class MapperResult(BaseModel):
 _SHORT_LANGUAGE_IDS = frozenset({"c", "r", "go"})
 _CONTEXT_SEPARATOR = r"[\s:/()]{0,8}"
 _ISOLATED_C_TOKEN = r"(?<![\w+#-])c(?![\w+#-])"
+_KOREAN_POSTPOSITION = r"(?:(?:은|는|이|가|을|를|의|와|과|으로|로))?"
+_KOREAN_TERM_END = r"(?=[\s,./)!?]|$)"
+_GO_KOREAN_CONTEXT = rf"""
+    (?:
+        언어{_KOREAN_POSTPOSITION}{_KOREAN_TERM_END}
+        | 개발자{_KOREAN_POSTPOSITION}{_KOREAN_TERM_END}
+        | 개발{_KOREAN_TERM_END}
+        | (?:서버|백엔드|backend|API)\s+개발{_KOREAN_TERM_END}
+    )
+"""
 _SHORT_LANGUAGE_CONTEXT = {
     "c": re.compile(
         rf"{_ISOLATED_C_TOKEN}{_CONTEXT_SEPARATOR}(?:programming(?:\s+language)?|language|compiler|언어|개발)\b",
@@ -98,8 +108,17 @@ _SHORT_LANGUAGE_CONTEXT = {
         re.IGNORECASE,
     ),
     "go": re.compile(
-        rf"(?:\bgolang\b|\bgo\b{_CONTEXT_SEPARATOR}(?:programming(?:\s+language)?|language|언어|개발)\b)",
-        re.IGNORECASE,
+        rf"""
+            (?:
+                \bgolang\b
+                | \bgo\b{_CONTEXT_SEPARATOR}(?:
+                    programming(?:\s+language)?\b
+                    | language\b
+                    | {_GO_KOREAN_CONTEXT}
+                )
+            )
+        """,
+        re.IGNORECASE | re.VERBOSE,
     ),
 }
 

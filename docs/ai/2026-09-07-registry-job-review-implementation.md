@@ -33,13 +33,16 @@ Stack Overflow와 신규 수요 집계 구현은 이번 범위에 포함하지 �
 - exact match와 import segment prefix 경계를 사용하며 후보와 정규화·판정 근거를 반환한다.
 - 자유 텍스트의 C/R/Go는 명시적인 언어 문맥이 없으면 모호한 후보로 남긴다.
 - C++, C#, Objective-C, C-level, R&D, Go-to-market을 짧은 기술명 C/R/Go의 확정 근거로 사용하지 않는다.
+- Go의 `개발자`, `언어를`, `서버 개발` 표현을 인식한다. `개발도상국`, `언어학`, `사업 개발` 등 유사 표현은 확정 근거로 사용하지 않는다.
 - 결과에 실제 사용한 `registry_version`을 기록한다.
 
 ### -82 채용 요구유형 분류
 
-- REQUIRED, PREFERRED, SKILL, REVIEW_REQUIRED를 구분한다. 입력 요구유형과 섹션이 충돌하거나 Registry가 미해결이면 검토 대상으로 남긴다.
+- REQUIRED, PREFERRED, SKILL, REVIEW_REQUIRED를 구분한다. 담당업무는 필수 요건으로 취급한다는 결정에 따라 `담당업무`, `주요업무`, `업무내용`, `responsibilities`의 기술은 REQUIRED로 분류한다. Registry가 미해결이면 이 정책보다 검토 판정이 우선한다.
+- 본문 위치에서 확인한 담당업무 섹션은 이전 섹션에서 상속된 PREFERRED보다 우선한다. 본문 섹션이 없으면 A의 명시적 담당업무 라벨을 사용한다. 담당업무 보정 외의 입력 요구유형·섹션 충돌은 검토 대상으로 남긴다.
 - A의 `evidence_section`과 C가 원문에서 관측한 `parsed_section`을 별도로 보존한다.
-- C는 원문 evidence offset까지 완전한 heading을 탐색한다. 고정된 앞쪽 줄 수에 제한되지 않으며, A의 누락·일반 본문 label을 보완한다. A의 명시적 section label은 유지한다.
+- C는 원문 evidence offset까지 완전한 heading을 탐색한다. 고정된 앞쪽 줄 수에 제한되지 않으며, A의 누락·일반 본문·미인식 label을 보완한다. A의 원문 label은 유지한다.
+- 판정 규칙 변경을 `job-requirement-rules/v2`로 기록한다. A→C 입력과 C 출력 schema 버전은 변경하지 않는다.
 - 동일 기술의 전달된 복수 근거를 유지하고, 다른 기술들이 하나의 evidence 문장을 공유하면 같은 위치를 기록한다.
 - 원문 text, surface, offset, mention index, mapping 시도 순서, parser/Registry 버전을 보존한다.
 - 공고 ID·URL·회사·직무·지역·상태·게시/수집 시각·content hash를 후속 집계 입력으로 유지한다. JSON 재검증에서도 URL과 timezone 제약을 적용한다.
@@ -75,7 +78,26 @@ Python 3.12와 저장소 `requirements-dev.txt` 환경에서 검증했다.
 Windows `core.autocrlf=true` 체크아웃에서 Registry JSON schema가 CRLF가 되면
 `test_committed_json_schema_matches_contract_model_exactly`의 byte 비교가 실패한다.
 스키마 검사를 수정하거나 제외하지 않고 LF 보존 복사본에서 전체 통과를 확인했다.
-미커밋 변경을 모두 포함한 검증본과 최종 구현 커밋의 변경 파일 8개는 LF SHA-256이 일치한다.
+초기 구현 당시 미커밋 변경을 모두 포함한 검증본과 구현 커밋의 변경 파일 8개는 LF SHA-256이 일치했다.
+
+### MR !31 리뷰 보완 검증
+
+`a73082a` 기준으로 리뷰의 두 사례를 현재 수집기 코드와 재현용 본문으로 확인했다.
+Go 3개 표현은 미확정이었고, 미인식 라벨 `신규 기술 검토`는 섹션 보완을 건너뛰게 했다.
+회귀 테스트에서 기존 실패를 확인한 뒤 아래 동작으로 보완했다.
+
+| 재현 입력 | 보완 결과 |
+|---|---|
+| `Go 개발자 경력 3년 이상`, `Go 언어를 활용한 서버 개발 경험`, `Go 서버 개발 경험` | `MATCHED`, `tech_id=go`; 자격요건 본문에서는 REQUIRED |
+| 우대사항 → Python 경험 → 담당업무 → 신규 기술 검토 → Docker 기반 서비스 개발 | Python PREFERRED, Docker REQUIRED; Docker의 입력 PREFERRED·원문 라벨·parsed_section 보존 |
+| 담당업무 이후 별도 우대사항 heading | 해당 우대사항 기술은 PREFERRED |
+| 담당업무의 미해결 Registry 기술 | REVIEW_REQUIRED 유지 |
+| 다른 섹션의 미인식 라벨과 요구유형 충돌 | 원문 위치의 섹션으로 검사해 REVIEW_REQUIRED |
+
+- 변경 파일: `AI/registry/mapper.py`, `AI/job/classifier.py`, 각각의 테스트 파일, `AI/README.md`, 이 문서.
+- 전체 미커밋 코드 변경을 포함한 LF 복사본: 전체 AI **309 passed**, schema byte parity 포함, 제외 없음.
+- 변경 Python 4개 파일의 Ruff check/format 및 diff whitespace 검사 통과.
+- 수집기 코드는 수정하지 않았다. 위 회귀 검증은 synthetic 본문이며 실공고·실서버 검증은 추가 수행하지 않았다.
 
 집중 검증은 저장소 루트에서 실행한다. `$python`은 해당 프로젝트 Python 환경을 지정한다.
 

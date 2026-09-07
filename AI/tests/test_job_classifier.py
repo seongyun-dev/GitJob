@@ -255,8 +255,9 @@ def test_collector_mentions_are_classified_from_full_section_boundaries() -> Non
     assert by_raw["Python"].parsed_section == "자격 요건"
     assert by_raw["Docker"].requirement_class is RequirementClass.PREFERRED
     # The collector carries the earlier preferred signal across this boundary.
-    # C flags the conflict instead of inheriting that classification.
-    assert by_raw["PostgreSQL"].requirement_class is RequirementClass.REVIEW_REQUIRED
+    # C treats responsibilities as required while retaining the collector input.
+    assert by_raw["PostgreSQL"].requirement_class is RequirementClass.REQUIRED
+    assert by_raw["PostgreSQL"].input_requirement_type == "PREFERRED"
     assert by_raw["PostgreSQL"].parsed_section == "담당업무"
     assert batch.model_dump_json() == before
 
@@ -281,3 +282,109 @@ def test_technologies_in_one_evidence_line_share_its_location() -> None:
     assert all(
         result.requirement_class is RequirementClass.REQUIRED for result in results
     )
+
+
+def classify_collector_body(body: str):
+    payload = load_fixture_payload()
+    record = payload["records"][0]
+    record["title"] = "백엔드 개발자"
+    record["description_text"] = body
+    record["technology_mentions"] = [
+        mention.model_dump(mode="json", by_alias=True)
+        for mention in extract_technology_mentions(record["title"], body)
+    ]
+    batch = JobAnalysisInputBatch.model_validate(payload)
+    before = batch.model_dump_json()
+    results = classify_job_batch(batch, load_mapper()).records[0].technologies
+    assert batch.model_dump_json() == before
+    return {result.raw_technology: result for result in results}
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "Go 개발자 경력 3년 이상",
+        "Go 언어를 활용한 서버 개발 경험",
+        "Go 서버 개발 경험",
+        "Go 개발 경험",
+    ],
+)
+def test_collector_go_korean_context_maps_to_required(evidence: str) -> None:
+    result = classify_collector_body(f"자격요건\n{evidence}")["Go"]
+    assert result.tech_id == "go"
+    assert result.match_status is MatchStatus.MATCHED
+    assert result.requirement_class is RequirementClass.REQUIRED
+    assert result.evidence_text == evidence
+
+
+@pytest.mark.parametrize(
+    "heading", ["담당업무", "주요 업무", "업무내용", "Responsibilities"]
+)
+@pytest.mark.parametrize("intermediate", ["", "신규 기술 검토\n"])
+def test_duties_override_inherited_preferred_but_preserve_input(
+    heading: str, intermediate: str
+) -> None:
+    body = f"우대사항\nPython 경험\n{heading}\n{intermediate}Docker 기반 서비스 개발"
+    results = classify_collector_body(body)
+    result = results["Docker"]
+    assert results["Python"].requirement_class is RequirementClass.PREFERRED
+    assert result.input_requirement_type == "PREFERRED"
+    assert result.requirement_class is RequirementClass.REQUIRED
+    assert result.parsed_section == heading
+    if intermediate:
+        assert result.evidence_section == "신규 기술 검토"
+    assert result.evidence_text == "Docker 기반 서비스 개발"
+    assert result.classification_reason == "responsibilities treated as required"
+    assert result.parser_version == "job-requirement-rules/v2"
+
+
+@pytest.mark.parametrize("input_type", ["MENTIONED", "REQUIRED", "PREFERRED"])
+def test_source_duties_label_without_locatable_heading_is_required(
+    input_type: str,
+) -> None:
+    payload = load_fixture_payload()
+    record = payload["records"][0]
+    record["description_text"] = "C# 실무 경험"
+    mention = record["technology_mentions"][0]
+    mention["evidence_section"] = "담당 업무"
+    mention["requirement_type"] = input_type
+    batch = JobAnalysisInputBatch.model_validate(payload)
+    result = classify_job_batch(batch, load_mapper()).records[0].technologies[0]
+    assert result.parsed_section is None
+    assert result.requirement_class is RequirementClass.REQUIRED
+    assert result.input_requirement_type == input_type
+
+
+@pytest.mark.parametrize("heading", ["자격요건", "기술스택", "복리후생"])
+def test_unrecognized_source_label_does_not_skip_parsed_section_conflict(
+    heading: str,
+) -> None:
+    payload = load_fixture_payload()
+    record = payload["records"][0]
+    record["description_text"] = f"{heading}\n신규 기술 검토\nC# 실무 경험"
+    mention = record["technology_mentions"][0]
+    mention["evidence_section"] = "신규 기술 검토"
+    mention["requirement_type"] = "PREFERRED"
+    batch = JobAnalysisInputBatch.model_validate(payload)
+    result = classify_job_batch(batch, load_mapper()).records[0].technologies[0]
+    assert result.requirement_class is RequirementClass.REVIEW_REQUIRED
+    assert result.parsed_section == heading
+    assert result.evidence_section == "신규 기술 검토"
+
+
+def test_preferred_subsection_ends_required_duties_policy() -> None:
+    results = classify_collector_body(
+        "담당업무\nDocker 기반 서비스 개발\n우대사항\nPython 경험"
+    )
+    assert results["Docker"].requirement_class is RequirementClass.REQUIRED
+    assert results["Python"].requirement_class is RequirementClass.PREFERRED
+
+
+def test_duties_do_not_confirm_unresolved_registry_mapping() -> None:
+    payload = load_fixture_payload()
+    record = payload["records"][3]
+    record["description_text"] = "담당업무\nQuantumDB 경험"
+    batch = JobAnalysisInputBatch.model_validate(payload)
+    result = classify_job_batch(batch, load_mapper()).records[3].technologies[0]
+    assert result.tech_id is None
+    assert result.requirement_class is RequirementClass.REVIEW_REQUIRED

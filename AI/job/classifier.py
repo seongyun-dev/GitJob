@@ -34,7 +34,7 @@ from registry.mapper import (
 )
 
 JOB_CLASSIFICATION_SCHEMA_VERSION = "job-technology-classification/v1"
-JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v1"
+JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v2"
 _ISO_8601_DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]")
 
 
@@ -140,6 +140,10 @@ _REQUIRED_SECTION_MARKERS = (
     "required",
 )
 
+_RESPONSIBILITY_HEADINGS = frozenset(
+    {"담당업무", "주요업무", "업무내용", "responsibilities"}
+)
+
 _SECTION_HEADINGS = {
     "자격요건": RequirementClass.REQUIRED,
     "지원자격": RequirementClass.REQUIRED,
@@ -154,15 +158,12 @@ _SECTION_HEADINGS = {
     "우대조건": RequirementClass.PREFERRED,
     "preferred": RequirementClass.PREFERRED,
     "nicetohave": RequirementClass.PREFERRED,
-    "담당업무": RequirementClass.SKILL,
-    "주요업무": RequirementClass.SKILL,
-    "업무내용": RequirementClass.SKILL,
+    **dict.fromkeys(_RESPONSIBILITY_HEADINGS, RequirementClass.REQUIRED),
     "기술스택": RequirementClass.SKILL,
     "사용기술": RequirementClass.SKILL,
     "복리후생": RequirementClass.SKILL,
     "근무조건": RequirementClass.SKILL,
     "채용절차": RequirementClass.SKILL,
-    "responsibilities": RequirementClass.SKILL,
     "benefits": RequirementClass.SKILL,
 }
 
@@ -202,6 +203,9 @@ _PREFERRED_SECTION_MARKERS = (
 def _section_requirement(section: str | None) -> RequirementClass | None:
     if section is None:
         return None
+    heading_requirement = _SECTION_HEADINGS.get(_heading_key(section))
+    if heading_requirement is not None:
+        return heading_requirement
     normalized = " ".join(section.casefold().split())
     if any(marker in normalized for marker in _PREFERRED_SECTION_MARKERS):
         return RequirementClass.PREFERRED
@@ -221,10 +225,22 @@ def _classify_requirement(
             "Registry mapping requires review",
         )
 
+    # Located body headings take precedence for the agreed duties policy.
+    # A source label is a fallback only when no body heading was located.
+    responsibility_section = parsed_section or mention.evidence_section
+    if (
+        mention.source_surface is SourceSurface.BODY
+        and responsibility_section is not None
+        and _heading_key(responsibility_section) in _RESPONSIBILITY_HEADINGS
+    ):
+        return RequirementClass.REQUIRED, "responsibilities treated as required"
+
     section_requirement = _section_requirement(mention.evidence_section)
+    # Unknown extractor labels must not hide a section found at the evidence
+    # offset. Keep recognized source labels, except for the duties policy above.
     if parsed_section is not None and (
-        mention.evidence_section in (None, "본문")
-        or _heading_key(mention.evidence_section) == _heading_key(parsed_section)
+        section_requirement is None
+        or _heading_key(mention.evidence_section or "") == _heading_key(parsed_section)
     ):
         section_requirement = _SECTION_HEADINGS[_heading_key(parsed_section)]
     input_requirement = {
