@@ -11,6 +11,18 @@
 # Local infrastructure data and generated backups
 /.local/
 
+# Personal working documents — not shared with the team.
+# New personal notes go under /docs/plans/ so they are ignored automatically.
+# Team-facing docs live in docs/<part>/ and stay tracked.
+/docs/plans/
+/docs/shared/WORKING-RULES.md
+
+# Worknet collection snapshots
+/data/worknet/
+
+# Saramin collection snapshots
+/data/saramin/
+
 # Temporary JobKorea collection snapshots
 /data/jobkorea/
 
