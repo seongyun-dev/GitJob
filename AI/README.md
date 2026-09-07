@@ -18,6 +18,7 @@ AI/
 ├── job/             # job-posting analysis
 ├── stackoverflow/   # Stack Overflow analysis
 ├── github/          # GitHub 수집 경계와 A→C Repo Snapshot 계약
+├── JobKorea_Collector_V1/  # 임시 JobKorea 백엔드 채용공고 수집기
 ├── llm/             # Fact-grounded LLM behavior
 └── tests/
 ```
@@ -25,6 +26,9 @@ AI/
 The domain packages do not contain placeholder results. The `github` package
 contains the bounded GitHub collection client used by the Repo Fetch
 Orchestrator; semantic technology analysis remains outside that client.
+
+The temporary JobKorea collector documented below is an explicit standalone
+exception for this short-lived collection task.
 
 ## Windows and PowerShell setup
 
@@ -142,8 +146,92 @@ A-team handoff still needs confirmation of actual Parquet/JSON types and
 locations, real `schema_version`/collector version production values,
 `raw_artifact_uri` availability, and revision/closed-posting policy. C-team
 owns contract validation, semantic duplicate adjudication, Registry matching,
-requirement classification, and downstream facts. No B-team online API is
-introduced by this issue.
+requirement classification, and downstream facts. No online source client is
+part of the contract boundary described above.
+
+## Temporary JobKorea backend crawler
+
+The temporary `AI/JobKorea_Collector_V1` tool collects ordinary `백엔드개발자`
+category postings registered during an inclusive date range. It uses
+JobKorea's public category-list response sorted by registration date, follows
+the public detail iframe when enabled, validates every record against the
+`job-analysis-input/v1` contract, and writes a run-specific JSON/CSV snapshot
+plus a manifest.
+
+Run from the repository root after installing `requirements-dev.txt`:
+
+```powershell
+$python = ".\.venv\Scripts\python.exe"
+$env:PYTHONPATH = "AI"
+& $python -m JobKorea_Collector_V1 `
+  --start-date 2026-08-01 `
+  --end-date 2026-08-31 `
+  --output-dir data\jobkorea
+Remove-Item Env:PYTHONPATH
+```
+
+Use `--no-detail --max-pages 1 --request-delay 0` for a quick list-only
+smoke run. The default date range is `2026-08-01` through `2026-08-31` and
+`--end-date` is inclusive. Each run is written under
+`data/jobkorea/<pipeline-run-id>/`.
+
+This is a temporary, rate-limited public-page collector. It does not log in,
+solve CAPTCHA, or bypass access controls. JobKorea's detail page states that
+the information must not be copied, redistributed, or repurposed without
+consent and is for job-seeking use; keep generated snapshots internal and
+respect the site's terms and request limits. The result is limited to postings
+that are still exposed by the public category listing; postings already
+removed from that listing cannot be reconstructed by this tool.
+
+### GUI
+
+The same crawler is available as a local Streamlit GUI. It provides date and
+request settings, OCR controls, progress, result tables, technology summaries,
+OCR diagnostics, and downloads for the generated JSON/CSV/manifest files.
+
+Install the GUI dependency and start it from the repository root:
+
+```powershell
+$python = ".\.venv\Scripts\python.exe"
+& $python -m pip install -r AI\requirements-gui.txt
+$env:PYTHONPATH = "AI"
+& $python -m streamlit run AI\JobKorea_Collector_V1\gui.py
+Remove-Item Env:PYTHONPATH
+```
+
+The browser page opens on the local Streamlit address shown in the terminal.
+Install `AI\requirements-ocr.txt` as described below when the GUI should also
+recognize image-based postings.
+
+### Image OCR and technology extraction
+
+Image OCR is enabled by default. The collector uses PaddleOCR's Korean model
+for image sources discovered in the detail iframe, then appends the recognized
+text under `[OCR 이미지]` before extracting technology mentions. Each mention
+keeps its source surface (`TITLE` or `BODY`), evidence text, extraction method,
+and requirement type (`REQUIRED`, `PREFERRED`, or `MENTIONED`). The raw
+`body_status` remains `IMAGE_ONLY` when the source body is image-only, so the
+original source condition is not hidden by OCR output.
+
+Install the optional OCR dependency in the same virtual environment. Paddle
+Paddle is installed separately because its CPU/GPU wheel depends on the target
+platform; the official [PaddleOCR quick start](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/quick_start.en.md)
+has the current selector and wheel commands. For a WSL CPU setup, an example
+is:
+
+```powershell
+$python = ".\.venv\Scripts\python.exe"
+& $python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+& $python -m pip install -r AI\requirements-ocr.txt
+```
+
+The first OCR run may download model files. Use `--ocr-device gpu:0` when the
+environment has a supported Paddle GPU installation, or `--no-ocr` to collect
+the postings without image recognition. OCR status, image URLs, confidence,
+and per-image errors are recorded in `manifest.json`; the normalized mentions
+are present in both the JSON contract and the `technology_mentions` CSV column.
+If PaddleOCR is unavailable, the crawler records a warning and preserves the
+image-only record for later reprocessing.
 
 ## Run locally
 

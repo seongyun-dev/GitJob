@@ -1,0 +1,4 @@
+# Optional dependency for image-based JobKorea posting extraction.
+# Install PaddlePaddle first with the official CPU/GPU wheel command for the
+# target machine, then install this file.
+paddleocr>=3.0,<4.0

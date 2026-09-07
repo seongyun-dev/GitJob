@@ -11,6 +11,9 @@
 # Local infrastructure data and generated backups
 /.local/
 
+# Temporary JobKorea collection snapshots
+/data/jobkorea/
+
 # Spring Boot local / secret configuration
 application-local.yml
 application-local.yaml

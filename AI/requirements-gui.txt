@@ -1,0 +1,3 @@
+# Optional local GUI for the temporary JobKorea collector.
+-r requirements.txt
+streamlit>=1.57,<2.0
