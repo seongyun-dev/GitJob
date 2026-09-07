@@ -31,6 +31,7 @@ from repo_fetch_candidates import (
 )
 from repo_fetch_candidates import (
     coverage_rows_from_counts,
+    deduplicate_top_n_rows,
     parse_positive_ints,
     stratified_target_ranks,
 )
@@ -57,6 +58,43 @@ def test_candidate_cli_supports_contiguous_phase_top_n(tmp_path: Path) -> None:
     )
     assert arguments.candidate_mode == "top-n"
     assert arguments.phase_top_n == 20_000
+
+
+def test_top_n_deduplicates_casefold_names_and_backfills_deterministically() -> None:
+    rows = [
+        {
+            "repo_id": 10,
+            "repo_name": "Owner/Repo",
+            "activity_count": 100,
+            "rank": 1,
+        },
+        {
+            "repo_id": 11,
+            "repo_name": "owner/repo",
+            "activity_count": 99,
+            "rank": 2,
+        },
+        {
+            "repo_id": 12,
+            "repo_name": "next/one",
+            "activity_count": 98,
+            "rank": 3,
+        },
+        {
+            "repo_id": 13,
+            "repo_name": "last/one",
+            "activity_count": 97,
+            "rank": 4,
+        },
+    ]
+
+    selected = deduplicate_top_n_rows(rows, 3)
+    reversed_selected = deduplicate_top_n_rows(list(reversed(rows)), 3)
+
+    assert selected == reversed_selected
+    assert [row["repo_id"] for row in selected] == [10, 12, 13]
+    assert [row["rank"] for row in selected] == [1, 2, 3]
+    assert [row["activity_count"] for row in selected] == [100, 98, 97]
 
 
 class ScriptedTransport:

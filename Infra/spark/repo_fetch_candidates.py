@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -96,6 +96,49 @@ def coverage_rows_from_counts(
     return rows
 
 
+def deduplicate_top_n_rows(
+    rows: Sequence[Mapping[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Keep the highest-priority row for each repo id/name and backfill.
+
+    The input ``rank`` is the immutable Repo Activity priority used for
+    ordering.  The returned ``rank`` is the contiguous rank of the final
+    candidate list required by the Bootstrap contract.
+    """
+
+    if limit < 1:
+        raise ValueError("top-n limit must be positive")
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (int(row["rank"]), int(row["repo_id"])),
+    )
+    selected: list[dict[str, Any]] = []
+    seen_repo_ids: set[int] = set()
+    seen_repo_names: set[str] = set()
+
+    for row in ordered:
+        repo_id = int(row["repo_id"])
+        repo_name = str(row["repo_name"])
+        repo_name_key = repo_name.casefold()
+        if repo_id in seen_repo_ids or repo_name_key in seen_repo_names:
+            continue
+        selected.append(
+            {
+                "repo_id": repo_id,
+                "repo_name": repo_name,
+                "activity_count": int(row["activity_count"]),
+                "rank": len(selected) + 1,
+            }
+        )
+        seen_repo_ids.add(repo_id)
+        seen_repo_names.add(repo_name_key)
+        if len(selected) == limit:
+            break
+
+    return selected
+
+
 def run(arguments: argparse.Namespace) -> dict[str, Any]:
     from pyspark.sql import SparkSession
     from pyspark.sql import functions as F
@@ -141,18 +184,41 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                 rank: f"phase_top_{arguments.phase_top_n}"
                 for rank in range(1, arguments.phase_top_n + 1)
             }
-            rows = (
+            initial_rows = (
                 activity.where(F.col("rank") <= F.lit(arguments.phase_top_n))
                 .select("repo_id", "repo_name", "activity_count", "rank")
                 .orderBy("rank")
                 .collect()
             )
-            actual_ranks = [int(row["rank"]) for row in rows]
+            actual_ranks = [int(row["rank"]) for row in initial_rows]
             expected_ranks = list(range(1, arguments.phase_top_n + 1))
             if actual_ranks != expected_ranks:
                 raise RuntimeError(
                     "Top-N candidates must contain each contiguous rank exactly once"
                 )
+            raw_rows = [row.asDict() for row in initial_rows]
+            selected_rows = deduplicate_top_n_rows(
+                raw_rows, arguments.phase_top_n
+            )
+            last_source_rank = arguments.phase_top_n
+            while len(selected_rows) < arguments.phase_top_n:
+                backfill_rows = (
+                    activity.where(F.col("rank") > F.lit(last_source_rank))
+                    .select("repo_id", "repo_name", "activity_count", "rank")
+                    .orderBy("rank")
+                    .limit(arguments.phase_top_n)
+                    .collect()
+                )
+                if not backfill_rows:
+                    raise RuntimeError(
+                        "Top-N candidates could not be backfilled to the requested limit"
+                    )
+                raw_rows.extend(row.asDict() for row in backfill_rows)
+                last_source_rank = max(int(row["rank"]) for row in backfill_rows)
+                selected_rows = deduplicate_top_n_rows(
+                    raw_rows, arguments.phase_top_n
+                )
+            rows = selected_rows
         else:
             targets = stratified_target_ranks(arguments.sample_size)
             target_to_stratum = {rank: stratum for stratum, rank in targets}
