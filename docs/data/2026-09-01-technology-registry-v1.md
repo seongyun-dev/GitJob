@@ -147,3 +147,39 @@ python -m pytest tests/test_registry_contracts.py tests/test_registry_seed.py -q
 python -m ruff check registry tests/test_registry_contracts.py tests/test_registry_seed.py
 python -m ruff format --check registry tests/test_registry_contracts.py tests/test_registry_seed.py
 ```
+
+## 10. C측 Review 구현과 B측 통합 경계
+
+> 기준일: 2026-09-07 / Jira: `S15P21E102-88`
+>
+> 상태: C측 로컬 동작 구현·검증, B측 관리자 API·운영 DB 통합 미완료
+
+`AI/registry/review.py`의 `ReviewStore`는 `job-technology-classification/v1`의
+`UNKNOWN`·`AMBIGUOUS` mapping을 `registry-review-queue/v1` JSON snapshot에 저장한다.
+`ingest`의 안정적인 `review_id`는 동일 snapshot의 재입력을 중복 저장하지 않으며,
+`query`는 `PENDING`·`RESOLVED`별 조회를 제공한다. 요구유형 충돌만 있는
+`MATCHED / REVIEW_REQUIRED`는 이 Registry 미해결 큐의 대상이 아니다.
+
+수동 결정은 ACTIVE `tech_id`, 검증된 Registry Mapper, 비어 있지 않은 reviewer와
+note를 요구한다. 자동·수동 결정마다 Registry 버전, 시각, 후보·사유를 남기며,
+자동 결정에는 순서 있는 source별 mapping 시도도 보존한다. `reprocess_pending`는
+저장된 mapping 순서와 문맥으로 다시 판정하여 성공한 항목만 RESOLVED로 바꾸고
+나머지는 PENDING으로 유지한다. source ID·URL·surface, mention index, 원문 근거와
+문맥은 조회할 수 있다.
+
+검증 근거는 `AI/tests/test_registry_review.py`의 저장·재로딩, 재입력 멱등성,
+서로 다른 source surface 보존, 수동 판정 검증, 신규 Registry 재처리 테스트다.
+이는 단일 writer의 로컬 파일 동작에 대한 증거이며 운영 DB 트랜잭션,
+다중 worker 동시성, 관리자 인증·인가 또는 배포 완료를 뜻하지 않는다.
+
+다음 B측 통합에서 확정할 최소 항목:
+
+| 경계 | 필요한 합의 |
+|---|---|
+| 조회·저장 | review ID, 상태, source·근거·후보, 모든 attempt 이력을 손실 없이 보존; 원본 batch의 snapshot/run/parser 버전을 ingestion envelope로 함께 연결 |
+| 수동 판정 | review ID, ACTIVE tech ID, Registry version, 인증된 actor, note; 중복 요청 key와 충돌 시 반환 규칙 |
+| Registry 공급 | B측이 승인된 immutable snapshot을 제공하고 C측이 구조·ACTIVE 참조를 검증; 승인·발행 자체는 `S15P21E102-143` 경계 |
+| 재처리 | 대상 pending 집합, Registry version, 실행 ID와 성공·미해결·실패 결과; 동시 갱신 및 재시작 규칙 |
+
+위 표는 다음 통합에 필요한 협의 항목이다. API URL, DB schema, 이벤트 또는
+운영 replay 구현을 이 문서에서 확정하거나 완료로 간주하지 않는다.

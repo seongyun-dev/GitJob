@@ -3,9 +3,13 @@
 This directory contains the Python 3.12 runtime boundaries for GitJob's
 collector and analysis worker. Both processes currently expose only a
 liveness endpoint. The A-to-C job-analysis input contract is also available
-as a library boundary. Technology Registry matching, requirement
-classification, demand aggregation, GitHub trend, Stack Overflow, and LLM
-behavior belong to their own follow-up issues.
+as a library boundary. C-team Registry matching, job requirement
+classification, and the local review/reprocessing boundary are implemented;
+demand aggregation, GitHub trend, Stack Overflow, and LLM behavior remain
+separate follow-up issues.
+
+Implementation history, verification, and remaining integration work are in
+[the C-team implementation report](../docs/ai/2026-09-07-registry-job-review-implementation.md).
 
 ## Package boundaries
 
@@ -148,6 +152,69 @@ locations, real `schema_version`/collector version production values,
 owns contract validation, semantic duplicate adjudication, Registry matching,
 requirement classification, and downstream facts. No online source client is
 part of the contract boundary described above.
+
+## Registry Mapper and job requirement classification
+
+Issue `S15P21E102-81` is implemented in `registry/mapper.py`. Callers provide
+an exact source type, raw value, optional package/import ecosystem, and context.
+The result is `MATCHED`, `AMBIGUOUS`, or `UNKNOWN` and always includes ordered
+candidate IDs, structured match evidence, and the Registry version used.
+Display-name matching for the short names C, R, and Go remains ambiguous unless
+the context contains an adjacent, explicit programming-language signal.
+
+Issue `S15P21E102-82` is implemented in `job/classifier.py`. It consumes the
+unchanged `JobAnalysisInputBatch` and produces the separate
+`job-technology-classification/v1` model. Each source mention produces one
+classification result, so repeated evidence is not collapsed. Results retain
+the original evidence text, section, source surface, character location, and
+mapping context. Each output record also preserves the canonical/source job
+identity, source URL, job/category/company/region dimensions, posting state and
+dates, collection time, and source content hash required by a later demand
+aggregation job. Registry and `job-requirement-rules/v1` parser versions remain
+explicit. Conflicting section and input requirement signals, plus unresolved
+Registry matches, become `REVIEW_REQUIRED` instead of being guessed.
+
+C also scans the original body through the evidence offset for complete
+required/preferred/general headings, without a fixed preceding-line window.
+`parsed_section` preserves this observation separately from A's
+`evidence_section`; explicit A section labels remain authoritative, while a
+missing/generic label can use the parsed boundary. A requirement that conflicts
+with the corresponding general section requires review. Different technologies
+sharing one evidence sentence share its location.
+
+The unchanged V1 collector limits preceding-section searches and collapses
+mentions by technology/requirement/surface. C preserves every delivered mention,
+but cannot restore evidence already discarded upstream. Synthetic tests invoke
+the actual collector extractor, validate the A-to-C contract, and run C mapping
+and classification. On 2026-09-07, a bounded live probe (August date range,
+one list page, three rows, existing delays, one attempt, OCR disabled) returned
+no in-range records. This does not establish real-posting end-to-end validation;
+the sample and manifest stay outside the repository.
+
+Run the focused suites from `AI/` with `AI` on `PYTHONPATH`:
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+& $python -m pytest tests/test_registry_mapper.py tests/test_job_classifier.py -q
+Remove-Item Env:PYTHONPATH
+```
+
+## C-side Registry review and reprocessing
+
+Issue `S15P21E102-88`'s C-side boundary is implemented in
+`registry/review.py`. `ReviewStore` writes an atomic, caller-path JSON snapshot,
+supports status queries, records automatic and manual attempts separately, and
+reprocesses pending records with a caller-supplied newer `RegistryMapper`.
+Stable review IDs make repeated ingestion idempotent. Source record IDs, source
+site/URL/surface, full mapping context, candidates, reasons, evidence, decision
+actor/note, and version history remain queryable.
+
+This local file store is executable verification of C-team behavior, not the
+B-team administrator API or operating database. B-team integration must supply
+the approved Registry snapshot and explicit review decision while preserving
+the same provenance and attempt-history semantics.
+The completed C boundary and the pending integration agreement are documented
+in [the Registry contract](../docs/data/2026-09-01-technology-registry-v1.md#10-c측-review-구현과-b측-통합-경계).
 
 ## Temporary JobKorea backend crawler
 
