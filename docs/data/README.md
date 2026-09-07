@@ -871,6 +871,17 @@ C조 범위다.
 - 책임 경계: A조 Snapshot 생성까지이며 Technology Registry/Evidence 의미 분석 제외
 - 상세: [S15P21E102-114 Repo Snapshot 부트스트랩 배치](2026-09-04-repo-snapshot-bootstrap-batch.md)
 
+## Repo Snapshot Production Canary
+
+- Jira: S15P21E102-163
+- 대상: `pallets/flask` (`repo_id=596892`) 1건, Production image 기준
+- 결과: `collection_status=COMPLETE`, `github-repo-snapshot/v1`, Artifact 5개, 실패 0
+- 요청량: Repo Core 3 / raw 5, control Core 1 (S15P21E102-114 canary 실측과 동일)
+- HDFS: `snapshot_id=s15p21e102-163-canary-20260907` publish 후 read-back 5/5, SHA-256 5/5 일치
+- 재실행: 동일 checkpoint에서 terminal 결과 재사용, `attempts=1` 유지, 추가 fetch 0건
+- 판정: Top 20,000 Bootstrap 진행 blocker 없음 (표본은 공개 Repo 1건)
+- 상세: [S15P21E102-163 Repo Snapshot Production Canary 검증](2026-09-07-repo-snapshot-production-canary.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
