@@ -135,6 +135,65 @@ remote_exec() {
   ssh "${ssh_options[@]}" "$user@$host" "$command"
 }
 
+# Compose treats ${VAR:?...} as mandatory and interpolates the whole file
+# before profile filtering, so a variable used by any service breaks validation
+# on every host regardless of the profiles selected. Collect those names from
+# the compose files this deployment will actually use, taken from the Jenkins
+# workspace at the commit being deployed.
+required_compose_vars() {
+  local override_file="$1"
+  grep -hv '^[[:space:]]*#' \
+    "$REPO_ROOT/Infra/compose/compose.yaml" \
+    "$REPO_ROOT/Infra/compose/$override_file" \
+    | grep -ohE '\$\{[A-Za-z_][A-Za-z0-9_]*:\?' \
+    | sed -E 's/^\$\{//; s/:\?$//' \
+    | sort -u
+}
+
+# Verify a host's remote env file before anything is pulled or started. Without
+# this, the first `compose config` failure lands after refresh_checkout has
+# already moved the checkout forward, leaving the host on a new commit while its
+# containers still run the previous build.
+preflight_remote_env() {
+  local host="$1"
+  local user="$2"
+  local deploy_path="$3"
+  local env_file_name="$4"
+  local override_file="$5"
+  local -a required=()
+  local key
+  local keys_arg=""
+  local quoted_env
+
+  mapfile -t required < <(required_compose_vars "$override_file")
+  if [[ ${#required[@]} -eq 0 ]]; then
+    die "no required Compose variables found; expected at least one in $override_file"
+  fi
+  for key in "${required[@]}"; do
+    keys_arg+=" $(quote_for_remote "$key")"
+  done
+  quoted_env="$(quote_for_remote "$deploy_path/$env_file_name")"
+
+  echo "Preflight: ${#required[@]} required keys in ${user}@${host}:${env_file_name}..."
+  remote_exec "$host" "$user" \
+    "set -Eeuo pipefail
+     env_path=${quoted_env}
+     test -f \"\$env_path\" || {
+       echo \"remote env file is missing: \$env_path\" >&2
+       exit 1
+     }
+     missing=
+     for key in${keys_arg}; do
+       grep -qE \"^[[:space:]]*\${key}[[:space:]]*=[[:space:]]*[^[:space:]]\" \"\$env_path\" \
+         || missing=\"\$missing \$key\"
+     done
+     if [ -n \"\$missing\" ]; then
+       echo \"remote env file \$env_path is missing required keys:\$missing\" >&2
+       exit 1
+     fi
+     echo 'Preflight OK'"
+}
+
 refresh_checkout() {
   local host="$1"
   local user="$2"
@@ -272,6 +331,16 @@ start_data_app() {
      ${compose_environment}${compose} --profile data up -d --no-build
      ENV_FILE=$(quote_for_remote "$data_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2-data.yaml) PROFILES=data HEALTHCHECK_TIMEOUT_SECONDS=300 bash Infra/scripts/healthcheck.sh"
 }
+
+# Both hosts are checked before either is modified, so one run reports every
+# missing key instead of stopping at the first host.
+preflight_failures=0
+preflight_remote_env "$service_host" "$service_user" "$service_path" \
+  "$service_env_file" compose.ec2.yaml || preflight_failures=$((preflight_failures + 1))
+preflight_remote_env "$data_host" "$data_user" "$data_path" \
+  "$data_env_file" compose.ec2-data.yaml || preflight_failures=$((preflight_failures + 1))
+[[ "$preflight_failures" -eq 0 ]] \
+  || die "preflight failed on $preflight_failures host(s); no host was modified"
 
 refresh_checkout "$service_host" "$service_user" "$service_path" "$deploy_ref"
 start_service_core

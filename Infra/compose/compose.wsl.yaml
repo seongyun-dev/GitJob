@@ -5,6 +5,15 @@ services:
   postgres:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    # Nothing applies db/init.sql on its own, so a fresh database comes up empty
+    # and JPA_DDL_AUTO=validate fails the context-load test. Seed it here rather
+    # than relaxing validate, which would drop that check from CI entirely.
+    # This override is only loaded by CI and WSL; the EC2 hosts use
+    # compose.ec2.yaml, so their databases are untouched. The entrypoint runs
+    # this once per empty data directory, which is every CI build and never an
+    # existing local volume. Remove once Flyway owns the schema.
+    volumes:
+      - ./BE/src/main/resources/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
 
   redis:
     ports:

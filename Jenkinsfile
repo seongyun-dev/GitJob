@@ -47,6 +47,11 @@ pipeline {
             steps {
                 sh '''#!/usr/bin/env bash
                     set -Eeuo pipefail
+                    # Report every missing mandatory variable up front. Compose
+                    # stops at the first one and phrases it as an interpolation
+                    # error, which hides that the env file is what needs fixing.
+                    bash Infra/scripts/check-required-env.sh .env.ci \\
+                      Infra/compose/compose.yaml Infra/compose/compose.wsl.yaml
                     docker compose --project-directory . --project-name "${COMPOSE_PROJECT_NAME}" --env-file .env.ci ${COMPOSE_FILES} \\
                       --profile core --profile app config --quiet
                 '''
@@ -96,17 +101,23 @@ pipeline {
                     db_name="$(env_value POSTGRES_DB)"
                     db_user="$(env_value POSTGRES_USER)"
                     db_password="$(env_value POSTGRES_PASSWORD)"
+                    aes_symmetric_key="$(env_value AES_SYMMETRIC_KEY)"
+                    aes_salt="$(env_value AES_SALT)"
                     test -n "$db_host" && test -n "$db_port" && test -n "$db_name" \\
-                      && test -n "$db_user" && test -n "$db_password"
+                      && test -n "$db_user" && test -n "$db_password" \\
+                      && test -n "$aes_symmetric_key" && test -n "$aes_salt"
 
                     # .env.ci is a Compose input file; copying it does not export
-                    # its values to the Gradle process. Pass only the Spring
-                    # datasource settings needed by the context-load test.
+                    # its values to the Gradle process. Pass the datasource
+                    # settings plus the AES pair, which application.yaml requires
+                    # with no fallback, so the context-load test can start.
                     (
                         export SPRING_PROFILES_ACTIVE=docker
                         export SPRING_DATASOURCE_URL="jdbc:postgresql://${db_host}:${db_port}/${db_name}"
                         export SPRING_DATASOURCE_USERNAME="$db_user"
                         export SPRING_DATASOURCE_PASSWORD="$db_password"
+                        export AES_SYMMETRIC_KEY="$aes_symmetric_key"
+                        export AES_SALT="$aes_salt"
                         cd BE
                         test -x ./gradlew
                         ./gradlew --no-daemon test
