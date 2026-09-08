@@ -1,111 +1,34 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@import "tailwindcss";
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+/*
+ * 톤 토큰 5종. 와이어프레임 1-2의 톤 어휘를 그대로 옮긴 것이며,
+ * 컴포넌트는 raw 색상을 쓰지 않고 이 토큰만 사용한다.
+ * 톤을 다섯 개 밖으로 늘리지 않는다.
+ *
+ *   뉴트럴  L0 없음 · L1 노출 · 팀 저장소 미확인 · QUEUED · CANCELED
+ *   액센트  L2 구현 · RUNNING · 히어로 숫자
+ *   주의    공동 작업 · 일부 수정 · RATE_LIMITED
+ *   성공    L3 운영 · SUCCEEDED
+ *   위험    FAILED
+ */
+@theme {
+  --color-tone-neutral: oklch(0.55 0.01 260);
+  --color-tone-neutral-bg: oklch(0.96 0.005 260);
+  --color-tone-accent: oklch(0.55 0.16 255);
+  --color-tone-accent-bg: oklch(0.95 0.03 255);
+  --color-tone-caution: oklch(0.62 0.13 75);
+  --color-tone-caution-bg: oklch(0.96 0.04 75);
+  --color-tone-success: oklch(0.58 0.13 155);
+  --color-tone-success-bg: oklch(0.95 0.04 155);
+  --color-tone-danger: oklch(0.55 0.19 25);
+  --color-tone-danger-bg: oklch(0.96 0.03 25);
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  /* 근거 행의 고정폭 대비는 이 제품의 시각적 시그니처다. 임의로 낮추지 않는다. */
+  --font-evidence: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-body {
-  margin: 0;
-}
-
+html,
+body,
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  height: 100%;
 }
