@@ -34,7 +34,7 @@ from registry.mapper import (
 )
 
 JOB_CLASSIFICATION_SCHEMA_VERSION = "job-technology-classification/v1"
-JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v2"
+JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v5"
 _ISO_8601_DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]")
 
 
@@ -143,6 +143,9 @@ _REQUIRED_SECTION_MARKERS = (
 _RESPONSIBILITY_HEADINGS = frozenset(
     {"담당업무", "주요업무", "업무내용", "responsibilities"}
 )
+_TERMINATING_SECTION_HEADINGS = frozenset(
+    {"회사소개", "기업소개", "company", "aboutus"}
+)
 
 _SECTION_HEADINGS = {
     "자격요건": RequirementClass.REQUIRED,
@@ -156,6 +159,7 @@ _SECTION_HEADINGS = {
     "우대": RequirementClass.PREFERRED,
     "우대사항": RequirementClass.PREFERRED,
     "우대조건": RequirementClass.PREFERRED,
+    "우대자격요건": RequirementClass.PREFERRED,
     "preferred": RequirementClass.PREFERRED,
     "nicetohave": RequirementClass.PREFERRED,
     **dict.fromkeys(_RESPONSIBILITY_HEADINGS, RequirementClass.REQUIRED),
@@ -167,9 +171,21 @@ _SECTION_HEADINGS = {
     "benefits": RequirementClass.SKILL,
 }
 
+_REQUIREMENT_NEGATION = re.compile(
+    r"필수(?:\s*(?:가|는|은))?\s*아(?:니|닌|닙|님|닐)\w*",
+    re.IGNORECASE,
+)
+_TECHNOLOGY_MINIMUM_COUNT = re.compile(
+    r"(?:(?<!\d)(?:[2-9]|[1-9]\d+)\s*(?:개|가지)|(?:두|둘|세|셋|네|넷)\s*(?:개|가지))\s*이상"
+)
+
 
 def _heading_key(value: str) -> str:
-    return "".join(value.casefold().split()).strip("[]()#*•-:：")
+    label = value.casefold().strip().strip("[]()#*•-:：")
+    # These decorations occur on the saved public job pages. Remove only
+    # leading list markers; the remaining label must still be an exact heading.
+    label = re.sub(r"^(?:(?:[0-9]{1,2}[.)]|[📋🏠🎁🚀])\s*)+", "", label)
+    return "".join(label.split()).strip("[]()#*•-:：")
 
 
 def _parse_section(text: str | None, location: ClassificationLocation) -> str | None:
@@ -187,7 +203,9 @@ def _parse_section(text: str | None, location: ClassificationLocation) -> str | 
         # Only complete headings or a heading followed by a colon establish
         # a boundary; a requirement word inside prose must not become one.
         label = re.split(r"[:：]", line.strip(), maxsplit=1)[0].strip()
-        if _heading_key(label) in _SECTION_HEADINGS:
+        if _heading_key(label) in (
+            set(_SECTION_HEADINGS) | _TERMINATING_SECTION_HEADINGS
+        ):
             current_section = label
         offset += len(line)
     return current_section
@@ -224,6 +242,18 @@ def _classify_requirement(
             RequirementClass.REVIEW_REQUIRED,
             "Registry mapping requires review",
         )
+    parsed_section_key = _heading_key(parsed_section or "")
+    if parsed_section_key in _TERMINATING_SECTION_HEADINGS:
+        # A located company section outranks carried source requirement labels.
+        # The original A fields remain in TechnologyClassification provenance.
+        return RequirementClass.SKILL, "company introduction is not a requirement"
+    if _REQUIREMENT_NEGATION.search(mention.evidence_text):
+        return RequirementClass.REVIEW_REQUIRED, "requirement negation requires review"
+    if _TECHNOLOGY_MINIMUM_COUNT.search(mention.evidence_text):
+        return (
+            RequirementClass.REVIEW_REQUIRED,
+            "technology count requirement requires review",
+        )
 
     # Located body headings take precedence for the agreed duties policy.
     # A source label is a fallback only when no body heading was located.
@@ -242,7 +272,7 @@ def _classify_requirement(
         section_requirement is None
         or _heading_key(mention.evidence_section or "") == _heading_key(parsed_section)
     ):
-        section_requirement = _SECTION_HEADINGS[_heading_key(parsed_section)]
+        section_requirement = _SECTION_HEADINGS.get(parsed_section_key)
     input_requirement = {
         RequirementType.REQUIRED: RequirementClass.REQUIRED,
         RequirementType.PREFERRED: RequirementClass.PREFERRED,

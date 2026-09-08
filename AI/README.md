@@ -1,15 +1,37 @@
 # GitJob AI
 
 This directory contains the Python 3.12 runtime boundaries for GitJob's
-collector and analysis worker. Both processes currently expose only a
-liveness endpoint. The A-to-C job-analysis input contract is also available
-as a library boundary. C-team Registry matching, job requirement
-classification, and the local review/reprocessing boundary are implemented;
-demand aggregation, GitHub trend, Stack Overflow, and LLM behavior remain
-separate follow-up issues.
+collector and analysis worker. The collector exposes a liveness endpoint;
+the worker also implements authenticated C computation and snapshot queries.
+Registry matching, job quality/classification/demand, Evidence consumption,
+Gap/recommendation/What-if, fact-grounded explanations, public GitHub artifact
+observations, and separate JOB/GITHUB trends are implemented locally.
+Stack Overflow and project recommendations are outside the current MVP.
+Private repository Evidence attribution remains the B-team boundary.
 
-Implementation history, verification, and remaining integration work are in
-[the C-team implementation report](../docs/ai/2026-09-07-registry-job-review-implementation.md).
+Start with the Korean [C-team implementation guide](../docs/ai/README.md)
+for the feature map, ownership, Evidence decisions, and integration order.
+[Verification and remaining acceptance](../docs/ai/c-mvp-verification.md)
+separates synthetic tests, actual public-data reads, and service integration.
+
+Detailed implementation and integration contracts:
+
+- [Job cohort and demand](../docs/ai/c-job-demand.md)
+- [Evidence consumption](../docs/ai/c-recommendation.md) and
+  [recommendation/What-if](../docs/ai/c-recommendation-engine.md)
+- [Fact-grounded explanation](../docs/ai/c-recommendation-explanation.md)
+- [Public GitHub observations](../docs/ai/c-public-analysis.md),
+  [partition/resume pipeline](../docs/ai/c-public-pipeline.md), and
+  [source-specific trends](../docs/ai/c-public-trend.md)
+- [C API, PostgreSQL migration and runtime](../docs/ai/c-compute-runtime.md)
+- [Completion-event client and CLI](../docs/ai/c-compute-client.md)
+
+Local execution does not establish production deployment or B/FE integration.
+The worker requires an explicit database migration and a service token before
+computation is ready; `/health` alone remains only a liveness check.
+
+The [September 7 Registry/classification report](../docs/ai/2026-09-07-registry-job-review-implementation.md)
+is historical and does not describe the full current C implementation.
 
 ## Package boundaries
 
@@ -20,7 +42,9 @@ AI/
 ├── common/          # shared process infrastructure
 ├── registry/        # Technology Registry analysis
 ├── job/             # job-posting analysis
-├── stackoverflow/   # Stack Overflow analysis
+├── recommendation/  # Evidence consumption, Gap, What-if and explanation
+├── trend/           # separate JOB and GITHUB metrics
+├── stackoverflow/   # historical boundary; excluded from current MVP
 ├── github/          # GitHub 수집 경계와 A→C Repo Snapshot 계약
 ├── JobKorea_Collector_V1/  # 임시 JobKorea 백엔드 채용공고 수집기
 ├── llm/             # Fact-grounded LLM behavior
@@ -37,8 +61,9 @@ exception for this short-lived collection task.
 ## Windows and PowerShell setup
 
 Run these commands from `AI/` with Python 3.12 available as `py -3.12`.
-The virtual environment is created at the repository root so the existing
-Dockerfile's `COPY AI/ ./` does not include it:
+The example creates a virtual environment at the repository root. Reuse an
+existing project environment (including `AI/.venv`) when already configured;
+adjust `$python` accordingly. `.dockerignore` excludes both locations:
 
 ```powershell
 py -3.12 -m venv ..\.venv
@@ -60,10 +85,16 @@ For a runtime-only environment, install `requirements.txt` instead.
 
 ```powershell
 $python = "..\.venv\Scripts\python.exe"
+$env:PYTHONPATH = (Get-Location).Path + ";" + (Resolve-Path ..\Infra\spark).Path
 & $python -m pytest
 & $python -m ruff check .
 & $python -m ruff format --check .
 ```
+
+Database integration tests require an explicitly selected, isolated PostgreSQL
+database in `C_COMPUTE_TEST_DATABASE_URL`; without it those tests skip. Do not
+point tests at an operating database. The [verification guide](../docs/ai/c-mvp-verification.md)
+records the full-run conditions and pre-existing lint failures.
 
 ## A-to-C job-analysis input contract
 
@@ -146,12 +177,14 @@ Run only the contract suite with:
 & $python -m pytest tests/test_job_contracts.py -q
 ```
 
-A-team handoff still needs confirmation of actual Parquet/JSON types and
-locations, real `schema_version`/collector version production values,
-`raw_artifact_uri` availability, and revision/closed-posting policy. C-team
-owns contract validation, semantic duplicate adjudication, Registry matching,
-requirement classification, and downstream facts. No online source client is
-part of the contract boundary described above.
+The v1 input contract is established; it is not waiting for a new schema design.
+Current [completed-input intake](../docs/ai/c-compute-runtime.md) validates actual
+writer manifests and JSON batches, while [input union and demand](../docs/ai/c-job-demand.md)
+define how later closed/changed observations affect the C cohort. Operating input
+mounts, sufficient valid postings, and original posting-date quality remain
+acceptance work. C owns validation, semantic duplicate adjudication, Registry
+matching, classification, and downstream facts. No online source client is part
+of the contract boundary described above.
 
 ## Registry Mapper and job requirement classification
 
@@ -170,8 +203,10 @@ the original evidence text, section, source surface, character location, and
 mapping context. Each output record also preserves the canonical/source job
 identity, source URL, job/category/company/region dimensions, posting state and
 dates, collection time, and source content hash required by a later demand
-aggregation job. Registry and `job-requirement-rules/v2` parser versions remain
-explicit. Under the agreed v2 policy, responsibilities (`담당업무`, `주요업무`,
+aggregation job. Registry and `job-requirement-rules/v4` parser versions remain
+explicit. Version v4 retains the v2/v3 responsibilities and `우대 자격 요건`
+policies and recognizes decorated/numbered headings such as `📋 주요업무`,
+`2. 자격요건`, and `3. 우대사항`. Responsibilities (`담당업무`, `주요업무`,
 `업무내용`, `responsibilities`) count as `REQUIRED`, including when the collector
 carried `PREFERRED` from an earlier section. The original input type and label
 remain unchanged in the output alongside the parsed section and correction reason.
@@ -337,9 +372,11 @@ Invoke-RestMethod http://127.0.0.1:8081/health
 `GET /health` proves only that the HTTP process is alive. It does not claim
 that Kafka, PostgreSQL, HDFS, Spark, or another dependency is ready.
 
-`APP_ENV` and the existing Compose connection variables are preserved for
-follow-up features. The base process does not use them to report false
-readiness.
+`APP_ENV` and the existing Compose connection variables are preserved.
+The worker uses the configured PostgreSQL connection and `C_COMPUTE_TOKEN`;
+authenticated `/ready` checks that the explicit C migration is present.
+Follow the runtime contract above to configure computation. Missing database
+or token configuration does not turn a liveness response into readiness.
 
 ## Docker verification
 

@@ -1,10 +1,16 @@
 # GitJob
 
+> 문서 기준: 2026-09-08 C 로컬 구현 반영. 전체 서비스·운영 배포 인수는 별도입니다.
+
 S15P21E102 특화 프로젝트 저장소입니다.
 
 GitJob은 GitHub 저장소를 분석해 사용자의 기술 사용 근거(Evidence)를 만들고, 목표 직무의 채용 수요와 비교해 Skill Gap과 다음 학습 기술을 제안하는 서비스입니다.
 
 GitJob은 사용자가 접근 권한을 부여한 GitHub public/private 저장소의 개발 활동을 기술별 Evidence로 변환합니다. GitHub 전체 Trend에는 공개 집계 데이터만 사용하며, 사용자의 private 저장소 원문은 시장 Trend에 사용하지 않습니다.
+
+현재 C 작업을 파악하려면 [C조 구현 안내](docs/ai/README.md)부터 읽으세요.
+기능·코드·상세 계약의 위치와 Evidence 판단 이유를 정리했습니다.
+[검증 결과·남은 인수](docs/ai/c-mvp-verification.md), [실행·API·DB 연결](docs/ai/c-compute-runtime.md)도 분리했습니다.
 
 ## 프로젝트 흐름
 
@@ -19,10 +25,10 @@ GitHub 수집 → 기술 Registry 판정 → Evidence Snapshot
     ↓
 기술 Profile → 목표 직무 수요 → Skill Gap·추천
     ↓
-Trend · Pain Topic · FAQ · 근거 기반 RAG Q&A
+What-if · 신규 부합 공고 목록 · Trend · 근거 설명
 ```
 
-분석 실행은 Kafka 기반 비동기 Job으로 처리합니다. 원본·장기 이력은 HDFS/Parquet에 저장하고, 서비스 조회 데이터와 Snapshot은 PostgreSQL에 저장합니다. Redis는 세션·캐시·작업 보조 상태에 사용합니다.
+위는 서비스 목표 흐름입니다. 비동기 수집/분석의 Kafka 연결과 별개로 현재 C 계산은 완료 입력 감시와 내부 HTTP API로 실행합니다. 실제 B 분석·인증 API·FE 연결은 통합 인수가 남아 있습니다. 원본·장기 이력은 HDFS/Parquet, 서비스 조회 결과와 Snapshot은 PostgreSQL에 저장하는 경계입니다.
 
 ## 주요 기능
 
@@ -32,13 +38,16 @@ Trend · Pain Topic · FAQ · 근거 기반 RAG Q&A
 - 기술별 Repository Level / Personal Level 및 Evidence 조회
 - 파일 경로·라인·Commit permalink·판정 규칙 기반의 근거 제공
 - 목표 직무별 채용공고 기술 수요와 Skill Gap 분석
-- 다음 학습 기술 후보, 선행관계, 필요한 Evidence 규칙 추천
-- GitHub 활동·채용·Stack Overflow 출처별 Trend 비교
-- Stack Overflow 반복 문제·FAQ·인용 가능한 기술 Q&A를 제공
+- 다음 학습 기술 후보·선행관계·What-if와 신규 부합 공고 목록
+- GitHub·채용의 출처별 Trend 및 근거 기반 설명
+
+이 목록은 서비스 기능 범위이며 전부 운영 완료라는 뜻은 아닙니다. Stack Overflow/Pain/FAQ/RAG와 프로젝트 추천은 현재 C MVP 범위에서 제외합니다.
 
 기술 레벨은 숙련도나 채용 가능성의 확률이 아니라, 등록된 Evidence 규칙에 의해 판정된 상태입니다. 서로 다른 출처의 지표를 임의의 종합 점수로 합치지 않습니다.
 
 ## 시스템 구성
+
+아래는 기존 시스템 목표 구성입니다. 이번 C 문서 갱신에서 ALB/HA 등 운영 구성을 재검증한 것은 아닙니다.
 
 ```text
                          Browser
@@ -63,7 +72,7 @@ Trend · Pain Topic · FAQ · 근거 기반 RAG Q&A
                          └──────► HDFS/Parquet ◄── Spark/Hadoop
 ```
 
-운영에서는 EC2를 무상태 app 노드로 사용하고, 2대 구성 시 AWS ALB가 Nginx 앞단에서 트래픽을 분산합니다. PostgreSQL·Redis·Kafka 같은 상태 저장 계층은 양쪽 EC2의 local volume을 공유하지 않고 별도 HA endpoint를 사용합니다.
+기존 HA 설계는 EC2 app 노드 앞에 ALB를 두고 상태 저장 계층에 별도 endpoint를 사용하는 목표안입니다. 이 그림을 현재 두 서버의 역할이나 실제 HA 구축 완료 증거로 사용하지 않습니다. 현재 운영 구성은 [Infra 문서](docs/infra/README.md)의 해당 배포 기록으로 확인해야 합니다.
 
 ## 기술 스택
 
@@ -83,14 +92,14 @@ Trend · Pain Topic · FAQ · 근거 기반 RAG Q&A
 .
 ├── BE/                 # Spring Boot Backend
 ├── FE/                 # React Frontend
-├── AI/                 # Collector·Worker·AI/RAG 처리
+├── AI/                 # Collector·Worker·Registry·수요·추천·공개 분석
 ├── Infra/              # Compose·Dockerfile·Nginx·Jenkins·운영 스크립트
 ├── docs/               # 요구사항·아키텍처·파트별 설계·운영 문서
 ├── Jenkinsfile         # CI/CD pipeline
 └── README.md
 ```
 
-현재 `BE/`, `FE/`, `AI/`에는 애플리케이션 소스가 아직 들어오지 않았습니다. 따라서 인프라 구성은 실행 골격과 연결 계약을 기준으로 하고, 실제 앱 통합 상태는 각 문서의 현재 상태 항목에 따로 기록합니다.
+현재 `BE/`에는 Spring Boot·공통 응답·DB schema, `FE/`에는 Vite/React 소스가 있습니다. `AI/`의 C 계산·저장·내부 API 구현과 검증 범위는 [C 안내](docs/ai/README.md)를 따릅니다. 파일 존재나 로컬 테스트 통과를 전체 앱 통합 완료로 해석하지 않습니다.
 
 ## 로컬 실행
 
@@ -132,7 +141,7 @@ PROFILES=core,app,data ./Infra/scripts/up.sh
 PROFILES=core,app,data,ci,observability ./Infra/scripts/up.sh
 ```
 
-현재 애플리케이션 소스가 없는 상태에서는 `core` 프로파일을 먼저 사용합니다. 전체 프로파일의 Compose 설정 병합만 확인하려면 다음 명령을 실행합니다.
+인프라만 확인할 때는 `core` 프로파일을 사용합니다. 전체 프로파일의 Compose 설정 병합만 확인하려면 다음 명령을 실행합니다. C 계산 준비에는 별도 migration·token·입력 mount가 필요합니다.
 
 ```bash
 docker compose --env-file .env.wsl --project-directory . \
@@ -177,7 +186,8 @@ docker compose --env-file .env.wsl --project-directory . \
 | [제품·요구사항](docs/product/README.md) | MVP·정책·범위·미결정 사항 |
 | [Backend](docs/be/README.md) | 도메인·분석 Job·API·보안 |
 | [Frontend](docs/fe/README.md) | 화면 흐름·상태·통신·UX |
-| [AI](docs/ai/README.md) | Fact 기반 설명·RAG·AI 안전장치 |
+| [C 구현 안내](docs/ai/README.md) | 기능·코드 지도, Evidence 판단·수요·추천·자동 실행 |
+| [C 검증·인수](docs/ai/c-mvp-verification.md) | 기준 커밋별 검증 결과, 재현 방법, 실제 서비스 잔여 |
 | [Data](docs/data/README.md) | 수집·Kafka·Parquet·Registry·품질 |
 | [Infrastructure](docs/infra/README.md) | Compose·배포·HA·운영 |
 | [QA](docs/qa/README.md) | 기능·통합·성능·복원력 검증 |
@@ -185,14 +195,18 @@ docker compose --env-file .env.wsl --project-directory . \
 
 ## 현재 상태
 
+9/8 C 구현은 공고·Evidence 소비·추천·공개 분석·Trend·자동 계산/API/DB의 로컬 구현 및 검증까지입니다. 실제 사용자 서비스 인수는 남아 있으며 상세 수치와 조건은 [C 검증 기록](docs/ai/c-mvp-verification.md)을 따릅니다.
+
+아래 인프라 항목은 기존 준비도 기록의 요약입니다. 이번 C 문서 갱신에서 운영 서버를 재점검한 결과가 아닙니다.
+
 - PostgreSQL·Redis·Kafka core Compose 설정과 healthcheck 구성
-- 현재 환경에서 core 컨테이너 healthcheck와 Kafka 송수신 smoke test 확인
+- 기존 준비도 검증 당시 core 컨테이너 healthcheck와 Kafka 송수신 smoke test 확인
 - PostgreSQL backup/restore와 Kafka replay 스크립트 파일 제공
 - Backend·Frontend·Worker Dockerfile 및 Nginx reverse proxy 골격 구성
 - HDFS/Spark는 최소 Parquet smoke까지 검증했으며, Jenkins·Collector/Worker 전체 흐름과 2대 EC2 HA는 실행 계약·전환 문서 수준
-- 실제 Backend·Frontend·AI 소스, 외부 credential, AWS 리소스 연결은 미완료
+- Backend·Frontend 소스는 존재하지만 C 결과와 실제 인증/화면/운영 배포 연결은 별도 인수
 
-재시작 영속성·backup/restore의 상세 통과 결과는 [인프라 준비도 문서](docs/infra/2026-08-27-infra-readiness.md)에 별도로 기록되어 있다. 이 README의 현재 상태는 이번 문서 작성에서 직접 확인한 범위와 파일 존재 여부를 우선한다.
+기존 재시작 영속성·backup/restore 결과는 [8/27 인프라 준비도 기록](docs/infra/2026-08-27-infra-readiness.md)에 있습니다. 이력과 현재 코드 존재·C 로컬 검증을 구분합니다.
 
 ## 원문 기획 문서
 

@@ -235,6 +235,13 @@ services:
     command: ["python", "-m", "worker"]
     environment:
       APP_ENV: ${APP_ENV:-docker}
+      # C HTTP compute is fail-closed until a shared internal token and the
+      # explicit DB migration are configured. Process /health stays liveness.
+      C_COMPUTE_TOKEN: ${C_COMPUTE_TOKEN:-}
+      C_COMPUTE_LEASE_SECONDS: ${C_COMPUTE_LEASE_SECONDS:-120}
+      C_INTAKE_CONFIG: ${C_INTAKE_CONFIG:-}
+      C_ARTIFACT_ROOT: ${C_ARTIFACT_ROOT:-}
+      C_ARTIFACT_URI_PREFIX: ${C_ARTIFACT_URI_PREFIX:-}
       POSTGRES_HOST: ${DB_HOST:-postgres}
       POSTGRES_PORT: ${DB_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-gitjob}

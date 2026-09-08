@@ -18,6 +18,22 @@ COPY AI/requirements.txt /tmp/requirements.txt
 RUN pip install --requirement /tmp/requirements.txt
 COPY AI/ ./
 
+# Keep the existing /app module layout used by A's collectors. Package only
+# the checked-in files referenced by approved Registry provenance separately.
+COPY AI/common/server.py /opt/gitjob-provenance/AI/common/server.py
+COPY AI/job/contracts.py /opt/gitjob-provenance/AI/job/contracts.py
+COPY AI/job/fixtures/job_analysis_expected_v1.json AI/job/fixtures/job_analysis_input_v1.json /opt/gitjob-provenance/AI/job/fixtures/
+COPY AI/requirements.txt /opt/gitjob-provenance/AI/requirements.txt
+COPY BE/build.gradle /opt/gitjob-provenance/BE/build.gradle
+COPY BE/src/main/java/com/example/git_job/GitJobApplication.java /opt/gitjob-provenance/BE/src/main/java/com/example/git_job/GitJobApplication.java
+COPY FE/package.json /opt/gitjob-provenance/FE/package.json
+COPY FE/src/main.tsx /opt/gitjob-provenance/FE/src/main.tsx
+COPY Infra/compose/compose.yaml /opt/gitjob-provenance/Infra/compose/compose.yaml
+COPY docs/data/2026-09-08-technology-registry-mvp.md /opt/gitjob-provenance/docs/data/2026-09-08-technology-registry-mvp.md
+COPY BE/src/main/resources/db/migrations/001_c_compute.sql /app/migrations/001_c_compute.sql
+ENV C_REGISTRY_REPOSITORY_ROOT=/opt/gitjob-provenance
+RUN python -c "from pathlib import Path; from registry.contracts import load_registry; load_registry(Path('registry/data/technology_registry_20260908_1.json'), repository_root=Path('/opt/gitjob-provenance'))"
+
 EXPOSE 8080
 USER appuser
 CMD ["python", "-m", "worker"]

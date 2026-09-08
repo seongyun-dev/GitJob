@@ -21,6 +21,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -507,10 +508,8 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
     csv_path = run_dir / "postings.csv"
     manifest_path = run_dir / "manifest.json"
 
-    _atomic_write(
-        json_path,
-        result.batch.model_dump_json(by_alias=True, indent=2) + "\n",
-    )
+    batch_text = result.batch.model_dump_json(by_alias=True, indent=2) + "\n"
+    _atomic_write(json_path, batch_text)
 
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=CSV_FIELDS, extrasaction="ignore")
@@ -538,6 +537,9 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
     _atomic_write(csv_path, buffer.getvalue())
 
     manifest = dict(result.manifest)
+    manifest["output_sha256"] = {
+        json_path.name: sha256(batch_text.encode("utf-8")).hexdigest()
+    }
     manifest["outputs"] = {
         "job_analysis_input.json": json_path.name,
         "postings.csv": csv_path.name,
@@ -722,7 +724,9 @@ def main(argv: list[str] | None = None) -> int:
             write_upload_record(paths["manifest"].parent, upload)
             print(f"raw={upload.run_path}")
             for entry in upload.failed:
-                print(f"raw failed: {entry['file']} - {entry['error']}", file=sys.stderr)
+                print(
+                    f"raw failed: {entry['file']} - {entry['error']}", file=sys.stderr
+                )
             if not upload.ok:
                 # The local snapshot is intact; a Raw failure must be visible
                 # to the scheduler without discarding what was collected.

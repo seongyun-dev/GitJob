@@ -335,7 +335,7 @@ def test_duties_override_inherited_preferred_but_preserve_input(
         assert result.evidence_section == "신규 기술 검토"
     assert result.evidence_text == "Docker 기반 서비스 개발"
     assert result.classification_reason == "responsibilities treated as required"
-    assert result.parser_version == "job-requirement-rules/v2"
+    assert result.parser_version == JOB_REQUIREMENT_PARSER_VERSION
 
 
 @pytest.mark.parametrize("input_type", ["MENTIONED", "REQUIRED", "PREFERRED"])
@@ -380,6 +380,82 @@ def test_preferred_subsection_ends_required_duties_policy() -> None:
     assert results["Python"].requirement_class is RequirementClass.PREFERRED
 
 
+def test_company_introduction_terminates_duties_scope_without_losing_evidence():
+    results = classify_collector_body(
+        "담당업무\nJava 서비스 개발\n회사소개:\n"
+        "Python 기반 서비스를 운영하는 회사입니다."
+    )
+    assert results["Java"].requirement_class is RequirementClass.REQUIRED
+    assert results["Java"].parsed_section == "담당업무"
+    assert results["Python"].evidence_section == "회사소개"
+    assert results["Python"].parsed_section == "회사소개"
+    assert results["Python"].requirement_class is RequirementClass.SKILL
+
+
+@pytest.mark.parametrize(
+    "company_text",
+    [
+        "C# 기반 회사입니다.",
+        "C# 제품 2가지 이상을 제공합니다.",
+        "C#이 필수가 아닌 회사입니다.",
+    ],
+)
+def test_located_company_intro_overrides_carried_source_required_metadata(company_text):
+    payload = load_fixture_payload()
+    record = payload["records"][0]
+    record["description_text"] = "담당업무\nC# 서비스 개발\n회사소개:\n" + company_text
+    mention = record["technology_mentions"][0]
+    mention.update(
+        evidence_text=company_text,
+        evidence_section="담당업무",
+        requirement_type="REQUIRED",
+    )
+    record["technology_mentions"] = [mention]
+    classified = classify_job_batch(
+        JobAnalysisInputBatch.model_validate(payload), load_mapper()
+    )
+    result = classified.records[0].technologies[0]
+    assert result.parsed_section == "회사소개"
+    assert result.requirement_class is RequirementClass.SKILL
+    assert result.input_requirement_type == "REQUIRED"
+    assert result.evidence_section == "담당업무"
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "Java 경험은 필수가 아닙니다",
+        "Java 경험은 필수는 아닙니다",
+        "Java 경험이 필수가 아니며 우대합니다",
+    ],
+)
+def test_negated_korean_required_word_requires_review(evidence):
+    result = classify_collector_body(f"자격요건\n{evidence}")["Java"]
+    assert result.requirement_class is RequirementClass.REVIEW_REQUIRED
+    assert result.classification_reason == "requirement negation requires review"
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "Java, Python, Docker 중 2가지 이상",
+        "Java, Python, Docker 중 2개 이상",
+        "Java, Python, Docker 중 두 가지 이상",
+        "Java, Python 중 10가지 이상",
+        "Java, Python 중 20개 이상",
+        "Java, Python 중 12개 이상",
+    ],
+)
+def test_multi_technology_minimum_count_requires_review(evidence):
+    results = classify_collector_body(evidence)
+    assert {result.requirement_class for result in results.values()} == {
+        RequirementClass.REVIEW_REQUIRED
+    }
+    assert {result.classification_reason for result in results.values()} == {
+        "technology count requirement requires review"
+    }
+
+
 def test_duties_do_not_confirm_unresolved_registry_mapping() -> None:
     payload = load_fixture_payload()
     record = payload["records"][3]
@@ -388,3 +464,64 @@ def test_duties_do_not_confirm_unresolved_registry_mapping() -> None:
     result = classify_job_batch(batch, load_mapper()).records[3].technologies[0]
     assert result.tech_id is None
     assert result.requirement_class is RequirementClass.REVIEW_REQUIRED
+
+
+@pytest.mark.parametrize("heading", ["[우대 자격 요건]", "우대자격요건"])
+def test_preferred_qualification_heading_ends_required_section(heading: str) -> None:
+    payload = load_fixture_payload()
+    payload["records"] = [payload["records"][0]]
+    record = payload["records"][0]
+    evidence = "- UI 개발 도구: React 경험"
+    record["description_text"] = f"[자격요건]\nJava 필수\n{heading}\n{evidence}"
+    record["technology_mentions"] = [
+        {
+            "raw_technology": "React",
+            "technology_id": "react",
+            "requirement_type": "PREFERRED",
+            "source_surface": "BODY",
+            "evidence_section": "- UI 개발 도구 ",
+            "evidence_text": evidence,
+            "extraction_method": "RULE_BASED_V1",
+        }
+    ]
+    batch = JobAnalysisInputBatch.model_validate(payload)
+    original = batch.model_dump_json()
+    result = classify_job_batch(batch, load_mapper()).records[0].technologies[0]
+    assert result.requirement_class is RequirementClass.PREFERRED
+    assert result.parsed_section == heading
+    assert result.evidence_section == "- UI 개발 도구 "
+    assert result.input_requirement_type is not None
+    assert result.input_requirement_type.value == "PREFERRED"
+    assert batch.model_dump_json() == original
+
+
+@pytest.mark.parametrize("duties", ["📋 주요업무", "1. 주요 업무"])
+def test_observed_decorated_and_numbered_sections_keep_requirement_boundaries(duties):
+    results = classify_collector_body(
+        f"{duties}\n- Java 서비스 개발\n"
+        "2. 자격요건\n- Python 경험\n"
+        "3. 우대사항\n- Redis 경험"
+    )
+    assert results["Java"].requirement_class is RequirementClass.REQUIRED
+    assert results["Java"].parsed_section == duties
+    assert results["Python"].requirement_class is RequirementClass.REQUIRED
+    assert results["Python"].parsed_section == "2. 자격요건"
+    assert results["Redis"].requirement_class is RequirementClass.PREFERRED
+    assert results["Redis"].parsed_section == "3. 우대사항"
+
+
+@pytest.mark.parametrize("heading", ["📋 우대사항", "3. 우대사항"])
+def test_decorated_preferred_heading_ends_duties_before_body_labeled_evidence(heading):
+    results = classify_collector_body(
+        f"담당업무\n- Java 서비스 개발\n{heading}\n- Redis 검색 경험"
+    )
+    assert results["Redis"].requirement_class is RequirementClass.PREFERRED
+    assert results["Redis"].parsed_section == heading
+
+
+@pytest.mark.parametrize(
+    "prose", ["1. 주요 업무를 설명합니다", "📋 자격요건에 대한 안내문"]
+)
+def test_decorated_prose_does_not_establish_a_requirement_section(prose):
+    results = classify_collector_body(f"기술스택\n{prose}\n- Docker 서비스")
+    assert results["Docker"].parsed_section == "기술스택"

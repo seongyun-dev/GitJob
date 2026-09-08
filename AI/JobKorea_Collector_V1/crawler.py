@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -653,10 +654,8 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
     manifest_path = run_dir / "manifest.json"
 
     batch_payload = result.batch.model_dump(mode="json", by_alias=True)
-    _atomic_write(
-        json_path,
-        json.dumps(batch_payload, ensure_ascii=False, indent=2) + "\n",
-    )
+    batch_text = json.dumps(batch_payload, ensure_ascii=False, indent=2) + "\n"
+    _atomic_write(json_path, batch_text)
 
     with csv_path.with_suffix(".csv.tmp").open(
         "w",
@@ -675,6 +674,9 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
     csv_path.with_suffix(".csv.tmp").replace(csv_path)
 
     manifest = dict(result.manifest)
+    # Match this writer's existing Path.write_text newline translation exactly.
+    batch_bytes = batch_text.replace("\n", os.linesep).encode("utf-8")
+    manifest["output_sha256"] = {json_path.name: sha256(batch_bytes).hexdigest()}
     manifest["outputs"] = {
         "job_analysis_input_v1.json": json_path.name,
         "jobs.csv": csv_path.name,

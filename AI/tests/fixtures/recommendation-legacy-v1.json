@@ -1,0 +1,578 @@
+{
+  "schema_version": "recommendation-snapshot/v1",
+  "user_id": "user-1",
+  "analysis_id": "analysis-1",
+  "cohort_id": "cohort-unit-1",
+  "status": "READY",
+  "algorithm_version": "c-recommendation/lexicographic/v1",
+  "prerequisite_policy_version": "c-learning-prerequisites/v1",
+  "prerequisite_snapshot": {
+    "version": "c-learning-prerequisites/v1",
+    "rules": [
+      {
+        "tech_id": "fastapi",
+        "required_tech_ids": [
+          "python"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:fastapi"
+        ]
+      },
+      {
+        "tech_id": "nextjs",
+        "required_tech_ids": [
+          "react"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:nextjs"
+        ]
+      },
+      {
+        "tech_id": "nodejs",
+        "required_tech_ids": [
+          "javascript"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:nodejs"
+        ]
+      },
+      {
+        "tech_id": "react",
+        "required_tech_ids": [
+          "javascript"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:react"
+        ]
+      },
+      {
+        "tech_id": "spring-actuator",
+        "required_tech_ids": [
+          "spring-boot"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:spring-actuator"
+        ]
+      },
+      {
+        "tech_id": "spring-boot",
+        "required_tech_ids": [
+          "java"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:spring-boot"
+        ]
+      },
+      {
+        "tech_id": "spring-data-jpa",
+        "required_tech_ids": [
+          "spring-boot"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:spring-data-jpa"
+        ]
+      },
+      {
+        "tech_id": "vuejs",
+        "required_tech_ids": [
+          "javascript"
+        ],
+        "fact_ids": [
+          "prerequisite:c-learning-prerequisites/v1:vuejs"
+        ]
+      }
+    ]
+  },
+  "tie_break_rule": "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc",
+  "demand": {
+    "schema_version": "job-demand-snapshot/v1",
+    "cohort_id": "cohort-unit-1",
+    "status": "READY",
+    "criteria": {
+      "target_role": "BACKEND",
+      "as_of": "2026-09-08T00:00:00Z",
+      "posted_from": null,
+      "posted_to": null,
+      "sources": [],
+      "regions": [],
+      "career_levels": [],
+      "min_jobs": 1
+    },
+    "denominator": 5,
+    "input_count": 5,
+    "duplicate_count": 0,
+    "excluded_count": 0,
+    "review_count": 0,
+    "dataset_snapshot_id": "jobs-unit-1",
+    "pipeline_run_id": "run-unit-1",
+    "collector_version": "collector/unit",
+    "registry_version": "registry-20260901.1",
+    "parser_version": "job-requirement-rules/v2",
+    "quality_version": "job-cohort-quality/v1",
+    "aggregation_version": "job-demand-aggregation/v1",
+    "technologies": [
+      {
+        "tech_id": "docker",
+        "required_count": 3,
+        "preferred_count": 1,
+        "general_count": 0,
+        "total_count": 4,
+        "required_ratio": 0.6,
+        "preferred_ratio": 0.2,
+        "general_ratio": 0.0,
+        "total_ratio": 0.8,
+        "rank": 1,
+        "required_rank": 1,
+        "preferred_rank": 1,
+        "general_rank": null,
+        "total_rank": 1
+      },
+      {
+        "tech_id": "redis",
+        "required_count": 3,
+        "preferred_count": 0,
+        "general_count": 0,
+        "total_count": 3,
+        "required_ratio": 0.6,
+        "preferred_ratio": 0.0,
+        "general_ratio": 0.0,
+        "total_ratio": 0.6,
+        "rank": 2,
+        "required_rank": 2,
+        "preferred_rank": null,
+        "general_rank": null,
+        "total_rank": 2
+      },
+      {
+        "tech_id": "java",
+        "required_count": 2,
+        "preferred_count": 0,
+        "general_count": 0,
+        "total_count": 2,
+        "required_ratio": 0.4,
+        "preferred_ratio": 0.0,
+        "general_ratio": 0.0,
+        "total_ratio": 0.4,
+        "rank": 3,
+        "required_rank": 3,
+        "preferred_rank": null,
+        "general_rank": null,
+        "total_rank": 3
+      }
+    ]
+  },
+  "held": {
+    "schema_version": "held-technology-selection/v1",
+    "user_id": "user-1",
+    "analysis_id": "analysis-1",
+    "registry_version": "registry-20260901.1",
+    "level_policy_version": "level-policy/v2",
+    "evidence_rule_version": "evidence-rules/v2",
+    "held_policy_version": "c-held/project-participation/v1",
+    "analysis_status": "COMPLETE",
+    "repository_coverage": [
+      {
+        "repository_id": "repo-1",
+        "repository_analysis_id": "repo-analysis-1",
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "COMPLETE",
+        "coverage_complete": true,
+        "evaluated_tech_ids": [
+          "docker",
+          "java",
+          "javascript",
+          "nodejs",
+          "python",
+          "react",
+          "redis",
+          "spring-boot",
+          "typescript"
+        ],
+        "data_gaps": []
+      }
+    ],
+    "held_tech_ids": [
+      "java"
+    ],
+    "technologies": [
+      {
+        "tech_id": "docker",
+        "status": "NOT_HELD",
+        "reason_codes": [
+          "NO_QUALIFYING_EVIDENCE_IN_ANALYZED_REPOSITORIES"
+        ],
+        "provenance": [],
+        "data_gaps": []
+      },
+      {
+        "tech_id": "java",
+        "status": "HELD",
+        "reason_codes": [
+          "SELF_IMPLEMENTATION"
+        ],
+        "provenance": [
+          {
+            "user_id": "user-1",
+            "analysis_id": "analysis-1",
+            "repository_id": "repo-1",
+            "repository_analysis_id": "repo-analysis-1",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "tech_id": "java",
+            "fact_ids": [
+              "fact-java-1"
+            ],
+            "source_refs": [
+              "https://github.com/example/repo/blob/aaa/A.java"
+            ],
+            "evidence_level": "L3",
+            "repository_status": "COMPLETE",
+            "level_policy_version": "level-policy/v2",
+            "evidence_rule_version": "evidence-rules/v2"
+          }
+        ],
+        "data_gaps": []
+      },
+      {
+        "tech_id": "redis",
+        "status": "NOT_HELD",
+        "reason_codes": [
+          "NO_QUALIFYING_EVIDENCE_IN_ANALYZED_REPOSITORIES"
+        ],
+        "provenance": [],
+        "data_gaps": []
+      }
+    ],
+    "data_gaps": []
+  },
+  "gap": {
+    "schema_version": "technology-gap/v1",
+    "user_id": "user-1",
+    "analysis_id": "analysis-1",
+    "registry_version": "registry-20260901.1",
+    "held_policy_version": "c-held/project-participation/v1",
+    "held_tech_ids": [
+      "java"
+    ],
+    "missing_tech_ids": [
+      "docker",
+      "redis"
+    ],
+    "unknown_tech_ids": [],
+    "technologies": [
+      {
+        "tech_id": "docker",
+        "status": "NOT_HELD",
+        "reason_codes": [
+          "NO_QUALIFYING_EVIDENCE_IN_ANALYZED_REPOSITORIES"
+        ],
+        "provenance": [],
+        "data_gaps": []
+      },
+      {
+        "tech_id": "java",
+        "status": "HELD",
+        "reason_codes": [
+          "SELF_IMPLEMENTATION"
+        ],
+        "provenance": [
+          {
+            "user_id": "user-1",
+            "analysis_id": "analysis-1",
+            "repository_id": "repo-1",
+            "repository_analysis_id": "repo-analysis-1",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "tech_id": "java",
+            "fact_ids": [
+              "fact-java-1"
+            ],
+            "source_refs": [
+              "https://github.com/example/repo/blob/aaa/A.java"
+            ],
+            "evidence_level": "L3",
+            "repository_status": "COMPLETE",
+            "level_policy_version": "level-policy/v2",
+            "evidence_rule_version": "evidence-rules/v2"
+          }
+        ],
+        "data_gaps": []
+      },
+      {
+        "tech_id": "redis",
+        "status": "NOT_HELD",
+        "reason_codes": [
+          "NO_QUALIFYING_EVIDENCE_IN_ANALYZED_REPOSITORIES"
+        ],
+        "provenance": [],
+        "data_gaps": []
+      }
+    ],
+    "data_gaps": []
+  },
+  "current_count": 1,
+  "current_job_ids": [
+    "current"
+  ],
+  "candidates": [
+    {
+      "tech_id": "docker",
+      "rank": 1,
+      "demand": {
+        "tech_id": "docker",
+        "required_count": 3,
+        "preferred_count": 1,
+        "general_count": 0,
+        "total_count": 4,
+        "required_ratio": 0.6,
+        "preferred_ratio": 0.2,
+        "general_ratio": 0.0,
+        "total_ratio": 0.8,
+        "rank": 1,
+        "required_rank": 1,
+        "preferred_rank": 1,
+        "general_rank": null,
+        "total_rank": 1
+      },
+      "evidence_status": "NOT_HELD",
+      "prerequisite_tech_ids": [],
+      "missing_prerequisite_tech_ids": [],
+      "unknown_prerequisite_tech_ids": [],
+      "reason_codes": [
+        "DEMAND_IN_SELECTED_COHORT",
+        "DIRECT_JOB_INCREASE",
+        "NO_HELD_EVIDENCE_UNDER_SELECTED_POLICY",
+        "NO_PREREQUISITE_IMPOSED_BY_POLICY"
+      ],
+      "fact_ids": [
+        "demand:cohort-unit-1:docker",
+        "evidence:analysis-1:docker",
+        "job:cohort-unit-1:docker-gain",
+        "job:cohort-unit-1:or-gain",
+        "what-if:cohort-unit-1:docker"
+      ],
+      "what_if": {
+        "tech_id": "docker",
+        "cohort_id": "cohort-unit-1",
+        "held_policy_version": "c-held/project-participation/v1",
+        "denominator": 5,
+        "current_count": 1,
+        "projected_count": 3,
+        "increased_count": 2,
+        "current_job_ids": [
+          "current"
+        ],
+        "projected_job_ids": [
+          "current",
+          "docker-gain",
+          "or-gain"
+        ],
+        "newly_matched_job_ids": [
+          "docker-gain",
+          "or-gain"
+        ],
+        "data_gaps": []
+      }
+    },
+    {
+      "tech_id": "redis",
+      "rank": 2,
+      "demand": {
+        "tech_id": "redis",
+        "required_count": 3,
+        "preferred_count": 0,
+        "general_count": 0,
+        "total_count": 3,
+        "required_ratio": 0.6,
+        "preferred_ratio": 0.0,
+        "general_ratio": 0.0,
+        "total_ratio": 0.6,
+        "rank": 2,
+        "required_rank": 2,
+        "preferred_rank": null,
+        "general_rank": null,
+        "total_rank": 2
+      },
+      "evidence_status": "NOT_HELD",
+      "prerequisite_tech_ids": [],
+      "missing_prerequisite_tech_ids": [],
+      "unknown_prerequisite_tech_ids": [],
+      "reason_codes": [
+        "DEMAND_IN_SELECTED_COHORT",
+        "DIRECT_JOB_INCREASE",
+        "NO_HELD_EVIDENCE_UNDER_SELECTED_POLICY",
+        "NO_PREREQUISITE_IMPOSED_BY_POLICY"
+      ],
+      "fact_ids": [
+        "demand:cohort-unit-1:redis",
+        "evidence:analysis-1:redis",
+        "job:cohort-unit-1:or-gain",
+        "job:cohort-unit-1:redis-gain",
+        "what-if:cohort-unit-1:redis"
+      ],
+      "what_if": {
+        "tech_id": "redis",
+        "cohort_id": "cohort-unit-1",
+        "held_policy_version": "c-held/project-participation/v1",
+        "denominator": 5,
+        "current_count": 1,
+        "projected_count": 3,
+        "increased_count": 2,
+        "current_job_ids": [
+          "current"
+        ],
+        "projected_job_ids": [
+          "current",
+          "or-gain",
+          "redis-gain"
+        ],
+        "newly_matched_job_ids": [
+          "or-gain",
+          "redis-gain"
+        ],
+        "data_gaps": []
+      }
+    }
+  ],
+  "jobs": [
+    {
+      "job_id": "current",
+      "source_record_id": "current",
+      "canonical_job_id": null,
+      "source_site": "FIXTURE",
+      "source_posting_id": "current",
+      "source_url": "https://example.invalid/jobs/current",
+      "company_name": "Fixture Ltd",
+      "title": "Backend current",
+      "raw_job_category": null,
+      "region": null,
+      "career_level": null,
+      "posted_at": null,
+      "deadline": null,
+      "collected_at": "2026-09-07T00:00:00Z",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "raw_artifact_uri": null,
+      "required_clauses": [
+        [
+          "java"
+        ]
+      ],
+      "preferred_tech_ids": [
+        "docker"
+      ],
+      "general_tech_ids": [],
+      "technologies": []
+    },
+    {
+      "job_id": "docker-gain",
+      "source_record_id": "docker-gain",
+      "canonical_job_id": null,
+      "source_site": "FIXTURE",
+      "source_posting_id": "docker-gain",
+      "source_url": "https://example.invalid/jobs/docker-gain",
+      "company_name": "Fixture Ltd",
+      "title": "Backend docker-gain",
+      "raw_job_category": null,
+      "region": null,
+      "career_level": null,
+      "posted_at": null,
+      "deadline": null,
+      "collected_at": "2026-09-07T00:00:00Z",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "raw_artifact_uri": null,
+      "required_clauses": [
+        [
+          "docker"
+        ],
+        [
+          "java"
+        ]
+      ],
+      "preferred_tech_ids": [],
+      "general_tech_ids": [],
+      "technologies": []
+    },
+    {
+      "job_id": "or-gain",
+      "source_record_id": "or-gain",
+      "canonical_job_id": null,
+      "source_site": "FIXTURE",
+      "source_posting_id": "or-gain",
+      "source_url": "https://example.invalid/jobs/or-gain",
+      "company_name": "Fixture Ltd",
+      "title": "Backend or-gain",
+      "raw_job_category": null,
+      "region": null,
+      "career_level": null,
+      "posted_at": null,
+      "deadline": null,
+      "collected_at": "2026-09-07T00:00:00Z",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "raw_artifact_uri": null,
+      "required_clauses": [
+        [
+          "docker",
+          "redis"
+        ]
+      ],
+      "preferred_tech_ids": [],
+      "general_tech_ids": [],
+      "technologies": []
+    },
+    {
+      "job_id": "redis-gain",
+      "source_record_id": "redis-gain",
+      "canonical_job_id": null,
+      "source_site": "FIXTURE",
+      "source_posting_id": "redis-gain",
+      "source_url": "https://example.invalid/jobs/redis-gain",
+      "company_name": "Fixture Ltd",
+      "title": "Backend redis-gain",
+      "raw_job_category": null,
+      "region": null,
+      "career_level": null,
+      "posted_at": null,
+      "deadline": null,
+      "collected_at": "2026-09-07T00:00:00Z",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "raw_artifact_uri": null,
+      "required_clauses": [
+        [
+          "redis"
+        ]
+      ],
+      "preferred_tech_ids": [],
+      "general_tech_ids": [],
+      "technologies": []
+    },
+    {
+      "job_id": "two-missing",
+      "source_record_id": "two-missing",
+      "canonical_job_id": null,
+      "source_site": "FIXTURE",
+      "source_posting_id": "two-missing",
+      "source_url": "https://example.invalid/jobs/two-missing",
+      "company_name": "Fixture Ltd",
+      "title": "Backend two-missing",
+      "raw_job_category": null,
+      "region": null,
+      "career_level": null,
+      "posted_at": null,
+      "deadline": null,
+      "collected_at": "2026-09-07T00:00:00Z",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "raw_artifact_uri": null,
+      "required_clauses": [
+        [
+          "docker"
+        ],
+        [
+          "redis"
+        ]
+      ],
+      "preferred_tech_ids": [],
+      "general_tech_ids": [],
+      "technologies": []
+    }
+  ],
+  "data_gaps": [],
+  "snapshot_id": "recommendation-88b99372eba749fc61c2949152a0d90f6a52968d58674d4b5d571be3a0c3d9cf"
+}

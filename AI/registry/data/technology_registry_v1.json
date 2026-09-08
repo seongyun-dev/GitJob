@@ -405,7 +405,7 @@
       "value": "react",
       "match_mode": "PREFIX",
       "status": "ACTIVE",
-      "provenance_refs": ["FE/src/main.jsx#react"]
+      "provenance_refs": ["FE/src/main.tsx#react"]
     },
     {
       "tech_id": "react-dom",
