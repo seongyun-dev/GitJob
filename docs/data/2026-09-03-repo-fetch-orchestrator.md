@@ -37,6 +37,10 @@ Registry Mapping, Evidence Level, Required/Preferred, 추천, What-if는 만들�
 계약 버전은 `github-repo-snapshot/v1`이고 모든 모델은 unknown field를 거부한다.
 Repository는 양수 `github_repo_id`와 `owner/repository` 형식의 `repo_full_name`으로
 식별한다. `pinned_commit_sha`는 모든 전달 record에 필수이며 `tree_sha`는 optional이다.
+`pinned_commit_sha`는 고정한 Git commit object의 SHA이고, `tree_sha`는 그
+commit object의 중첩 `commit.tree.sha`인 Git tree SHA다. 두 값은 서로 다른
+lineage 필드로 보존한다. Recursive Tree API의 최상위 `sha`는 요청 ref를
+반환하는 응답도 있으므로 `tree_sha`를 덮어쓰는 근거로 사용하지 않는다.
 
 Artifact는 `MANIFEST` 또는 `SOURCE`와 repository-relative POSIX path, 원문 URI,
 SHA-256 `content_hash`, `size_bytes`를 전달한다. Batch lineage는
@@ -97,7 +101,7 @@ Cache reuse lineage를 표현할 수 있다.
 Repo Activity candidate
   → Core rate-limit safety 확인
   → Repository metadata/canonical name
-  → default branch HEAD / pinned_commit_sha
+  → default branch HEAD / pinned_commit_sha + root tree_sha
   → (policy fingerprint, repo_id, pinned SHA) Cache
   → recursive Tree
   → named manifest 선택
@@ -131,6 +135,9 @@ SHA-256 fingerprint로 묶는다. Cache key는 이 fingerprint, `github_repo_id`
 - SHA 또는 policy 값이 하나라도 바뀌면 Cache miss다.
 - checkpoint는 dataset, pipeline run, collector, policy fingerprint와 candidate
   identity에 묶인다. 다른 입력으로 재사용하면 실패한다.
+- 이전 Cache에 `tree_sha == pinned_commit_sha`가 남아 있어도 같은 pinned
+  commit의 HEAD tree SHA를 확인한 뒤 Artifact URI/checksum은 건드리지 않고
+  tree metadata만 repair한 후 `REUSED`할 수 있다.
 - `COMPLETE/PARTIAL/FAILED/NOT_FOUND/REUSED`는 재실행에서 Repo fetch를 건너뛴다.
 - `RATE_LIMITED`는 terminal이 아니며 다음 실행에서 같은 Repo를 다시 시작한다.
 - checkpoint/cache JSON 전체 재작성은 기본 100 Repo 단위로 batch하고 정상 종료 및

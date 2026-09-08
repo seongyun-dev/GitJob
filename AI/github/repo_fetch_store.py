@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 from common.webhdfs import WebHdfsClient, WebHdfsTransport, normalize_hdfs_path
 
+from github.client import RequestRecord
 from github.contracts import GitHubRepoSnapshot, RepoCollectionStatus
 
 STORE_VERSION = 1
@@ -172,6 +173,35 @@ class RepoSnapshotCache:
         self.data["entries"][key] = payload
         self._mark_dirty()
 
+    def repair_tree_sha(
+        self,
+        *,
+        policy_version: str,
+        repo_id: int,
+        pinned_commit_sha: str,
+        tree_sha: str,
+    ) -> GitHubRepoSnapshot | None:
+        """Repair cached tree metadata without touching immutable artifacts.
+
+        Cache identity is still policy + repo ID + pinned commit.  When an
+        older run stored the commit SHA in ``tree_sha``, the current HEAD
+        response can provide the authoritative tree SHA.  Only that metadata
+        field is replaced; artifact URIs and content hashes remain byte-for-
+        byte unchanged.
+        """
+
+        key = _cache_key(policy_version, repo_id, pinned_commit_sha)
+        payload = self.data["entries"].get(key)
+        if not isinstance(payload, Mapping):
+            return None
+        record = GitHubRepoSnapshot.model_validate(payload)
+        if record.tree_sha == tree_sha:
+            return record
+        repaired = record.model_copy(update={"tree_sha": tree_sha})
+        self.data["entries"][key] = repaired.model_dump(mode="json")
+        self._mark_dirty()
+        return repaired
+
     def _mark_dirty(self) -> None:
         self._dirty += 1
         if self._dirty >= self.flush_every:
@@ -282,6 +312,70 @@ class RepoFetchCheckpoint:
     def status(self, repo_id: int) -> str:
         entry = self.data["repos"].get(str(repo_id), {})
         return str(entry.get("status", ""))
+
+    def contract_record(self, repo_id: int) -> GitHubRepoSnapshot | None:
+        """Return the terminal contract record stored for one candidate."""
+
+        entry = self.data["repos"].get(str(repo_id), {})
+        payload = entry.get("contract_record")
+        if not isinstance(payload, Mapping):
+            return None
+        return GitHubRepoSnapshot.model_validate(payload)
+
+    def repair_tree_sha(
+        self,
+        *,
+        repo_id: int,
+        tree_sha: str | None,
+    ) -> GitHubRepoSnapshot | None:
+        """Replace only legacy checkpoint tree metadata.
+
+        A checkpoint can outlive the code that produced it.  If an older run
+        stored the pinned commit SHA as ``tree_sha``, a later lightweight
+        commit lookup may repair that field without touching Artifact bytes or
+        retrying the repository collection.
+        """
+
+        entry = self.data["repos"].get(str(repo_id))
+        if not isinstance(entry, dict):
+            return None
+        payload = entry.get("contract_record")
+        if not isinstance(payload, Mapping):
+            return None
+        record = GitHubRepoSnapshot.model_validate(payload)
+        if record.tree_sha == tree_sha:
+            return record
+        repaired = record.model_copy(update={"tree_sha": tree_sha})
+        entry["contract_record"] = repaired.model_dump(mode="json")
+        self._mark_dirty()
+        return repaired
+
+    def record_tree_repair_requests(
+        self,
+        *,
+        repo_id: int,
+        requests: Sequence[RequestRecord],
+        last_error: str | None = None,
+    ) -> None:
+        """Account a metadata-only tree repair without incrementing attempts."""
+
+        entry = self.data["repos"].get(str(repo_id))
+        if not isinstance(entry, dict):
+            return
+        entry["api_calls"] = int(entry.get("api_calls", 0)) + len(requests)
+        entry["core_calls"] = int(entry.get("core_calls", 0)) + sum(
+            request.is_core for request in requests
+        )
+        entry["raw_calls"] = int(entry.get("raw_calls", 0)) + sum(
+            not request.is_core for request in requests
+        )
+        entry["http_statuses"] = [
+            *entry.get("http_statuses", []),
+            *(request.http_status for request in requests),
+        ]
+        if last_error is not None:
+            entry["last_error"] = last_error
+        self._mark_dirty()
 
     def record(
         self,

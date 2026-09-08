@@ -109,13 +109,24 @@ def head(commit_sha: str = COMMIT_A, tree_sha: str = TREE_A) -> HttpResponse:
     )
 
 
+def commit_tree(tree_sha: str = TREE_A) -> HttpResponse:
+    return response({"sha": COMMIT_A, "tree": {"sha": tree_sha}})
+
+
 def tree(
     entries: list[dict[str, object]],
     *,
     tree_sha: str = TREE_A,
+    response_sha: str | None = None,
     truncated: bool = False,
 ) -> HttpResponse:
-    return response({"sha": tree_sha, "truncated": truncated, "tree": entries})
+    return response(
+        {
+            "sha": response_sha or tree_sha,
+            "truncated": truncated,
+            "tree": entries,
+        }
+    )
 
 
 def candidate(
@@ -216,6 +227,7 @@ def success_outcomes(
     *,
     commit_sha: str = COMMIT_A,
     tree_sha: str = TREE_A,
+    response_tree_sha: str | None = None,
     path: str = "package.json",
     body: bytes = b'{"dependencies": {}}',
 ) -> list[HttpResponse]:
@@ -223,7 +235,11 @@ def success_outcomes(
         rate_control(),
         metadata(),
         head(commit_sha, tree_sha),
-        tree([{"path": path, "type": "blob", "size": len(body)}], tree_sha=tree_sha),
+        tree(
+            [{"path": path, "type": "blob", "size": len(body)}],
+            tree_sha=tree_sha,
+            response_sha=response_tree_sha,
+        ),
         response(body),
     ]
 
@@ -252,6 +268,62 @@ def test_complete_repo_uses_recursive_tree_and_emits_v1_contract(
     assert urls[4].startswith("https://raw.githubusercontent.com/")
     assert "Authorization" in transport.calls[1][1]
     assert "Authorization" not in transport.calls[4][1]
+
+
+def test_tree_response_commit_sha_cannot_overwrite_commit_tree_sha(
+    tmp_path: Path,
+) -> None:
+    transport = ScriptedTransport(
+        success_outcomes(response_tree_sha=COMMIT_A),
+    )
+
+    run = orchestrator(tmp_path, transport).run([candidate()])
+
+    record = run.batch.records[0]
+    assert record.pinned_commit_sha == COMMIT_A
+    assert record.tree_sha == TREE_A
+    assert f"/git/trees/{TREE_A}?recursive=1" in transport.calls[3][0]
+
+
+def test_checkpoint_replay_preserves_authoritative_tree_sha(
+    tmp_path: Path,
+) -> None:
+    first = orchestrator(
+        tmp_path,
+        ScriptedTransport(success_outcomes(response_tree_sha=COMMIT_A)),
+    ).run([candidate()])
+    replay = orchestrator(
+        tmp_path,
+        ScriptedTransport([rate_control()]),
+    ).run([candidate()])
+
+    assert first.batch.records[0].tree_sha == TREE_A
+    assert replay.batch.records[0].tree_sha == TREE_A
+    assert replay.batch == first.batch
+
+
+def test_legacy_checkpoint_tree_metadata_is_repaired_without_artifact_fetch(
+    tmp_path: Path,
+) -> None:
+    first = orchestrator(
+        tmp_path,
+        ScriptedTransport(success_outcomes()),
+    ).run([candidate()])
+
+    checkpoint_path = tmp_path / "checkpoint.json"
+    payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    payload["repos"]["1"]["contract_record"]["tree_sha"] = COMMIT_A
+    checkpoint_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    repair_transport = ScriptedTransport([rate_control(), commit_tree()])
+    repaired = orchestrator(tmp_path, repair_transport).run([candidate()])
+
+    record = repaired.batch.records[0]
+    assert record.tree_sha == TREE_A
+    assert record.artifacts == first.batch.records[0].artifacts
+    assert repaired.checkpoint_rows[0]["attempts"] == 1
+    assert len(repair_transport.calls) == 2
+    assert "/git/commits/" in repair_transport.calls[1][0]
 
 
 def test_progress_callback_reports_terminal_count(tmp_path: Path) -> None:
@@ -351,6 +423,39 @@ def test_same_sha_reuses_complete_cache_across_datasets(tmp_path: Path) -> None:
     assert reused.reused_from_snapshot_id == first_run.batch.records[0].repo_snapshot_id
     assert reused.activity_count == 11
     assert len(second.calls) == 3
+
+
+def test_same_sha_reuse_repairs_legacy_commit_tree_cache_metadata(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "cache.json"
+    first = orchestrator(
+        tmp_path,
+        ScriptedTransport(success_outcomes()),
+        cache_name=cache_path.name,
+    ).run([candidate()])
+
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    cache_key = next(iter(payload["entries"]))
+    payload["entries"][cache_key]["tree_sha"] = COMMIT_A
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    second_transport = ScriptedTransport([rate_control(), metadata(), head()])
+    second = orchestrator(
+        tmp_path,
+        second_transport,
+        dataset="dataset-002",
+        checkpoint_name="checkpoint-002.json",
+        cache_name=cache_path.name,
+    ).run([candidate()])
+
+    reused = second.batch.records[0]
+    assert reused.collection_status is RepoCollectionStatus.REUSED
+    assert reused.tree_sha == TREE_A
+    assert reused.artifacts == first.batch.records[0].artifacts
+    assert len(second_transport.calls) == 3
+    repaired = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert repaired["entries"][cache_key]["tree_sha"] == TREE_A
 
 
 def test_same_dataset_replay_preserves_batch_and_skips_repo_fetch(

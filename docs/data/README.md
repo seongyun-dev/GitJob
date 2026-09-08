@@ -892,6 +892,15 @@ C조 범위다.
 - Streaming: producer replay/smoke만 구현; application checkpoint·offset·sink 멱등성은 후속
 - 상세: [S15P21E102-111 MVP 데이터 파이프라인 멱등성 및 Replay 검증](2026-09-07-mvp-pipeline-idempotency-replay.md)
 
+## Repo Snapshot `tree_sha` lineage correction
+
+- Jira: `S15P21E102-150` 구현 보정 / `S15P21E102-114` Production 후속 / `S15P21E102-160` A→C Consumer Read 보정
+- source: `s15p21e102-114-phase1-20260907-fix-001`
+- target: `s15p21e102-114-phase1-20260908-treefix-001`
+- 결과: 13,392 eligible 중 13,390 tree resolved / 2 unresolved; Artifact 4,876개 signature 불변
+- 범위: pinned commit과 실제 Git tree SHA 분리, cache/checkpoint metadata-only repair, 실행 provenance 보강
+- 상세: [Repo Snapshot tree_sha lineage correction](2026-09-08-repo-snapshot-tree-sha-correction.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

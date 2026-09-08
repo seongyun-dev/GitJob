@@ -248,6 +248,8 @@ class RepoFetchOrchestrator:
             if stopped_reason is not None:
                 break
             if self.checkpoint.status(candidate.repo_id) in TERMINAL_STATUSES:
+                self._repair_legacy_checkpoint_tree(candidate)
+            if self.checkpoint.status(candidate.repo_id) in TERMINAL_STATUSES:
                 continue
             if used_core_calls >= self.policy.max_api_calls:
                 stopped_reason = "API_CALL_BUDGET"
@@ -381,6 +383,15 @@ class RepoFetchOrchestrator:
             pinned_commit_sha=pinned_commit_sha,
         )
         if cached is not None:
+            if head_tree_sha is not None and cached.tree_sha != head_tree_sha:
+                repaired = self.cache.repair_tree_sha(
+                    policy_version=self.policy.cache_identity,
+                    repo_id=candidate.repo_id,
+                    pinned_commit_sha=pinned_commit_sha,
+                    tree_sha=head_tree_sha,
+                )
+                if repaired is not None:
+                    cached = repaired
             record = self._reused_record(candidate, canonical_name, cached)
             return RepoExecution(
                 candidate=candidate,
@@ -389,10 +400,16 @@ class RepoFetchOrchestrator:
                 requests=tuple(requests),
             )
 
+        # The branch HEAD response is the authoritative source for the
+        # pinned commit's root Git tree.  A GitHub Tree response may echo the
+        # ref used in the request (including a commit SHA), so never use its
+        # top-level ``sha`` to replace the tree SHA we already obtained from
+        # the commit object.
+        tree_request_sha = head_tree_sha or pinned_commit_sha
         tree = self.client.get_json(
             (
                 f"/repos/{_encode_repo(canonical_name)}/git/trees/"
-                f"{pinned_commit_sha}?recursive=1"
+                f"{tree_request_sha}?recursive=1"
             ),
             stage="C_TREE",
             endpoint_category="recursive_tree",
@@ -437,7 +454,11 @@ class RepoFetchOrchestrator:
             )
         typed_entries = [entry for entry in entries if isinstance(entry, Mapping)]
         observed_entries = min(len(typed_entries), self.policy.max_tree_entries)
-        tree_sha = _valid_sha(tree_payload.get("sha")) or head_tree_sha
+        tree_sha = _authoritative_tree_sha(
+            pinned_commit_sha=pinned_commit_sha,
+            head_tree_sha=head_tree_sha,
+            tree_payload=tree_payload,
+        )
         tree_truncated = truncated_value
         selection = select_artifacts(typed_entries, self.policy)
         issues = list(selection.issues)
@@ -544,6 +565,47 @@ class RepoFetchOrchestrator:
             record=record,
             requests=tuple(requests),
             last_error=last_error,
+        )
+
+    def _repair_legacy_checkpoint_tree(
+        self, candidate: RepoActivityCandidate
+    ) -> None:
+        """Repair terminal checkpoint metadata without refetching artifacts."""
+
+        existing = self.checkpoint.contract_record(candidate.repo_id)
+        if existing is None or existing.tree_sha != existing.pinned_commit_sha:
+            return
+        response = self.client.get_json(
+            (
+                f"/repos/{_encode_repo(existing.repo_full_name)}/git/commits/"
+                f"{existing.pinned_commit_sha}"
+            ),
+            stage="B_COMMIT_TREE_REPAIR",
+            endpoint_category="commit_tree",
+        )
+        state, error = _request_state(
+            response,
+            safety_threshold=self.policy.rate_limit_safety_threshold,
+        )
+        tree_sha: str | None = None
+        if state == "OK" and isinstance(response.payload, Mapping):
+            tree = response.payload.get("tree")
+            if isinstance(tree, Mapping):
+                observed = _valid_sha(tree.get("sha"))
+                if observed != existing.pinned_commit_sha:
+                    tree_sha = observed
+        self.checkpoint.record_tree_repair_requests(
+            repo_id=candidate.repo_id,
+            requests=response.records,
+            last_error=(
+                None
+                if tree_sha is not None
+                else error or "checkpoint tree metadata could not be verified"
+            ),
+        )
+        self.checkpoint.repair_tree_sha(
+            repo_id=candidate.repo_id,
+            tree_sha=tree_sha,
         )
 
     def _before_pin_failure(
@@ -921,6 +983,30 @@ def _commit_shas(payload: Mapping[str, Any] | None) -> tuple[str | None, str | N
         if isinstance(tree, Mapping):
             tree_sha = _valid_sha(tree.get("sha"))
     return pinned, tree_sha
+
+
+def _authoritative_tree_sha(
+    *,
+    pinned_commit_sha: str,
+    head_tree_sha: str | None,
+    tree_payload: Mapping[str, Any],
+) -> str | None:
+    """Return a Git tree SHA without confusing it with the pinned commit SHA.
+
+    The commit object's nested ``tree.sha`` is authoritative.  Older GitHub
+    responses and test doubles can expose the request ref as the Tree
+    response's top-level ``sha``; when that ref is the commit SHA, storing it
+    as ``tree_sha`` would collapse the two distinct lineage fields.  A Tree
+    response can still supply the SHA when the commit object omitted it, but a
+    value equal to the commit SHA is rejected as ambiguous.
+    """
+
+    if head_tree_sha is not None:
+        return head_tree_sha
+    response_tree_sha = _valid_sha(tree_payload.get("sha"))
+    if response_tree_sha == pinned_commit_sha:
+        return None
+    return response_tree_sha
 
 
 def _valid_sha(value: object) -> str | None:

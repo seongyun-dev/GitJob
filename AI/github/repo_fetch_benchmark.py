@@ -550,7 +550,6 @@ class RepoFetchBenchmark:
             tree = commit_detail.get("tree")
             if isinstance(tree, Mapping):
                 tree_sha = _optional_str(tree.get("sha"))
-        tree_sha = tree_sha or result.pinned_commit_sha
         if not result.pinned_commit_sha or not tree_sha:
             return self._partial(result, "HEAD response has no pinned commit/tree SHA")
 

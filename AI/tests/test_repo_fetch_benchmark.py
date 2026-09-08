@@ -512,6 +512,28 @@ def test_artifact_rate_separates_http_200_from_usable_input(tmp_path: Path) -> N
     assert totals["artifact_rate_given_collected"] == 0.5
 
 
+def test_missing_commit_tree_does_not_use_commit_as_tree_ref() -> None:
+    transport = ScriptedTransport(
+        [
+            response(
+                200,
+                {"full_name": "owner/repo", "default_branch": "main"},
+            ),
+            response(200, {"commit": {"sha": "a" * 40}}),
+        ]
+    )
+    runner = RepoFetchBenchmark(
+        GitHubClient("t", transport=transport, sleep=lambda _: None),
+        CheckpointStore(Path("/tmp/missing-tree-cp.json")),
+    )
+
+    result = runner.fetch_repo(candidate())
+
+    assert result.status == CollectionStatus.PARTIAL.value
+    assert result.last_error == "HEAD response has no pinned commit/tree SHA"
+    assert len(transport.requests) == 2
+
+
 def test_budget_consumed_counts_the_followed_301_that_core_calls_misses() -> None:
     """A renamed repo costs 2 budget units per request; only 1 is logged.
 
