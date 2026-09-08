@@ -23,7 +23,21 @@ public enum ErrorCode {
             HttpStatus.BAD_REQUEST,
             "G-400-2",
                     "요청 파라미터가 올바르지 않습니다."
-    );
+    ),
+    UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "AUTH-401-1", "세션이 없거나 만료되었습니다."),
+    // 재로그인 외에는 회복 경로가 없다. 클라이언트는 이 코드를 받으면 재시도하지 않는다.
+    INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH-401-3", "세션이 만료되었습니다. 다시 로그인해주세요."),
+
+    // GitHub OAuth (B-FN-001 / GH-AUTH-001). 코드 값은 B조 API 명세서 v1.0을 따른다.
+    // AUTH-401-2는 명세에서 "code로 Access Token 교환 실패"에 배정되어 있다. GitJob은
+    // 이메일·비밀번호 로그인을 범위에서 제외하므로(GH-AUTH-001) 그 의미로 사용한다.
+    OAUTH_REDIRECT_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "AUTH-400-1", "로그인 후 이동할 경로가 허용되지 않습니다."),
+    OAUTH_INVALID_STATE(HttpStatus.BAD_REQUEST, "AUTH-400-2", "인증 요청이 유효하지 않습니다. 다시 로그인해 주세요."),
+    OAUTH_TOKEN_EXCHANGE_FAILED(HttpStatus.UNAUTHORIZED, "AUTH-401-2", "GitHub 인증에 실패했습니다. 다시 로그인해 주세요."),
+    OAUTH_ACCESS_DENIED(HttpStatus.FORBIDDEN, "AUTH-403-3", "GitHub 권한 요청이 거부되었습니다."),
+    OAUTH_SCOPE_NOT_GRANTED(HttpStatus.FORBIDDEN, "AUTH-403-4", "저장소 분석에 필요한 권한이 승인되지 않았습니다."),
+    OAUTH_GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AUTH-503-1", "GitHub 인증 서버에 연결할 수 없습니다.");
+
 
 
     private final HttpStatus httpStatus;

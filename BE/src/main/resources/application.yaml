@@ -36,12 +36,28 @@ spring:
       connect-timeout: ${REDIS_CONNECT_TIMEOUT:2s}
       timeout: ${REDIS_TIMEOUT:2s}
 
-
-
-
 jwt:
   secret: ${JWT_SECRET:gitjob-local-jwt-secret-key-change-me}
   issuer: ${JWT_ISSUER:gitjob}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:30m}
   refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:14d}
 
+encryption:
+  symmetric-key: ${AES_SYMMETRIC_KEY}
+  salt: ${AES_SALT}
+
+github:
+  oauth:
+    client-id: ${GITHUB_CLIENT_ID:}
+    client-secret: ${GITHUB_CLIENT_SECRET:}
+    redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/github/callback}
+    api-url: ${GITHUB_API_URL:https://api.github.com}
+    # 콜백 처리 결과를 안내할 FE 화면. 성공·실패 모두 이 주소로 302한다.
+    frontend-callback-url: ${FRONTEND_CALLBACK_URL:http://localhost:8080/auth/callback}
+    # redirectTo는 사용자 입력이므로 허용 목록과 정확히 일치할 때만 통과시킨다.
+    # 목록의 첫 항목이 redirectTo 미지정 시 기본 목적지가 된다.
+    allowed-redirect-paths: ${OAUTH_ALLOWED_REDIRECT_PATHS:/onboarding/repositories,/repos,/}
+
+cookie:
+  # 로컬 http에서는 false. 운영은 COOKIE_SECURE=true로 주입한다.
+  secure: ${COOKIE_SECURE:false}
