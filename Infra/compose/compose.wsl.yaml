@@ -18,6 +18,12 @@ services:
     ports:
       - "127.0.0.1:${KAFKA_EXTERNAL_PORT:-9094}:9094"
 
+  # Connect REST API for local connector inspection. 8083 on the host already
+  # belongs to spark-master, so the worker's own 8083 is published elsewhere.
+  kafka-connect:
+    ports:
+      - "127.0.0.1:${CDC_CONNECT_PORT:-8084}:8083"
+
   # WSL builds application images from the repository. EC2 uses the image
   # references from .env.ec2 and does not build on the server.
   backend:

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitjob.local/contracts/repository-analysis-request-v1.schema.json",
+  "title": "RepositoryAnalysisRequestedEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "schema_version",
+    "event_type",
+    "occurred_at",
+    "trace_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "schema_version": {
+      "const": "repository-analysis-request/v1"
+    },
+    "event_type": {
+      "const": "repository.analysis.requested"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "payload": {
+      "$ref": "#/$defs/RepositoryAnalysisRequestPayload"
+    }
+  },
+  "$defs": {
+    "RepositoryAnalysisRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_id",
+        "analysis_repository_id",
+        "github_repository_id",
+        "repository_full_name",
+        "branch_name",
+        "commit_sha",
+        "analysis_mode",
+        "registry_version"
+      ],
+      "properties": {
+        "analysis_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        "analysis_repository_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        "github_repository_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repository_full_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]+$"
+        },
+        "branch_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$",
+          "description": "Selected branch name at request time. Analysis remains pinned to commit_sha even if the branch moves."
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "analysis_mode": {
+          "enum": ["SNAPSHOT", "CONTRIBUTION"]
+        },
+        "registry_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$"
+        }
+      }
+    }
+  }
+}

@@ -173,7 +173,7 @@ docker compose --env-file .env.wsl --project-directory . \
   inbound webhook을 사용하지 않습니다.
 - WSL에서는 DB·Redis·Kafka·관리 UI를 loopback에만 노출합니다.
 - 운영에서는 외부 진입점을 ALB/Nginx 80·443으로 제한하고 관리 경로는 Tailscale/private network 또는 SSM을 사용합니다.
-- 운영 DB schema는 `JPA_DDL_AUTO=update` 대신 명시적 migration과 `validate`를 사용합니다.
+- DB schema는 모든 환경에서 `JPA_DDL_AUTO=validate`입니다. Hibernate가 schema를 만들지 않으므로 `BE/src/main/resources/db/init.sql`을 먼저 적용합니다.
 
 자세한 포트, 백업·복구, EC2 전환, 2대 HA 절차는 [Infra 문서](Infra/README.md)를 참고합니다.
 

@@ -36,7 +36,20 @@ public enum ErrorCode {
     OAUTH_TOKEN_EXCHANGE_FAILED(HttpStatus.UNAUTHORIZED, "AUTH-401-2", "GitHub 인증에 실패했습니다. 다시 로그인해 주세요."),
     OAUTH_ACCESS_DENIED(HttpStatus.FORBIDDEN, "AUTH-403-3", "GitHub 권한 요청이 거부되었습니다."),
     OAUTH_SCOPE_NOT_GRANTED(HttpStatus.FORBIDDEN, "AUTH-403-4", "저장소 분석에 필요한 권한이 승인되지 않았습니다."),
-    OAUTH_GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AUTH-503-1", "GitHub 인증 서버에 연결할 수 없습니다.");
+    OAUTH_GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AUTH-503-1", "GitHub 인증 서버에 연결할 수 없습니다."),
+
+    // 저장소 조회·분석 요청 (B-FN-002). GitHub은 접근 권한이 없는 저장소에도 404를 주며,
+    // 그 구분을 우리가 되살리면 비공개 저장소의 존재 여부가 새어 나간다. 그래서 권한 없음과
+    // 없는 저장소를 같은 코드로 응답한다.
+    GITHUB_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "AUTH-401-4", "GitHub 연결이 만료되었습니다. 다시 로그인해 주세요."),
+    REPOSITORY_NOT_FOUND(HttpStatus.NOT_FOUND, "REPO-404-1", "저장소를 찾을 수 없거나 접근 권한이 없습니다."),
+    BRANCH_NOT_FOUND(HttpStatus.NOT_FOUND, "REPO-404-2", "브랜치를 찾을 수 없습니다."),
+    REPOSITORY_ACCESS_DENIED(HttpStatus.FORBIDDEN, "REPO-403-1", "저장소를 분석할 권한이 없습니다."),
+    // 보관·비활성은 권한 문제가 아니다. 403으로 답하면 사용자가 GitHub 권한 설정을
+    // 뒤지게 되므로, 저장소 상태 때문이라는 것이 드러나는 코드를 따로 둔다.
+    REPOSITORY_NOT_ANALYZABLE(HttpStatus.CONFLICT, "REPO-409-1", "보관되었거나 비활성화된 저장소는 분석할 수 없습니다."),
+    GITHUB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "REPO-429-1", "GitHub API 호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."),
+    GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "REPO-503-1", "GitHub API에 연결할 수 없습니다.");
 
 
 

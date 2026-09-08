@@ -10,7 +10,7 @@ require_core_tools
 
 services=()
 if profile_enabled core; then
-  services+=(postgres redis kafka)
+  services+=(postgres redis kafka kafka-connect)
 fi
 if profile_enabled app; then
   services+=(backend frontend nginx)
@@ -32,14 +32,14 @@ while (( SECONDS < deadline )); do
   for service in "${services[@]}"; do
     container_id="$(service_container_id "$service")"
     if [[ -z "$container_id" ]]; then
-      printf '%-8s not running\n' "$service"
+      printf '%-14s not running\n' "$service"
       all_healthy=false
       continue
     fi
 
     status="$(docker inspect --format '{{.State.Status}}' "$container_id")"
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container_id")"
-    printf '%-8s %-10s %s\n' "$service" "$status" "$health"
+    printf '%-14s %-10s %s\n' "$service" "$status" "$health"
 
     if [[ "$status" == "exited" || "$status" == "dead" || "$health" == "unhealthy" ]]; then
       printf '\n%s logs:\n' "$service" >&2

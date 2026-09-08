@@ -261,7 +261,14 @@ Evidence 응답에는 다음을 포함한다.
 
 ## 9. 현재 레포 구현과 다음 작업
 
-현재 실제 Backend 코드는 없고, `Infra/compose`와 Dockerfile이 `BE/gradlew`, Java 21, `/actuator/health`, `bootJar`를 계약으로 가정한다. Backend 투입 순서는 다음을 권장한다.
+현재 Backend에는 기본 보안 코드와 분석 작업·이벤트를 한 트랜잭션에 저장하는
+Transactional Outbox가 구현되어 있고, 저장된 이벤트는 Debezium CDC가 Kafka로
+발행한다(백엔드가 직접 발행하는 폴링 relay는 롤백 경로로만 남겨 둔다).
+저장소 목록·브랜치 조회와 분석 요청 API가 그 앞단에 연결되어 있다.
+Worker 결과 처리와 분석 상태 조회는 아직 연결 전이다.
+[저장소 선택·분석 요청](repository-analysis-request.md),
+[Outbox·CDC 구현·SQL 적용·복구 안내](analysis-outbox.md)를 참고한다. `Infra/compose`와 Dockerfile은 `BE/gradlew`, Java 21,
+`/actuator/health`, `bootJar`를 실행 계약으로 사용한다. 전체 Backend 구현 순서는 다음과 같다.
 
 1. Spring Boot 기본 실행·Actuator·공통 오류 envelope 작성
 2. PostgreSQL/Redis/Kafka 연결 및 migration 전략 확정
@@ -271,7 +278,7 @@ Evidence 응답에는 다음을 포함한다.
 6. 프로필·직무·Gap·추천 API 연결
 7. Q&A/설명·운영 API와 권한·품질 검증 추가
 
-로컬 개발에서 `JPA_DDL_AUTO=update`를 사용할 수 있지만, 운영은 `validate`와 명시적 migration(Flyway/Liquibase 등)으로 전환한다.
+`JPA_DDL_AUTO`는 로컬·Docker·운영 모두 `validate`다. Hibernate가 스키마를 만들거나 고치지 않으므로 `db/init.sql`을 먼저 적용해야 하고, 엔티티와 스키마가 어긋나면 기동 시점에 바로 드러난다. 명시적 migration(Flyway/Liquibase 등) 도입은 별도 항목이다.
 
 ## 10. 미결정 사항
 

@@ -36,6 +36,43 @@ spring:
       connect-timeout: ${REDIS_CONNECT_TIMEOUT:2s}
       timeout: ${REDIS_TIMEOUT:2s}
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      properties:
+        "[enable.idempotence]": true
+        "[spring.json.add.type.headers]": false
+        "[max.block.ms]": 5000
+        "[delivery.timeout.ms]": 10000
+        "[request.timeout.ms]": 5000
+
+gitjob:
+  analysis:
+    request:
+      # 요청 시점의 판정 기준을 이벤트에 박아 둔다. Registry가 바뀌어도 과거 분석을
+      # 그대로 재현할 수 있어야 하므로 클라이언트가 보낸 값을 쓰지 않는다.
+      registry-version: ${ANALYSIS_REGISTRY_VERSION:technology-registry/v1}
+      poll-after-seconds: ${ANALYSIS_POLL_AFTER_SECONDS:2}
+    outbox:
+      # CDC uses Debezium, not a Spring Kafka producer. POLLING is a deliberate rollback option.
+      mode: ${ANALYSIS_OUTBOX_MODE:CDC}
+      # Legacy polling switch only; true must never enable polling in CDC mode.
+      enabled: ${ANALYSIS_OUTBOX_ENABLED:true}
+      poll-interval: ${ANALYSIS_OUTBOX_POLL_INTERVAL:2s}
+      initial-delay: 10s
+      batch-size: ${ANALYSIS_OUTBOX_BATCH_SIZE:20}
+      max-attempts: ${ANALYSIS_OUTBOX_MAX_ATTEMPTS:10}
+      send-timeout: ${ANALYSIS_OUTBOX_SEND_TIMEOUT:10s}
+      retry-delay: ${ANALYSIS_OUTBOX_RETRY_DELAY:5s}
+      max-retry-delay: ${ANALYSIS_OUTBOX_MAX_RETRY_DELAY:5m}
+  kafka:
+    topics:
+      repository-analysis:
+        requests: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:gitjob.repository-analysis.requests.v1}
+
 jwt:
   secret: ${JWT_SECRET:gitjob-local-jwt-secret-key-change-me}
   issuer: ${JWT_ISSUER:gitjob}

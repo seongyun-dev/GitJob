@@ -45,6 +45,7 @@ endpoint, 연결 환경변수, 서비스 의존관계는 미리 정의해 두었
 | `core` | `postgres` | 서비스 DB·분석 Snapshot | WSL 실제 기동/검증 완료 |
 | `core` | `redis` | 캐시·세션·작업 보조 저장소 | WSL 실제 기동/검증 완료 |
 | `core` | `kafka` | 수집·분석 이벤트, replay | WSL 실제 기동/송수신 검증 완료 |
+| `core` | `kafka-connect` | Debezium CDC: `analysis_outbox` → Kafka 발행 | 커넥터 정의 `Infra/cdc/connector.json`, 등록은 `cdc-register.sh` |
 | `app` | `backend` | Spring Boot API·분석 Job API | 소스 투입 후 build/연결 검증 필요 |
 | `app` | `frontend` | React production static | 소스 투입 후 build 검증 필요 |
 | `app` | `nginx` | 정적 파일·API·WebSocket reverse proxy | 설정 파일 작성, backend/frontend 연결 대기 |
@@ -68,6 +69,8 @@ Infra/
 │   ├── compose.ec2.yaml      # 서비스/core EC2 + 단일 EC2 fallback
 │   ├── compose.ec2-data.yaml # 분리된 Hadoop/Spark data EC2
 │   └── compose.ec2-ha.yaml   # 2대 EC2 app 노드용 override
+├── cdc/
+│   └── connector.json        # Debezium outbox 커넥터 (주소만 치환해서 등록)
 ├── docker/
 │   ├── backend/Dockerfile    # Java 21 + Gradle + Spring Boot 가정
 │   ├── frontend/Dockerfile   # Node/npm + React dist 가정
@@ -105,6 +108,22 @@ core를 실행한다.
 ./Infra/scripts/healthcheck.sh
 ./Infra/scripts/kafka-smoke.sh
 ```
+
+`core`에는 Debezium worker(`kafka-connect`)가 포함된다. Outbox 이벤트를 실제로
+발행하려면 스키마(`BE/src/main/resources/db/init.sql`)와 CDC 객체
+(`db/changes/002_analysis_outbox_cdc.sql`)를 차례로 적용한 뒤 커넥터를 등록한다.
+SQL 파일은 자동 적용되지 않는다. 스키마 파일은 그대로 실행되고, `002`만 비밀번호
+플레이스홀더 치환이 필요하다. 자세한 내용은
+[분석 Outbox CDC 문서](../docs/be/analysis-outbox.md)에 있다.
+
+```bash
+./Infra/scripts/cdc-register.sh
+```
+
+`kafka-connect`는 `CDC_DATABASE_PASSWORD`를 필수로 요구한다. `init-wsl.sh`는 새
+`.env.wsl`에 값을 생성해 주지만, 이미 만들어 둔 env 파일(`.env.wsl`, `.env.ec2`,
+`.env.service` 등)에는 없으므로 `core`를 올리기 전에 `.env.example`을 참고해
+직접 추가한다. 값이 없으면 `up.sh`가 바로 실패한다.
 
 처음 생성되는 `.env.wsl`은 Git에 포함되지 않으며, 초기화 스크립트가 PostgreSQL,
 Redis, JWT, Jenkins, webhook용 임시 secret을 생성한다. OAuth client secret과
@@ -166,6 +185,7 @@ Compose는 여러 `-f` 파일을 순서대로 병합한다. 공통 파일을 먼
 | Jenkins | `127.0.0.1:8081` | `jenkins:8080` | WSL loopback / EC2 Tailscale:8081 |
 | Kafka UI | `127.0.0.1:8082` | `kafka-ui:8080` | WSL loopback; EC2 Tailscale 예정 |
 | Spark master UI | `127.0.0.1:8083` | `spark-master:8080` | WSL loopback |
+| Kafka Connect REST | `127.0.0.1:8084` | `kafka-connect:8083` | WSL loopback; 8083은 Spark가 사용 |
 | Redis Insight | `127.0.0.1:8001` | `redis-insight:5540` | WSL loopback |
 
 컨테이너 간 연결에 `localhost`를 쓰지 않는다. Backend는 `postgres`, `redis`,

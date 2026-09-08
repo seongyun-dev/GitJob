@@ -25,6 +25,9 @@ if command -v openssl >/dev/null 2>&1; then
   }
 
   replace_value POSTGRES_PASSWORD "$(openssl rand -hex 24)"
+  # The Debezium replication role is separate from the application DB user;
+  # BE/src/main/resources/db/changes/002_analysis_outbox_cdc.sql needs this value.
+  replace_value CDC_DATABASE_PASSWORD "$(openssl rand -hex 24)"
   replace_value REDIS_PASSWORD "$(openssl rand -hex 24)"
   replace_value JWT_SECRET "$(openssl rand -hex 32)"
   replace_value JENKINS_ADMIN_PASSWORD "$(openssl rand -hex 24)"

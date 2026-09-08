@@ -190,3 +190,44 @@ ALTER TABLE "analysis_job" ADD CONSTRAINT "PK_ANALYSIS_JOB" PRIMARY KEY (
                                                                          "analysis_id"
     );
 
+CREATE TABLE analysis_outbox (
+    event_id VARCHAR(80) PRIMARY KEY,
+    analysis_id VARCHAR(80) NOT NULL REFERENCES analysis_job(analysis_id),
+    analysis_repository_id VARCHAR(80) NOT NULL,
+    topic VARCHAR(249) NOT NULL,
+    event_json TEXT NOT NULL,
+    status VARCHAR(16) NOT NULL CHECK (status IN ('PENDING', 'PUBLISHED', 'FAILED')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    created_at TIMESTAMPTZ NOT NULL,
+    next_attempt_at TIMESTAMPTZ NOT NULL,
+    published_at TIMESTAMPTZ,
+    last_error_code VARCHAR(64)
+);
+CREATE INDEX idx_analysis_outbox_pending
+    ON analysis_outbox (status, next_attempt_at, created_at, event_id);
+
+-- ---------------------------------------------------------------------------
+-- Duplicate protection and lookup support for analysis requests.
+-- Existing databases apply db/changes/004_analysis_job_active_unique.sql instead.
+-- ---------------------------------------------------------------------------
+
+-- One in-progress analysis per (user, repository). The application checks this first,
+-- but the check and the insert are separate statements, so two near-simultaneous
+-- requests can both pass it. This index is what actually decides the race; the loser
+-- gets a constraint violation and is handed the winning job.
+-- The status list must stay in sync with AnalysisJob.IN_PROGRESS_STATUSES;
+-- DatabaseScriptConsistencyTest fails the build if it drifts.
+CREATE UNIQUE INDEX uq_analysis_job_active
+    ON analysis_job (user_id, repository_id)
+    WHERE status IN ('QUEUED', 'COLLECTING', 'RUNNING', 'ANALYZING', 'RATE_LIMITED', 'CANCEL_REQUESTED');
+
+-- Serves the duplicate check itself. The partial index above cannot: the query binds the
+-- status list as parameters, and the planner cannot prove a parameterized IN list implies
+-- the index predicate, so it would fall back to a sequential scan.
+CREATE INDEX idx_analysis_job_user_repository
+    ON analysis_job (user_id, repository_id);
+
+-- PostgreSQL does not index the child side of a foreign key automatically. Without this,
+-- deleting or archiving an analysis_job scans analysis_outbox in full.
+CREATE INDEX idx_analysis_outbox_analysis_id
+    ON analysis_outbox (analysis_id);

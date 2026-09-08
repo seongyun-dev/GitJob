@@ -1,0 +1,53 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "tasks.max": "1",
+
+  "database.hostname": "__DATABASE_HOST__",
+  "database.port": "__DATABASE_PORT__",
+  "database.dbname": "__DATABASE_NAME__",
+  "database.user": "gitjob_cdc",
+  "database.password": "${env:CDC_DATABASE_PASSWORD}",
+
+  "plugin.name": "pgoutput",
+  "slot.name": "gitjob_analysis_outbox",
+  "publication.name": "gitjob_analysis_outbox_pub",
+  "publication.autocreate.mode": "disabled",
+
+  "topic.prefix": "gitjob_cdc",
+  "schema.include.list": "public",
+  "table.include.list": "public.analysis_outbox",
+  "include.schema.changes": "false",
+  "provide.transaction.metadata": "false",
+  "tombstones.on.delete": "false",
+  "skipped.operations": "u,d,t",
+
+  "snapshot.mode": "initial",
+  "snapshot.select.statement.overrides": "public.analysis_outbox",
+  "snapshot.select.statement.overrides.public.analysis_outbox": "SELECT * FROM public.analysis_outbox WHERE status = 'PENDING' AND created_at > now() - interval '7 days' ORDER BY created_at, event_id",
+
+  "heartbeat.interval.ms": "10000",
+  "heartbeat.action.query": "UPDATE public.cdc_heartbeat SET updated_at = now() WHERE id = 1",
+
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "header.converter": "org.apache.kafka.connect.storage.StringConverter",
+
+  "transforms": "outbox",
+  "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+  "transforms.outbox.table.field.event.id": "event_id",
+  "transforms.outbox.table.field.event.key": "analysis_repository_id",
+  "transforms.outbox.table.field.event.payload": "event_json",
+  "transforms.outbox.table.expand.json.payload": "false",
+  "transforms.outbox.route.by.field": "topic",
+  "transforms.outbox.route.topic.regex": "(?<routedByValue>.*)",
+  "transforms.outbox.route.topic.replacement": "${routedByValue}",
+  "transforms.outbox.route.tombstone.on.empty.payload": "false",
+
+  "topic.creation.default.replication.factor": "1",
+  "topic.creation.default.partitions": "3",
+  "topic.creation.default.cleanup.policy": "delete",
+
+  "errors.tolerance": "none",
+  "errors.log.enable": "true",
+  "errors.log.include.messages": "false"
+}
