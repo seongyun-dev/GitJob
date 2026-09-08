@@ -3,3 +3,4 @@ pydantic==2.13.5
 uvicorn==0.52.4
 psycopg[binary]==3.3.3
 tzdata>=2024.1
+kafka-python==3.0.11

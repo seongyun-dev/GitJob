@@ -18,8 +18,10 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from job.collector.events import publisher_from_env, write_publish_record
 from job.collector.schedule import (
     RunOutcome,
+    RunRecord,
     ScheduleConfig,
     append_history,
     count_blocked_runs,
@@ -38,6 +40,31 @@ def _webhook(config: ScheduleConfig) -> str | None:
     if not config.webhook_env:
         return None
     return os.environ.get(config.webhook_env) or None
+
+
+def _announce(record: RunRecord, *, cwd: Path) -> None:
+    """Publish `jobs.collected` for a round that reached Raw.
+
+    Called after history is written. The event points at HDFS rather than
+    carrying the postings, so a consumer needs the archive to already be
+    there — a round whose upload failed is skipped here and reported by the
+    alert instead. A broker that is unset or unreachable never fails the run.
+    """
+
+    publisher = publisher_from_env()
+    if publisher is None or not record.manifest_path:
+        return
+
+    run_dir = Path(cwd, record.manifest_path).resolve().parent
+    result = publisher.publish(record, run_dir=run_dir)
+    if result.published:
+        print(f"published {result.event_id} -> {result.topic}")
+    else:
+        print(f"not published: {result.reason}", file=sys.stderr)
+    try:
+        write_publish_record(run_dir, result)
+    except OSError as error:
+        print(f"could not write publish record: {error}", file=sys.stderr)
 
 
 def _alert(config: ScheduleConfig, text: str) -> None:
@@ -198,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{record.status} {record.records}건 exit={record.exit_code} "
         f"run={record.run_name}"
     )
+    _announce(record, cwd=config_path.parent)
 
     if record.status != RunOutcome.SUCCESS:
         detail = f" - {record.error.splitlines()[-1][:160]}" if record.error else ""
