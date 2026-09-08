@@ -45,6 +45,7 @@ from job.collector import (
     pipeline_run_id_for,
 )
 from job.collector.http import BlockedError, HttpError, PoliteHttpClient
+from job.collector.raw_sink import sink_from_env, write_upload_record
 from job.contracts import (
     JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
     JobAnalysisInputBatch,
@@ -580,6 +581,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument(
+        "--no-upload-raw",
+        action="store_true",
+        help=(
+            "skip the HDFS Raw upload; by default a run publishes to Raw "
+            "whenever WEBHDFS_URL is set (see job/collector/raw_sink.py)"
+        ),
+    )
+    parser.add_argument(
         "--cursor",
         default=None,
         help="resume-state file; omit to collect without resume support",
@@ -642,6 +651,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"json={paths['json']}")
     print(f"manifest={paths['manifest']}")
+
+    if not args.no_upload_raw:
+        sink = sink_from_env()
+        if sink is None:
+            print("raw=skipped (WEBHDFS_URL 미설정)", file=sys.stderr)
+        else:
+            upload = sink.upload_run(
+                paths["manifest"].parent,
+                source=SOURCE_SITE,
+                collected_at=result.batch.records[0].collected_at
+                if result.batch.records
+                else datetime.now(UTC),
+                pipeline_run_id=result.batch.pipeline_run_id,
+            )
+            write_upload_record(paths["manifest"].parent, upload)
+            print(f"raw={upload.run_path}")
+            for entry in upload.failed:
+                print(f"raw failed: {entry['file']} - {entry['error']}", file=sys.stderr)
+            if not upload.ok:
+                # The local snapshot is intact; a Raw failure must be visible
+                # to the scheduler without discarding what was collected.
+                return 1
 
     if result.manifest["stopped_reason"]:
         print(f"stopped: {result.manifest['stopped_reason']}", file=sys.stderr)

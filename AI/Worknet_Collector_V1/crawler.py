@@ -20,7 +20,7 @@ import sys
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ from job.collector import (
     normalize_posting,
     pipeline_run_id_for,
 )
+from job.collector.raw_sink import sink_from_env, write_upload_record
 from job.contracts import (
     JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
     JobAnalysisInputBatch,
@@ -579,6 +580,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=today.isoformat(),
         help="inclusive end of the registration-date range",
     )
+    parser.add_argument(
+        "--days-back",
+        type=int,
+        default=0,
+        help=(
+            "widen the range to N days before --end-date; a scheduled run needs "
+            "this because postings registered late yesterday carry yesterday's "
+            "date and a today-only window would never see them"
+        ),
+    )
     parser.add_argument("--output-dir", default="data/worknet")
     parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE)
     parser.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES)
@@ -598,6 +609,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--region-code",
         default=None,
         help="Worknet region code (codeDepth1Info); omit for no region filter",
+    )
+    parser.add_argument(
+        "--no-upload-raw",
+        action="store_true",
+        help=(
+            "skip the HDFS Raw upload; by default a run publishes to Raw "
+            "whenever WEBHDFS_URL is set (see job/collector/raw_sink.py)"
+        ),
     )
     parser.add_argument(
         "--cursor",
@@ -644,9 +663,15 @@ def _occupation_codes(
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     try:
+        end_date = parse_cli_date(args.end_date)
+        start_date = parse_cli_date(args.start_date)
+        if args.days_back < 0:
+            raise ValueError("--days-back must not be negative")
+        if args.days_back:
+            start_date = end_date - timedelta(days=args.days_back)
         config = CrawlConfig(
-            start_date=parse_cli_date(args.start_date),
-            end_date=parse_cli_date(args.end_date),
+            start_date=start_date,
+            end_date=end_date,
             page_size=args.page_size,
             max_pages=args.max_pages,
             request_delay=args.request_delay,
@@ -680,6 +705,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"json={paths['json']}")
     print(f"manifest={paths['manifest']}")
+
+    if not args.no_upload_raw:
+        sink = sink_from_env()
+        if sink is None:
+            print("raw=skipped (WEBHDFS_URL 미설정)", file=sys.stderr)
+        else:
+            upload = sink.upload_run(
+                paths["manifest"].parent,
+                source=SOURCE_SITE,
+                collected_at=result.batch.records[0].collected_at
+                if result.batch.records
+                else datetime.now(UTC),
+                pipeline_run_id=result.batch.pipeline_run_id,
+            )
+            write_upload_record(paths["manifest"].parent, upload)
+            print(f"raw={upload.run_path}")
+            for entry in upload.failed:
+                print(f"raw failed: {entry['file']} - {entry['error']}", file=sys.stderr)
+            if not upload.ok:
+                # The local snapshot is intact; a Raw failure must be visible
+                # to the scheduler without discarding what was collected.
+                return 1
 
     if result.manifest["stopped_reason"]:
         print(f"stopped: {result.manifest['stopped_reason']}", file=sys.stderr)

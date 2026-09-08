@@ -23,6 +23,10 @@
 # Saramin collection snapshots
 /data/saramin/
 
+# Scheduled-collection run history (S15P21E102-107). Operational output:
+# it records what ran on one machine, not anything the team shares.
+/data/collection-history.jsonl
+
 # Temporary JobKorea collection snapshots
 /data/jobkorea/
 
