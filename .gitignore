@@ -30,6 +30,10 @@
 # Temporary JobKorea collection snapshots
 /data/jobkorea/
 
+# GH Archive hourly archives. 17.6MB/hour measured — a month is ~13GB, so this
+# must never be staged. The watcher (S15P21E102-144) writes here.
+/data/gharchive/
+
 # GameJob collection snapshots
 /data/gamejob/
 
