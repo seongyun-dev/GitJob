@@ -25,6 +25,25 @@
 
   /* 근거 행의 고정폭 대비는 이 제품의 시각적 시그니처다. 임의로 낮추지 않는다. */
   --font-evidence: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /*
+   * 브랜드 색. 새로 만든 색 체계가 아니라 `GitJob Desktop UI Final.html`의
+   * Repository Selection(`section#repos`) computed style에서 그대로 읽어온 값이다.
+   * Landing이 쓰는 값과도 같은 계열이다.
+   *
+   * 위의 톤 토큰 5종과는 다른 축이다. 톤은 근거·상태 배지의 의미 체계이고 이쪽은 서비스
+   * 외형이므로 섞어 쓰지 않는다. 배지에 브랜드 색을 쓰거나 제목에 톤 색을 쓰지 않는다.
+   */
+  --color-brand-ink: #101a2e;
+  --color-brand-ink-soft: #1a2743;
+  --color-brand-body: #465873;
+  --color-brand-muted: #5f6f86;
+  --color-brand-faint: #7c8a9e;
+  --color-brand-600: #2f5eeb;
+  --color-brand-400: #5b8dff;
+  --color-brand-line: #e0e7f1;
+  --color-brand-line-active: #cfe0ff;
+  --color-brand-box: #d6dde7;
 }
 
 html,

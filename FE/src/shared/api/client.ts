@@ -126,3 +126,14 @@ export async function put<T>(path: string, body: unknown): Promise<T> {
   const envelope = await request<T>(path, { method: 'PUT', body: JSON.stringify(body) })
   return envelope.data
 }
+
+/**
+ * 신규 생성 쓰기용. `POST /analyses`가 유일한 소비자다(티켓 S15P21E102-117).
+ *
+ * `put`과 본문이 같지만 method가 계약의 일부다. 호출부에서 `request`에 직접
+ * `{ method: 'POST' }`를 넘기면 봉투 해제 코드가 기능마다 복제된다.
+ */
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const envelope = await request<T>(path, { method: 'POST', body: JSON.stringify(body) })
+  return envelope.data
+}
