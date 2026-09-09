@@ -425,7 +425,7 @@ ALB_HEALTHCHECK_URL=https://<service-domain>/health
 | HDFS·Spark·Kafka·Jenkins 동시 실행으로 WSL 자원 부족 | 높음/높음 | Compose profile 분리, 자원 제한, core/app 우선 검증, 사용량 측정 |
 | Compose 내부에서 `localhost` 사용 | 높음/높음 | 모든 서비스 연결을 Compose DNS 서비스명으로 통일하고 smoke test에 포함 |
 | Jenkins Docker 권한으로 호스트 장악 가능 | 중간/높음 | 전용 agent, private 접근, 최소 credential, EC2 운영 전 방식 재검토 |
-| 운영 DB가 `ddl-auto=update`에 의존 | 중간/높음 | Flyway/Liquibase 등 마이그레이션을 P2/P6 전에 확정 |
+| ~~운영 DB가 `ddl-auto=update`에 의존~~ (2026-09-09 해소) | 중간/높음 | Flyway 도입(S15P21E102-172). `db/migration`을 backend 기동 시 적용하며 `ddl-auto`는 `validate` 유지 |
 | 단일 EC2 장애 시 서비스·데이터 동시 중단 | 중간/높음 | 2대면 ALB + shared state로 분리하고, 1대면 EBS backup·dump·S3 백업을 적용 |
 | 두 EC2에서 local core를 동시에 실행해 데이터가 갈라짐 | 높음/높음 | HA overlay는 `app`만 실행하고 RDS·ElastiCache·MSK endpoint를 양쪽에 동일하게 주입 |
 | ALB health가 실제 Backend 장애를 감지하지 못함 | 중간/높음 | Nginx `/health`를 Backend actuator에 연결하고 target failover 테스트 수행 |

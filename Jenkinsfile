@@ -133,6 +133,10 @@ pipeline {
                     test -f FE/package.json
                     cd FE
                     npm ci
+                    # oxlint is already a devDependency and FE exposes it as `lint`,
+                    # but nothing was calling it. `npm run build` type-checks; this is
+                    # the only thing in CI that looks at the code itself.
+                    npm run lint
                     if node -e "const packageJson = require('./package.json'); process.exit(packageJson.scripts?.test ? 0 : 1)"; then
                         npm test -- --runInBand
                     else

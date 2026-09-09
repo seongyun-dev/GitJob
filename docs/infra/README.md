@@ -8,6 +8,7 @@
 
 | 문서 | 내용 |
 |---|---|
+| [첫 운영 배포 기록](2026-09-09-first-production-deploy.md) | 배포 전후 상태, 배포 후 수동 단계, CDC 종단 검증, 이날 드러난 도구 결함 |
 | [지급 서버 사양·네트워크 실측](2026-08-31-server-inspection.md) | J15E102/J15E102A 실제 사양, runtime, UFW, private network 점검 결과 |
 | [MR !3 수정·검증 기록](2026-08-28-mr3-fix-validation.md) | 검토 항목별 수정 내용과 실제 검증 결과 |
 | [인프라 준비도](2026-08-27-infra-readiness.md) | 현재 구현·검증·미완료 항목 |

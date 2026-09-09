@@ -16,7 +16,7 @@ spring:
   # db/init.sql was applied by hand, which is why environments drifted: the
   # production database was still empty while the entities expected the analysis
   # tables. Flyway owns the schema now and runs before Hibernate validates it.
-  # db/cdc and db/migrations are outside this location on purpose; see those
+  # db/cdc and db/c-compute are outside this location on purpose; see those
   # directories for why they are still applied separately.
   flyway:
     enabled: true

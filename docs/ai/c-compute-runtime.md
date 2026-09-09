@@ -233,7 +233,7 @@ error type 위주다. 원본과 loader의 검증 조건을 함께 대조해야 �
 ## 저장과 migration
 
 현재 `db/migration/V1__baseline_schema.sql`의 13개 Registry/Evidence 테이블은 수정하지 않는다.
-`db/migrations/001_c_compute.sql`이 `c_compute` schema의 event 실행,
+`db/c-compute/001_c_compute.sql`이 `c_compute` schema의 event 실행,
 불변 결과, 현재 pointer 및 migration checksum을 만든다. 공고 cohort는 원본 수집
 본문이 아닌 분석된 기술 조건·출처·품질·버전을 한 번 저장한다. 수요/개인 추천/공개
 분석/Trend는 버전이 있는 결과 JSONB를 저장한다. 개인 원본 코드·토큰은 받거나 저장하지 않는다.

@@ -7,17 +7,29 @@
 | --- | --- | --- |
 | `migration/` | **Flyway** (Spring Boot 자동설정) | backend 기동 시 자동 |
 | `cdc/` | 사람 | Debezium을 쓸 때 1회 수동 |
-| `migrations/` | **C조 자체 러너** (`python -m worker.migrate`) | 수동 |
+| `c-compute/` | **C조 자체 러너** (`python -m worker.migrate`) | 수동 |
 
-## `migration/` 과 `migrations/` 는 다른 것이다
+## `migration/` 과 `c-compute/` 를 합치지 않는 이유
 
-s 한 글자 차이인데 완전히 다른 시스템이다. 헷갈리기 쉬우므로 주의한다.
+Flyway로 통합하면 세 가지가 깨진다.
 
-- `migration/` (단수): Flyway가 읽는 위치다. `V<번호>__<설명>.sql` 규칙을 지켜야 하고,
-  이름이 어긋나면 Flyway가 **조용히 무시한다**. 적용 이력은 `flyway_schema_history`에 남는다.
-- `migrations/` (복수): C조의 `c_compute` 스키마용이다. `AI/worker/store.py`가 이 경로를
-  하드코딩해서 읽고, 적용 이력은 `c_compute.schema_version`에 따로 남긴다. Flyway는 이
-  디렉터리를 보지 않는다.
+1. `docs/ai/c-compute-runtime.md`가 "API가 시작하면서 DDL을 자동 실행하지 않는다"고
+   명시한다. Flyway는 기동 시 자동 실행이 본질이라 이 원칙과 정면으로 어긋난다.
+2. `c_compute.schema_version`은 이력 테이블이 아니라 런타임 계약이다. `AI/worker/store.py`의
+   `ready()`가 이 테이블에서 버전 행을 찾아 `/ready` 응답을 결정한다. Flyway가 소유하면
+   기록이 `flyway_schema_history`로 가므로 `/ready`가 영원히 준비되지 않은 것으로 보인다.
+3. worker는 데이터 호스트, backend는 서비스 호스트에 있다. 합치면 서비스 호스트의
+   backend가 기동하면서 다른 호스트 서비스의 스키마를 만들게 된다.
+
+기능적으로 겹치지도 않는다. Flyway는 `public`만, C 러너는 `c_compute`만 만든다.
+
+이 디렉터리는 한때 `migrations/`(복수)였다. `migration/`과 s 한 글자 차이라, 새 Flyway
+마이그레이션을 복수 쪽에 넣으면 **에러 없이 조용히 무시되는** 함정이 있었다.
+
+- `migration/`: Flyway가 읽는다. `V<번호>__<설명>.sql` 규칙을 지켜야 하고, 이름이 어긋나면
+  무시된다. 적용 이력은 `flyway_schema_history`에 남는다.
+- `c-compute/`: `AI/worker/store.py`가 경로를 하드코딩해 읽고, 이력은
+  `c_compute.schema_version`에 남긴다. Flyway는 이 디렉터리를 보지 않는다.
 
 `c_compute`는 대응하는 JPA 엔티티가 없어 Hibernate `validate` 대상이 아니다. 그래서
 적용하지 않아도 backend는 정상 기동하고, worker 컨테이너도 healthy로 뜬다. 준비가 안 된

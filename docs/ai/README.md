@@ -83,6 +83,8 @@ B 레벨, 검증 상태, 기술 관측, 참여, SELF 귀속을 따로 보존한�
 4. `GET /internal/v1/c/intake/status`로 처리 상태를 보고, `POST /internal/v1/c/job-cohorts/resolve`로 현재 기준의 코호트 ID를 얻는다. resolve는 조회이며 계산 요청이 아니다.
 5. B에서 `POST /internal/v1/c/analyses/completed`로 실제 Evidence와 코호트 ID를 보낸다. 반환된 저장 Snapshot ID로 결과와 공고 목록을 조회한다. 실패 재전달은 [클라이언트 규칙](c-compute-client.md)을 따른다.
 
+운영 준비 현황과 B 연동에 남은 일은 [B ↔ C compute 연동](c-compute-backend-integration.md)에 있다. 2026-09-09 기준 2번(스키마·token)까지 끝났고 3번 이후는 착수 전이다.
+
 배포 대상 주소·비밀값은 문서 예제를 그대로 쓰지 않는다. 자동 입력의 `as_of`는 명시한 기준 시각이며 저절로 현재 시각으로 이동하지 않는다. 기준 변경과 운영 입력 보존은 실행 설정에서 관리한다.
 
 ## 6. 어디까지 검증했고 무엇이 남았나

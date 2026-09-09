@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 MIGRATION_VERSION = 1
 MIGRATION_FILE = (
     Path(__file__).resolve().parents[2]
-    / "BE/src/main/resources/db/migrations/001_c_compute.sql"
+    / "BE/src/main/resources/db/c-compute/001_c_compute.sql"
 )
 
 

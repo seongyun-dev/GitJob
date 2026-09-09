@@ -342,6 +342,29 @@ preflight_remote_env "$data_host" "$data_user" "$data_path" \
 [[ "$preflight_failures" -eq 0 ]] \
   || die "preflight failed on $preflight_failures host(s); no host was modified"
 
+# healthcheck.sh above only asks whether containers are up. It cannot see that a
+# database has no schema, that the Debezium connector was never registered, or that
+# a worker has no c_compute tables — all of which have shipped as a green deploy.
+# This runs after BOTH hosts are deployed: stopping at the first failure would leave
+# the data host untouched, and the operator needs to see the state of both.
+verify_deployment() {
+  local host="$1"
+  local user="$2"
+  local deploy_path="$3"
+  local env_file_name="$4"
+  local override_file="$5"
+  local profiles="$6"
+
+  echo "Verifying readiness on ${user}@${host}..."
+  remote_exec "$host" "$user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$deploy_path")
+     ENV_FILE=$(quote_for_remote "$env_file_name") \
+       COMPOSE_OVERRIDE_FILE=$(quote_for_remote "Infra/compose/$override_file") \
+       PROFILES=${profiles} VERIFY_TIMEOUT_SECONDS=120 \
+       bash Infra/scripts/verify-deployment.sh"
+}
+
 refresh_checkout "$service_host" "$service_user" "$service_path" "$deploy_ref"
 start_service_core
 build_service_images
@@ -352,3 +375,13 @@ build_data_images
 start_data_app
 
 echo "Split source-pull/build deployment completed for ${deploy_ref}."
+
+verify_failures=0
+verify_deployment "$service_host" "$service_user" "$service_path" \
+  "$service_env_file" compose.ec2.yaml core,app || verify_failures=$((verify_failures + 1))
+verify_deployment "$data_host" "$data_user" "$data_path" \
+  "$data_env_file" compose.ec2-data.yaml data || verify_failures=$((verify_failures + 1))
+[[ "$verify_failures" -eq 0 ]] \
+  || die "deployment finished but ${verify_failures} host(s) are not ready; the checks above name the missing step"
+
+echo "Both hosts verified ready."
