@@ -36,6 +36,19 @@ services:
     ports:
       - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE_WEB_PORT:-9864}:9864"
 
+  # Publish distinct host UI ports so an operator can check port collisions
+  # before the targeted rollout. HDFS replication traffic still stays on the
+  # internal Compose network.
+  hdfs-datanode2:
+    restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE2_WEB_PORT:-9866}:9864"
+
+  hdfs-datanode3:
+    restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE3_WEB_PORT:-9867}:9864"
+
   spark-master:
     restart: unless-stopped
     build:

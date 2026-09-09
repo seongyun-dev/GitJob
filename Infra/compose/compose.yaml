@@ -432,6 +432,88 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  # Additional logical DataNodes on the same physical host. The existing
+  # hdfs-datanode service and volume remain DataNode-1.
+  hdfs-datanode2-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode2-data:/data
+    logging: *default-logging
+
+  hdfs-datanode3-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode3-data:/data
+    logging: *default-logging
+
+  hdfs-datanode2:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-datanode2
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode2-data-init:
+        condition: service_completed_successfully
+      hdfs-namenode:
+        condition: service_healthy
+    expose:
+      - "9864"
+    volumes:
+      - hdfs-datanode2-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  hdfs-datanode3:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-datanode3
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode3-data-init:
+        condition: service_completed_successfully
+      hdfs-namenode:
+        condition: service_healthy
+    expose:
+      - "9864"
+    volumes:
+      - hdfs-datanode3-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
   hdfs-bootstrap:
     image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
     profiles: [data]
@@ -623,6 +705,8 @@ volumes:
   kafka-data:
   hdfs-namenode-data:
   hdfs-datanode-data:
+  hdfs-datanode2-data:
+  hdfs-datanode3-data:
   jenkins-home:
   jenkins-agent-workspace:
   redis-insight-data:

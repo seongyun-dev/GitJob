@@ -16,7 +16,10 @@ if profile_enabled app; then
   services+=(backend frontend nginx)
 fi
 if profile_enabled data; then
-  services+=(hdfs-namenode hdfs-datanode spark-master spark-worker worker collector)
+  # The data profile expects all three logical DataNodes. During a rollout,
+  # check the existing NameNode/DataNode-1 first, run the targeted DN2/DN3
+  # up command, and invoke this full check only after both new nodes are up.
+  services+=(hdfs-namenode hdfs-datanode hdfs-datanode2 hdfs-datanode3 spark-master spark-worker worker collector)
 fi
 if profile_enabled ci; then
   services+=(jenkins)

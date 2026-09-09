@@ -52,6 +52,7 @@ endpoint, 연결 환경변수, 서비스 의존관계는 미리 정의해 두었
 | `data` | `collector` | 외부 소스 수집·Kafka producer | Python 모듈 계약 대기 |
 | `data` | `worker` | Kafka consumer·분석 작업 | Python 모듈/이벤트 계약 대기 |
 | `data` | `hdfs-namenode`, `hdfs-datanode` | 원본·장기 데이터/Parquet 저장 | XML env·volume 초기화·최초 format·put/get·재시작 영속성 검증 완료 |
+| `data` | `hdfs-datanode2`, `hdfs-datanode3` | 기존 HDFS에 추가하는 논리 DataNode | Compose 정의 및 독립 volume 준비, 운영 기동·분산 저장 검증 전 |
 | `data` | `spark-master`, `spark-worker` | 배치·스트리밍 처리 | 공식 Spark 3.5.3 image/foreground command와 1·2·4 worker Parquet smoke 검증 완료 |
 | `ci` | `jenkins`, `jenkins-agent` | CI/CD controller와 제한 agent | controller 발급 secret bootstrap 및 credential 연결 대기 |
 | `observability` | `kafka-ui`, `redis-insight` | WSL 디버깅/운영 보조 | 선택 프로파일, UI 실기동 대기 |
@@ -327,7 +328,7 @@ J15E102
                                       │ private endpoint
 J15E102A
   Collector/Worker ───────────────────┘
-  HDFS NameNode/DataNode + Spark master/worker (local)
+  HDFS NameNode + 논리 DataNode 1/2/3 + Spark master/worker (local)
 ```
 
 ### 서비스 서버
@@ -391,8 +392,28 @@ SPARK_MASTER_URL=spark://spark-master:7077
 HDFS_REPLICATION_FACTOR=1
 ```
 
+`hdfs-datanode`는 기존 `hdfs-datanode-data` volume을 사용하는 DataNode-1로
+그대로 유지한다. Compose project name이 `gitjob-data`일 때 실제 Docker volume은
+`gitjob-data_hdfs-datanode-data`, `gitjob-data_hdfs-datanode2-data`,
+`gitjob-data_hdfs-datanode3-data`이며, `hdfs-datanode2`와 `hdfs-datanode3`는
+각각 뒤의 두 별도 named volume을 사용한다. 실제 이름은 배포 환경의
+`COMPOSE_PROJECT_NAME`에 따라 접두사가 달라질 수 있으므로 `docker volume ls`로
+확인한다.
+세 DataNode는 동일 물리 호스트의 논리 프로세스이므로 host-level fault tolerance를
+제공하지 않으며, 대량 데이터에는 기본 `dfs.replication=1`을 유지한다.
+
+세 논리 DataNode가 같은 물리 디스크를 사용하면 `hdfs dfsadmin -report`의
+합산 capacity가 실제 독립 용량보다 부풀려 보일 수 있다. 용량 판단의 기준은
+DataNode host의 `df`이고, `dfsadmin -report` capacity는 참고값으로만 사용한다.
+DataNode별 예약 공간(`dfs.datanode.du.reserved`) 적용은 별도 후속 이슈에서
+검토한다.
+
 `J15E102A`에서는 반드시 `compose.ec2-data.yaml`을 사용한다. `compose.ec2.yaml`
 은 local core 의존성을 추가하므로 data 프로파일만 실행할 때 사용할 수 없다.
+
+DataNode 관리 UI는 기존 노드 `9864`, 신규 노드 `9866`·`9867`을 사용한다.
+기동 전 세 포트가 모두 비어 있는지 확인하고, `DATA_ADMIN_BIND_ADDRESS`의
+관리망 범위 밖으로 공개하지 않는다.
 
 ```bash
 ENV_FILE=.env.data \

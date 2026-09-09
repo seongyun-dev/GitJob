@@ -27,6 +27,8 @@ snapshot 또는 S3 backup 정책을 추가해야 한다.
 | Spark worker | data | spark-worker:8081 | Spark executor |
 | HDFS NameNode UI | data | Tailscale 100.70.66.38:9870 | HDFS 운영 확인 |
 | HDFS DataNode UI | data | Tailscale 100.70.66.38:9864 | HDFS 운영 확인 |
+| HDFS DataNode-2 UI | data | Tailscale 100.70.66.38:9866 | HDFS 운영 확인 |
+| HDFS DataNode-3 UI | data | Tailscale 100.70.66.38:9867 | HDFS 운영 확인 |
 | Spark master UI | data | Tailscale 100.70.66.38:8083 | Spark 운영 확인 |
 | Spark worker UI | data | Tailscale 100.70.66.38:8084 | Spark 운영 확인 |
 
@@ -113,6 +115,8 @@ DEPLOYMENT_MODE=split
 DATA_ADMIN_BIND_ADDRESS=100.70.66.38
 HDFS_NAMENODE_WEB_PORT=9870
 HDFS_DATANODE_WEB_PORT=9864
+HDFS_DATANODE2_WEB_PORT=9866
+HDFS_DATANODE3_WEB_PORT=9867
 SPARK_MASTER_WEB_PORT=8083
 SPARK_WORKER_WEB_PORT=8084
 
@@ -160,7 +164,7 @@ Tailscale IPv4 100.70.66.38에만 bind하고, UFW에서도 tailscale0 인터페�
 Security Group은 다음만 허용한다.
 
 - 22/tcp: 관리자 IP, SSM 또는 Tailscale 경로
-- public 80, 8020, 8080, 8081, 9870, 9864: 허용하지 않음
+- public 80, 8020, 8080, 8081, 9870, 9864, 9866, 9867: 허용하지 않음
 - Tailscale tailscale0에서만 9870, 9864, 8083, 8084 관리 접속 허용
 - 서비스 core port inbound: 필요하지 않음. data 서버는 서비스 서버로 outbound 연결만 수행
 
@@ -201,19 +205,77 @@ docker compose --project-directory . --env-file .env.data \
   --profile data config --quiet
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
-  --profile data pull hdfs-namenode hdfs-datanode hdfs-bootstrap
+  --profile data pull hdfs-namenode hdfs-datanode hdfs-datanode2 hdfs-datanode3 hdfs-bootstrap
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
   --profile data build collector worker spark-master spark-worker
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
   --profile data up -d --no-build \
-  hdfs-namenode hdfs-datanode hdfs-bootstrap spark-master spark-worker collector worker
+  hdfs-namenode hdfs-datanode hdfs-datanode2 hdfs-datanode3 hdfs-bootstrap spark-master spark-worker collector worker
 ~~~
 
-up.sh는 HDFS NameNode/DataNode, HDFS bootstrap, Spark master/worker, Collector,
+up.sh는 HDFS NameNode/DataNode 1/2/3, HDFS bootstrap, Spark master/worker, Collector,
 Worker를 dependency 순서에 맞춰 기동한다. HDFS volume은 컨테이너 재생성으로
 삭제되지 않지만, down --volumes나 volume prune은 운영 데이터 삭제로 이어진다.
+
+데이터 서버의 HDFS는 동일 물리 호스트 안에 세 개의 논리 DataNode를 둔다.
+기존 `hdfs-datanode`/`hdfs-datanode-data`는 DataNode-1로 보존하고,
+`hdfs-datanode2`/`hdfs-datanode3`는 각각 별도 named volume을 사용한다.
+Compose project name이 `gitjob-data`라면 실제 volume 이름은
+`gitjob-data_hdfs-datanode-data`, `gitjob-data_hdfs-datanode2-data`,
+`gitjob-data_hdfs-datanode3-data`다. 접두사는 `COMPOSE_PROJECT_NAME`에 따라
+달라질 수 있으므로 운영 전 `docker volume ls`로 실제 이름을 확인한다.
+
+운영 적용 시 기존 NameNode/DataNode를 내리지 않는다. 먼저 기존 NameNode와
+DataNode-1이 healthy인지, 신규 관리 포트가 비어 있는지 확인한다. 신규 노드가
+아직 없을 때 전체 `healthcheck.sh`를 실행하면 신규 서비스가 `not running`으로
+표시되어 실패하므로, 아래 순서를 지킨다.
+
+~~~bash
+COMPOSE=(docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml --profile data)
+
+# 기존 클러스터의 기준 상태를 먼저 확인한다.
+"${COMPOSE[@]}" ps hdfs-namenode hdfs-datanode
+"${COMPOSE[@]}" exec hdfs-namenode hdfs dfsadmin -report
+
+# 9864/9866/9867 중 이미 사용 중인 host port가 있는지 확인한다.
+for port in 9864 9866 9867; do
+  if ss -ltn | grep -Eq ":${port}[[:space:]]"; then
+    echo "host port ${port} is already listening" >&2
+    exit 1
+  fi
+done
+
+# 기동 전 실제 변경 계획만 출력한다. 이 명령은 서비스를 만들거나 시작하지 않는다.
+"${COMPOSE[@]}" --dry-run up -d --no-build --no-deps --no-recreate \
+  hdfs-datanode2-data-init hdfs-datanode3-data-init
+"${COMPOSE[@]}" --dry-run up -d --no-build --no-deps --no-recreate \
+  hdfs-datanode2 hdfs-datanode3
+
+# 새 volume의 권한 초기화 후, 기존 서비스에 영향을 주지 않고 신규 노드만 추가한다.
+"${COMPOSE[@]}" up -d --no-build --no-deps --no-recreate \
+  hdfs-datanode2-data-init hdfs-datanode3-data-init
+"${COMPOSE[@]}" up -d --no-build --no-deps --no-recreate \
+  hdfs-datanode2 hdfs-datanode3
+~~~
+
+`--no-deps` 때문에 위 targeted 기동은 NameNode를 자동으로 재기동하지 않는다.
+따라서 기존 NameNode healthy 확인이 선행 조건이다. 두 신규 DataNode 컨테이너가
+healthy가 된 뒤에만 전체 healthcheck를 실행한다.
+
+~~~bash
+ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml \
+PROFILES=data ./Infra/scripts/healthcheck.sh
+~~~
+
+`dfs.replication` 기본값은 기존과 같이 1이다. 동일 호스트의 논리 DataNode 3개는
+호스트 장애를 분산하지 않으며, replication 변경은 작은 검증 파일에만 적용한다.
+같은 물리 디스크를 세 논리 노드가 공유하므로 `dfsadmin -report`의 합산 capacity가
+실제 독립 용량보다 부풀려질 수 있다. 용량 판단은 DataNode host의 `df`를 기준으로
+하고, `dfsadmin -report` capacity는 참고값으로만 기록한다. `dfs.datanode.du.reserved`
+설정은 별도 후속 이슈로 분리할 수 있다.
 
 ## 9. 데이터 점검
 
@@ -229,11 +291,68 @@ docker compose --project-directory . --env-file .env.data -f Infra/compose/compo
 ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml PROFILES=data ./Infra/scripts/spark-smoke.sh
 ~~~
 
+신규 노드가 등록된 뒤 다음 운영 검증을 남긴다.
+
+~~~bash
+# report에서 Live DataNode 3개와 서로 다른 DatanodeUuid 3개를 확인한다.
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data exec hdfs-namenode hdfs dfsadmin -report
+
+# 기존 데이터의 block location과 replica 상태를 확인한다.
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data exec hdfs-namenode hdfs fsck /gitjob -files -blocks -locations
+
+# client가 DataNode hostname을 사용하도록 설정됐는지 확인하고 DNS/포트 영향을 검토한다.
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data exec hdfs-namenode hdfs getconf -confKey dfs.client.use.datanode.hostname
+
+# 작은 별도 test 파일에만 replication=2를 적용하고 under-replicated 해소를 기다린다.
+TEST_PATH=/gitjob/.ops/three-datanode-replication-check
+printf 'three-datanode-check\n' | docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data exec -T hdfs-namenode hdfs dfs -put - "$TEST_PATH"
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data exec hdfs-namenode hdfs dfs -setrep -w 2 "$TEST_PATH"
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data exec hdfs-namenode hdfs fsck "$TEST_PATH" -files -blocks -locations
+~~~
+
+`setrep -w 2`가 완료되고 `fsck`에서 under-replicated block이 해소되는지 확인한
+뒤에만 분산 저장 검증을 통과시킨다. 이 test 파일은 검증이 끝난 뒤 해당 경로만
+삭제하고 `/gitjob`의 기존 파일은 수정하지 않는다.
+
 현재 `develop`의 Collector/Worker 또는 `/health` 계약이 완성되지 않은 상태에서는
 전체 healthcheck가 실패할 수 있다. 이 경우 HDFS/Spark를 먼저 확인하되, Registry를
 기다리지 않고 소스 코드와 Dockerfile이 준비된 뒤 로컬 build를 다시 수행한다.
 
-## 10. Jenkins 배포와 운영 주의사항
+## 10. 롤백
+
+검증 실패 또는 신규 노드 제거가 필요할 때는 기존 NameNode/DataNode를 건드리지
+않고 신규 서비스와 신규 volume만 대상으로 한다.
+
+~~~bash
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data stop hdfs-datanode2 hdfs-datanode3
+docker compose --project-directory . --env-file .env.data \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
+  --profile data rm --force hdfs-datanode2 hdfs-datanode3
+
+# 실제 COMPOSE_PROJECT_NAME 접두사와 volume 이름을 먼저 확인한 뒤 신규 것만 제거한다.
+docker volume rm gitjob-data_hdfs-datanode2-data gitjob-data_hdfs-datanode3-data
+~~~
+
+`gitjob-data_hdfs-datanode-data`(기존 DataNode-1), NameNode volume, `/gitjob`
+데이터는 절대 삭제하지 않는다. HDFS 설정에서 decommission을 사용한 경우에만
+별도로 `hdfs dfsadmin -refreshNodes`를 수행하고, 단순 컨테이너 제거만으로 기존
+노드의 metadata를 변경하지 않는다.
+
+## 11. Jenkins 배포와 운영 주의사항
 
 Jenkins는 J15E102에서만 실행한다. data 서버에는 Jenkins controller나 Docker
 socket agent를 설치하지 않는다.
@@ -264,7 +383,7 @@ PEM, GitHub token은 동기화하지 않는다.
 변경한다. Worker가 처리 중인 상태에서 강제 재시작하기 전에 Kafka consumer
 재처리와 DLQ 정책을 확인한다.
 
-## 11. 장애 시 확인 순서
+## 12. 장애 시 확인 순서
 
 1. 서비스 EC2의 5432/6379/9094 private 연결 상태 확인
 2. docker compose logs --tail=100 worker collector로 인증·Kafka 오류 확인
