@@ -184,9 +184,23 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(UTC)
 
     if args.check:
+        # Only sites that are actually scheduled. A site whose every run is
+        # disabled is deliberately not collecting, so it has no gap to report.
+        #
+        # GameJob is the case that forced this: S15P21E102-149 found it fails
+        # criterion A, so `schedule.toml` keeps it declared but `enabled =
+        # false`. With no history at all, `detect_gap` returned "성공한 수집
+        # 이력이 없습니다" on every check — twice a day, forever. That was
+        # harmless while the webhook was unset and the alert only reached a
+        # log file. Once alerts reach the team channel, a warning that can
+        # never be cleared is worse than no warning: it teaches everyone to
+        # ignore the channel, and the next real gap goes unread with it.
+        scheduled_sites = dict.fromkeys(
+            run.site for run in config.runs if run.enabled
+        )
         gaps = [
             gap
-            for site in dict.fromkeys(run.site for run in config.runs)
+            for site in scheduled_sites
             if (
                 gap := detect_gap(
                     read_history(config.history_path),

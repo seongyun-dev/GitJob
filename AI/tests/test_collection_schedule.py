@@ -447,6 +447,71 @@ def test_gamejob_is_declared_but_never_scheduled():
     assert not any("gamejob" in line for line in render_os_schedule(config))
 
 
+def test_check_ignores_sites_whose_every_run_is_disabled(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """A site that is deliberately off has no gap to report.
+
+    게임잡 is declared with `enabled = false` (criterion A, see
+    `test_gamejob_is_declared_but_never_scheduled`) and has no history at all,
+    so `detect_gap` returns "성공한 수집 이력이 없습니다" for it on every check.
+
+    That was invisible while `GITJOB_ALERT_WEBHOOK_URL` was unset and the alert
+    only reached a log file. Once alerts reach the team channel it becomes a
+    warning nobody can ever clear, which is worse than no warning: it trains
+    everyone to ignore the channel, and the next real gap is ignored with it.
+
+    The fixture's SARAMIN run is disabled, so it stands in for 게임잡 here.
+    """
+
+    from job.collector.__main__ import main
+
+    config_path = _write_schedule(tmp_path)
+    # WORKNET is enabled, so it must still be checked — a fresh success keeps
+    # it out of the report and leaves SARAMIN as the only candidate.
+    #
+    # Timed off the wall clock, not the module's `NOW`: `main` calls
+    # `datetime.now(UTC)` itself, so a fixed timestamp would age past
+    # `max_interval_hours` and report WORKNET as the gap instead.
+    append_history(
+        tmp_path / "history.jsonl",
+        _record(
+            run_name="worknet-evening",
+            site="WORKNET",
+            finished_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+        ),
+    )
+
+    code = main(["--check", "--config", str(config_path)])
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+
+    assert "SARAMIN" not in combined
+    assert "결번 없음" in combined
+    assert code == 0
+
+
+def test_check_still_reports_an_enabled_site(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """The skip must be about `enabled`, not about having no history.
+
+    Without this the previous test passes just as well for a check that
+    reports nothing at all.
+    """
+
+    from job.collector.__main__ import main
+
+    config_path = _write_schedule(tmp_path)
+    # No WORKNET history at all, and WORKNET is enabled.
+    code = main(["--check", "--config", str(config_path)])
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+
+    assert "WORKNET" in combined
+    assert code == 1
+
+
 def test_every_repo_run_filters_by_job_category():
     """An unfiltered run collects 요양보호사 and 카지노 공채, not developers.
 
