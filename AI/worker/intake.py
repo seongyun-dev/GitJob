@@ -219,7 +219,12 @@ def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
         raise ValueError("manifest timestamp requires a timezone")
     if type(count) is not int or count != len(batch.records):
         raise ValueError("manifest record count does not match the batch")
-    if source not in ("SARAMIN", "WORKNET", "JOBKOREA") or any(
+    # CAREER · GAMEJOB were missing here, and not on purpose — this list
+    # predates both collectors and nobody added them, so the 커리어 회차
+    # (2026-09-09, 1,139건) could not be read at all. S15P21E102-196 admitted
+    # all three 기준 A 미통과 source 로, which settles it: the reader accepts
+    # every site the scheduler is allowed to run.
+    if source not in ("SARAMIN", "WORKNET", "JOBKOREA", "CAREER", "GAMEJOB") or any(
         r.source_site != source or r.collected_at != occurred_at for r in batch.records
     ):
         raise ValueError("manifest source/timestamp does not match the records")

@@ -411,64 +411,66 @@ def test_repo_schedule_declares_two_runs_a_day_per_site():
 
 
 def test_repo_schedule_covers_the_target_sites():
-    """S15P21E102-94 fixed the targets as 사람인 · 워크넷.
+    """S15P21E102-196 admitted the three 기준 A 미통과 sites.
+
+    `-94` had fixed the targets at 사람인 · 워크넷 on criterion A. The project
+    owner admitted 게임잡 · 커리어 · 잡코리아 on 2026-09-10 knowing each
+    ground still stands — see `test_criterion_a_failures_are_admitted_on_the
+    _record`.
 
     Listed explicitly rather than accepting "whatever the file says", because
     a site silently dropped from the schedule is exactly the gap this suite
-    exists to catch.
+    exists to catch. It now also catches a site silently *added*.
     """
 
     config = load_schedule(REPO_SCHEDULE)
     assert {run.site for run in config.runs if run.enabled} == {
         "WORKNET",
         "SARAMIN",
+        "GAMEJOB",
+        "CAREER",
+        "JOBKOREA",
     }
 
 
-def test_gamejob_is_declared_but_never_scheduled():
-    """게임잡 failed criterion A and must not start collecting on a timer.
+def test_criterion_a_failures_are_admitted_on_the_record():
+    """The three admitted sites failed criterion A, and that has to stay said.
 
-    `-149` (`docs/data/2026-09-08-source-criterion-a-review.md` §3) found the
-    operator to be the same legal entity as 잡코리아, so `-94`'s case-law
-    grounds carry over and that document fixes the job-posting sources at
-    워크넷·사람인. The collector exists and is verified, but enabling it is
-    gated on a data-provision agreement — not on someone editing a comment.
+    Until 2026-09-10 these shipped `enabled = false` and this suite asserted
+    it, so that turning one on could not happen by editing a comment. The
+    owner has now turned all three on (`-196`). The grounds did not change:
 
-    Asserted rather than left to the TOML comment so re-enabling it has to be
-    a deliberate change that also updates this test.
+        게임잡    `-149` §3 — operator is the same legal entity as 잡코리아,
+                  so `-94`'s case-law ground carries over
+        커리어    `-149` §10 — 이용약관 제14조 5항 prohibits 복제·배포
+                  without consent; 기준 A is an OR condition, so robots.txt
+                  allowing the paths is not a pass
+        잡코리아  `-94` §3.1 — 서울고등법원 held unauthorized crawling of this
+                  site's postings to infringe 데이터베이스제작자 권리
+
+    So what this test guards moved rather than disappeared. It no longer
+    asserts the runs are off; it asserts the schedule still *names* each
+    ground, so nobody can quietly re-tell the story as "these were fine all
+    along". The per-run `source_admission` block in each collector's manifest
+    is the other half of that record.
     """
 
     config = load_schedule(REPO_SCHEDULE)
-    gamejob = [run for run in config.runs if run.site == "GAMEJOB"]
+    text = REPO_SCHEDULE.read_text(encoding="utf-8")
 
-    assert gamejob, "게임잡 runs should stay declared so the config is reusable"
-    assert all(not run.enabled for run in gamejob)
-    # The OS scheduler renders only enabled runs, so nothing can fire.
-    assert not any("gamejob" in line for line in render_os_schedule(config))
+    for site in ("GAMEJOB", "CAREER", "JOBKOREA"):
+        runs = [run for run in config.runs if run.site == site]
+        assert runs, f"{site} runs should stay declared"
+        assert all(run.enabled for run in runs), f"{site} was admitted by -196"
 
-
-def test_career_is_declared_but_never_scheduled():
-    """커리어 also fails criterion A, on a different ground from 게임잡.
-
-    `job.career.co.kr/robots.txt` allows the posting paths, but 이용약관
-    제14조 5항 prohibits 복제·배포 without consent and 기준 A is an OR
-    condition — storing postings in HDFS is 복제. The operator is a separate
-    legal entity from 잡코리아, so the case law that disqualified 게임잡 does
-    not reach here; the terms clause is the sole ground.
-
-    The owner decided to proceed with a one-off collection after being shown
-    that clause. A twice-daily timer is a separate decision, so the runs ship
-    disabled: enabling has to be a deliberate change that also updates this
-    test.
-    """
-
-    config = load_schedule(REPO_SCHEDULE)
-    career = [run for run in config.runs if run.site == "CAREER"]
-
-    assert career, "커리어 runs should stay declared so the config is reusable"
-    assert all(not run.enabled for run in career)
-    # The OS scheduler renders only enabled runs, so nothing can fire.
-    assert not any("career" in line for line in render_os_schedule(config))
+    # The decision, the date and the reversal are all in the file.
+    assert text.count("기준 A 미통과") >= 3
+    assert text.count("`-196`") >= 3
+    assert text.count("2026-09-10") >= 3
+    assert "서울고등법원" in text
+    assert "제14조 5항" in text
+    assert "110-81-34859" in text
+    assert text.count("되돌리려면") >= 3
 
 
 def test_check_ignores_sites_whose_every_run_is_disabled(
@@ -542,10 +544,20 @@ def test_every_repo_run_filters_by_job_category():
     게임잡 uses `--duty-preset`, and for that site the filter runs on our side
     because the listing does not accept a 직무 code over the query string —
     see `GameJob_Collector_V1/duties.py`. The declaration is still required.
+
+    잡코리아 has no preset flag: it takes one `--duty-code` (1000229 =
+    백엔드개발자). That counts, but only when the schedule states it. Relying
+    on the CLI default would make the filter change silently the day the
+    default does — which is what this test exists to prevent.
     """
 
     config = load_schedule(REPO_SCHEDULE)
-    presets = ("--occupation-preset", "--category-preset", "--duty-preset")
+    presets = (
+        "--occupation-preset",
+        "--category-preset",
+        "--duty-preset",
+        "--duty-code",
+    )
     for run in config.runs:
         if not run.enabled:
             continue

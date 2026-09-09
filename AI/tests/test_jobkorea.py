@@ -2,6 +2,7 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
+from JobKorea_Collector_V1 import crawler as crawler_module
 from JobKorea_Collector_V1.crawler import CrawlConfig, JobKoreaCrawler, write_outputs
 from JobKorea_Collector_V1.dates import SEOUL, parse_deadline, parse_posted_at
 from JobKorea_Collector_V1.ocr import OcrLine, OcrResult, _extract_lines, image_suffix
@@ -331,3 +332,133 @@ def test_same_run_replay_replaces_outputs_without_duplicate_records(
         (record["source_site"], record["source_posting_id"])
         for record in replay_batch["records"]
     ] == [("JOBKOREA", "49872974")]
+
+
+# --- resume state (S15P21E102-196) ------------------------------------------
+#
+# This collector was a one-shot August backfill until `-196` put it on a
+# twice-daily schedule. Without a cursor every round re-fetches the same
+# postings, which on this site is the cost that matters — see the
+# `source_admission` block in the manifest.
+
+
+def _daily_config(tmp_path: Path, **overrides: object) -> CrawlConfig:
+    base = {
+        "start_date": date(2026, 8, 1),
+        "end_date": date(2026, 8, 31),
+        "request_delay": 0,
+        "detail_delay": 0,
+        "fetch_details": False,
+        "now": datetime(2026, 9, 3, 12, 0, tzinfo=SEOUL),
+        "cursor_path": tmp_path / "cursor.json",
+    }
+    base.update(overrides)
+    return CrawlConfig(**base)  # type: ignore[arg-type]
+
+
+def test_a_second_round_skips_postings_the_first_round_wrote(tmp_path: Path) -> None:
+    config = _daily_config(tmp_path)
+
+    first = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+    write_outputs(first, tmp_path / "run-1")
+
+    second = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+
+    assert [r.source_posting_id for r in first.batch.records] == ["49872974"]
+    assert second.batch.records == ()
+    assert second.manifest["stats"]["skipped_already_collected"] == 1
+    assert second.manifest["resume"]["known_ids_before"] == 1
+
+
+def test_the_cursor_is_written_after_the_batch_and_the_manifest(
+    tmp_path: Path,
+) -> None:
+    """S15P21E102-174: a cursor saved first can claim postings never stored."""
+
+    config = _daily_config(tmp_path)
+    result = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+    cursor_path = tmp_path / "cursor.json"
+    order: list[str] = []
+
+    real_write = crawler_module._atomic_write
+
+    def record_order(path: Path, content: str) -> None:
+        order.append(path.name)
+        real_write(path, content)
+
+    original = crawler_module._atomic_write
+    crawler_module._atomic_write = record_order
+    try:
+        write_outputs(result, tmp_path / "run-1")
+    finally:
+        crawler_module._atomic_write = original
+
+    assert cursor_path.exists()
+    assert order[-1] == "cursor.json"
+    assert "manifest.json" in order[: order.index("cursor.json")]
+
+
+def test_no_cursor_path_collects_without_resume_state(tmp_path: Path) -> None:
+    """Omitting `--cursor` must not start writing state somewhere by itself."""
+
+    config = _daily_config(tmp_path, cursor_path=None)
+
+    first = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+    write_outputs(first, tmp_path / "run-1")
+    second = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+
+    assert first.cursor_path is None
+    assert not list(tmp_path.glob("cursor.json"))
+    assert [r.source_posting_id for r in second.batch.records] == ["49872974"]
+
+
+def test_a_moved_date_range_resets_the_cursor(tmp_path: Path) -> None:
+    """Ids gathered under other bounds must not be trusted for a new range."""
+
+    first = JobKoreaCrawler(
+        _daily_config(tmp_path), client=FakeJobKoreaClient()
+    ).run()
+    write_outputs(first, tmp_path / "run-1")
+
+    widened = _daily_config(tmp_path, start_date=date(2026, 7, 1))
+    second = JobKoreaCrawler(widened, client=FakeJobKoreaClient()).run()
+
+    assert second.manifest["resume"]["known_ids_before"] == 0
+    assert [r.source_posting_id for r in second.batch.records] == ["49872974"]
+
+
+def test_days_back_widens_the_range_from_the_end_date() -> None:
+    parser = crawler_module.build_arg_parser()
+    args = parser.parse_args(["--end-date", "2026-09-10", "--days-back", "1"])
+
+    assert args.end_date == date(2026, 9, 10)
+    assert args.days_back == 1
+
+
+def test_the_request_interval_matches_the_other_sites() -> None:
+    """2.0s, not the 0.8/0.5 this collector used as a hand-run backfill.
+
+    `-94` §3.1 makes this the site with an adjudicated case against crawling
+    it; being the project's fastest requester here is indefensible.
+    """
+
+    config = CrawlConfig(start_date=date(2026, 8, 1), end_date=date(2026, 8, 31))
+
+    assert config.request_delay == 2.0
+    assert config.detail_delay == 2.0
+
+    defaults = crawler_module.build_arg_parser().parse_args([])
+    assert defaults.request_delay == 2.0
+    assert defaults.detail_delay == 2.0
+
+
+def test_the_manifest_records_that_criterion_a_failed() -> None:
+    """The decision travels with the data, not only in a doc."""
+
+    config = _daily_config(Path("."), cursor_path=None)
+    result = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
+    admission = result.manifest["source_admission"]
+
+    assert admission["criterion_a"] == "FAIL"
+    assert "서울고등법원" in admission["basis"]
+    assert admission["admitted_by"] == "project owner decision, 2026-09-10"

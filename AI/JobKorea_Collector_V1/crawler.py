@@ -10,8 +10,8 @@ import re
 import sys
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -60,8 +60,13 @@ class CrawlConfig:
     duty_name: str = DEFAULT_DUTY_NAME
     max_pages: int = 100
     page_size: int = 40
-    request_delay: float = 0.8
-    detail_delay: float = 0.5
+    # 2.0 for both, matching 워크넷·사람인·게임잡·커리어. These were 0.8 and
+    # 0.5 while this collector was a one-shot August backfill run by hand.
+    # S15P21E102-196 put it on a twice-daily schedule, and this is the site
+    # with the adjudicated precedent against crawling — the least defensible
+    # place in the project to be the fastest requester.
+    request_delay: float = 2.0
+    detail_delay: float = 2.0
     timeout: float = 30.0
     max_attempts: int = 3
     fetch_details: bool = True
@@ -70,6 +75,7 @@ class CrawlConfig:
     ocr_min_confidence: float = 0.35
     max_images_per_posting: int = 20
     user_agent: str = "GitJob-JobKoreaCrawler/0.1"
+    cursor_path: Path | None = None
     now: datetime | None = None
 
     def __post_init__(self) -> None:
@@ -93,10 +99,82 @@ class CrawlConfig:
             raise ValueError("max_images_per_posting must be at least 1")
 
 
+@dataclass
+class Cursor:
+    """Resume state for this site (S15P21E102-196).
+
+    The listing is sorted by registration date but offers no stable offset, so
+    the cursor stores the posting ids already written for this date range and a
+    re-run skips them. Same shape as 사람인·게임잡·커리어 for the same reason.
+
+    A different range resets it: `load` returns fresh state when either bound
+    moved, so widening `--days-back` re-collects rather than silently trusting
+    ids gathered under other bounds.
+    """
+
+    start_date: str
+    end_date: str
+    collected_ids: list[str] = field(default_factory=list)
+    last_page: int = 0
+    updated_at: str | None = None
+
+    @classmethod
+    def load(cls, path: Path | None, config: CrawlConfig) -> Cursor:
+        fresh = cls(
+            start_date=config.start_date.isoformat(),
+            end_date=config.end_date.isoformat(),
+        )
+        if path is None or not path.exists():
+            return fresh
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return fresh
+        if (
+            raw.get("start_date") != fresh.start_date
+            or raw.get("end_date") != fresh.end_date
+        ):
+            return fresh
+        ids = raw.get("collected_ids")
+        return cls(
+            start_date=fresh.start_date,
+            end_date=fresh.end_date,
+            collected_ids=[str(item) for item in ids] if isinstance(ids, list) else [],
+            last_page=int(raw.get("last_page") or 0),
+            updated_at=raw.get("updated_at"),
+        )
+
+    def save(self, path: Path | None) -> None:
+        if path is None:
+            return
+        self.updated_at = datetime.now(UTC).isoformat()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(
+            path,
+            json.dumps(
+                {
+                    "start_date": self.start_date,
+                    "end_date": self.end_date,
+                    "collected_ids": self.collected_ids,
+                    "last_page": self.last_page,
+                    "updated_at": self.updated_at,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
+
+
 @dataclass(frozen=True)
 class CrawlResult:
     batch: JobAnalysisInputBatch
     manifest: dict[str, Any]
+    # `write_outputs` saves the cursor last, after the batch and the manifest
+    # are on disk, so it can never claim postings whose batch was never
+    # stored — S15P21E102-174.
+    cursor: Cursor | None = None
+    cursor_path: Path | None = None
 
 
 class JobKoreaCrawler:
@@ -243,6 +321,8 @@ class JobKoreaCrawler:
         selected: list[tuple[JobListItem, datetime]] = []
         stats: Counter[str] = Counter()
         stopped_reason = "max_pages"
+        cursor = Cursor.load(self.config.cursor_path, self.config)
+        already = set(cursor.collected_ids)
 
         for page in range(1, self.config.max_pages + 1):
             _notify_progress(
@@ -284,6 +364,13 @@ class JobKoreaCrawler:
                 seen_ids.add(row.posting_id)
                 stats["unique_rows_seen"] += 1
                 if posted_at is not None and start_at <= posted_at < end_exclusive:
+                    # Skipped before the detail request, which is the point:
+                    # a resumed run must not re-fetch a posting it already
+                    # wrote. The date shortcut below still reads every page's
+                    # labels, so skipping here cannot end the scan early.
+                    if row.posting_id in already:
+                        stats["skipped_already_collected"] += 1
+                        continue
                     selected.append((row, posted_at))
 
             if unknown_date_count:
@@ -506,6 +593,10 @@ class JobKoreaCrawler:
                 technology_mentions=technology_mentions,
             )
             records.append(record)
+            # Appended only after the record validated against the contract.
+            # A posting that failed validation is not claimed as collected, so
+            # the next run tries it again.
+            cursor.collected_ids.append(row.posting_id)
             body_status_counts[body_status.value] += 1
             posting_status_counts[posting_status.value] += 1
 
@@ -546,6 +637,35 @@ class JobKoreaCrawler:
                 "inclusive": True,
                 "timezone": "Asia/Seoul",
             },
+            # Recorded in every run's manifest, not only in a doc: a batch that
+            # outlives this repository still says on what basis it was
+            # collected (S15P21E102-196, same block 커리어·게임잡 carry).
+            #
+            # This is the strongest FAIL of the three. The other two rest on a
+            # terms clause and on a same-legal-entity inference; this one rests
+            # on a decided case against this site's operator, for this exact
+            # activity.
+            "source_admission": {
+                "criterion_a": "FAIL",
+                "operator": "(주)잡코리아 110-81-34859",
+                "basis": (
+                    "-94 §3.1 — 서울고등법원이 잡코리아 공고 무단 크롤링을 "
+                    "데이터베이스제작자 권리 침해로 판단(4.5억 인정, 120억 합의). "
+                    "공식 API 는 신입공채·공공기관/학교로 범위가 제한되어 "
+                    "직무별 기술 수요 집계에 사용할 수 없다 (§3.2)."
+                ),
+                "prior_decision": (
+                    "-94 §1 이 제외를 결론했고 §7-2 가 코드 폐기를 지시했다. "
+                    "-195 가 그 폐기를 준비했으나 머지되지 않았다."
+                ),
+                "admitted_by": "project owner decision, 2026-09-10",
+                "note": (
+                    "판례 근거는 그대로 유효하고 없어지지 않았다. 수집을 켠 것은 "
+                    "근거가 바뀌었기 때문이 아니라 소유자가 위험을 감수하기로 "
+                    "했기 때문이다. 로그인·CAPTCHA 우회·접근제어 우회는 하지 "
+                    "않으며 요청 간격은 2초다."
+                ),
+            },
             "collection": {
                 "collected_at": collected_at.isoformat(),
                 "collector_version": COLLECTOR_VERSION,
@@ -561,6 +681,10 @@ class JobKoreaCrawler:
                 "raw_rows_seen": int(stats["raw_rows_seen"]),
                 "unique_rows_seen": int(stats["unique_rows_seen"]),
                 "duplicates_skipped": int(stats["duplicates_skipped"]),
+                # In range but already written by an earlier round. Distinct
+                # from `duplicates_skipped`, which is the same posting twice
+                # inside one round's listing.
+                "skipped_already_collected": int(stats["skipped_already_collected"]),
                 "matched_rows": len(selected),
                 "records_written": len(records),
                 "detail_requests": int(stats["detail_requests"]),
@@ -591,8 +715,21 @@ class JobKoreaCrawler:
             "detail_failures": detail_failures,
             "warnings": warnings,
             "outputs": {},
+            "resume": {
+                "cursor_path": (
+                    str(self.config.cursor_path) if self.config.cursor_path else None
+                ),
+                "known_ids_before": len(already),
+                "known_ids_after": len(cursor.collected_ids),
+            },
         }
-        return CrawlResult(batch=batch, manifest=manifest)
+        cursor.last_page = stats["pages_scanned"]
+        return CrawlResult(
+            batch=batch,
+            manifest=manifest,
+            cursor=cursor,
+            cursor_path=self.config.cursor_path,
+        )
 
 
 def _notify_progress(
@@ -686,6 +823,12 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
         manifest_path,
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     )
+    # Last, and only here. The cursor asserts these postings are collected, so
+    # it must not be written before the batch and the manifest are on disk —
+    # a cursor saved ahead of them makes the next run skip postings whose
+    # output never existed (S15P21E102-174).
+    if result.cursor is not None:
+        result.cursor.save(result.cursor_path)
     return {
         "json": json_path,
         "csv": csv_path,
@@ -712,12 +855,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="잡코리아 백엔드개발자 공고를 기간별로 CSV/JSON 수집합니다."
     )
-    parser.add_argument("--start-date", type=_parse_cli_date, default=date(2026, 8, 1))
-    parser.add_argument("--end-date", type=_parse_cli_date, default=date(2026, 8, 31))
+    # Defaults are today, not the August window this collector was written
+    # for. A scheduled run means "what was registered today"; a fixed range
+    # would re-collect the same window on every round (S15P21E102-196).
+    today = datetime.now(tz=SEOUL).date()
+    parser.add_argument("--start-date", type=_parse_cli_date, default=today)
+    parser.add_argument("--end-date", type=_parse_cli_date, default=today)
+    parser.add_argument(
+        "--days-back",
+        type=int,
+        default=0,
+        help="widen the range to N days before --end-date (for scheduled runs)",
+    )
+    parser.add_argument(
+        "--cursor",
+        default=None,
+        help="resume-state file; omit to collect without resume support",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("data/jobkorea"))
     parser.add_argument("--max-pages", type=int, default=100)
-    parser.add_argument("--request-delay", type=float, default=0.8)
-    parser.add_argument("--detail-delay", type=float, default=0.5)
+    parser.add_argument("--request-delay", type=float, default=2.0)
+    parser.add_argument("--detail-delay", type=float, default=2.0)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -754,8 +912,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     try:
+        if args.days_back < 0:
+            raise ValueError("--days-back must not be negative")
+        start_date = args.start_date
+        if args.days_back:
+            start_date = args.end_date - timedelta(days=args.days_back)
         config = CrawlConfig(
-            start_date=args.start_date,
+            start_date=start_date,
             end_date=args.end_date,
             output_dir=args.output_dir,
             base_url=args.base_url,
@@ -770,6 +933,7 @@ def main(argv: list[str] | None = None) -> int:
             ocr_device=args.ocr_device,
             ocr_min_confidence=args.ocr_min_confidence,
             max_images_per_posting=args.max_images_per_posting,
+            cursor_path=Path(args.cursor) if args.cursor else None,
         )
         result = JobKoreaCrawler(config).run()
         paths = write_outputs(result, config.output_dir)

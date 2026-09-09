@@ -480,6 +480,25 @@ class GameJobCrawler:
             "pipeline_run_id": pipeline_run_id,
             "dataset_snapshot_id": batch.dataset_snapshot_id,
             "collected_at": collected_at.isoformat(),
+            # Recorded in every run's manifest, not only in a doc: a batch that
+            # outlives this repository still says on what basis it was
+            # collected (S15P21E102-196, same block 커리어 carries).
+            "source_admission": {
+                "criterion_a": "FAIL",
+                "operator": "(주)웍스피어 110-81-34859",
+                "robots_txt": "allows the requested paths (www.gamejob.co.kr)",
+                "terms_clause": None,
+                "basis": (
+                    "-149 §3 — 운영사가 잡코리아와 동일 법인이므로 -94 §3.1 의 "
+                    "판례 근거(서울고등법원 DB제작자 권리 침해)가 그대로 적용된다"
+                ),
+                "admitted_by": "project owner decision, 2026-09-10",
+                "note": (
+                    "원래 켜는 전제는 웍스피어와의 데이터 제공 계약이었다. "
+                    "계약 없이 진행하기로 소유자가 결정했고, 동일 법인 근거는 "
+                    "그대로 유효하다."
+                ),
+            },
             "robots": {
                 "list_path": LIST_PATH,
                 "detail_path": "/Recruit/GI_Read/View",
