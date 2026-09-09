@@ -46,10 +46,11 @@ AI/
 ├── trend/           # separate JOB and GITHUB metrics
 ├── stackoverflow/   # historical boundary; excluded from current MVP
 ├── github/          # GitHub 수집 경계와 A→C Repo Snapshot 계약
-├── Worknet_Collector_V1/   # 워크넷 채용공고 수집기
+├── Worknet_Collector_V1/   # 워크넷(고용24) 채용공고 수집기
 ├── Saramin_Collector_V1/   # 사람인 채용공고 수집기
-├── GameJob_Collector_V1/   # 게임잡 채용공고 수집기
-├── JobKorea_Collector_V1/  # 임시 JobKorea 백엔드 채용공고 수집기
+├── GameJob_Collector_V1/   # 게임잡 채용공고 수집기 (기준 A 미통과, 스케줄 비활성)
+├── Career_Collector_V1/    # 커리어 채용공고 수집기 (기준 A 미통과, 스케줄 비활성)
+├── JobKorea_Collector_V1/  # 임시 JobKorea 백엔드 채용공고 수집기 (제외 결정)
 ├── llm/             # Fact-grounded LLM behavior
 └── tests/
 ```

@@ -37,6 +37,9 @@
 # GameJob collection snapshots
 /data/gamejob/
 
+# Career collection snapshots
+/data/career/
+
 # Spring Boot local / secret configuration
 application-local.yml
 application-local.yaml

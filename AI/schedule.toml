@@ -151,3 +151,67 @@ args = [
   "--cursor", "../data/gamejob/cursor.json",
   "--output-dir", "../data/gamejob",
 ]
+
+# --- 커리어 -----------------------------------------------------------------
+#
+# ## enabled = false 입니다. 켜기 전에 읽으십시오.
+#
+# 커리어도 기준 A **미통과**입니다. 다만 게임잡과 탈락 근거가 다릅니다.
+#
+#   운영사      (주)커리어넷 220-86-73547 — 잡코리아/웍스피어(110-81-34859)와
+#               별개 법인이라 `-94` 의 판례 근거는 적용되지 않습니다.
+#   robots.txt  job.career.co.kr 은 공고 경로를 **허용**합니다. 막힌 것은
+#               /admin /app /base /biz /user /signup 뿐이고 sitemap.xml 도
+#               공개합니다. 이 수집기가 요청하는 경로는 하나도 막혀 있지 않습니다.
+#   약관        제14조 5항 — "이용자는 커리어서비스 이용을 통해 획득한 정보 및
+#               게시물을 커리어넷의 동의없이 복제, 배포할 수 없으며 상업적,
+#               영리목적으로 이용할 수 없습니다." 제20조 6·7항 동일 취지.
+#
+# 기준 A 가 OR 조건이므로 robots.txt 허용만으로는 통과가 아닙니다. HDFS 에
+# 적재하는 것은 복제에 해당합니다. 크롤링·스크래핑을 명시적으로 금지하는
+# 조항은 없어서 링커리어(제20조 명시 금지)보다는 약하지만, 금지는 금지입니다.
+#
+# **이 수집기는 위 조항을 확인한 뒤 소유자가 진행을 결정해 만들어졌습니다.**
+# 그 결정은 일회성 수집에 대한 것이고, 하루 2회 자동 회차는 별개 판단입니다.
+# 그래서 게임잡과 같은 방식으로 여기서 막아 둡니다 — 켜는 것이 물려받은
+# 기본값이 아니라 의도적인 행위여야 합니다. 켜려면 `enabled` 를 지우거나
+# true 로 바꾸면 됩니다.
+#
+# --category-preset dev 가 없으면 경영·마케팅·디자인 공고가 채워집니다.
+# H0(IT.인터넷)과 N0(연구개발.엔지니어) 두 대분류가 필요합니다 — 임베디드와
+# R&D 직무가 N0 에 있어서 H0 만으로는 놓칩니다.
+#
+# --max-pages 40 은 여유값입니다. 2026-09-09 실측으로 H0 는 8페이지에서
+# 끝나고(227건) N0 는 12페이지에서도 계속됐습니다. 실제 중단 조건은 행이 없는
+# 페이지이고, 광고 슬롯은 파서가 제외합니다 — Career_Collector_V1/parser.py 참고.
+#
+# 게임잡보다 20분 늦게 시작합니다. 네 수집이 같은 시각에 겹치면 사이트별
+# 간격(2초)을 지켜도 우리 쪽 부하가 겹칩니다.
+
+[[run]]
+name = "career-morning"
+site = "CAREER"
+module = "Career_Collector_V1"
+enabled = false
+at = ["10:10"]
+args = [
+  "--category-preset", "dev",
+  "--days-back", "1",
+  "--max-pages", "40",
+  "--cursor", "../data/career/cursor.json",
+  "--output-dir", "../data/career",
+]
+
+[[run]]
+name = "career-evening"
+site = "CAREER"
+module = "Career_Collector_V1"
+enabled = false
+at = ["22:10"]
+args = [
+  "--category-preset", "dev",
+  "--days-back", "1",
+  "--max-pages", "40",
+  "--cursor", "../data/career/cursor.json",
+  "--output-dir", "../data/career",
+]

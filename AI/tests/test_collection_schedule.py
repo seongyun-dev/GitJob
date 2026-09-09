@@ -447,6 +447,30 @@ def test_gamejob_is_declared_but_never_scheduled():
     assert not any("gamejob" in line for line in render_os_schedule(config))
 
 
+def test_career_is_declared_but_never_scheduled():
+    """커리어 also fails criterion A, on a different ground from 게임잡.
+
+    `job.career.co.kr/robots.txt` allows the posting paths, but 이용약관
+    제14조 5항 prohibits 복제·배포 without consent and 기준 A is an OR
+    condition — storing postings in HDFS is 복제. The operator is a separate
+    legal entity from 잡코리아, so the case law that disqualified 게임잡 does
+    not reach here; the terms clause is the sole ground.
+
+    The owner decided to proceed with a one-off collection after being shown
+    that clause. A twice-daily timer is a separate decision, so the runs ship
+    disabled: enabling has to be a deliberate change that also updates this
+    test.
+    """
+
+    config = load_schedule(REPO_SCHEDULE)
+    career = [run for run in config.runs if run.site == "CAREER"]
+
+    assert career, "커리어 runs should stay declared so the config is reusable"
+    assert all(not run.enabled for run in career)
+    # The OS scheduler renders only enabled runs, so nothing can fire.
+    assert not any("career" in line for line in render_os_schedule(config))
+
+
 def test_check_ignores_sites_whose_every_run_is_disabled(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
