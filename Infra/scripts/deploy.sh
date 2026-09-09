@@ -301,6 +301,20 @@ start_service_core() {
      ENV_FILE=$(quote_for_remote "$service_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2.yaml) PROFILES=core HEALTHCHECK_TIMEOUT_SECONDS=180 bash Infra/scripts/healthcheck.sh"
 }
 
+# nginx is recreated explicitly at the end. Two separate reasons make a plain
+# `up -d` insufficient, and both were found the hard way on 2026-09-09.
+#
+# Its configuration is bind-mounted file by file, and a single-file bind mount pins
+# that file's inode. git replaces the file on checkout, so the running container
+# keeps reading the version it started with: a deploy could change nginx
+# configuration and have no effect at all.
+#
+# And nginx reads its configuration only at start, so even once the new file is
+# visible it is not in use until the process restarts.
+#
+# The configuration is validated in a throwaway container first. `nginx -t` inside
+# the running container would test the stale file, and restarting into a broken
+# config would leave the entry point down with no previous container to fall back to.
 start_service_app() {
   local compose
   local compose_environment
@@ -313,6 +327,8 @@ start_service_app() {
      cd $(quote_for_remote "$service_path")
      ${compose_environment}${compose} --profile core --profile app config --quiet
      ${compose_environment}${compose} --profile core --profile app up -d --no-build
+     ${compose_environment}${compose} --profile core --profile app run --rm --no-deps --entrypoint nginx nginx -t
+     ${compose_environment}${compose} --profile core --profile app up -d --no-deps --force-recreate --no-build nginx
      ENV_FILE=$(quote_for_remote "$service_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2.yaml) PROFILES=core,app HEALTHCHECK_TIMEOUT_SECONDS=240 bash Infra/scripts/healthcheck.sh"
 }
 

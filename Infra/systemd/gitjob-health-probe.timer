@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the GitJob health probe every two minutes
+
+[Timer]
+# Two minutes is chosen against how long a failure can hide, not against how fast we
+# can poll. nginx takes up to two minutes to be marked unhealthy by its own
+# healthcheck, so a slower probe could miss a failure that resolves and recurs.
+OnBootSec=3min
+OnUnitActiveSec=2min
+# Without this every host fires on the same second after a reboot.
+RandomizedDelaySec=15s
+Unit=gitjob-health-probe.service
+
+[Install]
+WantedBy=timers.target
