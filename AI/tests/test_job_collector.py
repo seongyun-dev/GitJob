@@ -205,6 +205,32 @@ def test_posting_status_follows_evidence(
     )
 
 
+def test_date_only_deadline_is_the_next_seoul_day_exclusive_boundary() -> None:
+    record = _normalize(deadline_date=date(2026, 9, 7))
+
+    assert record.deadline == datetime(2026, 9, 8, 0, 0, tzinfo=SEOUL)
+    assert record.posting_status is PostingStatus.ACTIVE
+
+
+def test_precise_deadline_is_preserved_including_a_real_midnight() -> None:
+    precise = datetime(2026, 9, 8, 0, 0, tzinfo=SEOUL)
+
+    record = _normalize(deadline_date=precise)
+
+    assert record.deadline == precise
+
+
+def test_precise_deadline_status_compares_the_actual_clock_time() -> None:
+    assert (
+        posting_status_from_deadline(
+            deadline_date=datetime(2026, 9, 7, 10, 0, tzinfo=SEOUL),
+            deadline_label=None,
+            collected_at=COLLECTED_AT,
+        )
+        is PostingStatus.CLOSED
+    )
+
+
 # --- field precedence ------------------------------------------------------
 
 
@@ -315,6 +341,27 @@ def test_every_mention_carries_evidence_text() -> None:
     )
     assert record.technology_mentions
     assert all(mention.evidence_text.strip() for mention in record.technology_mentions)
+
+
+def test_common_spring_boot_and_postgresql_aliases_are_extracted() -> None:
+    record = _normalize(
+        detail=PostingDetail(
+            description_text="자격요건\nSpringBoot 및 Postgres 운영 경험 필수"
+        )
+    )
+
+    ids = {mention.source_technology_id for mention in record.technology_mentions}
+    assert {"spring-boot", "postgresql"} <= ids
+
+
+def test_compound_words_do_not_trigger_the_new_technology_aliases() -> None:
+    record = _normalize(
+        detail=PostingDetail(description_text="SpringBootcamp 및 PostgresSQL")
+    )
+
+    ids = {mention.source_technology_id for mention in record.technology_mentions}
+    assert "spring-boot" not in ids
+    assert "postgresql" not in ids
 
 
 def test_a_body_less_record_has_no_mentions_rather_than_guessed_ones() -> None:

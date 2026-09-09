@@ -139,6 +139,106 @@ def _region_from_text(text: str) -> str | None:
     return collapse(match.group(0))
 
 
+_DETAIL_FIELD_LABELS = frozenset(
+    {
+        "모집직종",
+        "모집인원",
+        "경력",
+        "경력조건",
+        "학력",
+        "고용형태",
+        "근무예정지",
+        "근무지역",
+        "근무지",
+        "지역",
+        "임금",
+        "임금조건",
+        "급여",
+        "채용직급",
+        "우대조건",
+        "근무형태",
+        "근무시간",
+        "사회보험",
+        "퇴직금지급방법",
+        "인근전철역",
+        "지도보기",
+        "길찾기",
+        "접수기간",
+        "접수방법",
+        "제출서류준비물",
+        *(name.replace(" ", "") for name in DETAIL_SECTIONS),
+    }
+)
+
+
+def _field_key(text: str) -> str:
+    return re.sub(r"\s+", "", text).rstrip(":：")
+
+
+def _detail_field(text: str, labels: frozenset[str]) -> tuple[bool, str | None]:
+    """Read standalone/colon-labelled values, never caption or company text."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if _field_key(line) == "기업정보":
+            # A contiguous tab strip repeats 모집요강 before actual job fields.
+            # Only that observed navigation shape may cross the company boundary.
+            tail = lines[index + 1 : index + 3]
+            is_tab = (
+                index > 0
+                and lines[index - 1] == "전형방법"
+                and (tail[:1] == ["모집요강"] or tail == ["추천정보", "모집요강"])
+            )
+            if not is_tab:
+                break
+        label, separator, inline = line.replace("：", ":").partition(":")
+        if _field_key(label) not in labels:
+            continue
+        parts = [inline.strip()] if separator and inline.strip() else []
+        for following in lines[index + 1 :]:
+            key = _field_key(following.split(":", 1)[0].split("：", 1)[0])
+            # '경력' can itself be a value, including after '신입 ,'.
+            if key in _DETAIL_FIELD_LABELS and key not in labels:
+                break
+            parts.append(following)
+        value = collapse(" ".join(parts))
+        return True, value if value and value not in {
+            "-",
+            "미기재",
+            "해당없음",
+        } else None
+    return False, None
+
+
+def _condition_text(text: str) -> str:
+    """Legacy unlabelled prose is usable only inside the working-conditions section."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == "근무조건":
+            parts = []
+            for following in lines[index + 1 :]:
+                if following.strip() in DETAIL_SECTIONS:
+                    break
+                if "제공" not in following or "표" not in following:
+                    parts.append(following)
+            return collapse(" ".join(parts))
+    return ""
+
+
+def _detail_filters(text: str) -> tuple[str | None, str | None]:
+    has_career, career = _detail_field(text, frozenset({"경력", "경력조건"}))
+    has_region, region = _detail_field(
+        text, frozenset({"근무예정지", "근무지역", "근무지", "지역"})
+    )
+    fallback = _condition_text(text)
+    if not has_career:
+        career = _career_from_text(fallback)
+    elif career and _field_key(career) in {"관계없음", "무관", "경력관계없음"}:
+        career = "경력무관"
+    if not has_region:
+        region = _region_from_text(fallback)
+    return career, region
+
+
 def _posted_on_from_row(text: str) -> date | None:
     labelled = _REG_DATE_LABEL_RE.search(text)
     if labelled:
@@ -354,12 +454,13 @@ def parse_detail(html: str) -> DetailContent:
 
     education = _EDUCATION_RE.search(flat)
     employment = _EMPLOYMENT_RE.search(flat)
+    career, region = _detail_filters(description_text)
 
     return DetailContent(
         description_text=description_text,
         section_names=tuple(dict.fromkeys(_SECTION_RE.findall(flat))),
-        career_level=_career_from_text(flat),
-        region=_region_from_text(flat),
+        career_level=career,
+        region=region,
         education=education.group(1) if education else None,
         employment_type=employment.group(1) if employment else None,
         posted_at=posted_at,

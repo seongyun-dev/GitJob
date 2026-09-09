@@ -151,6 +151,6 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
             )
         )
     metadata = cohort.model_dump(
-        exclude={"schema_version", "jobs", "exclusions", "input_union"}
+        exclude={"schema_version", "jobs", "exclusions", "input_union", "matching_jobs"}
     )
     return DemandSnapshot(**metadata, denominator=denominator, technologies=tuple(rows))

@@ -35,11 +35,14 @@ from job.contracts import (
     JobPostingInput,
     PostingStatus,
 )
+from job.eligibility import FilterMatch, match_career_level, match_region
+from job.matching import MatchingJobInput
+from job.requirements import JOB_REQUIREMENTS_SCHEMA_VERSION, extract_job_requirements
 from registry.contracts import TechId, load_registry
 from registry.mapper import RegistryMapper
 
 JOB_COHORT_SCHEMA_VERSION = "job-cohort/v1"
-JOB_QUALITY_VERSION = "job-cohort-quality/v5"
+JOB_QUALITY_VERSION = "job-cohort-quality/v6"
 
 
 class CohortPurpose(StrEnum):
@@ -358,6 +361,9 @@ class JobCohort(CohortModel):
     jobs: tuple[CohortJob, ...]
     exclusions: tuple[CohortExclusion, ...]
     input_union: InputUnionProvenance | None = None
+    matching_jobs: tuple[MatchingJobInput, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_counts(self) -> "JobCohort":
@@ -367,6 +373,13 @@ class JobCohort(CohortModel):
             raise ValueError("cohort status must reflect included jobs and min_jobs")
         if len({job.job_id for job in self.jobs}) != len(self.jobs):
             raise ValueError("cohort job IDs must be unique")
+        if self.matching_jobs is not None:
+            if self.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
+                raise ValueError("partial matching inputs require active matching")
+            if len({job.job_id for job in self.matching_jobs}) != len(
+                self.matching_jobs
+            ):
+                raise ValueError("partial matching job IDs must be unique")
         if (
             self.input_count
             != len(self.jobs)
@@ -456,16 +469,17 @@ def _quality_reasons(
             criteria.posted_to and record.posted_at >= criteria.posted_to
         ):
             excluded.append("OUTSIDE_POSTED_PERIOD")
-    for attribute, allowed in (
-        ("region", criteria.regions),
-        ("career_level", criteria.career_levels),
+    for attribute, allowed, compare in (
+        ("region", criteria.regions, match_region),
+        ("career_level", criteria.career_levels, match_career_level),
     ):
-        if allowed:
-            value = getattr(record, attribute)
-            if value is None or not value.strip():
-                review.append(f"{attribute.upper()}_UNKNOWN")
-            elif value.strip() not in allowed:
-                excluded.append(f"{attribute.upper()}_NOT_MATCHED")
+        if not allowed:
+            continue
+        result = compare(getattr(record, attribute), allowed)
+        if result is FilterMatch.UNKNOWN:
+            review.append(f"{attribute.upper()}_UNKNOWN")
+        elif result is FilterMatch.NOT_MATCHED:
+            excluded.append(f"{attribute.upper()}_NOT_MATCHED")
     return excluded, review
 
 
@@ -674,7 +688,7 @@ def build_cohort(
         if len(group) > 1
         for digest in group
     }
-    jobs, exclusions = [], []
+    jobs, exclusions, matching_jobs = [], [], []
     for digest, (record, classification) in sorted(
         unique.items(), key=lambda pair: (pair[1][0].source_record_id, pair[0])
     ):
@@ -683,6 +697,49 @@ def build_cohort(
         review.extend(logic_reasons)
         if digest in conflicts:
             review.append("SOURCE_RECORD_CONFLICT")
+        if (
+            criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+            and not excluded
+            and not {"BODY_UNAVAILABLE", "SOURCE_RECORD_CONFLICT"}.intersection(review)
+        ):
+            requirements = extract_job_requirements(record, classification)
+            conditional = tuple(
+                sorted(
+                    set(review).intersection(
+                        {
+                            "POSTING_STATUS_UNKNOWN",
+                            "REGION_UNKNOWN",
+                            "CAREER_LEVEL_UNKNOWN",
+                            "POSTED_AT_UNKNOWN",
+                        }
+                    )
+                )
+            )
+            matching_jobs.append(
+                MatchingJobInput(
+                    job_id=(
+                        f"{record.source_site.strip().upper()}:{record.source_posting_id}"
+                        if qualify_job_ids
+                        else record.source_record_id
+                    ),
+                    source_record_id=record.source_record_id,
+                    source_site=record.source_site,
+                    source_posting_id=record.source_posting_id,
+                    source_url=record.source_url,
+                    company_name=record.company_name,
+                    title=record.title,
+                    region=record.region,
+                    career_level=record.career_level,
+                    deadline=record.deadline,
+                    collected_at=record.collected_at,
+                    content_hash=record.content_hash,
+                    eligibility="CONDITIONAL" if conditional else "ELIGIBLE",
+                    eligibility_reasons=conditional,
+                    strict_match_eligible=not review,
+                    strict_review_reasons=tuple(sorted(set(review))),
+                    requirements=requirements,
+                )
+            )
         if excluded or review:
             exclusions.append(
                 CohortExclusion(
@@ -751,6 +808,7 @@ def build_cohort(
         "registry_version": classified.registry_version,
         "parser_version": classified.parser_version,
         "quality_version": JOB_QUALITY_VERSION,
+        "requirements_version": JOB_REQUIREMENTS_SCHEMA_VERSION,
     }
     if qualify_job_ids:
         identity["job_id_policy"] = "source-site-posting/v1"
@@ -769,4 +827,9 @@ def build_cohort(
         review_count=sum(item.decision == "REVIEW_REQUIRED" for item in exclusions),
         jobs=tuple(jobs),
         exclusions=tuple(exclusions),
+        matching_jobs=(
+            tuple(sorted(matching_jobs, key=lambda item: item.job_id))
+            if criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+            else None
+        ),
     )

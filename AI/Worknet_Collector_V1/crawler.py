@@ -50,7 +50,7 @@ from .dates import as_seoul, date_range_bounds, parse_cli_date, parse_date
 from .occupations import OCCUPATION_PRESETS, resolve_occupation_preset
 from .parser import DetailContent, parse_detail, parse_job_list
 
-COLLECTOR_VERSION = "worknet-collector/v1"
+COLLECTOR_VERSION = "worknet-collector/v2"
 # Uppercase to match the source_site convention in the S15P21E102-90
 # fixture (JOBKOREA / JOBPLANET / SARAMIN / WANTED).
 SOURCE_SITE = "WORKNET"

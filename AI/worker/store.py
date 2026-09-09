@@ -12,10 +12,15 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-MIGRATION_VERSION = 1
+MIGRATION_VERSION = 2
 MIGRATION_FILE = (
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/001_c_compute.sql"
+)
+MIGRATION_FILES = (
+    MIGRATION_FILE,
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/002_job_matching_projection.sql",
 )
 
 
@@ -25,6 +30,10 @@ class IdempotencyConflict(ValueError):
 
 class LeaseLost(RuntimeError):
     """Another attempt owns the event, or this attempt's lease expired."""
+
+
+class StoredMatchingIntegrityError(RuntimeError):
+    """Persisted matching references disagree without exposing stored content."""
 
 
 def digest(value: Any) -> str:
@@ -39,32 +48,42 @@ def digest(value: Any) -> str:
     ).hexdigest()
 
 
-def apply_migration(dsn: str, path: Path = MIGRATION_FILE) -> None:
+def _migration_version(path: Path, index: int) -> int:
+    prefix = path.name.split("_", 1)[0]
+    return int(prefix) if prefix.isdigit() else index
+
+
+def apply_migration(dsn: str, path: Path | tuple[Path, ...] | None = None) -> None:
     """Explicit operator action, never run as an application startup side effect."""
-    source = path.read_bytes()
-    checksum = hashlib.sha256(source.replace(b"\r\n", b"\n")).hexdigest()
+    paths = (
+        MIGRATION_FILES if path is None else (path,) if isinstance(path, Path) else path
+    )
     with psycopg.connect(dsn, connect_timeout=5) as conn:
         conn.execute("SET LOCAL statement_timeout = '15s'")
         conn.execute("SELECT pg_advisory_xact_lock(331029)")
-        exists = conn.execute(
-            "SELECT to_regclass('c_compute.schema_version')"
-        ).fetchone()[0]
-        if exists:
-            row = conn.execute(
-                "SELECT checksum FROM c_compute.schema_version WHERE version = %s",
-                (MIGRATION_VERSION,),
-            ).fetchone()
-            if row:
-                if row[0] != checksum:
-                    raise ValueError(
-                        "C migration checksum mismatch; do not rewrite applied DDL"
-                    )
-                return
-        conn.execute(source.decode("utf-8"))
-        conn.execute(
-            "INSERT INTO c_compute.schema_version(version, checksum) VALUES (%s, %s)",
-            (MIGRATION_VERSION, checksum),
-        )
+        for index, migration_path in enumerate(paths, start=1):
+            source = migration_path.read_bytes()
+            checksum = hashlib.sha256(source.replace(b"\r\n", b"\n")).hexdigest()
+            version = _migration_version(migration_path, index)
+            exists = conn.execute(
+                "SELECT to_regclass('c_compute.schema_version')"
+            ).fetchone()[0]
+            if exists:
+                row = conn.execute(
+                    "SELECT checksum FROM c_compute.schema_version WHERE version = %s",
+                    (version,),
+                ).fetchone()
+                if row:
+                    if row[0] != checksum:
+                        raise ValueError(
+                            "C migration checksum mismatch; do not rewrite applied DDL"
+                        )
+                    continue
+            conn.execute(source.decode("utf-8"))
+            conn.execute(
+                "INSERT INTO c_compute.schema_version(version, checksum) VALUES (%s, %s)",
+                (version, checksum),
+            )
 
 
 @dataclass(frozen=True)
@@ -73,6 +92,7 @@ class Artifact:
     owner: str | None
     payload: dict[str, Any]
     stream: str
+    matching: dict[str, Any] | None = None
 
     def __post_init__(self):
         if self.kind not in {
@@ -87,6 +107,8 @@ class Artifact:
             raise ValueError("only recommendation snapshots have a user owner")
         if not self.stream or len(self.stream) > 160:
             raise ValueError("invalid snapshot stream")
+        if self.matching is not None and self.kind != "RECOMMENDATION":
+            raise ValueError("only recommendation snapshots have matching rows")
 
     @property
     def snapshot_id(self) -> str:
@@ -125,10 +147,11 @@ class ComputeStore:
     def ready(self) -> bool:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT version FROM c_compute.schema_version WHERE version = %s",
-                (MIGRATION_VERSION,),
+                "SELECT count(*) AS count FROM c_compute.schema_version "
+                "WHERE version = ANY(%s)",
+                (list(range(1, MIGRATION_VERSION + 1)),),
             ).fetchone()
-            return row is not None
+            return row["count"] == MIGRATION_VERSION
 
     def bind_job_inputs(self, inputs: dict[str, tuple[str, str]]) -> None:
         """Pin verified completion paths before publishing, independently of compute versions.
@@ -291,7 +314,11 @@ class ComputeStore:
             raise ValueError("result scope does not match event")
         if len({(a.kind, a.stream) for a in artifacts}) != len(artifacts):
             raise ValueError("duplicate result stream")
-        results = [{"kind": a.kind, "snapshot_id": a.snapshot_id} for a in artifacts]
+        identified = [(artifact, artifact.snapshot_id) for artifact in artifacts]
+        results = [
+            {"kind": artifact.kind, "snapshot_id": snapshot_id}
+            for artifact, snapshot_id in identified
+        ]
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT event_id FROM c_compute.event
@@ -301,17 +328,19 @@ class ComputeStore:
             ).fetchone()
             if not row:
                 raise LeaseLost("attempt no longer owns a live lease")
-            for artifact in artifacts:
+            for artifact, snapshot_id in identified:
                 conn.execute(
                     """INSERT INTO c_compute.snapshot(snapshot_id, kind, owner, payload)
                        VALUES (%s, %s, %s, %s) ON CONFLICT(snapshot_id) DO NOTHING""",
                     (
-                        artifact.snapshot_id,
+                        snapshot_id,
                         artifact.kind,
                         artifact.owner or "",
                         Jsonb(artifact.payload),
                     ),
                 )
+                if artifact.matching is not None:
+                    self._store_matching(conn, artifact, snapshot_id)
                 conn.execute(
                     """INSERT INTO c_compute.head(kind, owner, stream, snapshot_id, occurred_at, event_id)
                        VALUES (%s, %s, %s, %s, %s, %s)
@@ -324,7 +353,7 @@ class ComputeStore:
                         artifact.kind,
                         artifact.owner or "",
                         artifact.stream,
-                        artifact.snapshot_id,
+                        snapshot_id,
                         ticket.occurred_at,
                         ticket.event_id,
                     ),
@@ -335,6 +364,174 @@ class ComputeStore:
                 (Jsonb(results), ticket.event_id),
             )
         return results
+
+    @staticmethod
+    def _store_matching(conn, artifact: Artifact, snapshot_id: str) -> None:
+        matching = artifact.matching
+        reference = artifact.payload.get("job_matching_ref")
+        if not isinstance(matching, dict) or not isinstance(reference, dict):
+            raise TypeError("matching storage requires an immutable reference")
+        cohort_snapshot_id = reference.get("cohort_snapshot_id")
+        metadata = matching.get("metadata")
+        sources = matching.get("sources")
+        assessments = matching.get("assessments")
+        if (
+            not isinstance(cohort_snapshot_id, str)
+            or not isinstance(metadata, dict)
+            or not isinstance(sources, list)
+            or not isinstance(assessments, list)
+            or reference.get("schema_version") != "job-matching-storage/v2"
+            or reference.get("calculation_snapshot_id")
+            != matching.get("calculation_snapshot_id")
+            or reference.get("job_count") != matching.get("total_count")
+            or metadata.get("user_id") != artifact.owner
+            or metadata.get("analysis_id") != artifact.payload.get("analysis_id")
+            or metadata.get("cohort_id") != artifact.payload.get("cohort_id")
+        ):
+            raise ValueError("matching storage scope mismatch")
+
+        source_by_id = {source.get("job_id"): source for source in sources}
+        if len(source_by_id) != len(sources) or set(source_by_id) != {
+            assessment.get("job_id") for assessment in assessments
+        }:
+            raise ValueError("matching source references are incomplete")
+        source_hashes = {
+            job_id: digest(source) for job_id, source in source_by_id.items()
+        }
+        source_rows = [
+            (
+                cohort_snapshot_id,
+                job_id,
+                Jsonb(source),
+                source_hashes[job_id],
+            )
+            for job_id, source in source_by_id.items()
+        ]
+        if source_rows:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO c_compute.matching_source
+                       (cohort_snapshot_id, job_id, payload, source_hash)
+                       VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                    source_rows,
+                )
+            persisted = conn.execute(
+                "SELECT job_id, source_hash FROM c_compute.matching_source "
+                "WHERE cohort_snapshot_id = %s AND job_id = ANY(%s)",
+                (cohort_snapshot_id, list(source_by_id)),
+            ).fetchall()
+            if len(persisted) != len(source_hashes) or any(
+                row["source_hash"] != source_hashes.get(row["job_id"])
+                for row in persisted
+            ):
+                raise StoredMatchingIntegrityError(
+                    "immutable matching source changed for a cohort"
+                )
+
+        metadata_hash = digest(metadata)
+        conn.execute(
+            """INSERT INTO c_compute.matching_calculation
+               (recommendation_snapshot_id, storage_version,
+                calculation_snapshot_id, owner,
+                cohort_snapshot_id, analysis_id, cohort_id, metadata, metadata_hash,
+                total_count, eligible_count, conditional_count, stored_bytes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT DO NOTHING""",
+            (
+                snapshot_id,
+                reference["schema_version"],
+                matching["calculation_snapshot_id"],
+                artifact.owner,
+                cohort_snapshot_id,
+                metadata["analysis_id"],
+                metadata["cohort_id"],
+                Jsonb(metadata),
+                metadata_hash,
+                matching["total_count"],
+                matching["eligible_count"],
+                matching["conditional_count"],
+                matching["stored_bytes"],
+            ),
+        )
+        calculation = conn.execute(
+            "SELECT * FROM c_compute.matching_calculation "
+            "WHERE recommendation_snapshot_id = %s",
+            (snapshot_id,),
+        ).fetchone()
+        expected_calculation = (
+            reference["schema_version"],
+            matching["calculation_snapshot_id"],
+            artifact.owner,
+            cohort_snapshot_id,
+            metadata["analysis_id"],
+            metadata["cohort_id"],
+            metadata_hash,
+            matching["total_count"],
+            matching["eligible_count"],
+            matching["conditional_count"],
+            matching["stored_bytes"],
+        )
+        actual_calculation = (
+            calculation["storage_version"],
+            calculation["calculation_snapshot_id"],
+            calculation["owner"],
+            calculation["cohort_snapshot_id"],
+            calculation["analysis_id"],
+            calculation["cohort_id"],
+            calculation["metadata_hash"],
+            calculation["total_count"],
+            calculation["eligible_count"],
+            calculation["conditional_count"],
+            calculation["stored_bytes"],
+        )
+        if actual_calculation != expected_calculation:
+            raise StoredMatchingIntegrityError("matching calculation was replaced")
+
+        assessment_hashes = {
+            row["job_id"]: digest(row["assessment"]) for row in assessments
+        }
+        assessment_rows = [
+            (
+                snapshot_id,
+                cohort_snapshot_id,
+                row["position"],
+                row["job_id"],
+                row["eligibility"],
+                Jsonb(row["assessment"]),
+                assessment_hashes[row["job_id"]],
+            )
+            for row in assessments
+        ]
+        if assessment_rows:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO c_compute.matching_job
+                       (recommendation_snapshot_id, cohort_snapshot_id, position,
+                        job_id, eligibility, assessment, assessment_hash)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT DO NOTHING""",
+                    assessment_rows,
+                )
+        persisted = conn.execute(
+            """SELECT job_id, position, eligibility, assessment_hash
+               FROM c_compute.matching_job
+               WHERE recommendation_snapshot_id = %s""",
+            (snapshot_id,),
+        ).fetchall()
+        expected_rows = {
+            row["job_id"]: (
+                row["position"],
+                row["eligibility"],
+                assessment_hashes[row["job_id"]],
+            )
+            for row in assessments
+        }
+        if len(persisted) != len(expected_rows) or any(
+            (row["position"], row["eligibility"], row["assessment_hash"])
+            != expected_rows.get(row["job_id"])
+            for row in persisted
+        ):
+            raise StoredMatchingIntegrityError("matching assessment rows changed")
 
     def fail(self, ticket: Ticket, code: str) -> None:
         with self._connect() as conn:
@@ -353,6 +550,146 @@ class ComputeStore:
                 (snapshot_id, owner or ""),
             ).fetchone()
             return dict(row) if row else None
+
+    @staticmethod
+    def _matching_header(conn, snapshot_id: str, owner: str) -> dict | None:
+        row = conn.execute(
+            """SELECT s.snapshot_id,
+                      c.storage_version, c.calculation_snapshot_id, c.owner,
+                      c.cohort_snapshot_id,
+                      c.analysis_id, c.cohort_id,
+                      c.metadata, c.metadata_hash, c.total_count, c.eligible_count,
+                      c.conditional_count, c.stored_bytes
+               FROM c_compute.snapshot s
+               LEFT JOIN c_compute.matching_calculation c
+                 ON c.recommendation_snapshot_id = s.snapshot_id
+               WHERE s.snapshot_id = %s AND s.owner = %s
+                 AND s.kind = 'RECOMMENDATION'""",
+            (snapshot_id, owner),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["calculation_snapshot_id"] is None:
+            legacy = conn.execute(
+                "SELECT payload ? 'job_matching' AS has_embedded, "
+                "payload ? 'job_matching_ref' AS has_reference "
+                "FROM c_compute.snapshot WHERE snapshot_id = %s",
+                (snapshot_id,),
+            ).fetchone()
+            if legacy["has_reference"]:
+                raise StoredMatchingIntegrityError("matching reference has no rows")
+            return {
+                "status": "LEGACY_EMBEDDED"
+                if legacy["has_embedded"]
+                else "NOT_PREPARED"
+            }
+        metadata = row["metadata"]
+        if (
+            not isinstance(metadata, dict)
+            or row["storage_version"] != "job-matching-storage/v2"
+            or row["owner"] != owner
+            or metadata.get("user_id") != owner
+            or metadata.get("analysis_id") != row["analysis_id"]
+            or metadata.get("cohort_id") != row["cohort_id"]
+            or digest(metadata) != row["metadata_hash"]
+            or row["total_count"] != row["eligible_count"] + row["conditional_count"]
+        ):
+            raise StoredMatchingIntegrityError("stored matching scope mismatch")
+        return {"status": "READY", **dict(row)}
+
+    @staticmethod
+    def _restore_matching_rows(rows: list[dict]) -> list[dict[str, Any]]:
+        from job.matching import restore_job_assessment
+
+        restored = []
+        for row in rows:
+            try:
+                if (
+                    row["source"] is None
+                    or digest(row["source"]) != row["source_hash"]
+                    or digest(row["assessment"]) != row["assessment_hash"]
+                    or row["source"].get("job_id") != row["job_id"]
+                ):
+                    raise ValueError("matching row hash or reference mismatch")
+                item = restore_job_assessment(row["source"], row["assessment"])
+                if item.job.eligibility != row["eligibility"]:
+                    raise ValueError("matching eligibility reference mismatch")
+                restored.append(item.model_dump(mode="json"))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise StoredMatchingIntegrityError(
+                    "stored matching row is inconsistent"
+                ) from exc
+        return restored
+
+    def get_matching_page(
+        self,
+        snapshot_id: str,
+        *,
+        owner: str,
+        offset: int,
+        limit: int,
+        include_conditional: bool,
+    ) -> dict | None:
+        with self._connect() as conn:
+            header = self._matching_header(conn, snapshot_id, owner)
+            if header is None or header["status"] != "READY":
+                return header
+            selected_count = (
+                header["total_count"]
+                if include_conditional
+                else header["eligible_count"]
+            )
+            if offset >= selected_count:
+                return {**header, "items": [], "has_next": False}
+            eligibility_sql = (
+                "" if include_conditional else "AND eligibility = 'ELIGIBLE'"
+            )
+            rows = conn.execute(
+                f"""SELECT j.job_id, j.eligibility, j.assessment,
+                           j.assessment_hash, source.payload AS source,
+                           source.source_hash
+                    FROM (
+                        SELECT job_id, eligibility, assessment, assessment_hash,
+                               cohort_snapshot_id, position
+                        FROM c_compute.matching_job
+                        WHERE recommendation_snapshot_id = %s {eligibility_sql}
+                        ORDER BY position LIMIT %s OFFSET %s
+                    ) j
+                    LEFT JOIN c_compute.matching_source source
+                      ON source.cohort_snapshot_id = j.cohort_snapshot_id
+                     AND source.job_id = j.job_id
+                    ORDER BY j.position""",
+                (snapshot_id, limit + 1, offset),
+            ).fetchall()
+            has_next = len(rows) > limit
+            return {
+                **header,
+                "items": self._restore_matching_rows(rows[:limit]),
+                "has_next": has_next,
+            }
+
+    def get_matching_detail(
+        self, snapshot_id: str, *, owner: str, job_id: str
+    ) -> dict | None:
+        with self._connect() as conn:
+            header = self._matching_header(conn, snapshot_id, owner)
+            if header is None or header["status"] != "READY":
+                return header
+            row = conn.execute(
+                """SELECT j.job_id, j.eligibility, j.assessment,
+                          j.assessment_hash, source.payload AS source,
+                          source.source_hash
+                   FROM c_compute.matching_job j
+                   LEFT JOIN c_compute.matching_source source
+                     ON source.cohort_snapshot_id = j.cohort_snapshot_id
+                    AND source.job_id = j.job_id
+                   WHERE j.recommendation_snapshot_id = %s AND j.job_id = %s""",
+                (snapshot_id, job_id),
+            ).fetchone()
+            return {
+                **header,
+                "item": self._restore_matching_rows([row])[0] if row else None,
+            }
 
     def get_head(self, kind: str, owner: str | None, stream: str) -> str | None:
         with self._connect() as conn:

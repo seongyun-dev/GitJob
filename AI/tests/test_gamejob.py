@@ -835,7 +835,7 @@ def test_write_outputs_emits_a_valid_batch_and_manifest(tmp_path: Path):
     batch = JobAnalysisInputBatch.model_validate_json(
         paths["json"].read_text(encoding="utf-8")
     )
-    assert batch.collector_version == "gamejob-collector/v1"
+    assert batch.collector_version == "gamejob-collector/v2"
     assert batch.pipeline_run_id.startswith("GAMEJOB-")
 
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
@@ -930,7 +930,7 @@ def test_a_run_directory_can_be_published_by_the_scheduler(tmp_path: Path):
     assert JOBS_TOPIC == "jobs.collected"
     assert envelope.source == "gamejob"
     assert envelope.payload["site"] == SOURCE_SITE
-    assert envelope.payload["collector_version"] == "gamejob-collector/v1"
+    assert envelope.payload["collector_version"] == "gamejob-collector/v2"
     assert envelope.payload["record_count"] == len(result.batch.records)
     assert envelope.payload["dataset_snapshot_id"].startswith("GAMEJOB-")
 

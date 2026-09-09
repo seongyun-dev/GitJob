@@ -3,6 +3,11 @@
 상태: 로컬 PostgreSQL·HTTP 왕복 구현 및 검증. B/FE·운영 연결은 미검증.
 기준일: 2026-09-08. 이슈: S15P21E102-33.
 
+2026-09-09 -185 후속: 새 COHORT의 `matching_jobs`가 준비되어 있으면 분석 완료 시
+`job-matching/v2`도 원자적 저장 대상으로 계산한다. RECOMMENDATION에는 작은 reference만,
+공유 원본과 사용자별 평가는 002 projection에 분리한다. [부분 부합 계약](c-job-matching.md)에
+bounded 목록/상세 경로, 구 결과 호환/409, 예산과 무결성 오류 정책을 정의했다.
+
 ## 책임과 실행
 
 공고는 완료 manifest 자동 감시 또는 명시적 배치 완료 HTTP API로 입력한다.
@@ -34,6 +39,8 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | `POST /internal/v1/c/trends/completed` | `tech_id`, `source`, `periods`: JOB `demand_snapshot_ids` 또는 GITHUB 공식 형식 `csv_text`·`source_uri`·`source_version` |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
+| `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록. `user_id`, page/size, `include_conditional=false` |
+| `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-posting` | 동일 저장 평가의 상세. `user_id`, `job_id` |
 | `GET /internal/v1/c/registry` | 실행 중인 정확한 Registry Snapshot. 현재 기본 `registry-20260908.1` |
 | `GET /internal/v1/c/contracts` | 실제 Pydantic 완료 event의 JSON Schema. 구현이 계약 원본 |
 | `GET /internal/v1/c/intake/status` | 완료 입력 감시의 활성/실행 여부, 최근 poll의 완료·실패·보류 수, 공개 분할 진행 및 DB 결과 ID |
@@ -77,7 +84,9 @@ Trend pointer는 직무·출처·지역·경력·최소 표본과 계산 버전�
 같은 범위의 새 관측은 기존 pointer를 갱신하지만 다른 조회 범위나 품질 정책의
 결과를 덮어쓰지 않는다. 입력 내용 전체를 pointer 키로 사용하지 않는다.
 
-요청 본문은 8 MiB로 제한한다. 대형 Top20k Snapshot은 이 API에 한 요청으로
+요청 본문은 8 MiB로 제한하고 초과 시 413 `INPUT_TOO_LARGE`다. matching 결과는
+50,000공고/논리 저장 64 MiB 및 행별 예산을 적용하고 초과 시 절단 없이 413
+`RESULT_TOO_LARGE`로 전체 게시를 실패한다. 대형 Top20k Snapshot은 이 API에 한 요청으로
 전달하지 않는다. collection/consumer read budget에 맞춘 명시적 partition과 원본
 run lineage가 필요하며, 작은 표본 결과를 전체 완료로 표시하지 않는다.
 목록은 0-based `page`, `size=1..50`이다. 조회 응답 `snapshot_id`는 DB 저장 ID,
@@ -232,12 +241,15 @@ error type 위주다. 원본과 loader의 검증 조건을 함께 대조해야 �
 
 ## 저장과 migration
 
-현재 `db/migration/V1__baseline_schema.sql`의 13개 Registry/Evidence 테이블은 수정하지 않는다.
-`db/c-compute/001_c_compute.sql`이 `c_compute` schema의 event 실행,
-불변 결과, 현재 pointer 및 migration checksum을 만든다. 공고 cohort는 원본 수집
+현재 `db/migration/V1__baseline_schema.sql`의 13개 Registry/Evidence 테이블과 적용된
+`db/c-compute/001_c_compute.sql`은 수정하지 않는다. 001은 `c_compute` schema의 event 실행,
+불변 결과, 현재 pointer 및 migration checksum을 만든다. 새
+`002_job_matching_projection.sql`은 shared `matching_source`, 계산 metadata,
+compact 사용자 평가 행만 추가하고 source/assessment UPDATE·DELETE를 trigger로 막는다.
+런타임 role은 두 projection table에 SELECT/INSERT만 부여한다. 공고 cohort는 원본 수집
 본문이 아닌 분석된 기술 조건·출처·품질·버전을 한 번 저장한다. 수요/개인 추천/공개
 분석/Trend는 버전이 있는 결과 JSONB를 저장한다. 개인 원본 코드·토큰은 받거나 저장하지 않는다.
-중간 계산마다 테이블을 만들지 않는다. 결과의 owner는 기존 B 사용자 ID이며 C가
+다른 추천/설명 계산마다 테이블을 만들지 않는다. 결과의 owner는 기존 B 사용자 ID이며 C가
 별도의 사용자 테이블을 만들지 않는다. 스키마 생성 권한은 migration 실행자에게만 주고
 런타임에는 C 테이블 SELECT/INSERT/UPDATE 권한만 주면 된다.
 `JOB_INPUT`은 동일 경로의 입력 교체를 차단하는 내부 완료 검증 이벤트이며 결과 Snapshot이나
@@ -247,8 +259,10 @@ DB URI는 `C_COMPUTE_DATABASE_URL` 또는 기존 `POSTGRES_*` 설정으로 구�
 API가 시작하면서 DDL을 자동 실행하지 않는다. 적용/롤백/권한 부여는 배포 단계에서
 승인 후 별도로 실행해야 하며 이번 작업은 로컬 테스트 DB에만 적용한다.
 
-개발 PC에서는 `AI/`에서 `python -m worker.migrate`를 명시적으로 실행한다.
-빌드 이미지에는 `/app/migrations/001_c_compute.sql`을 포함하며 같은 명령을 쓴다.
+개발 PC에서는 `AI/`에서 `python -m worker.migrate`를 명시적으로 실행한다. runner는
+001부터 002까지 checksum을 확인하여 순서대로 적용하고 `/ready`는 두 버전을 모두 요구한다.
+빌드 이미지에는 `/app/migrations/001_c_compute.sql`과
+`/app/migrations/002_job_matching_projection.sql`을 포함하며 같은 명령을 쓴다.
 `C_COMPUTE_DATABASE_URL`은 migration에서 반드시 명시한다. 런타임 token과 DDL 권한은
 별개이며 실행에 필요한 테이블 권한만 별도로 부여한다. Worker image는 기존 `/app`
 모듈 위치를 유지하고 Registry provenance 파일을 `/opt/gitjob-provenance`에

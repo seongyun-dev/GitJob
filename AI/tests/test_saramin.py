@@ -359,7 +359,7 @@ def test_run_emits_a_contract_valid_batch():
     result = SaraminCrawler(_config(), FakeClient([LIST_HTML])).run()
 
     JobAnalysisInputBatch.model_validate(result.batch.model_dump(by_alias=True))
-    assert result.batch.collector_version == "saramin-collector/v1"
+    assert result.batch.collector_version == "saramin-collector/v2"
     assert all(record.source_site == SOURCE_SITE for record in result.batch.records)
 
 

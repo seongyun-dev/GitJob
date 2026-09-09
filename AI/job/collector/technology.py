@@ -28,7 +28,7 @@ TECHNOLOGY_RULES = (
     _rule("docker-compose", r"(?<![A-Za-z0-9])Docker[\s-]+Compose(?![A-Za-z0-9])"),
     _rule("github-actions", r"(?<![A-Za-z0-9])GitHub[\s-]+Actions(?![A-Za-z0-9])"),
     _rule("aws-lambda", r"(?<![A-Za-z0-9])AWS[\s-]+Lambda(?![A-Za-z0-9])"),
-    _rule("spring-boot", r"(?<![A-Za-z0-9])Spring[\s-]+Boot(?![A-Za-z0-9])"),
+    _rule("spring-boot", r"(?<![A-Za-z0-9])Spring[\s-]*Boot(?![A-Za-z0-9])"),
     _rule("nodejs", r"(?<![A-Za-z0-9])Node(?:\.js|JS)(?![A-Za-z0-9])"),
     _rule("nextjs", r"(?<![A-Za-z0-9])Next(?:\.js|JS)(?![A-Za-z0-9])"),
     _rule("vuejs", r"(?<![A-Za-z0-9])Vue(?:\.js|JS)(?![A-Za-z0-9])"),
@@ -36,7 +36,10 @@ TECHNOLOGY_RULES = (
     _rule("nestjs", r"(?<![A-Za-z0-9])Nest(?:\.js|JS)?(?![A-Za-z0-9])"),
     _rule("rest-api", r"(?<![A-Za-z0-9])REST(?:ful)?[\s-]+API(?![A-Za-z0-9])"),
     _rule("ci-cd", r"(?<![A-Za-z0-9])CI\s*/?\s*CD(?![A-Za-z0-9])"),
-    _rule("postgresql", r"(?<![A-Za-z0-9])PostgreSQL(?![A-Za-z0-9])"),
+    _rule(
+        "postgresql",
+        r"(?<![A-Za-z0-9])(?:PostgreSQL|Postgres)(?![A-Za-z0-9])",
+    ),
     _rule("elasticsearch", r"(?<![A-Za-z0-9])Elastic(?:search|Search)(?![A-Za-z0-9])"),
     _rule(
         "kubernetes",

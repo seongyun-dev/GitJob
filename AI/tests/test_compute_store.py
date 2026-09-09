@@ -214,10 +214,21 @@ def test_artifact_failure_rolls_back_all_results_and_event_completion(store):
     store.fail(ticket, "INVALID_RESULT")
 
 
-def test_applied_migration_checksum_cannot_be_changed(store, tmp_path):
-    from worker.store import MIGRATION_FILE
+@pytest.mark.parametrize("migration_index", [0, 1])
+def test_applied_migration_checksum_cannot_be_changed(store, tmp_path, migration_index):
+    from worker.store import MIGRATION_FILES
 
-    changed = tmp_path / "changed.sql"
-    changed.write_bytes(MIGRATION_FILE.read_bytes() + b"\n-- altered migration\n")
+    original = MIGRATION_FILES[migration_index]
+    changed = tmp_path / original.name
+    changed.write_bytes(original.read_bytes() + b"\n-- altered migration\n")
     with pytest.raises(ValueError, match="checksum"):
         apply_migration(os.environ["C_COMPUTE_TEST_DATABASE_URL"], changed)
+
+
+def test_all_forward_migrations_are_ready(store):
+    assert store.ready()
+    with psycopg.connect(os.environ["C_COMPUTE_TEST_DATABASE_URL"]) as conn:
+        versions = conn.execute(
+            "SELECT version FROM c_compute.schema_version ORDER BY version"
+        ).fetchall()
+    assert versions == [(1,), (2,)]

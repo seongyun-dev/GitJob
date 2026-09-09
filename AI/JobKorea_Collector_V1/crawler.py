@@ -40,7 +40,7 @@ from .ocr import (
 from .parser import DetailContent, JobListItem, parse_detail, parse_job_list
 from .technology import extract_technology_mentions
 
-COLLECTOR_VERSION = "jobkorea-crawler/v1"
+COLLECTOR_VERSION = "jobkorea-crawler/v2"
 DEFAULT_BASE_URL = "https://www.jobkorea.co.kr"
 DEFAULT_DUTY_CODE = "1000229"
 DEFAULT_DUTY_NAME = "백엔드개발자"

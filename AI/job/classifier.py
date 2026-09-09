@@ -34,7 +34,7 @@ from registry.mapper import (
 )
 
 JOB_CLASSIFICATION_SCHEMA_VERSION = "job-technology-classification/v1"
-JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v5"
+JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v6"
 _ISO_8601_DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]")
 
 
@@ -141,7 +141,7 @@ _REQUIRED_SECTION_MARKERS = (
 )
 
 _RESPONSIBILITY_HEADINGS = frozenset(
-    {"담당업무", "주요업무", "업무내용", "responsibilities"}
+    {"담당업무", "주요업무", "업무내용", "직무내용", "responsibilities"}
 )
 _TERMINATING_SECTION_HEADINGS = frozenset(
     {"회사소개", "기업소개", "company", "aboutus"}

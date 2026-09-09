@@ -89,6 +89,8 @@ def test_completed_batch_to_automatic_recommendation_database_and_exact_new_jobs
     result = client.get(
         PREFIX + f"/snapshots/{result_id}", params={"user_id": "user-1"}
     ).json()["data"]["payload"]
+    assert "job_matching" not in result
+    assert result["job_matching_ref"]["schema_version"] == "job-matching-storage/v2"
     assert result["current_count"] == 1
     assert result["explanation"]["snapshot_id"] == result["snapshot_id"]
     candidate = next(

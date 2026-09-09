@@ -14,9 +14,10 @@ papered over — see `resolve_body_status`.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from hashlib import sha256
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from job.collector.interface import ListingRow, PostingDetail
 from job.collector.technology import extract_technology_mentions
@@ -58,6 +59,7 @@ OPEN_ENDED_DEADLINE_LABELS = (
 # hash the same, so two different field splits of the same page would collide
 # and one posting would be treated as a duplicate of the other.
 _HASH_FIELD_SEPARATOR = "\x1f"
+_SEOUL = ZoneInfo("Asia/Seoul")
 
 
 def source_record_id_for(source_site: str, source_posting_id: str) -> str:
@@ -139,7 +141,7 @@ def resolve_body_status(
 
 def posting_status_from_deadline(
     *,
-    deadline_date: date | None,
+    deadline_date: date | datetime | None,
     deadline_label: str | None,
     collected_at: datetime,
 ) -> PostingStatus:
@@ -150,10 +152,18 @@ def posting_status_from_deadline(
     deadline is UNKNOWN, not ACTIVE: guessing would overstate what was seen.
     """
 
+    if isinstance(deadline_date, datetime):
+        if deadline_date.tzinfo is None or deadline_date.utcoffset() is None:
+            raise ValueError("deadline timestamp must include a timezone")
+        return (
+            PostingStatus.CLOSED
+            if deadline_date <= collected_at
+            else PostingStatus.ACTIVE
+        )
     if deadline_date is not None:
         return (
             PostingStatus.CLOSED
-            if deadline_date < collected_at.date()
+            if deadline_date < collected_at.astimezone(_SEOUL).date()
             else PostingStatus.ACTIVE
         )
     if deadline_label and any(
@@ -171,7 +181,7 @@ def normalize_posting(
     source_url: str,
     collected_at: datetime,
     detail_fetched: bool,
-    deadline_date: date | None = None,
+    deadline_date: date | datetime | None = None,
     detail_error: str | None = None,
     extract_technologies: bool = True,
 ) -> JobPostingInput:
@@ -236,7 +246,7 @@ def normalize_posting(
             collected_at=collected_at,
         ),
         "posted_at": _posted_at_for(row, detail, collected_at),
-        "deadline": _as_datetime(deadline_date, collected_at),
+        "deadline": _deadline_as_datetime(deadline_date),
         "collected_at": collected_at,
         "content_hash": content_hash_for(
             source_site=source_site,
@@ -279,3 +289,11 @@ def _as_datetime(value: date | None, collected_at: datetime) -> datetime | None:
     if value is None:
         return None
     return datetime.combine(value, datetime.min.time(), tzinfo=collected_at.tzinfo)
+
+
+def _deadline_as_datetime(value: date | datetime | None) -> datetime | None:
+    """Keep clock evidence; date-only values include their whole Seoul day."""
+
+    if value is None or isinstance(value, datetime):
+        return value
+    return datetime.combine(value + timedelta(days=1), time.min, tzinfo=_SEOUL)

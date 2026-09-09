@@ -57,7 +57,7 @@ from .categories import CATEGORY_PRESETS, resolve_category_preset
 from .dates import as_seoul, parse_deadline
 from .parser import SaraminDetail, listing_date_labels, parse_detail, parse_job_list
 
-COLLECTOR_VERSION = "saramin-collector/v1"
+COLLECTOR_VERSION = "saramin-collector/v2"
 # Uppercase to match the source_site convention in the S15P21E102-90 fixture.
 SOURCE_SITE = "SARAMIN"
 DEFAULT_BASE_URL = "https://www.saramin.co.kr"

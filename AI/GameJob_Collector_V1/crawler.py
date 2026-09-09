@@ -100,7 +100,7 @@ from .parser import (
     parse_job_list,
 )
 
-COLLECTOR_VERSION = "gamejob-collector/v1"
+COLLECTOR_VERSION = "gamejob-collector/v2"
 # Uppercase to match the source_site convention in the S15P21E102-90 fixture.
 SOURCE_SITE = "GAMEJOB"
 DEFAULT_BASE_URL = "https://www.gamejob.co.kr"

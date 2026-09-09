@@ -324,6 +324,54 @@ def test_parse_detail_reads_condition_fields():
     assert detail.posted_at.hour == 10
 
 
+@pytest.mark.parametrize(
+    "value", ["신입", "신입<br>,<br>경력<br>(최소 3년 이상)", "관계없음"]
+)
+def test_detail_filter_fields_ignore_caption_and_company_address(value):
+    # Minimal markup from the labelled text in the preserved Worknet sample;
+    # this is not a downloaded original HTML fixture.
+    detail = parse_detail(f"""
+        <h3>모집요강</h3>
+        <p>모집 직종, 경력, 학력, 근무 예정지를 제공하는 표</p>
+        <dl><dt>경력</dt><dd>{value}</dd><dt>학력</dt><dd>학력무관</dd>
+        <dt>근무 예정지</dt><dd>대구 동구</dd><dt>임금조건</dt><dd>협의</dd></dl>
+        <h3>기업정보</h3><p>경력 개발자를 우대합니다</p>
+        <p>주소</p><p>경기도 성남시 분당구</p>
+    """)
+    expected = value.replace("<br>", " ")
+    assert detail.career_level == ("경력무관" if value == "관계없음" else expected)
+    assert detail.region == "대구 동구"
+
+
+def test_detail_missing_workplace_does_not_use_company_address_or_caption_career():
+    detail = parse_detail("""
+        <h3>모집요강</h3><p>경력, 학력, 근무 예정지를 제공하는 표</p>
+        <dl><dt>경력</dt><dd>-</dd><dt>학력</dt><dd>학력무관</dd>
+        <dt>근무 예정지</dt><dd>-</dd><dt>임금조건</dt><dd>협의</dd></dl>
+        <h3>기업정보</h3><p>경력 개발자</p><p>주소</p><p>서울특별시 강남구</p>
+    """)
+    assert detail.career_level is None
+    assert detail.region is None
+
+
+def test_detail_absent_workplace_does_not_read_company_region_label():
+    detail = parse_detail(
+        "<h3>모집요강</h3><dl><dt>경력</dt><dd>신입</dd></dl>"
+        "<h3>기업정보</h3><dl><dt>지역</dt><dd>서울특별시 강남구</dd></dl>"
+    )
+    assert detail.region is None
+
+
+def test_detail_navigation_company_tab_does_not_hide_workplace_field():
+    detail = parse_detail(
+        "<h3>근무조건</h3><p>기타 조건</p>"
+        "<p>모집요강</p><p>근무조건</p><p>우대사항</p><p>복리후생</p>"
+        "<p>전형방법</p><p>기업정보</p><p>추천정보</p><p>모집요강</p>"
+        "<dl><dt>근무 예정지</dt><dd>대구 동구</dd><dt>임금조건</dt><dd>협의</dd></dl>"
+    )
+    assert detail.region == "대구 동구"
+
+
 def test_parse_detail_separates_posting_images_from_site_chrome():
     detail = parse_detail(IMAGE_ONLY_DETAIL_HTML)
     assert detail.image_sources == ("/upload/posting/9999/body.png",)
@@ -338,7 +386,7 @@ def test_run_emits_contract_valid_batch():
     result = crawler.run()
 
     assert result.batch.schema_version == JOB_ANALYSIS_INPUT_SCHEMA_VERSION
-    assert result.batch.collector_version == "worknet-collector/v1"
+    assert result.batch.collector_version == "worknet-collector/v2"
     # Re-validating the serialized batch proves the output is contract-clean,
     # not just that our in-memory objects happened to construct.
     JobAnalysisInputBatch.model_validate_json(
@@ -849,7 +897,7 @@ def test_crawler_satisfies_the_site_collector_protocol_surface():
     """The pieces the protocol names are all present on the Worknet modules."""
 
     assert SOURCE_SITE == "WORKNET"
-    assert COLLECTOR_VERSION == "worknet-collector/v1"
+    assert COLLECTOR_VERSION == "worknet-collector/v2"
     assert callable(parse_job_list)
     assert callable(parse_detail)
 
@@ -917,7 +965,7 @@ def test_period_deadline_makes_the_posting_active():
     record = WorknetCrawler(_config(), client).run().batch.records[0]
 
     assert record.deadline is not None
-    assert record.deadline.date() == date(2026, 9, 13)
+    assert record.deadline.isoformat() == "2026-09-14T00:00:00+09:00"
     assert record.posting_status is PostingStatus.ACTIVE
 
 

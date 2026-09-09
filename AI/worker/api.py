@@ -33,7 +33,14 @@ from recommendation.evidence import EvidenceAnalysis
 from registry.contracts import TechnologyRegistry, load_registry
 from registry.mapper import RegistryMapper
 from worker.lease import LeaseHeartbeat
-from worker.store import Artifact, ComputeStore, IdempotencyConflict, LeaseLost, digest
+from worker.store import (
+    Artifact,
+    ComputeStore,
+    IdempotencyConflict,
+    LeaseLost,
+    StoredMatchingIntegrityError,
+    digest,
+)
 
 LOGGER = logging.getLogger(__name__)
 Identifier = Annotated[
@@ -167,20 +174,23 @@ def default_registry() -> TechnologyRegistry:
 def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
     """A retry must not silently run different rules after a deployment."""
     versions = {
-        "runtime": "c-compute-runtime/v2",
+        "runtime": "c-compute-runtime/v3",
         "registry": registry.registry_version,
         "registry_sha256": digest(registry.model_dump(mode="json")),
     }
     if kind == "JOB_BATCH":
         from job.input_union import INPUT_UNION_VERSION
+        from job.requirements import JOB_REQUIREMENTS_SCHEMA_VERSION
 
         versions.update(
             parser=JOB_REQUIREMENT_PARSER_VERSION,
             quality=JOB_QUALITY_VERSION,
             aggregation=JOB_DEMAND_AGGREGATION_VERSION,
             input_union=INPUT_UNION_VERSION,
+            requirements=JOB_REQUIREMENTS_SCHEMA_VERSION,
         )
     elif kind == "ANALYSIS":
+        from job.matching import JOB_MATCHING_VERSION
         from recommendation.engine import (
             PREREQUISITE_POLICY_VERSION,
             RECOMMENDATION_ALGORITHM_VERSION,
@@ -195,6 +205,7 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
             level=LEVEL_POLICY_VERSION,
             aggregation=JOB_DEMAND_AGGREGATION_VERSION,
             explanation=EXPLANATION_VERSION,
+            matching=JOB_MATCHING_VERSION,
         )
     elif kind == "PUBLIC_REPO":
         from github.public_analysis import PUBLIC_PARSER_VERSION
@@ -375,12 +386,28 @@ def create_compute_app(
 
     @app.exception_handler(ValueError)
     async def invalid_domain_input(request: Request, exc: ValueError):
-        code, status = (
-            ("IDEMPOTENCY_CONFLICT", 409)
-            if isinstance(exc, IdempotencyConflict)
-            else ("INVALID_INPUT", 422)
-        )
+        from job.matching import MatchingResultTooLarge
+
+        if isinstance(exc, IdempotencyConflict):
+            code, status = "IDEMPOTENCY_CONFLICT", 409
+        elif isinstance(exc, MatchingResultTooLarge):
+            code, status = "RESULT_TOO_LARGE", 413
+        else:
+            code, status = "INVALID_INPUT", 422
         return JSONResponse(status_code=status, content={"code": code, "message": code})
+
+    @app.exception_handler(StoredMatchingIntegrityError)
+    async def stored_matching_integrity_error(
+        request: Request, exc: StoredMatchingIntegrityError
+    ):
+        LOGGER.error("Stored matching integrity check failed", exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "STORED_MATCHING_INTEGRITY_FAILED",
+                "message": "Stored matching result failed an integrity check",
+            },
+        )
 
     @app.exception_handler(PermissionError)
     async def wrong_scope(request: Request, exc: PermissionError):
@@ -538,13 +565,40 @@ def create_compute_app(
             payload["explanation"] = explain_recommendations(result).model_dump(
                 mode="json"
             )
+            if cohort.matching_jobs is not None:
+                from job.matching import (
+                    build_job_matching,
+                    matching_reference,
+                    matching_storage_rows,
+                )
+
+                matching_result = build_job_matching(
+                    cohort,
+                    event.evidence,
+                    user_id=event.user_id,
+                    analysis_id=event.analysis_id,
+                )
+                payload["job_matching_ref"] = matching_reference(
+                    matching_result, cohort_snapshot_id=event.cohort_snapshot_id
+                )
+                matching = matching_storage_rows(matching_result)
+            else:
+                matching = None
             stream = digest(
                 {
                     "cohort": event.cohort_snapshot_id,
                     "criteria": cohort.criteria.model_dump(mode="json"),
                 }
             )
-            return [Artifact("RECOMMENDATION", event.user_id, payload, stream)]
+            return [
+                Artifact(
+                    "RECOMMENDATION",
+                    event.user_id,
+                    payload,
+                    stream,
+                    matching=matching,
+                )
+            ]
 
         return execute(event, "ANALYSIS", event.user_id, compute)
 
@@ -566,6 +620,8 @@ def create_compute_app(
         payload = dict(snapshot(snapshot_id, user_id, "RECOMMENDATION")["payload"])
         payload.pop("cohort_snapshot_id", None)
         payload.pop("explanation", None)
+        payload.pop("job_matching", None)
+        payload.pop("job_matching_ref", None)
         result = RecommendationSnapshot.model_validate(payload)
         listing = list_related_jobs(
             result,
@@ -581,6 +637,167 @@ def create_compute_app(
                 **listing.model_dump(mode="json"),
                 "calculation_snapshot_id": listing.snapshot_id,
                 "snapshot_id": snapshot_id,
+            },
+        }
+
+    def legacy_matching_result(snapshot_id: str, user_id: str):
+        from job.matching import MatchingResultTooLarge, validate_job_matching
+
+        payload = snapshot(snapshot_id, user_id, "RECOMMENDATION")["payload"]
+        if "job_matching" not in payload:
+            raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
+        try:
+            result = validate_job_matching(payload["job_matching"])
+            if (
+                result.user_id != user_id
+                or result.analysis_id != payload["analysis_id"]
+                or result.cohort_id != payload["cohort_id"]
+            ):
+                raise ValueError("stored matching scope mismatch")
+            return result
+        except MatchingResultTooLarge as exc:
+            raise HTTPException(413, "LEGACY_MATCHING_RESULT_TOO_LARGE") from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StoredMatchingIntegrityError(
+                "legacy embedded matching result is inconsistent"
+            ) from exc
+
+    def matching_page(
+        snapshot_id: str,
+        user_id: str,
+        *,
+        page: int,
+        size: int,
+        include_conditional: bool,
+    ):
+        stored = database().get_matching_page(
+            snapshot_id,
+            owner=user_id,
+            offset=page * size,
+            limit=size,
+            include_conditional=include_conditional,
+        )
+        if stored is None:
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
+        if stored["status"] == "NOT_PREPARED":
+            raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
+        if stored["status"] == "LEGACY_EMBEDDED":
+            result = legacy_matching_result(snapshot_id, user_id)
+            rows = tuple(
+                row
+                for row in result.jobs
+                if include_conditional or row.job.eligibility == "ELIGIBLE"
+            )
+            offset = page * size
+            items = (
+                []
+                if offset >= len(rows)
+                else [
+                    row.model_dump(mode="json") for row in rows[offset : offset + size]
+                ]
+            )
+            return {
+                "calculation_snapshot_id": result.calculation_snapshot_id,
+                "metadata": result.model_dump(
+                    mode="json", exclude={"jobs", "calculation_snapshot_id"}
+                ),
+                "total_count": len(result.jobs),
+                "eligible_count": sum(
+                    row.job.eligibility == "ELIGIBLE" for row in result.jobs
+                ),
+                "conditional_count": sum(
+                    row.job.eligibility == "CONDITIONAL" for row in result.jobs
+                ),
+                "items": items,
+                "has_next": offset + size < len(rows),
+            }
+        return stored
+
+    @app.get(
+        prefix + "/recommendations/{snapshot_id}/matching-job-postings",
+        dependencies=auth,
+    )
+    def get_matching_postings(
+        snapshot_id: SnapshotId,
+        user_id: Identifier,
+        page: Annotated[int, Query(ge=0)] = 0,
+        size: Annotated[int, Query(ge=1, le=50)] = 20,
+        include_conditional: bool = False,
+    ):
+        stored = matching_page(
+            snapshot_id,
+            user_id,
+            page=page,
+            size=size,
+            include_conditional=include_conditional,
+        )
+        metadata = stored["metadata"]
+        total_count = (
+            stored["total_count"] if include_conditional else stored["eligible_count"]
+        )
+        return {
+            "message": "C partial matching job postings",
+            "data": {
+                "snapshot_id": snapshot_id,
+                "calculation_snapshot_id": stored["calculation_snapshot_id"],
+                "schema_version": metadata["schema_version"],
+                "cohort_id": metadata["cohort_id"],
+                "analysis_id": metadata["analysis_id"],
+                "criteria": metadata["criteria"],
+                "registry_version": metadata["registry_version"],
+                "held_policy_version": metadata["held_policy_version"],
+                "level_policy_version": metadata["level_policy_version"],
+                "evidence_rule_version": metadata["evidence_rule_version"],
+                "total_count": total_count,
+                "conditional_count": stored["conditional_count"],
+                "excluded_conditional_count": (
+                    0 if include_conditional else stored["conditional_count"]
+                ),
+                "page": page,
+                "size": size,
+                "has_next": stored["has_next"],
+                "items": stored["items"],
+                "data_gaps": metadata["data_gaps"],
+            },
+        }
+
+    @app.get(
+        prefix + "/recommendations/{snapshot_id}/matching-job-posting",
+        dependencies=auth,
+    )
+    def get_matching_posting(
+        snapshot_id: SnapshotId,
+        user_id: Identifier,
+        job_id: Annotated[str, Query(min_length=1, max_length=256)],
+    ):
+        stored = database().get_matching_detail(
+            snapshot_id, owner=user_id, job_id=job_id
+        )
+        if stored is None:
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
+        if stored["status"] == "NOT_PREPARED":
+            raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
+        if stored["status"] == "LEGACY_EMBEDDED":
+            result = legacy_matching_result(snapshot_id, user_id)
+            row = next((row for row in result.jobs if row.job.job_id == job_id), None)
+            stored = {
+                "calculation_snapshot_id": result.calculation_snapshot_id,
+                "metadata": result.model_dump(
+                    mode="json", exclude={"jobs", "calculation_snapshot_id"}
+                ),
+                "item": row.model_dump(mode="json") if row else None,
+            }
+        if stored["item"] is None:
+            raise HTTPException(404, "JOB_NOT_FOUND")
+        metadata = stored["metadata"]
+        return {
+            "message": "C partial matching job detail",
+            "data": {
+                "snapshot_id": snapshot_id,
+                "calculation_snapshot_id": stored["calculation_snapshot_id"],
+                "cohort_id": metadata["cohort_id"],
+                "analysis_id": metadata["analysis_id"],
+                "item": stored["item"],
             },
         }
 

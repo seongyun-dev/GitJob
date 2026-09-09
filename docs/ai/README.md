@@ -4,6 +4,10 @@
 >
 > 기준일: 2026-09-08 · 구현 기준: `ce4c24f` · 관련 Jira: S15P21E102-29/31/33/36/88/160
 
+> 2026-09-09 후속 -183/-184/-185: 채용공고 정규화·필수/우대 조건 보존·공고별 부분 부합을
+> 추가했다. [부분 부합 계약과 검증 한계](c-job-matching.md), [요구절 모델](c-job-requirements.md)을
+> 참고한다. 이 후속 기능의 실제 PostgreSQL·B/FE·운영 인수는 아직 완료되지 않았다.
+
 ## 1. 3분 요약
 
 C는 **사용자가 사용한 것으로 확인된 기술과 공고의 기술 조건을 비교해, 다음에 배울 기술과 늘어나는 부합 공고를 계산**한다. 여기서 부합은 수집·분류한 기술 조건에 대한 부합이지 학력·경력 등 전체 채용 자격 충족이나 합격 확률이 아니다.
@@ -26,6 +30,7 @@ C는 **사용자가 사용한 것으로 확인된 기술과 공고의 기술 조
 | 기능 / Jira | 제공하는 결과·핵심 동작 | 상세 계약 / 주요 코드 |
 |---|---|---|
 | 정규화·요구유형·검수 / -81·-82·-88 | 기술 alias를 Registry ID로 통일, 필수/우대/일반과 미확정 분리, 근거·검토 이력 보존 | [Registry](../data/2026-09-08-technology-registry-mvp.md), [분류·품질](c-job-demand.md) · [classifier.py](../../AI/job/classifier.py), [review.py](../../AI/registry/review.py) |
+| 공고별 부분 부합 / -183·-184·-185 | 필수/우대별 충족·부족·미확정과 원문 근거, 고정 목록/상세. 기존 What-if와 별도 | [부분 부합](c-job-matching.md), [요구절](c-job-requirements.md) · [matching.py](../../AI/job/matching.py) |
 | 공고 통합·수요 / -29 | 출처별 최신 관측을 합쳐 유효 공고 집합 확정, 기술별 distinct 공고 수·분모·비율 | [코호트·수요](c-job-demand.md) · [input_union.py](../../AI/job/input_union.py), [cohort.py](../../AI/job/cohort.py), [demand.py](../../AI/job/demand.py) |
 | Evidence 소비·Gap / -33 | 확인 보유/범위 내 미보유/미확정 구분, 레벨·관측·참여·귀속 프로필 보존 | [Evidence 정책](c-recommendation.md) · [evidence.py](../../AI/recommendation/evidence.py) |
 | 추천·What-if·목록 / -33 | 후보 최대 3개, 기술 하나 추가 시 증가 공고 수와 해당 공고 ID | [추천 엔진](c-recommendation-engine.md) · [engine.py](../../AI/recommendation/engine.py) |
