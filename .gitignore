@@ -30,6 +30,9 @@
 # Temporary JobKorea collection snapshots
 /data/jobkorea/
 
+# GameJob collection snapshots
+/data/gamejob/
+
 # Spring Boot local / secret configuration
 application-local.yml
 application-local.yaml

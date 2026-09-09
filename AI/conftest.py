@@ -14,9 +14,25 @@ bare `pytest tests/` did not.
 to add that directory by hand, so `pytest tests/` reported two errors on a
 clean checkout and the rest of the suite never ran.
 
-Both directories are added here so the suite runs with no environment setup:
+Both directories are added here so imports resolve with no environment setup.
 
-    python -m pytest AI/tests -q
+### What this file cannot fix is the working directory
+
+Five suites read fixture files through a bare relative path — six sites across
+`test_trend_job.py`, `test_trend_github.py`, `test_public_analysis.py`,
+`test_public_pipeline.py` and `test_public_run.py`:
+
+    Path("registry/data/technology_registry_v1.json").read_text(...)
+
+That resolves against the process's current directory, not against the test
+file, so no `sys.path` entry reaches it. Run the suite from `AI/`:
+
+    cd AI && python -m pytest tests -q      # 1199 passed, 42 skipped
+
+From the repository root the same 1241 tests collect without a single error and
+then 161 of them fail at fixture setup with `FileNotFoundError`, plus one
+outright failure. That reads like a broken checkout rather than a wrong
+directory, which is why it is written down here. Measured 2026-09-09.
 """
 
 import sys
