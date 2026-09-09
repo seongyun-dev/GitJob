@@ -1,8 +1,8 @@
 # J15E102A 데이터 EC2 운영 문서
 
-- 상태: 2-EC2 분리 구성용 실행 문서
+- 상태: 2-EC2 분리 구성 및 논리 3-DataNode 운영 검증 완료
 - 대상: J15E102A / j15e102a.p.ssafy.io
-- 역할: Hadoop/HDFS single-node·Spark·Collector·Worker 서버
+- 역할: Hadoop/HDFS 논리 3-DataNode·Spark·Collector·Worker 서버
 - 기준일: 2026-08-31
 - 기준 브랜치: develop
 
@@ -11,9 +11,10 @@ Collector와 Worker가 J15E102의 private PostgreSQL·Redis·Kafka endpoint를
 사용한다. 서비스 서버의 Compose 파일이나 local core profile을 이 서버에서
 실행하지 않는다.
 
-이 구성의 HDFS는 single-node이며 replication factor는 1이다. 따라서 이 서버의
-EBS/volume과 NameNode가 단일 장애점이다. 중요한 원본과 Parquet는 별도 EBS
-snapshot 또는 S3 backup 정책을 추가해야 한다.
+이 구성의 HDFS는 동일 물리 호스트 위의 논리 DataNode 3개이며 기본 replication
+factor는 1이다. 논리 노드 수가 늘어도 이 서버의 EBS/volume과 NameNode는 단일
+장애점이다. 중요한 원본과 Parquet는 별도 EBS snapshot 또는 S3 backup 정책을
+추가해야 한다.
 
 ## 1. 서버 구성과 네트워크 경계
 
@@ -391,3 +392,27 @@ PEM, GitHub token은 동기화하지 않는다.
 4. Spark master/worker health와 worker 등록 상태 확인
 5. Kafka consumer lag과 DLQ를 확인한 뒤 Worker만 재시작
 6. HDFS volume 삭제·재format은 백업과 팀 승인 없이 실행하지 않음
+
+## 13. 2026-09-09 S15P21E102-175 운영 검증 결과
+
+MR !47 merge 후 `develop` commit
+`0a1e546df68dc7806779b3f3867dd05987b12087` 기준으로 J15E102A에 적용했다.
+기존 NameNode/DataNode-1 container ID는 유지됐고, 신규 DataNode-2/3만
+`--no-build --no-deps --no-recreate`로 targeted 기동했다.
+
+- 적용 전/후 Live DataNode: `1 → 3`
+- `datanodeUuid`: `b1ce2dcf-e408-48e0-aa8c-31599b8a3d07`, `dc3991a5-3b4d-4d76-831c-3be8b3353f02`, `32f7bc8d-a77f-48fd-b5e4-04fb3cafb37c` (모두 상이)
+- 기존 `/gitjob`, GH Archive Raw, Repo Activity Parquet, Repo Snapshot read: PASS
+- `hdfs fsck /gitjob -files -blocks -locations`: HEALTHY, missing/corrupt/missing replica `0`
+- 테스트 파일 `replication=2`: 서로 다른 DataNode 2개에 배치, under-replicated `0`
+- 신규 DataNode-2 pause 중 테스트 파일 read: PASS; unpause 후 세 노드 healthy
+- 포트 `9864/9866/9867`: 충돌 없음
+- `dfs.client.use.datanode.hostname`: `false`
+- host `df -h`: 적용 전 `309G/27G/283G`, 검증 후 `309G/28G/282G` (size/used/available)
+
+`dfsadmin -report`의 최종 논리 합산 capacity는 약 `926.79 GB`였으나, 세 노드는
+동일 물리 디스크를 공유하므로 실제 용량 판단은 host `df`를 기준으로 한다.
+검증용 테스트 경로는 확인 후 삭제했으며, 기존 `/gitjob` 전체 replication은
+변경하지 않았다. 상세 경로와 UUID/volume 기록은
+[HDFS 3-DataNode 운영 검증](2026-09-09-hdfs-three-datanode-production-validation.md)에
+보존한다.

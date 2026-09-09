@@ -14,6 +14,7 @@
 | [배포 준비 계획](2026-08-27-infra-deployment-plan.md) | Compose profile, CI/CD, WSL→EC2 전환 |
 | [J15E102 서비스 서버 문서](2026-08-31-ec2-service-node-runbook.md) | 서비스·core·Jenkins EC2 접속·기동·보안 |
 | [J15E102A 데이터 서버 문서](2026-08-31-ec2-data-node-runbook.md) | Hadoop/HDFS·Spark·Collector/Worker EC2 접속·기동·점검 |
+| [HDFS 3-DataNode 운영 검증](2026-09-09-hdfs-three-datanode-production-validation.md) | S15P21E102-175 merge 후 J15E102A 논리 3-DataNode 적용 및 무결성 검증 |
 | [2대 EC2 HA 설계](2026-08-27-ec2-high-availability-design.md) | ALB, 무상태 app node, 공유 상태 저장소, failover |
 | [노트북 로컬 LLM GPU 런북](local-llm-runbook.md) | WSL2·Docker Desktop·NVIDIA GPU 기반 Ollama 실행·연동 준비 |
 | [실제 Infra 실행 안내](../../Infra/README.md) | 명령어와 운영 스크립트 사용법 |
