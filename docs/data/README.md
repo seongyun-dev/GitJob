@@ -308,21 +308,37 @@ Raw 요청:
 >
 > 기준일: 2026-09-01
 >
-> 상태: **수집기 완성 · 2026년 8월 Bootstrap 실행 완료**
+> 상태: **수집기 완성 · 2026년 8월 Bootstrap 실행 완료 · 현재 active HDFS에서 재확인**
 >
-> **⚠️ 생성된 dataset 은 현재 HDFS 에 없다. 재수집이 필요하다 — §14.1**
+> 2026-09-09 중간 확인에서 다른 HDFS volume namespace의 dataset 부재를 기록했으나,
+> 현재 active `gitjob-data` HDFS의 기존 8월 Raw를 `S15P21E102-179`에서 재확인했다 — §14.1
 >
 > Raw 경로 `/gitjob/raw/{source}/dt=` 확정, 적재 방식 WebHDFS 확정
 >
 > 생성했던 dataset: 744 files / 10.85 GiB 압축 / 87,516,869 events
 
-### 14.1 생성된 dataset 이 사라졌다 (2026-09-09 확인)
+### 14.1 Dataset 부재 관측과 현재 active HDFS 재확인 (2026-09-09)
+
+#### S15P21E102-179 후속 확인
+
+`S15P21E102-179` 최종 검증 시 active `gitjob-data` HDFS에서 2026-08 Raw
+744 files / 11,654,413,308 B를 다시 확인했다. 첫 파일과 마지막 파일의 HDFS
+mtime도 각각 2026-09-01 06:34:15 UTC, 07:14:20 UTC로 유지돼 `-179` 실행에서
+재업로드한 데이터가 아니다. `-179`은 이 8월 Raw를 유지하고 2026-03~07만
+추가했으며, 6개월 전체 4,416 files를 Spark로 읽어 660,081,904 events를
+집계했다. 상세 근거는 [6개월 Historical Bootstrap 검증](2026-09-09-gharchive-six-month-bootstrap.md)에 남겼다.
+
+아래 내용은 같은 날 다른 HDFS volume namespace에서 실제로 관측한 dataset 부재와
+재발 방지 필요성의 기록이다. 해당 시점의 사실로 유지하되 현재 active HDFS 상태로
+해석하지 않는다.
+
+#### 당시 Dataset 부재 관측
 
 아래 §14 전체는 2026-09-01 에 **실제로 수행한 실행의 기록**이고 측정값도 그때
 실측한 값이다. 그 부분은 고치지 않는다. 정정되는 것은 **"지금 적재돼 있다"는
 현재 상태 주장 하나**다.
 
-2026-09-09 확인 결과 `hdfs:///gitjob/raw/gharchive/` 에 `dt=2026-08-*` 이 **하나도
+2026-09-09 중간 확인 당시 `hdfs:///gitjob/raw/gharchive/` 에 `dt=2026-08-*` 이 **하나도
 없다.**
 
 ```text
@@ -360,9 +376,9 @@ GH Archive 는 로컬 사본도 함께 사라져서 원본에서 다시 받아�
 #### 이 절을 읽고 Spark 를 돌리려는 사람에게
 
 §14 아래의 `inputFiles() = 744`, `전체 record 수 = 87,516,869` 같은 값은 **그때의
-실측**이다. 지금 같은 Spark job 을 돌리면 입력이 없어 0 건이 나온다. `-109`
-Repo 활동량 Top-N 은 이 dataset 을 입력으로 전제하므로 **재수집이 선행되어야
-한다.**
+실측**이다. 이 부재를 관측한 환경에서는 같은 Spark job 을 돌리면 입력이 없어
+0 건이 나오는 상태였다. 현재 active HDFS 상태는 위 `S15P21E102-179` 후속 확인을
+따른다.
 
 #### 재발 방지가 없다
 
@@ -853,7 +869,7 @@ Spark가 분산 처리한 결과만 받았다.
 | `publish_downloaded_range` 결과 분리 | **Runtime 검증됨** (3시간) / 단위 테스트 |
 | Spark의 Raw 판독 | **Runtime 검증됨** (read only) |
 | `HdfsCliSink` | 로직은 Runtime 검증됨(주입 runner). **기본 runner는 배포 이미지에서 실행 불가** |
-| **744시간 전량 적재** | 실행 시점에 **생성 완료** (744/744, missing·invalid·failed 0). **현재 HDFS 에 없다 — §14.1** |
+| **744시간 전량 적재** | **Runtime 재확인 완료** (744/744, missing·invalid·failed 0). 중간 volume namespace 부재 이력은 §14.1 참고 |
 | `-109` 집계·Top-N·Coverage | **미구현** |
 | Repo Mapping / Manifest Fetch | **미구현** |
 
@@ -896,7 +912,16 @@ C조 범위다.
 |---|---|
 | `S15P21E102-109` | 이 Raw를 Spark로 전량 읽어 Repo 활동량 집계와 Top-N·Coverage 산출 |
 | `S15P21E102-144` | P1 신규 Collector가 `historical_cutoff`를 하한으로 사용해 수집 구간 중복 방지 |
-| `S15P21E102-105` | 수집기 완성, Bootstrap 실행 완료. **다만 dataset 이 HDFS 에서 사라져 재수집이 남아 있다 — §14.1** |
+| `S15P21E102-105` | 수집기 완성, 8월 Bootstrap 실행 완료. 현재 active HDFS에서 `S15P21E102-179`이 기존 744시간을 재확인·재사용 — §14.1 |
+
+## GH Archive 6개월 Historical Bootstrap
+
+- Jira: S15P21E102-179
+- 기간: 2026-03-01~2026-08-31 UTC, 기존 2026-08 Raw 재사용
+- 결과: HDFS Raw 4,416/4,416 files, missing/duplicate/unexpected/invalid 0
+- 총량: 120,146,905,981 B 압축 / 622,296,167,176 B 해제 / 660,081,904 events
+- 검증: Spark 전량 집계 SUCCESS, HDFS fsck HEALTHY
+- 상세: [S15P21E102-179 GH Archive 6개월 Historical Bootstrap 검증](2026-09-09-gharchive-six-month-bootstrap.md)
 
 ## Repo Activity Aggregation
 
