@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
@@ -114,7 +115,29 @@ class WorknetHttpClient:
                     raise WorknetHttpError(
                         f"Worknet returned HTTP {error.code} for GET {url}"
                     ) from error
-            except URLError as error:
+            except (URLError, TimeoutError, OSError, HTTPException) as error:
+                # `URLError` alone was not enough. `response.read()` above can
+                # raise three things it does not cover:
+                #
+                #   http.client.IncompleteRead   a truncated chunked response.
+                #                                Subclasses `HTTPException`
+                #                                only — not `OSError`, not
+                #                                `URLError`
+                #   TimeoutError                 socket timeout during read.
+                #                                An `OSError`, but not a
+                #                                `URLError`
+                #   plain OSError                connection reset
+                #
+                # `URLError` subclasses `OSError`, but not the other way
+                # round, so `except URLError` let all three propagate out of
+                # `get` and end the whole round. That is S15P21E102-173, which
+                # killed a Saramin backfill seven pages in; this client is the
+                # same defect in the collector that gathers the most postings
+                # (5,648 across 15 rounds).
+                #
+                # Worknet's own exceptions are `RuntimeError` subclasses, so
+                # the block page raised inside the `try` above is not caught
+                # here.
                 last_error = error
 
             if attempt + 1 < self.max_attempts:

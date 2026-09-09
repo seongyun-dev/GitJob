@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
@@ -155,7 +156,20 @@ class JobKoreaHttpClient:
                     raise JobKoreaHttpError(
                         f"JobKorea returned HTTP {error.code} for {method} {url}"
                     ) from error
-            except URLError as error:
+            except (URLError, TimeoutError, OSError, HTTPException) as error:
+                # Same widening as `Worknet_Collector_V1.client` and the shared
+                # `PoliteHttpClient` — see that client's comment for why
+                # `URLError` alone lets `IncompleteRead`, `TimeoutError` and a
+                # plain `OSError` escape `read()` and end the whole round
+                # (S15P21E102-173).
+                #
+                # Fixed here even though S15P21E102-94 §1 concluded this
+                # collector should be discarded: it is still in the tree, still
+                # importable, and leaving a known defect in code that exists is
+                # worse than a few lines that will be deleted with it.
+                #
+                # The discard is S15P21E102-195, which has to land after this
+                # commit — it deletes the file this hunk edits.
                 last_error = error
 
             if attempt + 1 < self.max_attempts:
