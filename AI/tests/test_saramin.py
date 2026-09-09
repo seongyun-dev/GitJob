@@ -480,16 +480,42 @@ def test_page_params_carry_registration_sort_and_categories():
 
 
 def test_cursor_round_trip(tmp_path: Path):
+    """`write_outputs` is what persists the cursor (S15P21E102-174)."""
+
     config = _config(cursor_path=tmp_path / "cursor.json")
-    SaraminCrawler(config, FakeClient([LIST_HTML])).run()
+    result = SaraminCrawler(config, FakeClient([LIST_HTML])).run()
+    write_outputs(result, tmp_path / "out")
 
     reloaded = Cursor.load(tmp_path / "cursor.json", config)
     assert "54962457" in reloaded.collected_ids
 
 
+def test_run_alone_does_not_persist_the_cursor(tmp_path: Path):
+    """The regression that cost 2,633 postings.
+
+    `run` used to write the cursor inside the page loop, so a crawl killed
+    mid-run left it claiming ids whose batch was never stored — and the next
+    run skipped them silently, because skipping is exactly what a cursor is
+    for. Nothing surfaced the loss.
+
+    Now an interrupted run leaves no cursor at all, which costs a repeated
+    request instead of the postings.
+    """
+
+    cursor_path = tmp_path / "cursor.json"
+    result = SaraminCrawler(
+        _config(cursor_path=cursor_path), FakeClient([LIST_HTML])
+    ).run()
+
+    assert result.batch.records, "the crawl itself still collected"
+    assert not cursor_path.exists()
+
+
 def test_rerun_with_cursor_skips_already_collected(tmp_path: Path):
     config = _config(cursor_path=tmp_path / "cursor.json")
-    SaraminCrawler(config, FakeClient([LIST_HTML])).run()
+    first = SaraminCrawler(config, FakeClient([LIST_HTML])).run()
+    write_outputs(first, tmp_path / "out")
+
     second = SaraminCrawler(config, FakeClient([LIST_HTML])).run()
 
     assert second.batch.records == ()
@@ -498,7 +524,9 @@ def test_rerun_with_cursor_skips_already_collected(tmp_path: Path):
 
 def test_cursor_is_discarded_for_a_different_range(tmp_path: Path):
     first = _config(cursor_path=tmp_path / "cursor.json")
-    SaraminCrawler(first, FakeClient([LIST_HTML])).run()
+    write_outputs(
+        SaraminCrawler(first, FakeClient([LIST_HTML])).run(), tmp_path / "out"
+    )
 
     other = _config(
         cursor_path=tmp_path / "cursor.json",

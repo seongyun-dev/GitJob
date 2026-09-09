@@ -524,6 +524,8 @@ def test_rerun_with_cursor_skips_already_collected_postings(tmp_path: Path):
 
     first = WorknetCrawler(config, FakeClient([LIST_HTML])).run()
     assert len(first.batch.records) == 2
+    # `write_outputs` persists the cursor, not `run` (S15P21E102-174).
+    write_outputs(first, tmp_path / "out")
 
     second = WorknetCrawler(config, FakeClient([LIST_HTML])).run()
     assert second.batch.records == ()

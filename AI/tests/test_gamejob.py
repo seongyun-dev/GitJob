@@ -788,6 +788,8 @@ def test_cursor_skips_ids_already_collected(tmp_path: Path):
 
     first = GameJobCrawler(config, FakeClient([LIST_HTML])).run()
     assert first.batch.records
+    # `write_outputs` persists the cursor, not `run` (S15P21E102-174).
+    write_outputs(first, tmp_path / "out")
 
     second_client = FakeClient([LIST_HTML])
     second = GameJobCrawler(config, second_client).run()

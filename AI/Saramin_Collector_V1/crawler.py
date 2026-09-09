@@ -163,6 +163,13 @@ class Cursor:
 class CrawlResult:
     batch: JobAnalysisInputBatch
     manifest: dict[str, Any]
+    # Resume state and where it belongs. `write_outputs` writes it last, so
+    # the cursor cannot claim postings whose batch was never stored — the
+    # failure that cost Saramin 2,337 postings on 2026-09-08 and 296 more on
+    # 2026-09-09 (S15P21E102-174). Defaulted so a caller building a result by
+    # hand simply gets no resume state.
+    cursor: Cursor | None = None
+    cursor_path: Path | None = None
 
 
 ProgressCallback = Callable[[str], None]
@@ -310,8 +317,12 @@ class SaraminCrawler:
                 already.add(item.source_posting_id)
                 cursor.collected_ids.append(item.source_posting_id)
 
+            # Advanced in memory only. Persisting here is what made an
+            # interrupted run lose postings permanently — the cursor claimed
+            # them while the batch had not been written yet, so a resume
+            # skipped them silently. `write_outputs` persists it instead,
+            # after the batch is on disk (S15P21E102-174).
             cursor.last_page = page
-            cursor.save(self.config.cursor_path)
 
             if stopped_reason is not None:
                 break
@@ -386,7 +397,12 @@ class SaraminCrawler:
             "detail_error_samples": detail_errors[:20],
             "invalid_record_samples": invalid_records[:20],
         }
-        return CrawlResult(batch=batch, manifest=manifest)
+        return CrawlResult(
+            batch=batch,
+            manifest=manifest,
+            cursor=cursor,
+            cursor_path=self.config.cursor_path,
+        )
 
     def _in_range(self, posted_on: date) -> bool:
         return self.config.start_date <= posted_on <= self.config.end_date
@@ -528,6 +544,13 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
         manifest_path,
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     )
+    # Last, and only here. The cursor asserts these postings are collected,
+    # which is only true now that the batch above is on disk. Writing it any
+    # earlier turns an interrupted run into permanent loss, because a resume
+    # trusts the cursor and skips them without reporting anything.
+    if result.cursor is not None:
+        result.cursor.save(result.cursor_path)
+
     return {"json": json_path, "csv": csv_path, "manifest": manifest_path}
 
 
