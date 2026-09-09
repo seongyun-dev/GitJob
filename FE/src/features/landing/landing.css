@@ -1,0 +1,122 @@
+/*
+ * Landing 전용 모션. 티켓 S15P21E102-191.
+ *
+ * 전역 `index.css`를 건드리지 않으려고 이 파일에 가둔다. LandingPage에서만 import한다.
+ *
+ * 규칙 두 가지만 지킨다.
+ *  1. `transform`과 `opacity`만 움직인다. 레이아웃 속성을 애니메이션하면 스크롤 위치가
+ *     흔들리고 CLS가 생긴다.
+ *  2. 등장 모션은 `both`로 끝 상태를 고정한다. 재생이 끝난 뒤 원위치로 돌아가면 안 된다.
+ *
+ * 순서: Hero가 먼저 올라오고, 오른쪽 유리 패널이 조금 늦게 들어온 뒤, 패널 내부가
+ * 얕게 stagger된다. 배경 링·빛은 등장과 무관하게 아주 느리게 떠 있는다.
+ */
+
+@keyframes lp-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes lp-panel-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 26px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+/* 등장이 끝난 뒤 시작한다. 진폭 5px. 이보다 크면 유리판이 흔들리는 것처럼 보인다. */
+@keyframes lp-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+@keyframes lp-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-14px, 18px, 0);
+  }
+}
+
+@keyframes lp-drift-alt {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(16px, -12px, 0);
+  }
+}
+
+/* What-if 증감값에 최초 1회만 얹는 빛. 반복하면 실시간 갱신처럼 읽혀서 오해를 준다. */
+@keyframes lp-glow-once {
+  0%,
+  100% {
+    text-shadow: none;
+  }
+  50% {
+    text-shadow: 0 0 18px rgba(47, 94, 235, 0.55);
+  }
+}
+
+.lp-rise {
+  animation: lp-rise 0.62s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--lp-delay, 0ms);
+}
+
+.lp-panel-in {
+  animation: lp-panel-in 0.78s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--lp-delay, 0ms);
+}
+
+.lp-float {
+  animation: lp-float 7.5s ease-in-out 1.4s infinite;
+}
+
+.lp-drift {
+  animation: lp-drift 34s ease-in-out infinite;
+}
+
+.lp-drift-alt {
+  animation: lp-drift-alt 42s ease-in-out infinite;
+}
+
+.lp-glow-once {
+  animation: lp-glow-once 1.5s ease-in-out 1.5s 1 both;
+}
+
+/*
+ * 모션을 줄이도록 설정한 사용자에게는 전부 끈다.
+ * 등장 모션까지 끄므로 끝 상태(보이는 상태)를 여기서 직접 준다.
+ * `animation: none`만 두면 `both`로 고정돼 있던 opacity 0이 남아 화면이 비어 보인다.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .lp-rise,
+  .lp-panel-in,
+  .lp-float,
+  .lp-drift,
+  .lp-drift-alt,
+  .lp-glow-once {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    text-shadow: none;
+  }
+}
