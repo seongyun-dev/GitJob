@@ -392,7 +392,12 @@ REPO_SCHEDULE = Path(__file__).resolve().parents[1] / "schedule.toml"
 
 
 def test_repo_schedule_declares_two_runs_a_day_per_site():
-    """The ticket is "하루 2회"; a site with one run would not meet it."""
+    """The ticket is "하루 2회"; a site with one run would not meet it.
+
+    Asserted per site rather than against a fixed total, so adding a fourth
+    collector cannot satisfy this by giving one site four runs and another
+    none.
+    """
 
     config = load_schedule(REPO_SCHEDULE)
 
@@ -400,24 +405,62 @@ def test_repo_schedule_declares_two_runs_a_day_per_site():
     for run in config.runs:
         if run.enabled:
             per_site[run.site] = per_site.get(run.site, 0) + len(run.at)
-    assert per_site == {"WORKNET": 2, "SARAMIN": 2}
+
+    assert per_site, "no enabled runs declared"
+    assert all(count == 2 for count in per_site.values()), per_site
 
 
-def test_repo_schedule_covers_both_target_sites():
-    """S15P21E102-94 fixed the targets as 사람인 · 워크넷."""
+def test_repo_schedule_covers_the_target_sites():
+    """S15P21E102-94 fixed the targets as 사람인 · 워크넷.
+
+    Listed explicitly rather than accepting "whatever the file says", because
+    a site silently dropped from the schedule is exactly the gap this suite
+    exists to catch.
+    """
 
     config = load_schedule(REPO_SCHEDULE)
-    assert {run.site for run in config.runs if run.enabled} == {"WORKNET", "SARAMIN"}
+    assert {run.site for run in config.runs if run.enabled} == {
+        "WORKNET",
+        "SARAMIN",
+    }
+
+
+def test_gamejob_is_declared_but_never_scheduled():
+    """게임잡 failed criterion A and must not start collecting on a timer.
+
+    `-149` (`docs/data/2026-09-08-source-criterion-a-review.md` §3) found the
+    operator to be the same legal entity as 잡코리아, so `-94`'s case-law
+    grounds carry over and that document fixes the job-posting sources at
+    워크넷·사람인. The collector exists and is verified, but enabling it is
+    gated on a data-provision agreement — not on someone editing a comment.
+
+    Asserted rather than left to the TOML comment so re-enabling it has to be
+    a deliberate change that also updates this test.
+    """
+
+    config = load_schedule(REPO_SCHEDULE)
+    gamejob = [run for run in config.runs if run.site == "GAMEJOB"]
+
+    assert gamejob, "게임잡 runs should stay declared so the config is reusable"
+    assert all(not run.enabled for run in gamejob)
+    # The OS scheduler renders only enabled runs, so nothing can fire.
+    assert not any("gamejob" in line for line in render_os_schedule(config))
 
 
 def test_every_repo_run_filters_by_job_category():
-    """An unfiltered run collects 요양보호사 and 카지노 공채, not developers."""
+    """An unfiltered run collects 요양보호사 and 카지노 공채, not developers.
+
+    게임잡 uses `--duty-preset`, and for that site the filter runs on our side
+    because the listing does not accept a 직무 code over the query string —
+    see `GameJob_Collector_V1/duties.py`. The declaration is still required.
+    """
 
     config = load_schedule(REPO_SCHEDULE)
+    presets = ("--occupation-preset", "--category-preset", "--duty-preset")
     for run in config.runs:
         if not run.enabled:
             continue
-        assert "--occupation-preset" in run.args or "--category-preset" in run.args
+        assert any(preset in run.args for preset in presets), run.name
 
 
 def test_every_repo_run_covers_the_day_boundary():
@@ -437,9 +480,20 @@ def test_repo_schedule_keeps_the_webhook_url_out_of_the_file():
     assert "https://" not in body
 
 
-def test_repo_schedule_renders_four_cron_lines():
-    lines = render_os_schedule(load_schedule(REPO_SCHEDULE))
-    assert len(lines) == 4
+def test_repo_schedule_renders_one_cron_line_per_declared_time():
+    """Derived from the file rather than hardcoded.
+
+    A fixed count made adding a third site look like a regression; what
+    actually matters is that every declared time produces exactly one crontab
+    line, so no run is registered twice or dropped.
+    """
+
+    config = load_schedule(REPO_SCHEDULE)
+    expected = sum(len(run.at) for run in config.runs if run.enabled)
+    lines = render_os_schedule(config)
+
+    assert len(lines) == expected
+    assert len(set(lines)) == expected
 
 
 # --- 차단 계측: S15P21E102-101 완료 조건 -----------------------------------

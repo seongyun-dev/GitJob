@@ -46,6 +46,9 @@ AI/
 ├── trend/           # separate JOB and GITHUB metrics
 ├── stackoverflow/   # historical boundary; excluded from current MVP
 ├── github/          # GitHub 수집 경계와 A→C Repo Snapshot 계약
+├── Worknet_Collector_V1/   # 워크넷 채용공고 수집기
+├── Saramin_Collector_V1/   # 사람인 채용공고 수집기
+├── GameJob_Collector_V1/   # 게임잡 채용공고 수집기
 ├── JobKorea_Collector_V1/  # 임시 JobKorea 백엔드 채용공고 수집기
 ├── llm/             # Fact-grounded LLM behavior
 └── tests/

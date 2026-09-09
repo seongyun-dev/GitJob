@@ -88,3 +88,66 @@ args = [
   "--cursor", "../data/saramin/cursor.json",
   "--output-dir", "../data/saramin",
 ]
+
+# --- 게임잡 -----------------------------------------------------------------
+#
+# ## enabled = false 입니다. 켜기 전에 읽으십시오.
+#
+# 게임잡은 `-149` 기준 A 심사에서 **미통과**입니다
+# (docs/data/2026-09-08-source-criterion-a-review.md §3). 운영사 웍스피어가
+# 잡코리아와 동일 법인(사업자등록번호 110-81-34859)이라 `-94`의 판례·소송
+# 근거가 그대로 적용되고, 그 문서는 채용공고 source를 워크넷·사람인 2종으로
+# 확정했습니다.
+#
+# 수집기는 구현·검증을 마쳤지만 회차를 자동으로 돌리지 않습니다. 켜는 것은
+# 웍스피어와의 데이터 제공 계약이 확보된 뒤이며, 그때 이 두 블록의
+# `enabled` 를 지우거나 true 로 바꾸면 됩니다.
+#
+# 아래 설정은 계약이 생겼을 때 그대로 쓸 수 있도록 남겨 둔 것입니다.
+#
+# 사람인보다 20분 늦게 시작합니다. 세 수집이 같은 시각에 겹치면 사이트별
+# 간격(2초)을 지켜도 우리 쪽 부하가 겹칩니다.
+#
+# --duty-preset dev 가 없으면 게임기획·원화·애니메이션·마케팅 공고가
+# 채워집니다. 게임잡은 서버측 직무 필터를 query string 으로 받지 않아서 이
+# 필터는 우리 쪽에서 동작합니다 — GameJob_Collector_V1/duties.py 참고.
+#
+# --max-pages 가 2 인 이유. 게임잡 목록은 Page 파라미터를 무시합니다 —
+# 2026-09-08 실측으로 80페이지가 3,200행을 돌려줬고 고유 공고는 40건이었습니다.
+# 모든 페이지가 같은 페이지입니다. 그래서 페이지를 늘려도 데이터가 아니라
+# 요청만 늘어나고, 수집기는 새 공고가 없는 페이지에서 중단합니다.
+#
+# 1 이 아니라 2 로 둔 것은 진단을 남기기 위해서입니다. 2페이지째가 중복임을
+# 확인해 manifest 의 paging_advances 를 false 로 기록하므로, 사이트가 나중에
+# 페이징을 고치면 그 값이 true 로 바뀌어 드러납니다. 1 이면 확인 자체가
+# 불가능합니다.
+#
+# 공고 하나가 본문 iframe 때문에 최대 3요청인 점은 그대로입니다.
+
+[[run]]
+name = "gamejob-morning"
+site = "GAMEJOB"
+module = "GameJob_Collector_V1"
+enabled = false
+at = ["09:50"]
+args = [
+  "--duty-preset", "dev",
+  "--days-back", "1",
+  "--max-pages", "2",
+  "--cursor", "../data/gamejob/cursor.json",
+  "--output-dir", "../data/gamejob",
+]
+
+[[run]]
+name = "gamejob-evening"
+site = "GAMEJOB"
+module = "GameJob_Collector_V1"
+enabled = false
+at = ["21:50"]
+args = [
+  "--duty-preset", "dev",
+  "--days-back", "1",
+  "--max-pages", "2",
+  "--cursor", "../data/gamejob/cursor.json",
+  "--output-dir", "../data/gamejob",
+]

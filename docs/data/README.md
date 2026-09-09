@@ -45,9 +45,14 @@ PostgreSQL은 raw 본문 전체를 대체하지 않는다. HDFS/Parquet dataset�
 |---|---|---|---|
 | Worknet | 목록·상세 채용공고 | 일 단위, 명목 1,000건; 상세 호출 budget 때문에 실효량은 500건 미만일 수 있음 | `jobs.raw` |
 | Saramin | 승인된 채용공고 | 일 단위 수집 초안 | `jobs.raw` |
+| ~~GameJob~~ | 목록·상세 채용공고 (게임업계) | **기준 A 미통과 · 스케줄 비활성.** 수집기만 구현됨 | (발행 없음) |
 | GitHub | 사용자가 권한을 부여한 public/private 저장소 개발 활동·저장소 기술 신호 | 일 단위, API quota 내 최대 5,000/hour 기준 | `repos.raw` |
 | Stack Exchange API | 질문·답변·tag 신호 | 주 단위, 최대 10,000/day 기준 | `posts.raw` |
 | Stack Exchange dump | Posts·Tags·PostLinks | 최신 dump 확인 후 batch intake | Parquet → replay |
+
+**게임잡은 수집 대상이 아니다.** [`-149` 기준 A 심사](2026-09-08-source-criterion-a-review.md) §3이 운영사가 잡코리아와 동일 법인이라는 근거로 미통과 판정했고, 채용공고 source는 워크넷·사람인 2종으로 확정됐다. 수집기는 구현돼 있으나 `schedule.toml`에서 `enabled = false`이며 켜는 전제는 웍스피어와의 데이터 제공 계약이다. 사이트 실측 기록은 [게임잡 채용공고 수집](2026-09-08-gamejob-collection.md)에 남겼다.
+
+위 표의 topic 이름은 Notion 초안의 논리 topic이다. 실제로 발행하는 topic은 S15P21E102-103이 정한 `jobs.collected` 하나이고, 사이트별 수집기가 아니라 스케줄러가 회차 단위로 발행한다. 표의 이름과 partition·retention 확정은 S15P21E102-102와 함께 정리한다.
 
 실제 호출 전에는 source별 API 약관·권한·rate limit·보관 정책을 확인한다. 사용자가 권한을 부여한 public/private 저장소 분석과 공개 기술 추세 수집을 분리하고, private 원문은 시장 Trend나 다른 사용자의 AI 입력에 넣지 않으며, 권한 없는 데이터를 수집하지 않는다.
 
