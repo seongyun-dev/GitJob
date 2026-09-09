@@ -13,12 +13,18 @@ exit code is what the OS scheduler logs, not the only record of the failure.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from job.collector.events import publisher_from_env, write_publish_record
+from job.collector.raw_verify import (
+    default_sites,
+    verifier_from_env,
+    verify_sites,
+)
 from job.collector.schedule import (
     RunOutcome,
     RunRecord,
@@ -121,6 +127,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="send one alert to verify delivery (S15P21E102-107 완료 조건)",
     )
+    parser.add_argument(
+        "--verify-raw",
+        action="store_true",
+        help=(
+            "check that every run's claimed HDFS Raw files are still there. "
+            "Nothing did this, and 2026-09-08 볼륨 재생성으로 사라진 5,124건을 "
+            "손으로 세어 발견했다"
+        ),
+    )
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="collector output root for --verify-raw (default: config 옆의 ../data)",
+    )
     return parser
 
 
@@ -183,6 +203,33 @@ def main(argv: list[str] | None = None) -> int:
 
     now = datetime.now(UTC)
 
+    if args.verify_raw:
+        client = verifier_from_env()
+        if client is None:
+            # Not configured is not a failure, matching the Raw sink and the
+            # alert webhook. A developer without WebHDFS verifies nothing.
+            print("WEBHDFS_URL 미설정 — 적재 검증을 건너뜁니다", file=sys.stderr)
+            return 0
+        data_root = (
+            Path(args.data_root)
+            if args.data_root
+            else config_path.parent.parent / "data"
+        )
+        summary = verify_sites(client, data_root, default_sites())
+        print(json.dumps(summary.as_dict(), ensure_ascii=False, indent=2))
+        for problem in summary.problems:
+            _alert(config, f"[GitJob] Raw 적재 검증 - {problem.run}: {problem.state}")
+        if summary.never_uploaded:
+            # Reported, not alerted. Twelve Worknet development runs from
+            # 2026-09-07 will never be archived, and alerting on them every
+            # check is the failure mode S15P21E102-186 removed.
+            print(
+                f"적재 기록이 없는 회차 {len(summary.never_uploaded)}건 "
+                "(경고 대상 아님)",
+                file=sys.stderr,
+            )
+        return 0 if summary.ok else 1
+
     if args.check:
         # Only sites that are actually scheduled. A site whose every run is
         # disabled is deliberately not collecting, so it has no gap to report.
@@ -195,9 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         # log file. Once alerts reach the team channel, a warning that can
         # never be cleared is worse than no warning: it teaches everyone to
         # ignore the channel, and the next real gap goes unread with it.
-        scheduled_sites = dict.fromkeys(
-            run.site for run in config.runs if run.enabled
-        )
+        scheduled_sites = dict.fromkeys(run.site for run in config.runs if run.enabled)
         gaps = [
             gap
             for site in scheduled_sites

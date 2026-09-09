@@ -120,6 +120,28 @@ class WebHdfsClient:
             return False
         raise self._error("check object", response)
 
+    def length(self, path: str | PurePosixPath) -> int | None:
+        """Byte length of an object, or `None` when it is absent.
+
+        Added for `job.collector.raw_verify`: checking existence alone would
+        pass a truncated upload, and reading a 34 MB batch back to compare
+        bytes costs more than the check is worth. `GETFILESTATUS` returns the
+        length in the same request that answers existence.
+        """
+
+        response = self._call("GET", path, "GETFILESTATUS")
+        if response.status == 404:
+            return None
+        if response.status != 200:
+            raise self._error("read object status", response)
+        try:
+            payload = json.loads(response.body.decode("utf-8"))
+            return int(payload["FileStatus"]["length"])
+        except (ValueError, KeyError, TypeError) as error:
+            raise WebHdfsError(
+                f"GETFILESTATUS returned an unexpected shape: {error}"
+            ) from error
+
     def read(self, path: str | PurePosixPath) -> bytes:
         response = self._call("GET", path, "OPEN")
         if response.status == 307:
