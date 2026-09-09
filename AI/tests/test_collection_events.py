@@ -40,6 +40,22 @@ class FakeTransport:
             raise KafkaError(self.error)
         self.sent.append((topic, key, value))
 
+    def send_many(self, topic: str, messages) -> int:
+        """Batched publish, added for `github.events` (S15P21E102-144).
+
+        `jobs.collected` does not use it — four messages a day need no
+        batching — but the fake has to satisfy the whole protocol or
+        `test_fake_transport_satisfies_the_protocol` stops meaning anything.
+        """
+
+        if self.error:
+            raise KafkaError(self.error)
+        count = 0
+        for key, value in messages:
+            self.sent.append((topic, key, value))
+            count += 1
+        return count
+
     def close(self) -> None:
         self.closed = True
 

@@ -11,6 +11,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
+from collector.gharchive.events import (
+    GITHUB_EVENTS_TOPIC,
+    publisher_from_env,
+)
 from collector.gharchive.historical import (
     DEFAULT_BASE_URL,
     DEFAULT_OUTPUT_ROOT,
@@ -38,6 +42,7 @@ from collector.gharchive.watch import (
 )
 
 WEBHDFS_URL_ENV = "WEBHDFS_URL"
+KAFKA_BOOTSTRAP_ENV = "KAFKA_BOOTSTRAP_SERVERS"
 RAW_ROOT_ENV = "RAW_ROOT"
 WEBHDFS_USER_ENV = "WEBHDFS_USER"
 
@@ -116,6 +121,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="how long a 404 stays 'not yet published' before it is a gap",
     )
 
+    publish_parser = subparsers.add_parser(
+        "publish",
+        help=f"publish downloaded hours to {GITHUB_EVENTS_TOPIC}",
+    )
+    _add_output_arguments(publish_parser)
+    publish_parser.add_argument(
+        "--topic",
+        default=GITHUB_EVENTS_TOPIC,
+        help=f"Kafka topic (default: {GITHUB_EVENTS_TOPIC})",
+    )
+    publish_parser.add_argument(
+        "--publish-checkpoint",
+        default=None,
+        help=(
+            "file recording which hours reached the broker; separate from the "
+            "download checkpoint on purpose (see events.py)"
+        ),
+    )
+    publish_parser.add_argument(
+        "--max-hours",
+        type=int,
+        default=None,
+        help=(
+            "publish at most this many hours in one pass. The first watch run "
+            "after the bootstrap cutoff fills every hour since it, which was "
+            "over 200 on 2026-09-09; the checkpoint lets the next pass "
+            "continue where this one stopped"
+        ),
+    )
+    publish_parser.add_argument(
+        "--hours",
+        default=None,
+        help=(
+            "comma-separated UTC hours to publish; omit to publish every hour "
+            "found on disk, oldest first"
+        ),
+    )
+
     return parser
 
 
@@ -140,6 +183,42 @@ def main(argv: list[str] | None = None) -> int:
             watch = watcher.poll()
             _print_json(watch.as_dict())
             return 0 if watch.ok else 1
+
+        if arguments.command == "publish":
+            # Like `watch`, this is driven by what is on disk rather than by a
+            # requested range, so the bootstrap range arguments do not apply.
+            publisher = publisher_from_env(
+                Path(arguments.output_root),
+                checkpoint_path=(
+                    Path(arguments.publish_checkpoint)
+                    if arguments.publish_checkpoint is not None
+                    else None
+                ),
+                topic=arguments.topic,
+            )
+            if publisher is None:
+                # Not configured is not a failure, the same rule the Raw sink
+                # and the alert webhook follow.
+                _print_json(
+                    {
+                        "topic": arguments.topic,
+                        "published_hours": [],
+                        "reason": f"{KAFKA_BOOTSTRAP_ENV} 미설정",
+                    }
+                )
+                return 0
+            hours = (
+                tuple(
+                    value.strip()
+                    for value in arguments.hours.split(",")
+                    if value.strip()
+                )
+                if arguments.hours
+                else publisher.downloaded_hours_on_disk()
+            )
+            summary = publisher.publish_hours(hours, max_hours=arguments.max_hours)
+            _print_json(summary.as_dict())
+            return 0 if summary.ok else 1
 
         start, end, historical_start, historical_cutoff = _parsed_range(arguments)
         if arguments.command == "plan":
