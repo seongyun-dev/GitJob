@@ -46,11 +46,16 @@ PostgreSQL은 raw 본문 전체를 대체하지 않는다. HDFS/Parquet dataset�
 | Worknet | 목록·상세 채용공고 | 일 단위, 명목 1,000건; 상세 호출 budget 때문에 실효량은 500건 미만일 수 있음 | `jobs.raw` |
 | Saramin | 승인된 채용공고 | 일 단위 수집 초안 | `jobs.raw` |
 | ~~GameJob~~ | 목록·상세 채용공고 (게임업계) | **기준 A 미통과 · 스케줄 비활성.** 수집기만 구현됨 | (발행 없음) |
+| Career | 목록·상세 채용공고 | **기준 A 미통과 · 스케줄 비활성.** 소유자 판단으로 1회 수집 | `jobs.collected` |
 | GitHub | 사용자가 권한을 부여한 public/private 저장소 개발 활동·저장소 기술 신호 | 일 단위, API quota 내 최대 5,000/hour 기준 | `repos.raw` |
 | Stack Exchange API | 질문·답변·tag 신호 | 주 단위, 최대 10,000/day 기준 | `posts.raw` |
 | Stack Exchange dump | Posts·Tags·PostLinks | 최신 dump 확인 후 batch intake | Parquet → replay |
 
-**게임잡은 수집 대상이 아니다.** [`-149` 기준 A 심사](2026-09-08-source-criterion-a-review.md) §3이 운영사가 잡코리아와 동일 법인이라는 근거로 미통과 판정했고, 채용공고 source는 워크넷·사람인 2종으로 확정됐다. 수집기는 구현돼 있으나 `schedule.toml`에서 `enabled = false`이며 켜는 전제는 웍스피어와의 데이터 제공 계약이다. 사이트 실측 기록은 [게임잡 채용공고 수집](2026-09-08-gamejob-collection.md)에 남겼다.
+**잡코리아는 수집 대상에서 제외한다.** 무단 크롤링이 데이터베이스제작자 권리 침해로 판단된 판례가 있고, 공식 API는 신입공채·공공기관/학교로 범위가 제한되어 직무별 기술 수요 집계에 사용할 수 없다. 판단 근거와 기준은 [잡코리아 존치 여부 판단 근거](2026-08-31-jobkorea-retention-decision.md)에 있으며, 같은 기준 A를 신규 source 심사에도 적용한다. 1차 검증에 쓴 수집 코드 폐기는 `S15P21E102-195`다.
+
+**게임잡은 수집 대상이 아니다.** [`-149` 기준 A 심사](2026-09-08-source-criterion-a-review.md) §3이 운영사가 잡코리아와 동일 법인이라는 근거로 미통과 판정했다. 스케줄이 도는 채용공고 source는 워크넷·사람인 2종이고, 게임잡과 커리어는 기준 A 미통과로 `schedule.toml`에서 `enabled = false`다. 게임잡 수집기는 구현돼 있으나 켜는 전제는 웍스피어와의 데이터 제공 계약이다. 사이트 실측 기록은 [게임잡 채용공고 수집](2026-09-08-gamejob-collection.md)에 남겼다.
+
+**커리어도 기준 A 미통과다.** `job.career.co.kr`의 robots.txt는 공고 경로를 허용하지만 이용약관 제14조 5항이 동의 없는 복제·배포를 금지한다 — 기준 A는 OR 조건이라 robots.txt 허용만으로는 통과가 아니다. 약관 조항을 확인한 뒤 소유자가 진행을 결정해 2026-09-09에 1회 1,139건을 수집했고, 회차 manifest의 `source_admission` 블록에 `criterion_a: FAIL`과 `admitted_by`를 함께 기록한다. 스케줄은 `enabled = false`다.
 
 위 표의 topic 이름은 Notion 초안의 논리 topic이다. 실제로 발행하는 topic은 S15P21E102-103이 정한 `jobs.collected` 하나이고, 사이트별 수집기가 아니라 스케줄러가 회차 단위로 발행한다. 표의 이름과 partition·retention 확정은 S15P21E102-102와 함께 정리한다.
 
