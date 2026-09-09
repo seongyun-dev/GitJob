@@ -15,6 +15,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
@@ -136,7 +137,16 @@ class PoliteHttpClient:
                 if error.code not in _RETRYABLE_STATUSES:
                     raise HttpError(f"HTTP {error.code} for {url}") from error
                 last_error = error
-            except (URLError, TimeoutError, OSError) as error:
+            except (URLError, TimeoutError, OSError, HTTPException) as error:
+                # `HTTPException` covers the ones that escape the three above,
+                # and `http.client.IncompleteRead` is the one that matters: a
+                # truncated chunked response. It subclasses `HTTPException`
+                # only — not `OSError`, not `URLError` — so without it here a
+                # half-delivered page propagates out of `get` and kills the
+                # whole run. Observed 2026-09-09 on a Saramin detail page
+                # ("IncompleteRead(29047 bytes read, 27065 more expected)"),
+                # which ended a backfill seven pages in and lost every record
+                # collected up to that point.
                 last_error = error
             else:
                 if looks_blocked(body):
