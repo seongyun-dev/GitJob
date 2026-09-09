@@ -6,7 +6,7 @@
 #
 # Prerequisites, in order:
 #   1. postgres running with wal_level=logical (compose does this)
-#   2. BE/src/main/resources/db/changes/002_analysis_outbox_cdc.sql applied once
+#   2. BE/src/main/resources/db/cdc/cdc_prerequisites.sql applied once
 #   3. CDC_DATABASE_PASSWORD in the env file, matching that migration
 
 set -Eeuo pipefail

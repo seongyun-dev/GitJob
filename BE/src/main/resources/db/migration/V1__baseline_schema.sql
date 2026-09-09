@@ -208,7 +208,6 @@ CREATE INDEX idx_analysis_outbox_pending
 
 -- ---------------------------------------------------------------------------
 -- Duplicate protection and lookup support for analysis requests.
--- Existing databases apply db/changes/004_analysis_job_active_unique.sql instead.
 -- ---------------------------------------------------------------------------
 
 -- One in-progress analysis per (user, repository). The application checks this first,

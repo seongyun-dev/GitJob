@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.Map;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,14 +14,13 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * 모든 배포 환경이 {@code JPA_DDL_AUTO=validate}로 뜬다. 그래서 엔티티 매핑이
- * {@code db/init.sql}과 한 군데라도 어긋나면 애플리케이션이 아예 기동하지 않는다.
+ * 마이그레이션과 한 군데라도 어긋나면 애플리케이션이 아예 기동하지 않는다.
  * 그 실패를 배포가 아니라 여기에서 먼저 만나기 위한 테스트다.
  *
  * <p>H2로는 대신할 수 없다. CHAR와 VARCHAR, TIMESTAMPTZ처럼 validate가 실제로
@@ -36,7 +36,7 @@ class SchemaValidationTest {
     private LocalContainerEntityManagerFactoryBean entityManagers;
 
     @Test
-    @DisplayName("db/init.sql만 적용한 DB에서 모든 엔티티가 validate를 통과한다")
+    @DisplayName("마이그레이션만 적용한 DB에서 모든 엔티티가 validate를 통과한다")
     void everyEntityMatchesTheDeploymentSchema() {
         postgres = new PostgreSQLContainer("postgres:16.4-alpine");
         postgres.start();
@@ -48,8 +48,10 @@ class SchemaValidationTest {
         config.setMaximumPoolSize(2);
         dataSource = new HikariDataSource(config);
 
-        // 운영이 적용하는 파일 그대로. 여기에 없는 테이블에 엔티티가 걸려 있으면 실패해야 한다.
-        new ResourceDatabasePopulator(new ClassPathResource("db/init.sql")).execute(dataSource);
+        // 운영과 같은 마이그레이션을 그대로 돌린다. 여기서 만들지 않는 테이블에
+        // 엔티티가 걸려 있으면 실패해야 한다.
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .load().migrate();
 
         entityManagers = new LocalContainerEntityManagerFactoryBean();
         entityManagers.setDataSource(dataSource);
@@ -68,12 +70,13 @@ class SchemaValidationTest {
     }
 
     @Test
-    @DisplayName("엔티티가 매핑한 테이블은 init.sql에 실제로 존재한다")
-    void mappedTablesExistInInitSql() {
-        String initSql = assertDoesNotThrow(
-                () -> new ClassPathResource("db/init.sql").getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
-        assertTrue(initSql.contains("CREATE TABLE \"analysis_job\""), "analysis_job이 init.sql에 없다");
-        assertTrue(initSql.contains("CREATE TABLE \"user\""), "user가 init.sql에 없다");
+    @DisplayName("엔티티가 매핑한 테이블은 baseline 마이그레이션에 실제로 존재한다")
+    void mappedTablesExistInBaselineMigration() {
+        String baseline = assertDoesNotThrow(
+                () -> new ClassPathResource("db/migration/V1__baseline_schema.sql")
+                        .getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+        assertTrue(baseline.contains("CREATE TABLE \"analysis_job\""), "analysis_job이 baseline에 없다");
+        assertTrue(baseline.contains("CREATE TABLE \"user\""), "user가 baseline에 없다");
     }
 
     @AfterAll

@@ -45,7 +45,7 @@ GitHub OAuth
 | 영역 | 현재 레포 상태 | 문서에서의 표현 |
 |---|---|---|
 | `Infra/` | Compose, Dockerfile, Nginx, Jenkins, 운영 스크립트 존재 | 구현·검증 범위와 미검증 범위를 분리 |
-| `BE/` | Spring Boot 진입점·공통 응답/오류 처리·init.sql·C migration 존재 | B 실제 분석·인증 API 통합은 별도 인수 |
+| `BE/` | Spring Boot 진입점·공통 응답/오류 처리·Flyway 마이그레이션·C migration 존재 | B 실제 분석·인증 API 통합은 별도 인수 |
 | `FE/` | Vite/React 소스·package-lock 존재 | C 결과 화면의 실제 연결은 별도 인수 |
 | `AI/` | Collector·Registry·공고 분석·추천·공개 분석·Trend·C Worker 구현 | [기능 지도](ai/README.md)와 [검증 경계](ai/c-mvp-verification.md)로 확인 |
 | `docs/` | 본 문서와 기존 Infra 보고서 | 프로젝트 기술·인수인계 문서 |

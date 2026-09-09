@@ -232,7 +232,7 @@ error type 위주다. 원본과 loader의 검증 조건을 함께 대조해야 �
 
 ## 저장과 migration
 
-현재 `db/init.sql`의 13개 Registry/Evidence 테이블은 수정하지 않는다.
+현재 `db/migration/V1__baseline_schema.sql`의 13개 Registry/Evidence 테이블은 수정하지 않는다.
 `db/migrations/001_c_compute.sql`이 `c_compute` schema의 event 실행,
 불변 결과, 현재 pointer 및 migration checksum을 만든다. 공고 cohort는 원본 수집
 본문이 아닌 분석된 기술 조건·출처·품질·버전을 한 번 저장한다. 수요/개인 추천/공개
@@ -262,7 +262,7 @@ API가 시작하면서 DDL을 자동 실행하지 않는다. 적용/롤백/권�
 신규 부합 1과 목록 ID 일치를 확인했다. 같은 event 재전달은 같은 Snapshot을
 반환하고 다른 사용자 조회는 404다. 공식 Innovation Graph CSV의 Java 두 분기
 값 32,342 → 29,166도 HTTP 계산·DB 저장·조회로 확인했다. 별도 새 로컬 DB에
-기존 init.sql을 적용하고 C migration을 두 번 실행해 public 13개 테이블의 열 정의가
+기존 베이스라인을 적용하고 C migration을 두 번 실행해 public 13개 테이블의 열 정의가
 유지되고 c_compute의 4개 테이블만 추가됨을 검증했다.
 
 A Top20k 인계는 표본 read 이후 read-only WebHDFS와 parser v2로 전체 27개 파티션을

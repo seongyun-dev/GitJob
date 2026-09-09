@@ -36,6 +36,7 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ByteArrayResource;
+import org.flywaydb.core.Flyway;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -222,11 +223,12 @@ class AnalysisOutboxCdcIntegrationTest {
         config.setPassword(postgres.getPassword());
         config.setMaximumPoolSize(3);
         dataSource = new HikariDataSource(config);
-        // db/init.sql is the schema exactly as a new database receives it: no substitution.
-        new ResourceDatabasePopulator(new ClassPathResource("db/init.sql")).execute(dataSource);
+        // The same migrations a new database receives, run the same way: no substitution.
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .load().migrate();
         jdbc = new JdbcTemplate(dataSource);
         // The CDC migration runs unchanged except for the isolated secret and database name.
-        String cdcSql = new ClassPathResource("db/changes/002_analysis_outbox_cdc.sql")
+        String cdcSql = new ClassPathResource("db/cdc/cdc_prerequisites.sql")
                 .getContentAsString(StandardCharsets.UTF_8)
                 .replace("__CDC_PASSWORD__", CDC_PASSWORD)
                 .replace("__DATABASE_NAME__", postgres.getDatabaseName());

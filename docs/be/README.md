@@ -278,7 +278,11 @@ Worker 결과 처리와 분석 상태 조회는 아직 연결 전이다.
 6. 프로필·직무·Gap·추천 API 연결
 7. Q&A/설명·운영 API와 권한·품질 검증 추가
 
-`JPA_DDL_AUTO`는 로컬·Docker·운영 모두 `validate`다. Hibernate가 스키마를 만들거나 고치지 않으므로 `db/init.sql`을 먼저 적용해야 하고, 엔티티와 스키마가 어긋나면 기동 시점에 바로 드러난다. 명시적 migration(Flyway/Liquibase 등) 도입은 별도 항목이다.
+`JPA_DDL_AUTO`는 로컬·Docker·운영 모두 `validate`다. Hibernate가 스키마를 만들거나 고치지 않는 대신 Flyway가 `db/migration`을 기동 시 적용하고, Spring Boot가 Flyway를 Hibernate보다 먼저 실행하므로 `validate`가 도는 시점에는 스키마가 이미 있다. 엔티티와 스키마가 어긋나면 기동 시점에 바로 드러난다. CDC의 롤·publication은 비밀번호 치환이 필요해 마이그레이션이 아니라 `db/cdc/cdc_prerequisites.sql`로 남아 있다.
+
+`baseline-on-migrate`는 꺼 두었다. 켜면 Flyway가 이력 없는 기존 스키마를 확인 없이 V1으로 간주하고 넘어가는데, 그러면 실제 스키마와 마이그레이션이 어긋난 채로 조용히 통과한다. 대신 이력이 없는 비어 있지 않은 데이터베이스에서는 기동을 거부한다. 예전 방식으로 `db/init.sql`을 손으로 넣어둔 로컬 데이터베이스가 여기 해당하며, 볼륨을 지우고 다시 만들면 된다(루트 README의 `로컬 실행` 참고). 운영 데이터베이스는 비어 있었으므로 V1부터 그대로 적용된다.
+
+전환 이후 남은 배포 절차와 후속 티켓은 `docs/be/2026-09-09-flyway-rollout-followups.md`에 있다. 임시 문서이며 항목이 모두 끝나면 삭제한다.
 
 ## 10. 미결정 사항
 

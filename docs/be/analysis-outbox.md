@@ -71,24 +71,26 @@ Worker가 보내는 값을 enum이 다 포함하지 못하면 조회 시점에 �
 
 ## 배포 전 SQL
 
-이 저장소는 아직 Flyway/Liquibase를 사용하지 않는다. SQL 파일은 자동 적용되지 않는다.
+스키마는 Flyway가 애플리케이션 기동 시 적용한다. Spring Boot가 Flyway를 Hibernate보다
+먼저 실행하므로, `validate`가 도는 시점에는 스키마가 이미 있다. 손으로 넣을 SQL은
+아래 한 파일뿐이다.
 
-| 순서 | 파일 | 대상 |
-| --- | --- | --- |
-| 1 | `db/init.sql` | 신규 DB. 스키마 전체(테이블 14개). 치환할 것이 없어 그대로 실행된다 |
-| 1' | `db/changes/001_analysis_outbox.sql` | `analysis_job`은 있고 `analysis_outbox`만 없는 기존 DB. `init.sql` 대신 이것을 쓴다 |
-| 2 | `db/changes/002_analysis_outbox_cdc.sql` | CDC 모드에 필요. 1 또는 1' 다음에 한 번 |
-| 2' | `db/changes/003_analysis_outbox_drop_repository_unique.sql` | 1'로 만든 기존 DB만. `analysis_repository_id` UNIQUE 제거 |
-| 3 | `db/changes/004_analysis_job_active_unique.sql` | 기존 DB만. 중복 차단·조회 인덱스 3개. 적용 전 기존 중복 확인 필요(파일 주석 참고) |
+| 파일 | 적용 |
+| --- | --- |
+| `db/migration/V1__baseline_schema.sql` | Flyway 자동. 스키마 전체(테이블 14개) |
+| `db/migration/V2__cdc_heartbeat.sql` | Flyway 자동. CDC heartbeat 테이블 |
+| `db/cdc/cdc_prerequisites.sql` | **수동 1회.** CDC 모드에 필요한 롤·GRANT·publication |
 
-`init.sql`과 `changes/001`을 같은 DB에 연속 적용하지 않는다. 같은 테이블을 두 번
-만들려다 실패한다. 기존 테이블을 삭제하거나 초기화하지 않는다. `init.sql`은 `001`의
-문장을 그대로 품고 있으며, 어긋나면 `DatabaseScriptConsistencyTest`가 빌드를 깨뜨린다.
+`cdc_prerequisites.sql`만 `db/migration` 밖에 둔 이유는 세 가지다. 비밀번호를 치환해
+넣어야 하고, `CREATE ROLE`은 스키마 변경이 아니라 클러스터 레벨 객체이며,
+`CREATE ROLE`과 `CREATE PUBLICATION`은 재실행할 수 없다. 마이그레이션으로 만들면 한 번
+실패한 뒤로 애플리케이션이 아예 기동하지 못한다.
 
-CDC 객체(롤·publication)는 일부러 `init.sql`에 넣지 않았다. `CREATE ROLE`에 비밀번호
-리터럴이 필요해서, 합치면 스키마 파일에 플레이스홀더가 생겨 그대로 실행할 수 없게 된다.
-그래서 `002`만 `__CDC_PASSWORD__`, `__DATABASE_NAME__`를 치환해서 적용한다. 비밀번호는
+이 파일의 `__CDC_PASSWORD__`, `__DATABASE_NAME__`를 치환해서 적용한다. 비밀번호는
 `.env`의 `CDC_DATABASE_PASSWORD`와 같아야 하고, 애플리케이션 DB 비밀번호와는 다른 값을 쓴다.
+
+Flyway 도입 전에는 `db/init.sql`을 사람이 넣어야 했고, 그래서 환경이 어긋났다. 운영 DB는
+엔티티가 analysis 테이블을 기대하는 동안 계속 비어 있었다.
 
 `CREATE PUBLICATION`은 `wal_level`이 `logical`이 아니어도 경고만 내고 성공한다.
 따라서 SQL이 다 통과해도 CDC 준비가 끝난 것은 아니다. 커넥터 등록 전에 확인한다.
@@ -172,11 +174,13 @@ FAILED로 멈춘다. Outbox 행은 DB에 남아 있으므로 원인을 고치고
 # 1) core 프로필로 postgres/kafka/kafka-connect 기동
 PROFILES=core ./Infra/scripts/up.sh
 
-# 2) 스키마 적용 (신규 DB). 백엔드보다 먼저. 치환할 것이 없어 그대로 넣는다
-source .env.wsl && docker compose --project-directory . --env-file .env.wsl -f Infra/compose/compose.yaml -f Infra/compose/compose.wsl.yaml --profile core exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" < BE/src/main/resources/db/init.sql
+# 2) 백엔드를 띄운다. 스키마는 이때 Flyway가 적용하므로 넣을 SQL이 없다.
+#    3)의 GRANT와 publication이 analysis_outbox/cdc_heartbeat를 참조하므로
+#    이 단계를 건너뛰면 3)이 "relation does not exist"로 실패한다.
+PROFILES=core,app ./Infra/scripts/up.sh
 
 # 3) CDC 객체 적용. 치환이 필요한 것은 이 파일뿐이다
-sed -e "s/__CDC_PASSWORD__/$CDC_DATABASE_PASSWORD/" -e "s/__DATABASE_NAME__/$POSTGRES_DB/" BE/src/main/resources/db/changes/002_analysis_outbox_cdc.sql | docker compose --project-directory . --env-file .env.wsl -f Infra/compose/compose.yaml -f Infra/compose/compose.wsl.yaml --profile core exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+source .env.wsl && sed -e "s/__CDC_PASSWORD__/$CDC_DATABASE_PASSWORD/" -e "s/__DATABASE_NAME__/$POSTGRES_DB/" BE/src/main/resources/db/cdc/cdc_prerequisites.sql | docker compose --project-directory . --env-file .env.wsl -f Infra/compose/compose.yaml -f Infra/compose/compose.wsl.yaml --profile core exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
 # 4) 커넥터 등록 (재실행해도 안전하다)
 ./Infra/scripts/cdc-register.sh
@@ -370,16 +374,22 @@ Connect worker를 교체해도 저장된 설정과 offset으로 이어서 발행
 그중 CDC 3개는 PostgreSQL 16.4 + Kafka 4.0.0 + Debezium Connect 3.4.3 컨테이너에서
 실제 왕복을 검증했다.
 
-같은 날 `db/init.sql`을 임시 PostgreSQL 16.4 컨테이너에서 단독 실행해 테이블 14개와
-`idx_analysis_outbox_pending`이 오류 없이 생성되는 것을 확인했고, 이어서 `002`도 같은
+같은 날 스키마를 임시 PostgreSQL 16.4 컨테이너에서 단독 실행해 테이블 14개와
+`idx_analysis_outbox_pending`이 오류 없이 생성되는 것을 확인했고, 이어서 CDC 객체도 같은
 DB에 적용되는 것을 확인했다. 이때 `CREATE PUBLICATION`이 `wal_level` 경고만 남기고
-성공하는 것도 함께 관찰했다. `DatabaseScriptConsistencyTest`는 Docker 없이 항상 돌며
-`init.sql`과 `changes/001`이 어긋나지 않았는지 확인한다.
+성공하는 것도 함께 관찰했다.
+
+2026-09-08 Flyway 전환 검증(S15P21E102-172): 빈 데이터베이스에 애플리케이션을 띄워
+`flyway_schema_history`에 V1·V2가 `success`로 남고 테이블 16개가 생성되며 `validate`가
+통과하는 것을 확인했다. 같은 커밋에서 테스트 109개 전부 통과(건너뜀 0)했고, 그중 CDC 3개는
+새 `db/cdc/cdc_prerequisites.sql` 경로로 Debezium 왕복까지 확인했다.
+`DatabaseScriptConsistencyTest`는 Docker 없이 항상 돌며, `uq_analysis_job_active`의 상태
+목록이 `AnalysisJob.IN_PROGRESS_STATUSES`와 어긋나지 않았는지 확인한다.
 
 같은 날 `analysis_job`을 JPA 엔티티로 전환한 뒤 26개 재실행해 전부 통과했다.
 CDC 테스트와 `OUTBOX_TEST_DATABASE=postgres` 실행은 EntityManagerFactory를
 `hibernate.hbm2ddl.auto=validate`로 띄우므로, `AnalysisJob` 매핑이 배포용
-`db/init.sql`과 일치하는지도 함께 검증된다. H2 실행은 스키마가 근사치라 `none`이다.
+마이그레이션이 만든 스키마와 일치하는지도 함께 검증된다. H2 실행은 스키마가 근사치라 `none`이다.
 
 참고: [Debezium PostgreSQL connector](https://debezium.io/documentation/reference/stable/connectors/postgresql.html),
 [Debezium Outbox Event Router](https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html),

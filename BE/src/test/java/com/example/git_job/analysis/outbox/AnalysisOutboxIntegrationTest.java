@@ -81,12 +81,18 @@ class AnalysisOutboxIntegrationTest {
             config.setPassword("");
         }
         dataSource = new HikariDataSource(config);
-        String init = new ClassPathResource("db/init.sql").getContentAsString(StandardCharsets.UTF_8);
-        int start = init.indexOf("CREATE TABLE \"analysis_job\"");
-        String jobSql = init.substring(start, init.indexOf(");", start) + 2)
-                + " ALTER TABLE analysis_job ADD PRIMARY KEY (analysis_id);";
-        String outboxSql = new ClassPathResource("db/changes/001_analysis_outbox.sql")
+        // The full baseline does not run on H2, so this builds the smallest schema the
+        // outbox needs: analysis_job, then the outbox table and the index it is read by.
+        String baseline = new ClassPathResource("db/migration/V1__baseline_schema.sql")
                 .getContentAsString(StandardCharsets.UTF_8);
+        int start = baseline.indexOf("CREATE TABLE \"analysis_job\"");
+        String jobSql = baseline.substring(start, baseline.indexOf(");", start) + 2)
+                + " ALTER TABLE analysis_job ADD PRIMARY KEY (analysis_id);";
+        // Stops at the outbox index: the baseline goes on to create a partial index on
+        // analysis_job, and H2 rejects the WHERE clause on CREATE INDEX.
+        int outboxStart = baseline.indexOf("CREATE TABLE analysis_outbox");
+        int outboxIndex = baseline.indexOf("CREATE INDEX idx_analysis_outbox_pending", outboxStart);
+        String outboxSql = baseline.substring(outboxStart, baseline.indexOf(';', outboxIndex) + 1);
         String sql = jobSql + outboxSql;
         if (!realPostgres) {
             sql = sql.replace("TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE");

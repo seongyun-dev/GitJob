@@ -24,7 +24,7 @@
 | 전체 AI 테스트 | Python 3.12.14, 실제 격리 PostgreSQL 포함 **973 passed / 0 failed / 0 skipped**, 의존성 deprecation warning 2개 | B 실제 귀속 정확도·운영 서비스 완성 |
 | 정적 검증 | 후속 변경 Python 39개 Ruff check/format, base..HEAD diff check PASS | 저장소 전체 lint가 깨끗하다는 주장 |
 | 이미지·설정 | Worker Docker build/startup, 테스트 환경값을 사용한 Compose config PASS | 운영 환경·비밀값·권한·네트워크 준비 |
-| DB 호환 | 기존 public init.sql 13개 테이블 후 C migration 2회 적용, 기존 열 불변·별도 C 4개 테이블 확인 | 운영 DB migration 수행 |
+| DB 호환 | 기존 public 베이스라인 13개 테이블 후 C migration 2회 적용, 기존 열 불변·별도 C 4개 테이블 확인 | 운영 DB migration 수행 |
 | HTTP·DB 통합 | 실제 writer 형식 합성 공고/Evidence → 자동 감지 → 계산 → 저장 → 조회·재시작 | 실제 B 분석 완료 callback 또는 실계정 FE E2E |
 | A 공개 데이터 | 실제 Top20k 완료 입력 검증·27개 분할 전체 처리·재개·최종 DB/HTTP 조회 | 모든 Repo 기술 판정 성공·개인 수준 판정·정상 tree lineage |
 | 실제 채용 데이터 | 기존 10개 + 신규 4개 공고 품질 검수 | 충분한 목표 직무 모집단·월별 시장 추세 확보 |

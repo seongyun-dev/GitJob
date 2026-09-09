@@ -13,6 +13,18 @@ spring:
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
+  # db/init.sql was applied by hand, which is why environments drifted: the
+  # production database was still empty while the entities expected the analysis
+  # tables. Flyway owns the schema now and runs before Hibernate validates it.
+  # db/cdc and db/migrations are outside this location on purpose; see those
+  # directories for why they are still applied separately.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Every environment starts from V1, so there is no legacy database to adopt.
+    # Left off deliberately: it would silently mark an unknown schema as current.
+    baseline-on-migrate: false
+
   jpa:
     open-in-view: false
     hibernate:

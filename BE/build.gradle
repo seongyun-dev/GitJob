@@ -19,6 +19,14 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// Migrations run before Hibernate validates, so the schema exists by then.
+	// Boot 4 ships each integration as its own module: without spring-boot-flyway
+	// there is no FlywayAutoConfiguration, and flyway-core sits unused while
+	// validate fails on an empty database. Postgres support is a separate Flyway
+	// module as of Flyway 10.
+	implementation 'org.springframework.boot:spring-boot-flyway'
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-database-postgresql'
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'

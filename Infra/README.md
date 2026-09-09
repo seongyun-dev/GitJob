@@ -110,8 +110,8 @@ core를 실행한다.
 ```
 
 `core`에는 Debezium worker(`kafka-connect`)가 포함된다. Outbox 이벤트를 실제로
-발행하려면 스키마(`BE/src/main/resources/db/init.sql`)와 CDC 객체
-(`db/changes/002_analysis_outbox_cdc.sql`)를 차례로 적용한 뒤 커넥터를 등록한다.
+발행하려면 스키마가 적용된 뒤(backend 기동 시 Flyway가 처리한다) CDC 객체
+(`BE/src/main/resources/db/cdc/cdc_prerequisites.sql`)를 적용하고 커넥터를 등록한다.
 SQL 파일은 자동 적용되지 않는다. 스키마 파일은 그대로 실행되고, `002`만 비밀번호
 플레이스홀더 치환이 필요하다. 자세한 내용은
 [분석 Outbox CDC 문서](../docs/be/analysis-outbox.md)에 있다.
