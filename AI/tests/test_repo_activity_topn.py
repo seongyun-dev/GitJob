@@ -7,6 +7,8 @@ from repo_activity_topn import (
     parse_top_n,
     parse_utc_hour,
     rank_activity_rows,
+    SUPPORTED_HISTORICAL_CUTOFF,
+    SUPPORTED_HISTORICAL_START,
     validate_period,
 )
 
@@ -94,4 +96,9 @@ def test_period_is_utc_start_inclusive_and_cutoff_exclusive() -> None:
     with pytest.raises(ValueError, match="historical_cutoff"):
         validate_period(HISTORICAL_START, "2026-09-01T01:00:00Z")
     with pytest.raises(ValueError, match="precedes historical_start"):
-        validate_period("2026-07-31T23:00:00Z", HISTORICAL_CUTOFF)
+        validate_period("2026-02-28T23:00:00Z", HISTORICAL_CUTOFF)
+
+
+def test_six_month_historical_window_is_supported() -> None:
+    validate_period(SUPPORTED_HISTORICAL_START, SUPPORTED_HISTORICAL_CUTOFF)
+    assert parse_utc_hour(SUPPORTED_HISTORICAL_START).isoformat() == "2026-03-01T00:00:00+00:00"

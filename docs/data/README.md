@@ -996,6 +996,14 @@ C조 범위다.
 - 검증: Spark 전량 집계 SUCCESS, HDFS fsck HEALTHY
 - 상세: [S15P21E102-179 GH Archive 6개월 Historical Bootstrap 검증](2026-09-09-gharchive-six-month-bootstrap.md)
 
+## GH Archive 6개월 Repo Activity (S15P21E102-193)
+
+- Jira: S15P21E102-193
+- 기간: 2026-03-01~2026-08-31 UTC
+- 결과: 4,416 input files, 660,081,904 raw events, 47,466,125 unique repos
+- 검증: Spark app `app-20260909135033-0019` SUCCESS, valid repo events 660,076,996, invalid/null 4,908, duplicate rank 0, read-back PASS
+- 상세: [S15P21E102 6개월 Repo Activity 결과](2026-09-10-gharchive-six-month-repo-activity.md)
+
 ## Repo Activity Aggregation
 
 - Jira: S15P21E102-109

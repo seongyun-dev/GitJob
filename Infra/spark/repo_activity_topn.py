@@ -19,6 +19,10 @@ UTC = timezone.utc
 
 HISTORICAL_START = "2026-08-01T00:00:00Z"
 HISTORICAL_CUTOFF = "2026-09-01T00:00:00Z"
+# The August MVP remains the default period, while the validated Historical
+# Raw window now permits the six-month follow-up without changing that default.
+SUPPORTED_HISTORICAL_START = "2026-03-01T00:00:00Z"
+SUPPORTED_HISTORICAL_CUTOFF = "2026-09-01T00:00:00Z"
 DEFAULT_INPUT = "hdfs:///gitjob/raw/gharchive/dt=2026-08-*/*.json.gz"
 DEFAULT_TOP_N = (100, 500, 1_000, 3_000, 5_000, 10_000, 20_000)
 
@@ -64,8 +68,8 @@ def validate_period(period_start: str, period_end: str) -> None:
 
     start = parse_utc_hour(period_start)
     end = parse_utc_hour(period_end)
-    historical_start = parse_utc_hour(HISTORICAL_START)
-    historical_cutoff = parse_utc_hour(HISTORICAL_CUTOFF)
+    historical_start = parse_utc_hour(SUPPORTED_HISTORICAL_START)
+    historical_cutoff = parse_utc_hour(SUPPORTED_HISTORICAL_CUTOFF)
     if start < historical_start:
         raise ValueError("period_start precedes historical_start")
     if end > historical_cutoff:
