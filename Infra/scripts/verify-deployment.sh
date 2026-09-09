@@ -222,6 +222,41 @@ run_all_checks() {
     esac
   fi
 
+  # --- entry point ------------------------------------------------------------
+  # The container healthcheck for nginx did not save us on 2026-09-09: a deploy
+  # recreated backend, nginx kept using the address it had resolved at startup, and
+  # the deploy passed because nginx had not yet exhausted its retry budget. It then
+  # served 502 for two hours. This asks the question the healthcheck's timing can
+  # miss — does a request actually reach the backend through nginx right now.
+  if ! profile_enabled app; then
+    skip entry-point "app 프로필이 이 호스트에 없다"
+  elif ! running nginx; then
+    undetermined entry-point "nginx 컨테이너가 이 호스트에 없다"
+  else
+    entry_status="$(compose exec -T nginx sh -c '
+      code=$(wget -q -O /tmp/verify-entry.out -T 5 -S http://127.0.0.1/health 2>&1 \
+        | awk "/HTTP\\//{print \$2; exit}") || true
+      printf "%s " "${code:-000}"
+      tr -d "\n" < /tmp/verify-entry.out 2>/dev/null
+      rm -f /tmp/verify-entry.out
+    ' 2>/dev/null | tr -d '\r' || true)"
+    entry_code="${entry_status%% *}"
+    entry_body="${entry_status#* }"
+    if [[ "$entry_body" == *'"status":"UP"'* ]]; then
+      ok entry-point "nginx → backend /health UP"
+    elif [[ "$entry_code" == "502" || "$entry_code" == "504" ]]; then
+      # The usual cause is a stale upstream address, which a restart clears.
+      needs_action entry-point "nginx 가 backend 에 도달하지 못한다 (HTTP $entry_code)" \
+        "backend 는 살아 있는데 nginx 만 못 붙는 경우, upstream 주소가 낡았을 수 있다. 먼저 확인한다.
+  docker exec \$(docker ps -qf name=nginx) sh -c 'wget -q -O- -T3 http://backend:8080/actuator/health'
+위가 성공하는데 127.0.0.1/health 가 502 면 nginx 를 재시작한다.
+  docker restart \$(docker ps -qf name=nginx)
+재발한다면 Infra/nginx 의 resolver 설정이 적용되었는지 확인한다."
+    else
+      undetermined entry-point "예상하지 못한 응답: code=$entry_code body=$entry_body"
+    fi
+  fi
+
   # --- C compute worker -------------------------------------------------------
   # /health says the process is up. /ready is the one that looks at the database.
   if ! profile_enabled data; then
