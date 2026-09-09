@@ -308,11 +308,72 @@ Raw 요청:
 >
 > 기준일: 2026-09-01
 >
-> 상태: **2026년 8월 Historical Bootstrap 완료** — 744 hourly archives가 HDFS Raw에 적재됨
+> 상태: **수집기 완성 · 2026년 8월 Bootstrap 실행 완료**
+>
+> **⚠️ 생성된 dataset 은 현재 HDFS 에 없다. 재수집이 필요하다 — §14.1**
 >
 > Raw 경로 `/gitjob/raw/{source}/dt=` 확정, 적재 방식 WebHDFS 확정
 >
-> 생성 dataset: 744 files / 10.85 GiB 압축 / 87,516,869 events
+> 생성했던 dataset: 744 files / 10.85 GiB 압축 / 87,516,869 events
+
+### 14.1 생성된 dataset 이 사라졌다 (2026-09-09 확인)
+
+아래 §14 전체는 2026-09-01 에 **실제로 수행한 실행의 기록**이고 측정값도 그때
+실측한 값이다. 그 부분은 고치지 않는다. 정정되는 것은 **"지금 적재돼 있다"는
+현재 상태 주장 하나**다.
+
+2026-09-09 확인 결과 `hdfs:///gitjob/raw/gharchive/` 에 `dt=2026-08-*` 이 **하나도
+없다.**
+
+```text
+dt=2026-09-01 ~ 09-08   각 24파일    ← -144 감시기가 받은 것
+dt=2026-09-09            6파일
+dt=2026-08-*            없음         ← 이 절이 "744파일 적재 완료"라고 하는 것
+```
+
+원인은 HDFS 볼륨 재생성이다.
+
+| 시각 (UTC) | 사건 |
+|---|---|
+| 2026-09-01 | 744파일 적재 완료. §14 의 측정은 이때의 것 |
+| 2026-09-08 03:15 | 워크넷 백필 4,631건 적재 (`raw_upload.json` 이 성공 기록) |
+| **2026-09-08 08:56:05** | **`gitjob_hdfs-namenode-data` · `gitjob_hdfs-datanode-data` 볼륨 생성 시각** |
+| 2026-09-08 08:59 | 게임잡 적재 — 이후 것은 살아 있다 |
+
+`docker volume inspect` 의 `CreatedAt` 이 두 볼륨 모두 `2026-09-08T08:56:05Z` 다.
+그 시각 이전에 적재된 것은 GH Archive 744파일과 워크넷 5,124건을 포함해 전부
+사라졌다. `-175` DataNode 1→3 확장 작업 시점과 겹친다.
+
+**`hdfs fsck /gitjob` 은 HEALTHY 이고 missing block 0 이다.** 블록이 깨진 것이
+아니라 NameNode 메타데이터까지 함께 초기화됐다. 그래서 `-ls` 에 흔적이 없고,
+파일이 사라졌다는 사실 자체를 저장소 상태만 봐서는 알 수 없다.
+
+#### 데이터를 잃은 것은 아니다
+
+GH Archive 는 과거 시간대를 계속 제공한다. `download` 서브커맨드를 같은 범위로
+다시 돌리면 같은 dataset 이 재생성된다 — 체크포인트는 `.local` 에도 없으므로
+전량 다시 받는다. 재수집 비용은 약 13 GB 전송이다.
+
+워크넷 5,124건은 로컬 산출물이 남아 있어 2026-09-09 에 재적재를 완료했다.
+GH Archive 는 로컬 사본도 함께 사라져서 원본에서 다시 받아야 한다.
+
+#### 이 절을 읽고 Spark 를 돌리려는 사람에게
+
+§14 아래의 `inputFiles() = 744`, `전체 record 수 = 87,516,869` 같은 값은 **그때의
+실측**이다. 지금 같은 Spark job 을 돌리면 입력이 없어 0 건이 나온다. `-109`
+Repo 활동량 Top-N 은 이 dataset 을 입력으로 전제하므로 **재수집이 선행되어야
+한다.**
+
+#### 재발 방지가 없다
+
+수집기는 `raw_upload.json` 에 "적재했다"를 기록하지만, **그 뒤에 파일이 사라져도
+알아채는 절차가 없다.** `store_immutable` 이 확인하는 것은 "지금 있고 내용이
+같다"이고, 회차가 `unchanged` 로 끝나면 다시 올릴 트리거가 없다.
+
+2026-09-09 에 이 소실 두 건을 발견한 것은 HDFS 디렉터리를 손으로 세어봤기
+때문이다. HDFS 가 system of record 인데 적재 여부를 검증하는 절차가 없다는 것이
+이 사고의 본질이다. `-105` 에는 `validate` 서브커맨드가 있으나 채용공고 수집기와
+회차 이력에는 대응물이 없다.
 
 ### 문제
 
@@ -792,7 +853,7 @@ Spark가 분산 처리한 결과만 받았다.
 | `publish_downloaded_range` 결과 분리 | **Runtime 검증됨** (3시간) / 단위 테스트 |
 | Spark의 Raw 판독 | **Runtime 검증됨** (read only) |
 | `HdfsCliSink` | 로직은 Runtime 검증됨(주입 runner). **기본 runner는 배포 이미지에서 실행 불가** |
-| **744시간 전량 적재** | **Historical Dataset 생성 완료** (744/744, missing·invalid·failed 0) |
+| **744시간 전량 적재** | 실행 시점에 **생성 완료** (744/744, missing·invalid·failed 0). **현재 HDFS 에 없다 — §14.1** |
 | `-109` 집계·Top-N·Coverage | **미구현** |
 | Repo Mapping / Manifest Fetch | **미구현** |
 
@@ -835,7 +896,7 @@ C조 범위다.
 |---|---|
 | `S15P21E102-109` | 이 Raw를 Spark로 전량 읽어 Repo 활동량 집계와 Top-N·Coverage 산출 |
 | `S15P21E102-144` | P1 신규 Collector가 `historical_cutoff`를 하한으로 사용해 수집 구간 중복 방지 |
-| `S15P21E102-105` | Historical Bootstrap 완료. Dataset 잔여 작업 없음 |
+| `S15P21E102-105` | 수집기 완성, Bootstrap 실행 완료. **다만 dataset 이 HDFS 에서 사라져 재수집이 남아 있다 — §14.1** |
 
 ## Repo Activity Aggregation
 
