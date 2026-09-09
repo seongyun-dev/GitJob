@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -30,6 +30,11 @@ from collector.gharchive.sinks import (
     HdfsSinkError,
     WebHdfsSink,
     publish_downloaded_range,
+)
+from collector.gharchive.watch import (
+    DEFAULT_PUBLICATION_LAG,
+    UNPUBLISHED_GRACE,
+    GhArchiveWatcher,
 )
 
 WEBHDFS_URL_ENV = "WEBHDFS_URL"
@@ -89,6 +94,28 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"WebHDFS user.name (default: ${WEBHDFS_USER_ENV} or {DEFAULT_WEBHDFS_USER})",
     )
     upload_parser.add_argument("--timeout", type=float, default=120.0)
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help="download hours published after the bootstrap cutoff",
+    )
+    _add_output_arguments(watch_parser)
+    watch_parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    watch_parser.add_argument(
+        "--lag-minutes",
+        type=int,
+        default=int(DEFAULT_PUBLICATION_LAG.total_seconds() // 60),
+        help=(
+            "hold back an hour this long after it ends. GH Archive served a "
+            "just-ended hour 17 minutes late in measurement (2026-09-09)"
+        ),
+    )
+    watch_parser.add_argument(
+        "--grace-hours",
+        type=int,
+        default=int(UNPUBLISHED_GRACE.total_seconds() // 3600),
+        help="how long a 404 stays 'not yet published' before it is a gap",
+    )
+
     return parser
 
 
@@ -96,6 +123,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "watch":
+            # The watcher derives its own range from the clock, so the
+            # bootstrap range arguments do not apply and are not parsed.
+            watcher = GhArchiveWatcher(
+                Path(arguments.output_root),
+                checkpoint_path=(
+                    Path(arguments.checkpoint)
+                    if arguments.checkpoint is not None
+                    else None
+                ),
+                base_url=arguments.base_url,
+                lag=timedelta(minutes=arguments.lag_minutes),
+                grace=timedelta(hours=arguments.grace_hours),
+            )
+            watch = watcher.poll()
+            _print_json(watch.as_dict())
+            return 0 if watch.ok else 1
+
         start, end, historical_start, historical_cutoff = _parsed_range(arguments)
         if arguments.command == "plan":
             archives = expected_archives(
