@@ -119,23 +119,23 @@ public class GithubOAuthService {
         }
     }
 
+    /**
+     * GitHub 프로필 이름은 선택 항목이라 미설정 계정은 null이다. <b>그대로 저장한다.</b>
+     * 명세({@code GET /api/v1/me})가 {@code githubLogin}과 {@code name}을 나눠 두었으므로
+     * 여기서 login으로 때우면 두 필드가 같은 값이 된다.
+     */
     private User upsert(GithubUserResponse githubUser, String email, GithubTokenResponse token) {
-        // user.name은 NOT NULL이지만 GitHub name은 프로필 미설정 시 null이다. login으로 대체한다.
-        String name = githubUser.name() != null && !githubUser.name().isBlank()
-                ? githubUser.name()
-                : githubUser.login();
-
         return userRepository.findByGithubId(githubUser.id())
                 .map(existing -> {
                     existing.syncFromGithub(
-                            githubUser.login(), name, email, githubUser.avatarUrl(),
+                            githubUser.login(), githubUser.name(), email, githubUser.avatarUrl(),
                             token.scope(), token.accessToken()
                     );
                     return existing;
                 })
                 .orElseGet(() -> userRepository.save(User.register(
-                        githubUser.id(), githubUser.login(), name, email, githubUser.avatarUrl(),
-                        token.scope(), token.accessToken()
+                        githubUser.id(), githubUser.login(), githubUser.name(), email,
+                        githubUser.avatarUrl(), token.scope(), token.accessToken()
                 )));
     }
 

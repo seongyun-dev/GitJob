@@ -40,6 +40,19 @@ public class User {
     @Column(name = "github_login", nullable = false, length = 100)
     private String githubLogin;
 
+    /**
+     * GitHub 프로필의 사람 이름. 프로필에 없으면 <b>빈 문자열</b>이다.
+     *
+     * <p>GitHub은 프로필 이름을 선택 항목으로 두어 미설정 계정에 {@code null}을 준다.
+     * 그때 {@code githubLogin}으로 때우지 않는다 — B조 API 명세서 {@code GET /api/v1/me}가
+     * {@code githubLogin}과 {@code name}을 별도 필드로 내려주므로, 핸들을 여기 넣으면
+     * 명세가 구분해 둔 두 값이 같아진다.</p>
+     *
+     * <p>{@code null}이 아니라 빈 문자열인 것은 스키마를 바꾸지 않기 위해서다. 컬럼이
+     * {@code NOT NULL}인데 그 제약은 V1 baseline이 정한 것이고, 마이그레이션을 하나 더
+     * 쌓는 것보다 빈 값으로 두는 편이 싸다. 표시용 대체는 FE가 정한다 — FE는
+     * {@code githubLogin}을 함께 받으므로 falsy 판정 한 번이면 된다.</p>
+     */
     @Column(name = "name", nullable = false, length = 100)
     private String name;
 
@@ -90,7 +103,7 @@ public class User {
     ) {
         this.githubId = githubId;
         this.githubLogin = githubLogin;
-        this.name = name;
+        this.name = blankIfMissing(name);
         this.email = email;
         this.avatarUrl = avatarUrl;
         this.grantedScopes = grantedScopes;
@@ -114,6 +127,14 @@ public class User {
      *
      * <p>{@code email}은 null로 덮어쓰지 않는다. 사용자가 로그인 후에 이메일을 비공개로
      * 바꾸면 GitHub이 null을 주는데, 그 때문에 이미 확보한 주소를 잃을 이유는 없다.</p>
+     *
+     * <p><b>{@code name}은 재로그인에서 덮어쓰지 않는다.</b> 콜백 명세는 "사용자를
+     * 생성·연결한 뒤 세션을 발급한다"까지만 규정한다. 최초 연동이 회원가입이고 그 뒤
+     * 로그인은 식별과 세션 발급이므로, 가입 때 정해진 이름을 매번 GitHub 값으로
+     * 되돌리지 않는다.</p>
+     *
+     * <p>예외는 비어 있을 때뿐이다. GitHub 프로필에 이름이 없는 상태로 가입한 뒤
+     * 나중에 채운 경우인데, 이건 있던 값을 바꾸는 게 아니라 빈칸을 메우는 것이다.</p>
      */
     public void syncFromGithub(
             String githubLogin,
@@ -124,12 +145,23 @@ public class User {
             String accessToken
     ) {
         this.githubLogin = githubLogin;
-        this.name = name;
+        if (this.name.isBlank()) {
+            this.name = blankIfMissing(name);
+        }
         if (email != null && !email.isBlank()) {
             this.email = email;
         }
         this.avatarUrl = avatarUrl;
         this.grantedScopes = grantedScopes;
         this.accessToken = accessToken;
+    }
+
+    /**
+     * 컬럼이 {@code NOT NULL}이라 null을 넣을 수 없다. GitHub이 프로필 이름을 주지
+     * 않았다는 사실을 빈 문자열로 표현한다. {@code githubLogin}으로 때우지 않는 것이
+     * 핵심이다 — 그러면 명세가 나눈 두 필드가 같은 값이 된다.
+     */
+    private static String blankIfMissing(String name) {
+        return name == null || name.isBlank() ? "" : name;
     }
 }

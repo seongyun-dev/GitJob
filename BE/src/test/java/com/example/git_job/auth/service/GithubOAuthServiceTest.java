@@ -27,6 +27,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -228,16 +229,58 @@ class GithubOAuthServiceTest {
         }
 
         @Test
-        @DisplayName("GitHub name이 없으면 login으로 채운다 — user.name은 NOT NULL이다")
-        void fallsBackToLoginWhenNameMissing() {
-            givenGithubUser("read:user,repo", null, "octocat@github.com");
-            User existing = User.register(GITHUB_ID, "octocat", "Old",
+        @DisplayName("재로그인은 가입 때 정해진 이름을 덮어쓰지 않는다")
+        void keepsRegisteredNameOnRelogin() {
+            givenGithubUser("read:user,repo", "Renamed On Github", "octocat@github.com");
+            User existing = User.register(GITHUB_ID, "octocat", "The Octocat",
                     null, null, "read:user,repo", "old-token");
             when(userRepository.findByGithubId(GITHUB_ID)).thenReturn(Optional.of(existing));
 
             service.completeLogin("code", STATE, STATE);
 
-            assertThat(existing.getName()).isEqualTo("octocat");
+            assertThat(existing.getName()).isEqualTo("The Octocat");
+            assertThat(existing.getGithubLogin()).isEqualTo("octocat");
+        }
+
+        @Test
+        @DisplayName("연결 상태(token·scope)는 재로그인마다 갱신한다")
+        void refreshesConnectionStateOnRelogin() {
+            givenGithubUser("read:user,repo", "The Octocat", "octocat@github.com");
+            User existing = User.register(GITHUB_ID, "octocat", "The Octocat",
+                    null, null, "read:user", "old-token");
+            when(userRepository.findByGithubId(GITHUB_ID)).thenReturn(Optional.of(existing));
+
+            service.completeLogin("code", STATE, STATE);
+
+            assertThat(existing.getAccessToken()).isEqualTo(TOKEN);
+            assertThat(existing.getGrantedScopes()).isEqualTo("read:user,repo");
+        }
+
+        @Test
+        @DisplayName("신규 등록도 GitHub name이 없으면 빈 문자열로 둔다 — login으로 때우지 않는다")
+        void registersWithoutNameWhenGithubNameMissing() {
+            givenGithubUser("read:user,repo", null, "octocat@github.com");
+            when(userRepository.findByGithubId(GITHUB_ID)).thenReturn(Optional.empty());
+
+            service.completeLogin("code", STATE, STATE);
+
+            ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+            verify(userRepository).save(captor.capture());
+            assertThat(captor.getValue().getName()).isEmpty();
+            assertThat(captor.getValue().getGithubLogin()).isEqualTo("octocat");
+        }
+
+        @Test
+        @DisplayName("이름이 비어 있던 계정은 나중에 채운 프로필 이름으로 메운다 — 덮어쓰기가 아니라 빈칸 채우기다")
+        void fillsEmptyNameLater() {
+            givenGithubUser("read:user,repo", "The Octocat", "octocat@github.com");
+            User existing = User.register(GITHUB_ID, "octocat", null,
+                    null, null, "read:user,repo", "old-token");
+            when(userRepository.findByGithubId(GITHUB_ID)).thenReturn(Optional.of(existing));
+
+            service.completeLogin("code", STATE, STATE);
+
+            assertThat(existing.getName()).isEqualTo("The Octocat");
         }
     }
 
