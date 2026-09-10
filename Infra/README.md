@@ -55,7 +55,7 @@ endpoint, 연결 환경변수, 서비스 의존관계는 미리 정의해 두었
 | `data` | `hdfs-datanode2`, `hdfs-datanode3` | 기존 HDFS에 추가하는 논리 DataNode | Compose 정의 및 독립 volume 준비, 운영 기동·분산 저장 검증 전 |
 | `data` | `spark-master`, `spark-worker` | 배치·스트리밍 처리 | 공식 Spark 3.5.3 image/foreground command와 1·2·4 worker Parquet smoke 검증 완료 |
 | `ci` | `jenkins`, `jenkins-agent` | CI/CD controller와 제한 agent | controller 발급 secret bootstrap 및 credential 연결 대기 |
-| `observability` | `kafka-ui`, `redis-insight` | WSL 디버깅/운영 보조 | 선택 프로파일, UI 실기동 대기 |
+| `observability` | `kafka-ui`, `redis-insight`; monitoring overlay의 `prometheus`, `grafana`, `node-exporter`, `kafka-exporter` | WSL 디버깅/운영 보조 및 시계열 모니터링 | 선택 프로파일, overlay는 신규 서비스만 targeted 기동 |
 
 전체 Compose에는 모든 서비스가 들어 있지만, 기본 실행은 자원과 소스 상태를
 고려해 `core`만 활성화한다.
@@ -188,6 +188,8 @@ Compose는 여러 `-f` 파일을 순서대로 병합한다. 공통 파일을 먼
 | Spark master UI | `127.0.0.1:8083` | `spark-master:8080` | WSL loopback |
 | Kafka Connect REST | `127.0.0.1:8084` | `kafka-connect:8083` | WSL loopback; 8083은 Spark가 사용 |
 | Redis Insight | `127.0.0.1:8001` | `redis-insight:5540` | WSL loopback |
+| Prometheus | `127.0.0.1:9090` (overlay) | `prometheus:9090` | 관리자망 only; overlay targeted 기동 |
+| Grafana | `127.0.0.1:3000` (overlay) | `grafana:3000` | 관리자망 only; overlay targeted 기동 |
 
 컨테이너 간 연결에 `localhost`를 쓰지 않는다. Backend는 `postgres`, `redis`,
 `kafka:9092`를 사용한다. WSL host 도구만 `localhost:9094`를 사용한다.
@@ -306,6 +308,8 @@ ENV_FILE=.env.service COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml PROFI
 | J15E102 | Jenkins | http://100.71.215.74:8081 |
 | J15E102 | Kafka UI | http://100.71.215.74:8082 |
 | J15E102 | Redis Insight | http://100.71.215.74:8001 |
+| J15E102 | Grafana | http://100.71.215.74:3000 (monitoring overlay 기동 후) |
+| J15E102 | Prometheus | http://100.71.215.74:9090 (monitoring overlay 기동 후) |
 | J15E102A | HDFS NameNode | http://100.70.66.38:9870 |
 | J15E102A | HDFS DataNode | http://100.70.66.38:9864 |
 | J15E102A | Spark master | http://100.70.66.38:8083 |

@@ -1,0 +1,108 @@
+# Monitoring overlay for the existing `observability` profile.
+#
+# This file is intentionally separate from the service/data Compose files.  It
+# lets an operator start only the monitoring containers with a targeted `up`;
+# the existing Kafka, HDFS, Spark, and monthly artifact containers are never
+# recreated by this overlay.  Run Prometheus/Grafana/Kafka exporter only on
+# the service host.  Run node-exporter on both hosts.
+
+services:
+  node-exporter:
+    image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.8.2}
+    profiles: [observability]
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)(|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+    ports:
+      - "${NODE_EXPORTER_BIND_ADDRESS:-127.0.0.1}:${NODE_EXPORTER_PORT:-9100}:9100"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  kafka-exporter:
+    image: ${KAFKA_EXPORTER_IMAGE:-danielqsj/kafka-exporter:v1.8.0}
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --kafka.server=${KAFKA_EXPORTER_BROKER:-kafka:9092}
+      - --web.listen-address=:9308
+    expose:
+      - "9308"
+    # The exporter retries the broker while Kafka is starting.  Keeping this
+    # dependency-free is deliberate: a targeted monitoring start must not
+    # pull the core profile (or recreate Kafka).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.54.1}
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    ports:
+      - "${SERVICE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_EC2_PORT:-9090}:9090"
+    expose:
+      - "9090"
+    volumes:
+      - ./Infra/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./Infra/monitoring/prometheus/targets:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.2.0}
+    profiles: [observability]
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # The service-host launch preflight must verify GRAFANA_ADMIN_PASSWORD in
+      # the mode-600 env/secret file. An empty interpolation keeps data-host
+      # config validation (which never targets Grafana) independent of that
+      # service-only secret; it must never be used to start Grafana.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    ports:
+      - "${SERVICE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_EC2_PORT:-3000}:3000"
+    expose:
+      - "3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./Infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./Infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # These are new monitoring-only volumes.  Existing service/data volumes are
+  # not referenced and must never be removed as part of monitoring rollout.
+  prometheus-data:
+  grafana-data:

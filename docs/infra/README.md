@@ -17,6 +17,7 @@
 | [J15E102 서비스 서버 문서](2026-08-31-ec2-service-node-runbook.md) | 서비스·core·Jenkins EC2 접속·기동·보안 |
 | [J15E102A 데이터 서버 문서](2026-08-31-ec2-data-node-runbook.md) | Hadoop/HDFS·Spark·Collector/Worker EC2 접속·기동·점검 |
 | [HDFS 3-DataNode 운영 검증](2026-09-09-hdfs-three-datanode-production-validation.md) | S15P21E102-175 merge 후 J15E102A 논리 3-DataNode 적용 및 무결성 검증 |
+| [GitJob System Monitoring MVP](2026-09-10-gitjob-system-monitoring.md) | S15P21E102-205 Prometheus/Grafana 운영 지표 overlay·dashboard·검증 절차 |
 | [2대 EC2 HA 설계](2026-08-27-ec2-high-availability-design.md) | ALB, 무상태 app node, 공유 상태 저장소, failover |
 | [노트북 로컬 LLM GPU 런북](local-llm-runbook.md) | WSL2·Docker Desktop·NVIDIA GPU 기반 Ollama 실행·연동 준비 |
 | [실제 Infra 실행 안내](../../Infra/README.md) | 명령어와 운영 스크립트 사용법 |
@@ -42,7 +43,7 @@ Kafka → Collector·Worker → HDFS/Parquet·Spark
 | `app` | Backend, Frontend, Nginx | 사용자 서비스 |
 | `data` | Collector, Worker, HDFS NameNode/DataNode, Spark master/worker | 수집·분석·대용량 처리 |
 | `ci` | Jenkins controller/agent | 빌드·테스트·배포 |
-| `observability` | Kafka UI, Redis Insight | 내부 운영 확인 |
+| `observability` | Kafka UI, Redis Insight, monitoring overlay의 Prometheus/Grafana/node-exporter/Kafka exporter | 내부 운영 확인 및 시계열 지표 |
 
 환경별 override는 목적이 다르다.
 
@@ -58,6 +59,9 @@ Kafka → Collector·Worker → HDFS/Parquet·Spark
 않으므로 데이터 서버는 서비스 서버의 private PostgreSQL·Redis·Kafka endpoint를
 사용한다. 향후 HA로 전환할 때는 양쪽에서 PostgreSQL·Redis·Kafka를 동시에 실행하지
 않고 RDS Multi-AZ, ElastiCache failover, MSK/동등한 외부 HA endpoint를 사용한다.
+
+Prometheus/Grafana 운영 모니터링 MVP의 overlay와 안전한 targeted 기동·검증 절차는
+[GitJob System Monitoring MVP](2026-09-10-gitjob-system-monitoring.md)에 기록한다.
 
 ## 4. 로컬 실행
 

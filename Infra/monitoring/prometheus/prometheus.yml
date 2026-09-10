@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# The service host runs this Prometheus instance. Node-exporter endpoints are
+# registered through file-based discovery so adding a server only changes the
+# target registry and labels, not dashboard queries. Keep both endpoints
+# private to the administrator network; do not expose node-exporter publicly.
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: monitoring
+
+  - job_name: node-exporter
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/node-exporter.yml
+        refresh_interval: 30s
+
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: core
