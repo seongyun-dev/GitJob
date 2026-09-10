@@ -93,6 +93,23 @@ gitjob:
     consumer:
       repository-analysis-results:
         group-id: ${ANALYSIS_RESULTS_CONSUMER_GROUP:gitjob-analysis-results}
+  monitoring:
+    prometheus:
+      # 비워 두면 Prometheus를 호출하지 않고 화면에 미연결 상태를 내린다. 관리자망
+      # 주소이므로 기본값을 넣지 않는다 — 코드에 박힌 사설 IP는 환경이 바뀌면 조용히
+      # 틀린 곳을 가리킨다.
+      base-url: ${PROMETHEUS_BASE_URL:}
+      # 관리자망이 끊겼을 때 화면이 무한정 기다리지 않게 한다.
+      timeout: ${PROMETHEUS_TIMEOUT:3s}
+      # Infra/monitoring/prometheus/prometheus.yml의 global.scrape_interval과 같아야 한다.
+      scrape-interval: ${PROMETHEUS_SCRAPE_INTERVAL:15s}
+      # target 라벨의 cluster 값. Infra/monitoring/prometheus/targets/node-exporter.yml이 정한다.
+      cluster: ${PROMETHEUS_CLUSTER:gitjob}
+    links:
+      # 화면 Quick Access가 여는 주소. FE 번들에 넣지 않고 응답으로 전달한다.
+      # 미설정이면 응답에서 null이 되어 화면은 링크를 그리지 않는다.
+      grafana-url: ${GRAFANA_ADMIN_URL:}
+      prometheus-url: ${PROMETHEUS_ADMIN_URL:}
 
 jwt:
   secret: ${JWT_SECRET:gitjob-local-jwt-secret-key-change-me}
