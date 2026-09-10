@@ -1,96 +1,80 @@
+import { Link } from 'react-router'
+import { RecommendationChain } from '@/features/matching/components/RecommendationChain'
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
-import { StatShell, TableScaffold } from '@/shared/ui/Scaffold'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * What-if가 비교하는 축. Final `#whatif`의 `현재 → 확보 시` 구조다.
- * 증감값은 C조 계산 결과라 FE가 만들지 않는다(PROJECT_GUIDE §2).
- */
-const WHATIF_COLUMNS = ['공고', '지금 부족한 기술', '이 기술 확보 시', '변화'] as const
-const WHATIF_TEMPLATE = '1.6fr 1.2fr 1.2fr 100px'
-
-/**
- * Next Skill · What-if 초안 · 티켓 S15P21E102-192.
+ * 다음 학습 기술 · 티켓 S15P21E102-204
+ * (확정 디자인 `Final v2`의 `10 Next Skill Overview`).
  *
- * 시각 기준: Final `section#nextskill`(hero → `463 370 370` 3열 → 각주)과
- * `section#whatif`(NEWLY MATCHED). 두 섹션을 한 화면에 세로로 쌓았다.
+ * v2 구조: hero(+비교 집합 표시) → `931.8 / 326.2` split(1순위 근거 체인 | 후순위) → 각주.
+ * 1순위는 가로 5단으로 펼쳐 무엇을 근거로 추천했는지 보여준다(`RecommendationChain`).
  *
- * 3열 중 첫 칸이 넓은 것은 Final의 `#1 RECOMMENDED` 강조를 그대로 옮긴 것이다.
- * 순위 자리는 세워 두고 값은 비운다. 추천 조회 API가 develop에 없고 추천·What-if
- * 계산은 C조 몫이라 FE가 재현하지 않는다.
- *
- * What-if의 의미는 "이 기술 Evidence가 특정 조건이 되었다고 가정할 때 매칭되는
- * 공고가 얼마나 늘어나는가"다. 취업 확률 증가가 아니다. Final의 증가량 숫자는
- * demo 값이라 옮기지 않는다.
+ * **정렬 기준은 공고 수 증가분 하나다.** v2 카피가 "추천 점수는 만들지 않습니다"라고
+ * 못 박는다. 순위·증감·근거 문장은 전부 C조 계산 결과이고 조회 API가 develop에 없다.
+ * 화면에서 만들어내지 않는다.
  */
 export function RecommendationPage() {
   return (
     <div>
-      <PageHero
-        eyebrow="NEXT SKILL · TOP 3"
-        title="다음에 무엇을 배우면 가장 많이 달라질까요?"
-        description="부족한 기술 중 어떤 것을 채우면 비교 대상 공고가 늘어나는지 보여줍니다. 순위와 근거는 서버가 계산합니다."
-      />
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <PageHero
+          eyebrow="RECOMMENDATION · NEXT SKILL"
+          title="다음에 무엇을 배우면 가장 많이 달라질까요?"
+          description="필수 기술을 모두 충족하는 공고 수가 얼마나 늘어나는지로만 정렬합니다. 추천 점수는 만들지 않습니다."
+        />
+        <Link
+          to="/skill-gap"
+          className="shrink-0 rounded-xl border border-brand-line bg-white px-5 py-3 text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+        >
+          ← 부족한 기술
+        </Link>
+      </div>
 
-      {/*
-        순위 3칸. Audit에서 "같은 카드 3개가 반복된다"는 지적을 받은 자리다.
-        `gj-trio`가 이미 첫 칸을 넓게 잡으므로(1.25fr 1fr 1fr) 폭은 차이가 나 있었지만,
-        내부가 완전히 같은 모양이라 위계가 읽히지 않았다.
-
-        그래서 1순위에만 판단 근거의 축(요구 공고 수 · 현재 Level · 목표 Level)을 껍데기로
-        세우고, 2·3순위는 한 줄 상태로 둔다. Final의 `#1 RECOMMENDED` 강조와 같은 의도다.
-        기술명과 수치는 어느 칸에도 넣지 않는다.
-      */}
-      <div className="gj-trio mt-7">
+      {/* v2의 `931.8 / 326.2`. 사이드 패널이 후순위 후보 자리다. */}
+      <div className="mt-7 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_326px]">
         <DataRegion
           eyebrow="#1 RECOMMENDED"
           title="1순위 후보"
           hint="가장 많은 공고가 요구하면서 현재 근거가 부족한 기술입니다."
         >
-          <div className="grid gap-2.5">
-            <StatShell label="요구 공고" note="계산 후 표시" />
-            <StatShell label="현재 Personal Level" note="분석 후 표시" />
-            <StatShell label="목표 Level" note="계산 후 표시" />
-          </div>
+          <RecommendationChain />
           <div className="mt-3">
             <StateCard
               kind="PREPARING"
-              title="추천 결과 준비 중"
-              description="학습 후보와 점수 분해, 요구 근거를 돌려주는 조회 API가 준비되면 이 자리에 표시합니다."
+              title="추천 결과를 아직 불러올 수 없어요"
+              description="학습 후보와 공고 수 변화, 추천 근거를 돌려주는 조회 API가 준비되면 위 다섯 단계에 채워집니다."
             />
           </div>
         </DataRegion>
-        <DataRegion eyebrow="#2" title="2순위 후보">
-          <StateCard
-            kind="PREPARING"
-            title="후순위 후보 자리"
-            description="1순위와 같은 기준으로 함께 제시됩니다."
-          />
-        </DataRegion>
-        <DataRegion eyebrow="#3" title="3순위 후보">
-          <StateCard
-            kind="PREPARING"
-            title="후순위 후보 자리"
-            description="반대 신호나 데이터 공백이 있으면 그 사실도 함께 표시합니다."
-          />
-        </DataRegion>
-      </div>
 
-      <div className="mt-4">
-        <DataRegion
-          eyebrow="NEWLY MATCHED"
-          title="What-if · 이 기술을 채우면 무엇이 달라질까요"
-          hint="특정 기술의 Evidence가 올라갔다고 가정할 때 새로 매칭되는 공고를 보여줍니다."
-        >
-          <TableScaffold columns={WHATIF_COLUMNS} template={WHATIF_TEMPLATE}>
+        <div className="grid gap-4">
+          <DataRegion
+            eyebrow="OTHERS"
+            title="후순위 후보"
+            hint="1순위와 같은 기준으로 함께 제시됩니다."
+          >
             <StateCard
               kind="PREPARING"
-              title="What-if 결과 준비 중"
-              description="서버가 계산해 돌려주면 그대로 표시합니다. 화면에서 증가량을 만들어내지 않습니다."
+              title="후순위 후보 자리"
+              description="반대 신호나 데이터 공백이 있으면 그 사실도 함께 표시합니다."
             />
-          </TableScaffold>
-        </DataRegion>
+          </DataRegion>
+
+          <DataRegion
+            eyebrow="WHAT-IF"
+            title="가정해 보면"
+            hint="특정 기술 Evidence가 올라갔다고 가정할 때 무엇이 달라지는지 봅니다."
+          >
+            <Link
+              to="/what-if"
+              className="block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-4 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
+            >
+              What-if 자세히 보기
+            </Link>
+          </DataRegion>
+        </div>
       </div>
 
       <PageFootnote>

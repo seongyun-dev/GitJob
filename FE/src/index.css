@@ -72,20 +72,17 @@ body,
   /*
    * 로그인 이후 화면의 셸 컨테이너.
    *
-   * Final은 1440 기준으로 본문 1328px(좌우 여백 56px)이다. 그 구간은 그대로 두고
-   * 그 위에서만 단계적으로 넓힌다. 1328px에 고정하면 1920px 모니터에서 좌우 296px이
-   * 비고 콘텐츠가 가운데 작게 떠 보인다(2026-09-10 리뷰).
-   *
-   *   ~1535px      1328px  ← Final 1440 기준 유지
-   *   1536~1919px  1440px
-   *   1920px~      1600px
+   * 치수는 확정 디자인 `GitJob Desktop UI Final v2`의 computed style을 그대로 읽었다.
+   *   max-width 1520px · padding 40px 48px 96px
+   * 1440 뷰포트에서 본문 1344px(= 1440 − 48×2)이고, 그 위에서는 1520px에서 멈춘다.
+   * v2의 모든 로그인 이후 화면이 이 한 값을 공유하므로 화면별 breakpoint를 두지 않는다.
    *
    * `transform: scale()`을 쓰지 않는다. 글자와 테두리가 같이 흐려진다.
    */
   .gj-shell {
     width: 100%;
     margin-inline: auto;
-    max-width: 1328px;
+    max-width: 1520px;
     padding: 1.75rem 1.25rem 3.5rem;
   }
   @media (width >= 640px) {
@@ -95,20 +92,7 @@ body,
   }
   @media (width >= 1024px) {
     .gj-shell {
-      padding: 2.5rem 3rem 5.5rem;
-    }
-  }
-  @media (width >= 1536px) {
-    .gj-shell {
-      max-width: 1440px;
-      padding-top: 3rem;
-    }
-  }
-  @media (width >= 1920px) {
-    .gj-shell {
-      max-width: 1600px;
-      padding-top: 3.5rem;
-      padding-bottom: 6rem;
+      padding: 2.5rem 3rem 6rem;
     }
   }
 
@@ -199,9 +183,9 @@ body,
   /*
    * 본문 + 우측 패널 2열.
    *
-   * Final `section#repos`의 846:372(68:31) 비율이 기준이다. 폭이 커질 때 패널을
-   * 372px에 고정하면 왼쪽만 늘어나 비율이 71:28까지 밀린다. 그래서 패널도 같이
-   * 키워 비율을 유지한다. 1024px 미만에서는 한 열로 접힌다.
+   * Final v2는 사이드 패널을 372px로 **고정**한다(repos·analysis·evidence·evdetail·
+   * mypage 전부 동일). 본문만 늘어나 1440에서 958 / 1920에서 1038이 된다.
+   * 패널을 같이 키우던 이전 방식은 v2와 어긋나므로 되돌린다. 1024px 미만에서는 한 열.
    */
   .gj-split {
     display: grid;
@@ -212,17 +196,6 @@ body,
     .gj-split {
       grid-template-columns: minmax(0, 1fr) 372px;
       gap: 14px;
-    }
-  }
-  @media (width >= 1536px) {
-    .gj-split {
-      grid-template-columns: minmax(0, 1fr) 416px;
-    }
-  }
-  @media (width >= 1920px) {
-    .gj-split {
-      grid-template-columns: minmax(0, 1fr) 464px;
-      gap: 16px;
     }
   }
 

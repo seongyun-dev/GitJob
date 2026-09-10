@@ -40,6 +40,12 @@ export type StateKind =
   | 'INSUFFICIENT_DATA'
   /** 해당 출처에 데이터가 없다. 오류가 아니다 */
   | 'NO_DATA'
+  /**
+   * 그 출처가 애초에 제공하지 않는 지표다. 데이터가 없는 것과 다르다.
+   * 확정 디자인 `Final v2`의 `15 System States`가 정의한다
+   * (예: GitHub Innovation Graph는 언어 지표만 제공).
+   */
+  | 'NOT_SUPPORTED'
 
 type Tone = 'neutral' | 'caution' | 'danger'
 
@@ -52,6 +58,7 @@ const TONES: Readonly<Record<StateKind, Tone>> = {
   PREPARING: 'caution',
   INSUFFICIENT_DATA: 'neutral',
   NO_DATA: 'neutral',
+  NOT_SUPPORTED: 'neutral',
 }
 
 const TONE_CLASSES: Readonly<Record<Tone, string>> = {

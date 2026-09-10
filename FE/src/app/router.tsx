@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router'
 import { AppLayout } from '@/app/layouts/AppLayout'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
+import { SystemStatesPage } from '@/app/pages/SystemStatesPage'
 import { TechnologyCandidatePage } from '@/features/admin/pages/TechnologyCandidatePage'
 import { AnalysisProgressPage } from '@/features/analysis/pages/AnalysisProgressPage'
 import { RepositorySelectionPage } from '@/features/analysis/pages/RepositorySelectionPage'
@@ -9,6 +10,9 @@ import { GithubConnectPage } from '@/features/auth/pages/GithubConnectPage'
 import { EvidenceDetailPage } from '@/features/evidence/pages/EvidenceDetailPage'
 import { EvidenceOverviewPage } from '@/features/evidence/pages/EvidenceOverviewPage'
 import { LandingPage } from '@/features/landing/pages/LandingPage'
+import { SkillGapPage } from '@/features/matching/pages/SkillGapPage'
+import { TargetRolePage } from '@/features/matching/pages/TargetRolePage'
+import { WhatIfPage } from '@/features/matching/pages/WhatIfPage'
 import { JobMatchPage } from '@/features/matching/pages/JobMatchPage'
 import { RecommendationPage } from '@/features/matching/pages/RecommendationPage'
 import { MyPage } from '@/features/mypage/pages/MyPage'
@@ -62,12 +66,21 @@ export const router = createBrowserRouter([
       // 초안 · 세부 기능은 티켓 137·138
       { path: 'evidence', element: <EvidenceOverviewPage /> },
       { path: 'evidence/:techId', element: <EvidenceDetailPage /> },
+      // 티켓 204 · Final v2 16. Evidence → 직무 선택 → 공고 매칭 순서다.
+      { path: 'roles', element: <TargetRolePage /> },
       { path: 'jobs', element: <JobMatchPage /> },
+      // 티켓 204 · Final v2 17. 공고 매칭 다음, 추천 이전에 온다.
+      { path: 'skill-gap', element: <SkillGapPage /> },
       { path: 'recommendations', element: <RecommendationPage /> },
+      // 티켓 204 · Final v2 03. 추천에 접어 두지 않고 별도 화면으로 둔다.
+      { path: 'what-if', element: <WhatIfPage /> },
       { path: 'technologies/:techId', element: <TechnologyDetailPage /> },
       { path: 'trends', element: <TrendPage /> },
       { path: 'trends/:techId', element: <TrendDetailPage /> },
       { path: 'mypage', element: <MyPage /> },
+
+      // 티켓 204 · Final v2 15. 팀 내부 표기 레퍼런스라 헤더 네비게이션에는 넣지 않는다.
+      { path: 'system-states', element: <SystemStatesPage /> },
 
       // 관리자 전용. 위 경로들과 달리 사용자 여정의 일부가 아니라 운영 화면이다.
       // 라우트를 숨기지 않는 이유는 숨겨도 보호가 되지 않기 때문이다. 접근

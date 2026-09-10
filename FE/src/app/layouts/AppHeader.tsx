@@ -31,23 +31,30 @@ const NAV: ReadonlyArray<{ to: string; label: string }> = [
 
 export function AppHeader() {
   return (
-    <header className="sticky top-0 z-10 border-b border-[rgba(224,231,241,0.9)] bg-white/[0.62] backdrop-blur-[14px]">
+    <header className="sticky top-0 z-10 border-b border-[rgba(224,231,241,0.9)] bg-white/[0.62] backdrop-blur-[20px]">
       {/* 71px + bottom border 1px = Final의 header 총 높이 72px. */}
-      <div className="mx-auto flex h-[71px] w-full max-w-[1440px] items-center gap-8 px-6 lg:px-12">
+      <div className="mx-auto flex h-[71px] w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
         <Link to="/" className="flex shrink-0 items-center" aria-label="GitJob 홈으로">
           {/* Final v2 앱 헤더는 로고 26px. */}
           <BrandLogo className="h-[26px]" />
         </Link>
 
+        {/*
+          티켓 204. Final v2는 네비게이션을 헤더 가운데 둔다. 오른쪽 사용자 영역은
+          값을 주는 API가 없어 비어 있으므로 `justify-between`만으로는 가운데 정렬이
+          되지 않는다. nav가 남는 폭을 차지하고 그 안에서 가운데 정렬한다.
+        */}
         <nav aria-label="주요 화면" className="min-w-0 flex-1">
-          <ul className="flex items-center gap-5 overflow-x-auto lg:gap-8">
+          <ul className="flex items-center justify-center gap-5 overflow-x-auto lg:gap-8">
             {NAV.map((item) => (
               <li key={item.to} className="shrink-0">
                 <NavLink
                   to={item.to}
                   className={({ isActive }) =>
-                    `text-[14px] font-medium whitespace-nowrap transition-colors ${
-                      isActive ? 'text-brand-600' : 'text-brand-faint hover:text-brand-ink'
+                    `text-[14px] whitespace-nowrap transition-colors ${
+                      isActive
+                        ? 'font-[750] text-brand-ink-soft'
+                        : 'font-medium text-brand-faint hover:text-brand-ink'
                     }`
                   }
                 >
@@ -57,6 +64,13 @@ export function AppHeader() {
             ))}
           </ul>
         </nav>
+
+        {/*
+          티켓 204. Final v2 헤더 오른쪽의 `마지막 분석 …` + 아바타 자리. 값을 주는
+          API가 없어(`GET /analyses/{id}`·`GET /me` 미구현) 아무것도 렌더하지 않는다.
+          자리만 비워 두어 nav 가운데 정렬을 유지한다.
+        */}
+        <div className="hidden shrink-0 lg:block lg:w-[132px]" aria-hidden />
       </div>
     </header>
   )

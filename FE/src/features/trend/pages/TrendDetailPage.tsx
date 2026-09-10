@@ -1,83 +1,94 @@
 import { Link, useParams } from 'react-router'
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
-import { SourceLegend } from '@/shared/ui/Scaffold'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * Trend Detail 초안 · 티켓 S15P21E102-192.
+ * 트렌드 상세 · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `13 Trend Detail`).
  *
- * 시각 기준: Final `section#trenddetail` — hero → `609 609` 2등분(출처별 카드) → 각주.
- * Final이 출처를 좌우로 나란히 둔 이유가 "Y축·단위·기간이 각각 독립"이라는 규칙이라
- * 그 배치를 그대로 가져왔다.
+ * v2 구조: 개요 복귀 링크 → hero → `737.8 / 590.2` split(시계열 | 보조) → 각주.
  *
- * 기간별 추이를 표시하지 않는다. 조회 API가 없고 기간 집계는 FE가 계산하지 않는다.
+ * v2는 `POSTING COUNT` / `POSTING SHARE` 지표 토글과 출처 탭을 둔다. 전환할 데이터가
+ * 없어 **토글을 만들지 않는다.** 누를 수 있는데 아무 일도 없는 컨트롤을 만들지 않기
+ * 위해, 지표 축 이름만 정적으로 밝히고 값 자리는 비운다.
+ *
+ * 세 출처의 Y축 · 단위 · 기간은 각각 독립이다. 한 화면에 겹쳐 그리거나 합산하지 않는다.
  */
+const AXES = [
+  { label: '공고 건수', hint: '해당 기간에 이 기술을 언급한 공고 수' },
+  { label: '언급 비중', hint: '같은 기간 전체 공고 대비 비율' },
+] as const
+
 export function TrendDetailPage() {
   const { techId } = useParams()
 
   return (
     <div>
-      <PageHero
-        eyebrow="TREND DETAIL"
-        title={techId ?? '기술 트렌드 상세'}
-        description="세 출처의 Y축과 단위, 기간은 각각 독립입니다. 하나의 지표로 합치지 않고 출처별로 나란히 보여줍니다."
-      />
+      <Link
+        to="/trends"
+        className="inline-block text-[13px] font-semibold text-brand-muted hover:text-brand-ink"
+      >
+        ← 트렌드 개요
+      </Link>
 
-      {/*
-        출처 범례. 이 화면도 출처를 합산하지 않는다는 원칙 위에 있다.
-        탭이 아니라 읽기 전용이다. 전환할 데이터가 아직 없다.
-      */}
-      <div className="mt-7">
-        <SourceLegend sources={['채용공고', 'GitHub', 'Stack Overflow']} />
+      <div className="mt-3">
+        <PageHero
+          eyebrow="TREND DETAIL"
+          title="이 기술의 출처별 추이"
+          description="세 출처의 Y축 · 단위 · 기간은 각각 독립적입니다. 서로 비교하거나 합산하지 마세요."
+        />
       </div>
 
-      <div className="gj-duo mt-4">
+      {/* v2의 `737.8 / 590.2`. 왼쪽이 시계열, 오른쪽이 출처별 상태다. */}
+      <div className="mt-7 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,737fr)_minmax(0,590fr)]">
         <DataRegion
-          eyebrow="JOB"
-          title="채용공고 기준"
-          hint="공고 건수와 공고 비중이 이 자리에 들어갑니다."
+          eyebrow="JOB · 채용공고"
+          title="기간별 추이"
+          hint="공고 건수와 언급 비중을 같은 기간 축에서 봅니다."
         >
-          <StateCard
-            kind="PREPARING"
-            title="공고 지표 준비 중"
-            description="이 출처의 지표는 곧 제공됩니다. 다른 출처를 먼저 확인할 수 있습니다."
-          />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {AXES.map((axis) => (
+              <div
+                key={axis.label}
+                className="rounded-[14px] border border-brand-line bg-white/70 px-4 py-3.5"
+              >
+                <p className="text-[12px] text-brand-faint">{axis.label}</p>
+                <p className="mt-1.5 text-[15px] font-[750] text-brand-faint">집계 후 표시</p>
+                <p className="mt-1 text-[11.5px] leading-[1.5] text-brand-faint">{axis.hint}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3">
+            <StateCard
+              kind="PREPARING"
+              title="추이를 아직 불러올 수 없어요"
+              description="기간별 집계가 준비되면 이 영역에 표시합니다. 화면에서 추세를 만들어내지 않습니다."
+            />
+          </div>
         </DataRegion>
 
         <DataRegion
-          eyebrow="GITHUB"
-          title="저장소 활동 기준"
-          hint="저장소 활동 지표가 이 자리에 들어갑니다."
+          eyebrow="OTHER SOURCES"
+          title="다른 출처의 상태"
+          hint="출처마다 지원 범위와 기간이 달라 따로 표시합니다."
         >
           <StateCard
             kind="NO_DATA"
-            title="기간 내 데이터가 없어요"
-            description="수집된 항목이 없는 것은 오류가 아닙니다. 추정값으로 채우지 않습니다."
+            title="이 출처에는 아직 데이터가 없어요"
+            description="수집된 항목이 없는 것은 오류가 아닙니다. 지원하지 않는 출처는 그 사실을 그대로 표시합니다."
           />
         </DataRegion>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Link
-          to="/trends"
-          className="rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink shadow-[0_10px_28px_rgba(25,47,81,0.07)] hover:border-brand-line-active"
-        >
-          트렌드 목록
-        </Link>
-        {techId !== undefined && (
-          <Link
-            to={`/technologies/${techId}`}
-            className="rounded-xl px-4 py-2.5 text-[13px] text-brand-muted hover:text-brand-ink"
-          >
-            학습 안내 보기
-          </Link>
-        )}
-      </div>
-
       <PageFootnote>
-        종합 Trend 점수는 제공하지 않습니다. 출처마다 READY · PREPARING · NO_DATA 상태가
-        따로 표시됩니다.
+        종합 Trend 점수는 제공하지 않습니다. 출처마다 준비 상태가 다르며 데이터가 없는 것은
+        오류가 아닙니다.
+        {techId !== undefined && (
+          <>
+            {' · '}
+            기술 <span className="font-evidence text-brand-muted">{techId}</span>
+          </>
+        )}
       </PageFootnote>
     </div>
   )
