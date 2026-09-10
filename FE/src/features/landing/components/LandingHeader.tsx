@@ -1,5 +1,6 @@
 import { githubLoginUrl } from '@/features/auth/api/authUrls'
 import { NAV_LABELS } from '@/features/landing/landingPreviewData'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
  * Landing 전용 헤더. 유리 배경 위에 얹히는 흰 글씨 조합이라
@@ -17,12 +18,8 @@ import { NAV_LABELS } from '@/features/landing/landingPreviewData'
 export function LandingHeader() {
   return (
     <header className="lp-rise relative z-[5] flex h-[72px] items-center justify-between lg:h-[88px]">
-      <div className="flex items-center gap-3">
-        <div className="grid h-[34px] w-[34px] place-items-center rounded-[11px] bg-[linear-gradient(145deg,#1B2B4A,#4F82FF)] text-[15px] font-extrabold tracking-[-0.03em] text-white shadow-[0_10px_22px_rgba(26,53,110,0.22)]">
-          G
-        </div>
-        <span className="text-[21px] font-extrabold tracking-[-0.035em] text-white">GitJob</span>
-      </div>
+      {/* Final v2 랜딩 헤더는 로고 36px. 헤더가 88px에서 72px로 접힐 때 함께 줄인다. */}
+      <BrandLogo className="h-[30px] lg:h-9" />
 
       <nav className="hidden items-center gap-[38px] text-sm font-medium text-white/85 lg:flex">
         {NAV_LABELS.map((label) => (

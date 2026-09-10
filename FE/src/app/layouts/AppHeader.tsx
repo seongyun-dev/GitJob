@@ -1,4 +1,5 @@
 import { Link, NavLink } from 'react-router'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
  * 로그인 이후 화면의 서비스 헤더.
@@ -33,13 +34,9 @@ export function AppHeader() {
     <header className="sticky top-0 z-10 border-b border-[rgba(224,231,241,0.9)] bg-white/[0.62] backdrop-blur-[14px]">
       {/* 71px + bottom border 1px = Final의 header 총 높이 72px. */}
       <div className="mx-auto flex h-[71px] w-full max-w-[1440px] items-center gap-8 px-6 lg:px-12">
-        <Link to="/" className="flex shrink-0 items-center gap-2.5" aria-label="GitJob 홈으로">
-          <span className="grid size-[30px] place-items-center rounded-[10px] bg-[linear-gradient(145deg,#1B2B4A,#4F82FF)] text-[13px] font-extrabold tracking-[-0.03em] text-white shadow-[0_8px_18px_rgba(26,53,110,0.20)]">
-            G
-          </span>
-          <span className="text-[17px] font-extrabold tracking-[-0.035em] text-brand-ink-soft">
-            GitJob
-          </span>
+        <Link to="/" className="flex shrink-0 items-center" aria-label="GitJob 홈으로">
+          {/* Final v2 앱 헤더는 로고 26px. */}
+          <BrandLogo className="h-[26px]" />
         </Link>
 
         <nav aria-label="주요 화면" className="min-w-0 flex-1">

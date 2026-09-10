@@ -1,11 +1,12 @@
 import { useSearchParams } from 'react-router'
 import { githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
  * GitHub 권한 재요청 안내 화면 · 티켓 S15P21E102-156.
  *
  * 시각 기준: Final v2 `section#connect`(03 GitHub Connect).
- *   배경 그라데이션 · 헤더 80px / 로고 32px · 카드 520px
+ *   배경 그라데이션 · 헤더 80px / 로고 30px · 카드 520px
  *   카드 #fff / 1px #E0E7F1 / radius 18px / shadow 0 10px 28px rgba(25,47,81,.07)
  *   padding 36px 40px 32px
  *
@@ -45,15 +46,8 @@ export function GithubConnectPage() {
   return (
     <section className="relative min-h-dvh overflow-hidden bg-[radial-gradient(780px_560px_at_92%_0%,rgba(158,184,221,.38),transparent_62%),radial-gradient(620px_460px_at_2%_100%,rgba(186,170,159,.3),transparent_62%),linear-gradient(118deg,#F1EEEB_0%,#EEEDEE_50%,#E7EDF7_100%)]">
       <header className="relative z-[5] flex h-20 items-center justify-between px-6 lg:px-14">
-        {/* 로고 32px · 워드마크 19px. 밝은 배경이라 랜딩과 달리 워드마크가 잉크색이다. */}
-        <div className="flex items-center gap-[11px]">
-          <span className="grid size-8 place-items-center rounded-[11px] bg-[linear-gradient(145deg,#1B2B4A,#4F82FF)] text-[14px] font-extrabold text-white">
-            G
-          </span>
-          <span className="text-[19px] font-extrabold tracking-[-0.035em] text-brand-ink">
-            GitJob
-          </span>
-        </div>
+        {/* Final v2 연결 화면 헤더는 로고 30px. */}
+        <BrandLogo className="h-[30px]" />
         {/* 도움말 화면이 없어 링크로 만들지 않는다. Final v2도 `← 이전`을 함께 두지만
             그 목적지는 이전 온보딩 단계다. 여기는 분석이 끊긴 지점에서 온 화면이라
             되돌아가도 같은 실패를 다시 만난다. */}
