@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react'
+import { Link } from 'react-router'
 import type { AnalysisRequestOutcome, RepositorySummary } from '@/features/analysis/api/types'
 import { BranchPicker } from '@/features/analysis/components/BranchPicker'
 import { RepositoryStateBadge } from '@/features/analysis/components/RepositoryStateBadge'
@@ -115,6 +116,17 @@ export function SelectedRepositoryCard({
             <dt className="shrink-0">상태 원문</dt>
             <dd className="font-evidence text-brand-ink">{outcome.accepted.status}</dd>
           </div>
+          {/*
+            접수된 분석의 진행 화면으로 이동한다(티켓 192에서 흐름 연결).
+            analysisId가 저장소마다 다르므로 링크도 카드별로 각자의 ID를 가리킨다.
+            진행 상태 조회 API는 아직 없어서 그 화면은 준비 중 상태만 보여준다.
+          */}
+          <Link
+            to={`/analyses/${outcome.accepted.analysisId}`}
+            className="mt-1 block rounded-lg border border-brand-line px-2.5 py-1.5 text-center text-[11.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+          >
+            진행 화면 보기
+          </Link>
         </dl>
       ) : (
         <div className="mt-2.5">

@@ -12,6 +12,9 @@ import { AppHeader } from '@/app/layouts/AppHeader'
  * computed style에서 그대로 읽었다.
  *   본문 컨테이너 max-width 1328px · padding 40px 48px 88px → 내부 콘텐츠 1232px
  * 이전에 쓰던 `max-w-5xl`(1024px)은 1440~1600px에서 좌우 여백이 과했다.
+ *
+ * 폭·여백 단계는 `index.css`의 `.gj-shell`이 갖는다. 화면마다 max-width를 따로
+ * 적지 않기 위해 셸 한 곳에서만 정한다.
  */
 
 /**
@@ -32,7 +35,7 @@ export function AppLayout() {
   return (
     <div className="min-h-full text-brand-ink" style={{ background: APP_BACKDROP }}>
       <AppHeader />
-      <main className="mx-auto w-full max-w-[1328px] px-5 pt-7 pb-14 sm:px-8 lg:px-12 lg:pt-10 lg:pb-22">
+      <main className="gj-shell">
         <Outlet />
       </main>
     </div>

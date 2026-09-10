@@ -176,7 +176,7 @@ export function RepositorySelectionPage() {
         </p>
       </header>
 
-      <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(0,1fr)_372px] lg:items-start lg:gap-[14px]">
+      <div className="gj-split mt-7">
         <section aria-labelledby="repository-list-heading">
           <h2 id="repository-list-heading" className="sr-only">
             저장소 목록
