@@ -156,6 +156,7 @@ class AnalysisSubmissionServiceTest {
         assertEquals("develop", submission.branchName());
         assertFalse(submission.created());
         verify(analysisRequestService, never()).enqueueAuthorized(anyLong(), any(), anyString());
+        verifyNoInteractions(currentRegistryVersion);
     }
 
     @Test

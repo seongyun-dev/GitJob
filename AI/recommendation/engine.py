@@ -24,9 +24,10 @@ from recommendation.evidence import (
 )
 from registry.contracts import TechId
 
-RECOMMENDATION_ALGORITHM_VERSION = "c-recommendation/lexicographic/v2"
+RECOMMENDATION_ALGORITHM_VERSION = "c-recommendation/lexicographic/v3"
 PREREQUISITE_POLICY_VERSION = "c-learning-prerequisites/v1"
-TIE_BREAK_RULE = "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+LEGACY_TIE_BREAK_RULE = "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+TIE_BREAK_RULE = "gain-desc,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
 
 
 class PrerequisiteRule(EvidenceModel):
@@ -214,12 +215,15 @@ class _RecommendationContent(EvidenceModel):
         "INSUFFICIENT_EVIDENCE",
     ]
     algorithm_version: Literal[
-        "c-recommendation/lexicographic/v1", "c-recommendation/lexicographic/v2"
+        "c-recommendation/lexicographic/v1",
+        "c-recommendation/lexicographic/v2",
+        "c-recommendation/lexicographic/v3",
     ] = RECOMMENDATION_ALGORITHM_VERSION
     prerequisite_policy_version: NonBlank
     prerequisite_snapshot: PrerequisiteSnapshot
     tie_break_rule: Literal[
-        "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+        "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc",
+        "gain-desc,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc",
     ] = TIE_BREAK_RULE
     demand: DemandSnapshot
     held: Annotated[
@@ -248,6 +252,13 @@ class RecommendationSnapshot(_RecommendationContent):
 
     @model_validator(mode="after")
     def verify_reproducible_result(self) -> "RecommendationSnapshot":
+        expected_rule = (
+            TIE_BREAK_RULE
+            if self.algorithm_version == "c-recommendation/lexicographic/v3"
+            else LEGACY_TIE_BREAK_RULE
+        )
+        if self.tie_break_rule != expected_rule:
+            raise ValueError("recommendation formula and rank policy mismatch")
         if self.demand.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
             raise ValueError("ACTIVE_MATCHING_COHORT_REQUIRED")
         if (
@@ -394,8 +405,8 @@ def build_recommendations(
             fact_ids.update(rule.fact_ids)
         uncertainty = len(unknown) + len(decisions[row.tech_id].data_gaps)
         key = (
-            bool(missing or unknown),
             -what_if.increased_count,
+            bool(missing or unknown),
             -row.required_count,
             uncertainty,
             -row.total_count,

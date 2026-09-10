@@ -289,9 +289,12 @@ def publish_job_output(
 
 
 def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
+    from collections import defaultdict
+
     from job.demand import aggregate_demand
     from job.input_union import build_input_union
     from worker.api import compute_versions
+    from worker.jobs import job_review_records
     from worker.store import Artifact
 
     cohort = build_input_union(tuple(outputs), criteria, mapper)
@@ -311,10 +314,48 @@ def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
         return {"status": "PREPARING", "results": []}
     try:
         with LeaseHeartbeat(store, ticket):
+            output_by_source = {
+                (
+                    output.batch.dataset_snapshot_id,
+                    output.batch_sha256,
+                    output.manifest_sha256,
+                ): output
+                for output in outputs
+            }
+            selected_indexes = defaultdict(list)
+            for observation in cohort.input_union.observations:
+                if observation.disposition in {"SELECTED", "CONFLICT"}:
+                    selected_indexes[observation.input_id].append(
+                        observation.record_index
+                    )
+            review_records = []
+            for source in cohort.input_union.input_batches:
+                output = output_by_source[
+                    (
+                        source.dataset_snapshot_id,
+                        source.batch_sha256,
+                        source.manifest_sha256,
+                    )
+                ]
+                selected_batch = output.batch.model_copy(
+                    update={
+                        "records": tuple(
+                            output.batch.records[index]
+                            for index in selected_indexes[source.input_id]
+                        )
+                    }
+                )
+                review_records.extend(job_review_records(selected_batch, mapper))
             results = store.complete(
                 ticket,
                 [
-                    Artifact("COHORT", None, cohort.model_dump(mode="json"), identity),
+                    Artifact(
+                        "COHORT",
+                        None,
+                        cohort.model_dump(mode="json"),
+                        identity,
+                        review_records=tuple(review_records),
+                    ),
                     Artifact(
                         "DEMAND",
                         None,

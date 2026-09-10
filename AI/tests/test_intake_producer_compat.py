@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import date, datetime
 
 import pytest
+from test_job_cohort import criteria
 from test_jobkorea import FakeJobKoreaClient
 
 from JobKorea_Collector_V1.crawler import CrawlConfig, JobKoreaCrawler, write_outputs
@@ -39,6 +40,67 @@ def test_jobkorea_actual_writer_completion_is_accepted(tmp_path):
     assert loaded.batch == collected.batch
     assert loaded.collection_issues == ()
     assert loaded.occurred_at == collected.batch.records[0].collected_at
+
+
+@pytest.mark.parametrize("source", ["CAREER", "GAMEJOB"])
+def test_actual_career_gamejob_writer_completion_is_accepted_and_tamper_rejected(
+    tmp_path, source
+):
+    if source == "CAREER":
+        from test_career import FakeClient, _config, _list_page, _row
+
+        from Career_Collector_V1.crawler import CareerCrawler as Crawler
+        from Career_Collector_V1.crawler import write_outputs as write
+
+        collected = Crawler(
+            _config(), FakeClient({"H0": [_list_page(_row("1"))]})
+        ).run()
+    else:
+        from test_gamejob import LIST_HTML, FakeClient, _config
+
+        from GameJob_Collector_V1.crawler import GameJobCrawler as Crawler
+        from GameJob_Collector_V1.crawler import write_outputs as write
+
+        collected = Crawler(_config(), FakeClient([LIST_HTML])).run()
+
+    paths = write(collected, tmp_path)
+    assert_manifest_binds_exact_bytes(paths)
+    loaded = load_job_output(paths["manifest"], tmp_path)
+    assert loaded.collection_issues == ()
+    from test_compute_matching import REGISTRY, MemoryStore
+
+    from registry.mapper import RegistryMapper
+    from worker.intake import publish_job_output
+
+    # Execute the real publication guard and calculation, not only watcher dispatch.
+    result = publish_job_output(
+        loaded,
+        criteria(),
+        store=MemoryStore(),
+        mapper=RegistryMapper(REGISTRY),
+        registry=REGISTRY,
+    )
+    assert result["status"] == "COMPLETED"
+    assert {item["kind"] for item in result["results"]} == {"COHORT", "DEMAND"}
+
+    published = []
+    runner = IntakeRunner(
+        IntakeConfig(
+            schema_version="c-intake-config/v1",
+            job_roots=(tmp_path,),
+            criteria=(criteria(),),
+        ),
+        job_sink=lambda loaded, criterion: (
+            published.append((loaded, criterion)) or {"status": "COMPLETED"}
+        ),
+    )
+    assert runner.poll_once()["completed"] == 1
+    assert len(published) == 1
+
+    paths["json"].write_bytes(paths["json"].read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="bind.*batch bytes"):
+        load_job_output(paths["manifest"], tmp_path)
+    assert runner.poll_once()["failed"] == 1
 
 
 @pytest.mark.parametrize("source", ["SARAMIN", "WORKNET"])

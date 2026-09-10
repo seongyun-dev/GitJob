@@ -12,7 +12,7 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 없어 **토글을 만들지 않는다.** 누를 수 있는데 아무 일도 없는 컨트롤을 만들지 않기
  * 위해, 지표 축 이름만 정적으로 밝히고 값 자리는 비운다.
  *
- * 세 출처의 Y축 · 단위 · 기간은 각각 독립이다. 한 화면에 겹쳐 그리거나 합산하지 않는다.
+ * 두 출처의 Y축 · 단위 · 기간은 각각 독립이다. 한 화면에 겹쳐 그리거나 합산하지 않는다.
  */
 const AXES = [
   { label: '공고 건수', hint: '해당 기간에 이 기술을 언급한 공고 수' },
@@ -35,7 +35,7 @@ export function TrendDetailPage() {
         <PageHero
           eyebrow="TREND DETAIL"
           title="이 기술의 출처별 추이"
-          description="세 출처의 Y축 · 단위 · 기간은 각각 독립적입니다. 서로 비교하거나 합산하지 마세요."
+          description="두 출처의 Y축 · 단위 · 기간은 각각 독립적입니다. 서로 비교하거나 합산하지 마세요."
         />
       </div>
 

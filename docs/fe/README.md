@@ -1,10 +1,10 @@
 # Frontend 설계 문서
 
-> 상태: 화면·상태·통신 계약 정리
+> 상태: 주요 화면 초안과 남은 API 인수 경계
 >
-> 기준일: 2026-08-28
+> 기준일: 2026-09-10
 >
-> 현재 레포의 `FE/`에는 애플리케이션 소스가 아직 없으므로, 이 문서는 와이어프레임과 API 기능명세를 React 구현으로 옮길 때의 기준이다.
+> `S15P21E102-192`로 Vite/React 주요 화면 초안이 `develop`에 들어왔다. 화면 존재는 실계정 B/C API 연결 완료를 뜻하지 않는다.
 >
 > `FE/src/shared/`(봉투·페이징·오류 코드·캐시 키)의 실제 계약은 [FE shared API 계약](shared-api-contract.md)을 따른다. 아래 6장·7장의 폴더 구조와 상태 목록은 2026-08-28 초안이며, 구현된 구조는 Notion 프론트엔드 설계 3장과 그 문서가 우선한다.
 
@@ -12,7 +12,7 @@
 
 - GitHub 로그인부터 저장소 선택, 분석 진행, 결과 확인까지의 사용자 흐름 제공
 - 기술 Profile과 Evidence를 규칙과 출처가 보이는 형태로 표현
-- 목표 직무·Skill Gap·학습 추천·Pain/FAQ/Q&A 화면 제공
+- 목표 직무·Skill Gap·학습 추천·What-if·신규 부합 공고·Trend 화면 제공
 - 분석 상태·부분 결과·외부 API 오류를 사용자에게 이해 가능한 상태로 표시
 - 서버를 단일 진실 공급원으로 삼아 타이머·진행률·순위·권한 상태를 표시
 - `/api` REST 요청과 `/ws` 실시간 연결을 화면 컴포넌트에서 분리
@@ -43,7 +43,7 @@ GitJob의 사용자 화면은 분석 서비스 UI를 중심으로 React를 사�
   → 목표 직무 선택
   → Skill Gap / 학습 후보
   → 학습 기술 선택
-  → Trend / Pain Topic / FAQ / Q&A
+  → What-if / 신규 부합 공고 / Trend / 근거 설명
   → 이력·Snapshot 비교·설정
 ```
 
@@ -59,8 +59,8 @@ GitJob의 사용자 화면은 분석 서비스 UI를 중심으로 React를 사�
 | 목표 직무 | 지원 직무 master 검증, 지역·경력 선택 | `/api/v1/me/target` |
 | Skill Gap | 보유/강화/부족 상태, 수요 비율·판정 근거 | `/api/v1/me/skill-gap` |
 | 학습 후보 | 순위, 점수 분해, Evidence 요구, 반대 신호·data gap | `/api/v1/me/recommendations` |
-| 학습 지원 | 학습 기술, Roadmap, Template, Pain, FAQ, Q&A | `/learning-target`, `/roadmap`, `/technologies/*` |
-| Trend/Radar | JOB/GITHUB/SO를 분리한 출처별 지표 | `/trends`, `/trends/compare`, `/tech-radar` |
+| 학습 지원 | 학습 기술, What-if, 신규 부합 공고, 근거 설명 | `/learning-target`, `/recommendations`, `/matching-jobs` |
+| Trend/Radar | JOB/GITHUB를 분리한 출처별 지표 | `/trends`, `/trends/compare`, `/tech-radar` |
 | 이력·설정 | Snapshot 비교, 연결 해제, 데이터 삭제 | `/me/analyses/compare`, `/auth/github`, `/me` |
 
 Notion에서 화면 번호가 문서마다 다르게 사용되므로 구현에서는 `S1` 같은 번호보다 위 화면 이름과 기능 ID를 기준으로 route와 component를 연결한다.
@@ -80,7 +80,7 @@ Profile·Gap·추천 카드에는 단순 기술명이나 점수만 두지 않는
 
 ### 4.2 출처별 데이터는 섞지 않는다
 
-채용공고 건수/비율, GitHub 분기 `num_pushers`, Stack Overflow 질문·답변 지표는 단위와 기간이 다르다. 차트의 축·범례·단위를 각각 표시하고 “종합 Trend 점수”로 합치지 않는다.
+채용공고 건수/비율과 GitHub 기간별 활동은 단위와 기간이 다르다. 차트의 축·범례·단위를 각각 표시하고 “종합 Trend 점수”로 합치지 않는다.
 
 ### 4.3 과장된 시각화 금지
 
@@ -131,10 +131,10 @@ learning
 
 | 종류 | 예시 | 보관 위치 |
 |---|---|---|
-| 서버 상태 | Profile, Evidence, demand, FAQ, 분석 진행률 | API cache/query layer |
+| 서버 상태 | Profile, Evidence, demand, recommendation, 분석 진행률 | API cache/query layer |
 | 세션 상태 | 로그인 사용자, scope, 세션 만료 | auth store |
 | 화면 상태 | 모달 열림, 필터, 선택된 탭 | 컴포넌트 local state |
-| 임시 입력 | Q&A 입력, 직무 form | form state |
+| 임시 입력 | 직무·분석 대상 form | form state |
 | 실시간 연결 | WebSocket 연결·구독 ID | websocket manager |
 
 ## 6. API 연동 규칙
@@ -207,17 +207,15 @@ Frontend는 서버가 보내는 상태와 `completedCount/totalCount/currentRepo
 
 ## 10. 현재 레포와 다음 작업
 
-현재 `FE/`는 `.gitkeep`만 있으며, `Infra/docker/frontend/Dockerfile`은 `package-lock.json`, `npm ci`, `npm run build`, `dist/`를 가정한다.
+현재 `FE/`에는 React Router·React Query 기반 앱, 공통 API/상태 UI와 저장소 선택·분석 진행·Evidence·추천·Trend 등 주요 화면 초안이 있다. `package-lock.json`, `npm run lint`, `npm run typecheck`, `npm run build`가 검증 진입점이다. 화면의 정적/fixture 표현과 실제 B/C API 응답 연결은 구분한다.
 
 구현 순서:
 
-1. React/Vite 프로젝트와 TypeScript·CSS·상태 관리·HTTP client 확정
-2. `auth`와 GitHub OAuth callback 후 `/me` 분기 구현
-3. 저장소 목록·선택·분석 요청/상태 화면 구현
-4. Profile/Evidence와 공통 상태 badge 구현
-5. 목표 직무·Skill Gap·추천 화면 구현
-6. Trend/Pain/FAQ/Q&A와 이력/설정 연결
-7. polling·재연결·부분 실패·접근성 E2E 테스트 추가
+1. `auth`와 GitHub OAuth callback 후 `/me` 분기 연결
+2. 저장소 목록·선택·분석 요청/상태를 실제 B API와 연결
+3. C Snapshot을 B 인증 조회 API를 통해 Profile/Evidence·추천·Trend 화면에 연결
+4. polling·재전달·부분 실패·사용자 격리·접근성 E2E 테스트 추가
+5. 이력·Snapshot 비교·설정 화면과 API 연결
 
 ## 11. 원문 출처
 

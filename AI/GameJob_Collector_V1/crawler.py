@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -704,6 +705,9 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
         "job_analysis_input.json": json_path.name,
         "postings.csv": csv_path.name,
         "manifest.json": manifest_path.name,
+    }
+    manifest["output_sha256"] = {
+        json_path.name: hashlib.sha256(json_path.read_bytes()).hexdigest()
     }
     _atomic_write(
         manifest_path,

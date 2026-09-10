@@ -422,6 +422,5 @@ A조 확인: 정민아      /  일자: 2026-09-__
 
 - [데이터 플랫폼·파이프라인 문서](README.md) §4 Kafka 이벤트 계약
 - [GH Archive Historical 실측](README.md#14-gh-archive-historical-시간별-덤프-수집) — 744시간 / 87,516,869 events
-- [주간 계획](../plans/2026-09-07-p1-week2-plan.md) §4 의존 사슬
-- [이번 주 Jira 태스크](../plans/2026-09-07-week2-jira-tasks.md) `-102`·`-103`·`-108`·`-112`
+- Jira 의존 사슬: `S15P21E102-102`·`S15P21E102-103`·`S15P21E102-108`·`S15P21E102-112`
 - `AI/job/collector/raw_sink.py` · `AI/job/collector/schedule.py` — payload 출처 (`-107`)

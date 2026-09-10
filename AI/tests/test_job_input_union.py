@@ -15,7 +15,8 @@ from worker.api import default_registry
 
 
 @pytest.fixture
-def mapper():
+def mapper(monkeypatch):
+    monkeypatch.setenv("C_REGISTRY_BACKEND", "file")
     return RegistryMapper(default_registry())
 
 

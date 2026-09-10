@@ -1,12 +1,14 @@
 # GitJob 시스템 아키텍처
 
-> 상태: 목표 구조 및 현재 인프라 골격 정리
+> 상태: 목표 구조와 현재 구현 경계
 >
-> 기준일: 2026-08-28
+> 기준일: 2026-09-10
+>
+> 현재 구현·배포·인수 구분은 [중간 통합 상태](2026-09-10-current-status.md)를 따른다.
 
 ## 1. 시스템 목적
 
-GitJob은 사용자가 접근 권한을 부여한 GitHub public/private 저장소의 개발 활동을 기술별 Evidence로 변환한다. 단순히 기술 이름을 검색하거나 사용자의 숙련도를 추정하는 것이 아니라, 저장소·파일·라인·Commit·본인 기여 여부를 추적할 수 있는 근거를 제시한다. 이후 목표 직무의 채용공고 기술 수요, 공개 GitHub 활동 추세, Stack Overflow 반복 문제 신호를 출처별로 비교해 Skill Gap과 학습 후보를 제공한다. private 저장소 원문은 시장 Trend에 사용하지 않는다.
+GitJob은 사용자가 접근 권한을 부여한 GitHub public/private 저장소의 개발 활동을 기술별 Evidence로 변환한다. 단순히 기술 이름을 검색하거나 사용자의 숙련도를 추정하는 것이 아니라, 저장소·파일·라인·Commit·본인 기여 여부를 추적할 수 있는 근거를 제시한다. 이후 목표 직무의 채용공고 기술 수요와 공개 GitHub 활동 추세를 출처별로 비교해 Skill Gap과 학습 후보를 제공한다. private 저장소 원문은 시장 Trend에 사용하지 않는다.
 
 요구사항의 핵심은 “판정 가능한 근거와 출처를 보여주는 것”이다. 기술 레벨은 숙련도나 채용 가능성의 확률이 아니며, 등록된 규칙에 의해 계산된 Repository Level과 Personal Level이다.
 
@@ -45,7 +47,7 @@ GitJob은 사용자가 접근 권한을 부여한 GitHub public/private 저장�
                 ▼
 ┌──────────────────────────────────────────┐
 │ Collector / Analysis Worker               │
-│ GitHub·채용·Stack Exchange 수집           │
+│ GitHub·채용 수집                          │
 │ 정규화·Evidence·집계·품질·DLQ             │
 └─────────┬───────────────────┬────────────┘
           ▼                   ▼
@@ -84,11 +86,11 @@ GitJob은 사용자가 접근 권한을 부여한 GitHub public/private 저장�
 
 ### 5.1 출처별 지표 유지
 
-채용공고 건수/비율, GitHub 분기별 `num_pushers`, Stack Overflow 질문 수/미답변·채택답변 비율은 단위·기간·분모가 다르다. 따라서 하나의 임의 가중치 점수로 합치지 않고 출처별 Fact Pack과 기준을 나란히 반환한다.
+채용공고 건수/비율과 GitHub 기간별 활동은 단위·기간·분모가 다르다. 따라서 하나의 임의 가중치 점수로 합치지 않고 출처별 Fact Pack과 기준을 나란히 반환한다.
 
 ### 5.2 규칙 우선, AI 보조
 
-레벨·Skill Gap·추천 후보는 Registry와 Evidence 규칙을 우선한다. AI는 확정된 Fact를 설명하거나 검수된 Stack Overflow 자료를 검색하는 보조 역할만 수행하며, 근거에 없는 수치·판정을 만들면 Rule Template으로 대체한다.
+레벨·Skill Gap·추천 후보는 Registry와 Evidence 규칙을 우선한다. AI는 확정된 Fact를 설명하는 보조 역할만 수행하며, 근거에 없는 수치·판정을 만들면 Rule Template으로 대체한다.
 
 ### 5.3 개인정보·원본 보호
 
@@ -100,16 +102,16 @@ GitHub Token은 암호화 저장하고 응답·로그·이벤트에 넣지 않�
 
 ## 6. 현재 레포와 목표 구조의 차이
 
-현재 레포에는 `Infra/`의 Docker Compose 기반 실행 골격만 실제 코드로 존재한다. `BE/`, `FE/`, `AI/`는 아직 애플리케이션 소스가 들어오지 않았다. 따라서 아래 상태를 구분한다.
+현재 레포에는 `BE/`, `FE/`, `AI/`, `Infra/` 코드가 모두 존재한다. 다만 파일 존재와 로컬 테스트를 운영 서비스 인수로 해석하지 않고 아래 상태를 구분한다.
 
 | 계층 | 현재 확인 상태 |
 |---|---|
-| Nginx `/api`, `/ws`, `/health` | 설정 작성, 실제 Backend 연결은 미검증 |
-| PostgreSQL·Redis·Kafka | 현재 core 컨테이너 healthcheck·Kafka smoke 확인; 영속성·백업/복원은 별도 기록 |
-| HDFS·Spark | 최소 cluster·Parquet smoke 검증, production data pipeline 미검증 |
-| Collector·Worker | Compose와 연결 계약 작성, 실제 end-to-end Job 미검증 |
-| Jenkins | JCasC·Jenkinsfile 골격 작성, 실제 GitLab/Registry/EC2 배포 미검증 |
-| 2대 EC2 | app-only overlay와 ALB 설계 작성, AWS 장애 조치 미검증 |
+| FE | Vite/React 주요 화면 초안 존재, 실제 B/C 응답 연결 E2E 미검증 |
+| BE | OAuth·저장소·분석 요청·Outbox와 일부 C 호출 계약 존재, Worker 완료 결과와 사용자 조회 인수 미완료 |
+| AI/C | Registry·공고·추천·Trend·DB 저장·내부 API 로컬 구현, 이번 migration/이미지 운영 적용 미검증 |
+| PostgreSQL·Redis·Kafka | 과거 core healthcheck·Kafka smoke 기록과 로컬 DB 검증 존재, 이번 변경 운영 인수는 별도 |
+| HDFS·Spark | 과거 cluster·Parquet/Top20k 처리 기록 존재, 월별 운영 모집단과 새 계산 소비 경로는 별도 |
+| Nginx·Jenkins·EC2 | 설정·배포 기록은 Infra 문서에 존재, 이번 브랜치 배포·장애 조치는 미검증 |
 
 상세 실행 명령은 [Infra 문서](infra/README.md), 기능 계약은 [BE 문서](be/README.md)와 [Data 문서](data/README.md)를 기준으로 한다.
 

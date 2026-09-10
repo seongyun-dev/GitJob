@@ -1,6 +1,10 @@
 # 기술 Evidence Level 평가·LLM 연동 설계안
 
-> 상태: Backend 담당자 전달·협의안
+> 상태: 과거 협의 기록. 아래 옛 레벨 표와 미결 선택지는 현행 구현 기준이 아니다.
+>
+> 2026-09-10 / S15P21E102-127: 현행 기준은 [Notion 정책 v2](https://app.notion.com/p/78215fc50ec7823d81e481e5ce71e50e)와
+> [B 레벨·Evidence 규칙](../be/README.md#8-레벨evidence-규칙), [C 소비 계약](c-recommendation.md)이다.
+> L3는 사용자 작성 구현 근거이며 운영 숙련도를 뜻하지 않는다. 과거 비교·payload 예시는 이력으로만 읽는다.
 >
 > 기준일: 2026-09-02
 >
@@ -123,7 +127,7 @@ USER_AUTHORED 구현 Evidence 있음
 Evidence로는 유효하지만 `OTHER_AUTHORED`이므로 개인 기여 근거로는 사용하지
 않는다.
 
-### 3.3 기존 프로젝트 문서와의 정책 충돌
+### 3.3 당시 프로젝트 문서와의 정책 충돌 (과거 기록, v2로 정리됨)
 
 현재 [Backend 설계 문서](../be/README.md)의 레벨 정책은 다음과 같다.
 

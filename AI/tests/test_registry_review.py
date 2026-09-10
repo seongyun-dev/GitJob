@@ -12,14 +12,34 @@ from registry.mapper import MapperSource, MatchStatus, RegistryMapper
 from registry.review import (
     DecisionKind,
     ReviewQueueSnapshot,
+    ReviewRecord,
     ReviewStatus,
     ReviewStore,
+    build_records,
 )
 
 AI_ROOT = Path(__file__).resolve().parents[1]
 JOB_FIXTURE = AI_ROOT / "job" / "fixtures" / "job_analysis_input_v1.json"
 REGISTRY_PATH = AI_ROOT / "registry" / "data" / "technology_registry_v1.json"
 FIXED_NOW = datetime(2026, 9, 7, 1, 2, 3, tzinfo=UTC)
+LEGACY_FIXTURE_IDS = {
+    "C": (
+        "review-38e7a97dcd6f08de13560d03",
+        "review-1149feb5aa22f0e92041dc17",
+    ),
+    "R": (
+        "review-c577e61155faf9f9b7370f6b",
+        "review-7ef7d4fd1d530b07091bca50",
+    ),
+    "Go": (
+        "review-078767c644a0914d0810c35f",
+        "review-43863bf3e8c86f8423c23cc2",
+    ),
+    "QuantumDB": (
+        "review-2e4d9b55575a86b8c609fe2b",
+        "review-020443146b8e4d901a32df13",
+    ),
+}
 
 
 def load_base_registry() -> TechnologyRegistry:
@@ -31,6 +51,40 @@ def classify_fixture(registry: TechnologyRegistry | None = None):
         JOB_FIXTURE.read_text(encoding="utf-8")
     )
     return classify_job_batch(batch, RegistryMapper(registry or load_base_registry()))
+
+
+def write_legacy_snapshot(
+    path: Path,
+    *,
+    schema_version: str,
+    resolve_quantumdb: bool = False,
+) -> None:
+    store = ReviewStore(path, now=lambda: FIXED_NOW)
+    records = store.ingest(classify_fixture())
+    if resolve_quantumdb:
+        quantumdb = next(
+            record for record in records if record.raw_technology == "QuantumDB"
+        )
+        store.resolve_manual(
+            quantumdb.review_id,
+            tech_id="postgresql",
+            reviewer="legacy-admin",
+            note="기존 수동 결정",
+            mapper=RegistryMapper(load_base_registry()),
+        )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = schema_version
+    legacy_index = 0 if schema_version == "registry-review-queue/v2" else 1
+    for value in payload["records"]:
+        record = ReviewRecord.model_validate(value)
+        value["review_id"] = LEGACY_FIXTURE_IDS[record.raw_technology][legacy_index]
+        value.pop("review_id_version")
+        value.pop("char_start")
+        value.pop("char_end")
+        if schema_version == "registry-review-queue/v1":
+            value.pop("source_dataset_snapshot_id")
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def add_quantumdb_registry_mapping() -> TechnologyRegistry:
@@ -117,8 +171,89 @@ def test_review_queue_reloads_and_ingestion_is_idempotent(tmp_path: Path) -> Non
     second_store = ReviewStore(path, now=lambda: FIXED_NOW)
     second_store.ingest(classify_fixture())
 
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == (
+        "registry-review-queue/v3"
+    )
     assert len(second_store.query()) == 4
     assert second_store.query() == first_store.query()
+
+
+def test_v1_snapshot_reloads_without_rewriting_stored_review_id(tmp_path: Path) -> None:
+    path = tmp_path / "review-queue.json"
+    store = ReviewStore(path, now=lambda: FIXED_NOW)
+    store.ingest(classify_fixture())
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = "registry-review-queue/v1"
+    payload["records"][0]["review_id"] = "review-" + "0" * 24
+    for record in payload["records"]:
+        record.pop("review_id_version")
+        record.pop("char_start")
+        record.pop("char_end")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = ReviewStore(path, now=lambda: FIXED_NOW)
+
+    assert loaded.query()[0].review_id == "review-" + "0" * 24
+
+
+@pytest.mark.parametrize(
+    "schema_version",
+    ("registry-review-queue/v1", "registry-review-queue/v2"),
+)
+def test_legacy_snapshot_reingest_preserves_existing_resolution(
+    tmp_path: Path,
+    schema_version: str,
+) -> None:
+    path = tmp_path / "review-queue.json"
+    write_legacy_snapshot(
+        path,
+        schema_version=schema_version,
+        resolve_quantumdb=True,
+    )
+    before = ReviewStore(path, now=lambda: FIXED_NOW)
+    legacy_resolution = next(
+        record for record in before.query() if record.raw_technology == "QuantumDB"
+    )
+
+    affected = ReviewStore(path, now=lambda: FIXED_NOW).ingest(classify_fixture())
+    after = ReviewStore(path, now=lambda: FIXED_NOW)
+    preserved = next(
+        record for record in after.query() if record.raw_technology == "QuantumDB"
+    )
+
+    assert len(after.query()) == 4
+    assert preserved == legacy_resolution
+    assert preserved.status is ReviewStatus.RESOLVED
+    assert preserved.resolved_tech_id == "postgresql"
+    assert len(preserved.attempts) == 2
+    assert preserved in affected
+
+
+def test_v1_reingest_does_not_merge_same_legacy_id_from_a_different_site(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-queue.json"
+    write_legacy_snapshot(path, schema_version="registry-review-queue/v1")
+    payload = json.loads(JOB_FIXTURE.read_text(encoding="utf-8"))
+    quantumdb_source = payload["records"][3]
+    quantumdb_source["source_site"] = "WANTED"
+    quantumdb_source["source_url"] = "https://example.invalid/jobs/wanted-1004"
+    changed_batch = JobAnalysisInputBatch.model_validate(payload)
+
+    ReviewStore(path, now=lambda: FIXED_NOW).ingest(
+        classify_job_batch(changed_batch, RegistryMapper(load_base_registry()))
+    )
+    stored = ReviewStore(path, now=lambda: FIXED_NOW).query()
+    quantumdb_records = [
+        record for record in stored if record.raw_technology == "QuantumDB"
+    ]
+
+    assert len(stored) == 5
+    assert len(quantumdb_records) == 2
+    assert {record.source_site for record in quantumdb_records} == {
+        "JOBKOREA",
+        "WANTED",
+    }
 
 
 def test_same_evidence_at_same_offset_on_different_surfaces_is_not_collapsed(
@@ -158,6 +293,31 @@ def test_same_evidence_at_same_offset_on_different_surfaces_is_not_collapsed(
     }
 
 
+def test_changed_source_variant_has_its_own_id_and_reconstructable_location() -> None:
+    payload = json.loads(JOB_FIXTURE.read_text(encoding="utf-8"))
+    original = payload["records"][3]
+    changed = json.loads(json.dumps(original))
+    changed["source_url"] = "https://example.invalid/jobs/fixture-1004-revised"
+    changed["title"] = "수정된 데이터 엔지니어"
+    payload["records"].append(changed)
+    classified = classify_job_batch(
+        JobAnalysisInputBatch.model_validate_json(json.dumps(payload)),
+        RegistryMapper(load_base_registry()),
+    )
+
+    records = [
+        record
+        for record in build_records(classified)
+        if record.raw_technology == "QuantumDB"
+    ]
+
+    assert len(records) == 2
+    assert len({record.review_id for record in records}) == 2
+    assert {record.review_id_version for record in records} == {"registry-review-id/v3"}
+    assert all(record.char_start is not None for record in records)
+    assert all(record.char_end is not None for record in records)
+
+
 def test_manual_resolution_records_actor_note_and_registry_version(
     tmp_path: Path,
 ) -> None:
@@ -184,6 +344,43 @@ def test_manual_resolution_records_actor_note_and_registry_version(
         "Explicit reviewer decision for fixture verification"
     )
     assert resolved.attempts[-1].registry_version == "registry-20260901.1"
+
+
+def test_manual_resolution_can_correct_a_prior_decision_without_losing_history(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-queue.json"
+    store = ReviewStore(path, now=lambda: FIXED_NOW)
+    unknown = next(
+        record
+        for record in store.ingest(classify_fixture())
+        if record.raw_technology == "QuantumDB"
+    )
+    first = store.resolve_manual(
+        unknown.review_id,
+        tech_id="postgresql",
+        reviewer="reviewer-123",
+        note="원문 확인 후 최초 결정",
+        mapper=RegistryMapper(load_base_registry()),
+    )
+
+    corrected = store.resolve_manual(
+        unknown.review_id,
+        tech_id="python",
+        reviewer="reviewer-456",
+        note="교차 검토 후 결정 교정",
+        mapper=RegistryMapper(load_base_registry()),
+    )
+
+    assert corrected.status is ReviewStatus.RESOLVED
+    assert corrected.resolved_tech_id == "python"
+    assert corrected.attempts[:-1] == first.attempts
+    assert corrected.attempts[-2].tech_id == "postgresql"
+    assert corrected.attempts[-1].tech_id == "python"
+    assert corrected.attempts[-1].reviewer == "reviewer-456"
+    assert ReviewStore(path, now=lambda: FIXED_NOW).query(ReviewStatus.RESOLVED) == (
+        corrected,
+    )
 
 
 def test_manual_resolution_rejects_unknown_or_inactive_registry_technology(

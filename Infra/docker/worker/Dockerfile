@@ -34,6 +34,8 @@ COPY Infra/compose/compose.yaml /opt/gitjob-provenance/Infra/compose/compose.yam
 COPY docs/data/2026-09-08-technology-registry-mvp.md /opt/gitjob-provenance/docs/data/2026-09-08-technology-registry-mvp.md
 COPY BE/src/main/resources/db/c-compute/001_c_compute.sql /app/migrations/001_c_compute.sql
 COPY BE/src/main/resources/db/c-compute/002_job_matching_projection.sql /app/migrations/002_job_matching_projection.sql
+COPY BE/src/main/resources/db/c-compute/003_registry_review.sql /app/migrations/003_registry_review.sql
+COPY BE/src/main/resources/db/c-compute/004_registry_review_source_identity.sql /app/migrations/004_registry_review_source_identity.sql
 ENV C_REGISTRY_REPOSITORY_ROOT=/opt/gitjob-provenance
 RUN python -c "from pathlib import Path; from registry.contracts import load_registry; load_registry(Path('registry/data/technology_registry_20260908_1.json'), repository_root=Path('/opt/gitjob-provenance'))"
 

@@ -22,7 +22,8 @@ pipeline {
     environment {
         COMPOSE_PROJECT_NAME = "gitjob-ci-${env.BUILD_NUMBER}"
         COMPOSE_FILES = "-f Infra/compose/compose.yaml -f Infra/compose/compose.wsl.yaml"
-        // AI runs on a separate GPU server; Jenkins CI covers BE/FE only.
+        // Service dependencies for BE/FE. Non-DB C regressions run separately
+        // in the same Python base image as Worker, without GPU/data services.
         COMPOSE_PROFILES = 'core,app'
     }
 
@@ -122,6 +123,26 @@ pipeline {
                         test -x ./gradlew
                         ./gradlew --no-daemon test
                     )
+                '''
+            }
+        }
+
+        stage('AI non-DB regression') {
+            steps {
+                sh '''#!/usr/bin/env bash
+                    set -Eeuo pipefail
+                    test -f AI/scripts/ci-regression.sh
+                    # The Jenkins agent has Docker but does not promise Python/venv.
+                    # Stream this checked-out commit rather than bind-mount an agent
+                    # path that may not exist on the Docker host. No .env is copied.
+                    git archive --format=tar HEAD | docker run --rm -i \\
+                      python:3.12-slim-bookworm bash -c '
+                        set -Eeuo pipefail
+                        mkdir /workspace
+                        tar -xf - -C /workspace
+                        cd /workspace
+                        bash AI/scripts/ci-regression.sh
+                      '
                 '''
             }
         }

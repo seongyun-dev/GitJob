@@ -129,7 +129,7 @@ export function ListShell({
 /**
  * 읽기 전용 출처 구분.
  *
- * Final `#trend`는 채용공고 · GitHub · Stack Overflow를 탭으로 전환한다. 하지만
+ * 현재 MVP `#trend`는 채용공고 · GitHub 두 출처를 구분한다. 하지만
  * 전환할 데이터가 아직 없다. **누를 수 있는데 아무 일도 없는 탭은 만들지 않는다**
  * (Interaction Safety). 그래서 같은 정보를 정적 범례로만 보여준다.
  *

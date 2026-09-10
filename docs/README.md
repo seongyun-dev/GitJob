@@ -1,8 +1,8 @@
 # GitJob 기술 문서
 
-> 기준일: 2026-09-08 (C 구현 진입점 갱신, 타 파트 전체 인수 상태는 별도)
+> 기준일: 2026-09-10 (중간 통합 상태와 현재 MVP 계약 갱신)
 >
-> 기술 문서 진입점이다. 현재 C 구현은 [C조 구현 안내](ai/README.md), 검증 근거와 잔여는 [C 검증·인수 기록](ai/c-mvp-verification.md)부터 읽는다. 이전 설계 문서의 전체 기능 목록을 현재 구현 완료 목록으로 해석하지 않는다.
+> 기술 문서 진입점이다. 먼저 [2026-09-10 구현 상태와 실행 계약](2026-09-10-current-status.md)을 읽고, C 구현은 [C조 구현 안내](ai/README.md), 검증 근거와 잔여는 [C 검증·인수 기록](ai/c-mvp-verification.md)에서 확인한다. 이전 설계 문서의 전체 기능 목록을 현재 구현 완료 목록으로 해석하지 않는다.
 
 ## 1. 5분 요약
 
@@ -22,7 +22,8 @@ GitHub OAuth
 
 위는 서비스 목표 흐름이며 Kafka부터 실제 화면까지 연결 완료를 뜻하지 않는다.
 현재 C는 완료 입력 감시/내부 HTTP 호출로 계산한다. SO·FAQ/Q&A·프로젝트 추천은
-이번 C MVP 범위에서 제외하며, 정확한 실행 경계는 [C 안내](ai/README.md)를 따른다.
+현재 MVP 범위에서 제외하며, 정확한 통합 경계는 [현재 상태](2026-09-10-current-status.md)와
+[C 안내](ai/README.md)를 따른다.
 
 ## 2. 파트별 문서
 
@@ -46,7 +47,7 @@ GitHub OAuth
 |---|---|---|
 | `Infra/` | Compose, Dockerfile, Nginx, Jenkins, 운영 스크립트 존재 | 구현·검증 범위와 미검증 범위를 분리 |
 | `BE/` | Spring Boot 진입점·공통 응답/오류 처리·Flyway 마이그레이션·C migration 존재 | B 실제 분석·인증 API 통합은 별도 인수 |
-| `FE/` | Vite/React 소스·package-lock 존재 | C 결과 화면의 실제 연결은 별도 인수 |
+| `FE/` | Vite/React 소스·주요 화면 초안·package-lock 존재 | 실계정 분석부터 C 결과 표시까지는 별도 인수 |
 | `AI/` | Collector·Registry·공고 분석·추천·공개 분석·Trend·C Worker 구현 | [기능 지도](ai/README.md)와 [검증 경계](ai/c-mvp-verification.md)로 확인 |
 | `docs/` | 본 문서와 기존 Infra 보고서 | 프로젝트 기술·인수인계 문서 |
 

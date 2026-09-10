@@ -24,6 +24,14 @@ Flyway로 통합하면 세 가지가 깨진다.
 
 기능적으로 겹치지도 않는다. Flyway는 `public`만, C 러너는 `c_compute`만 만든다.
 
+2026-09-10: public Registry는 develop의 V3~V10을 유지하고, C import 메타데이터는
+후속 `V11__c_registry_snapshot_metadata.sql`(-199)로 확장한다.
+C 검토 큐는 `003_registry_review.sql`과 긴 원천 ID를 보존하는 후속
+`004_registry_review_source_identity.sql`(-88)이다. 새 C Worker는 양쪽 schema와 승인된
+Registry import가 모두 필요하다. [DB Registry 운영 계약](../../../../../docs/data/technology-registry-db.md)을
+참고한다. B의 CURRENT 시드와 C의 hash 검증된 import는 구분되며, V11은 기존 B 시드를
+변경하거나 C 활성 alias를 자동 생성하지 않는다.
+
 `c-compute/`는 한때 `migrations/`(복수)였다. 현재 복수형 디렉터리는
 `repo_analysis` 스키마를 위한 별도 수동 SQL만 둔다. `migration/`과 s 한 글자 차이라,
 새 Flyway 마이그레이션을 복수 쪽에 넣으면 여전히 **에러 없이 조용히 무시된다.**
@@ -38,8 +46,9 @@ Flyway로 통합하면 세 가지가 깨진다.
 
 `c_compute`는 대응하는 JPA 엔티티가 없어 Hibernate `validate` 대상이 아니다. 그래서
 적용하지 않아도 backend는 정상 기동하고, worker 컨테이너도 healthy로 뜬다. 준비가 안 된
-것은 `GET /ready`가 `C_MIGRATION_REQUIRED`로만 알려주는데, 이 엔드포인트를 자동으로
-호출하는 곳이 없다. **배포 후 `python -m worker.migrate`를 실행했는지 직접 확인해야 한다.**
+것은 `GET /ready`가 `C_MIGRATION_REQUIRED`로 알려준다. 현재 `deploy.sh`는 사후
+`verify-deployment.sh`에서 이 엔드포인트를 확인하지만 migration을 대신 실행하지는
+않는다. **서비스 전환 전에 `python -m worker.migrate` 적용과 `/ready` 성공을 확인해야 한다.**
 
 ## `cdc/` 를 Flyway로 옮기지 않은 이유
 
@@ -60,5 +69,5 @@ Flyway로 통합하면 세 가지가 깨진다.
 체크섬을 비교해 이미 적용된 파일이 바뀌면 기동을 거부한다.
 
 ```
-V3__<설명>.sql
+V12__<설명>.sql
 ```

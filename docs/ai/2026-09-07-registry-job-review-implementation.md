@@ -1,5 +1,9 @@
 # Registry Mapper·채용 요구유형 분류·Review 구현 내역
 
+> 이 문서는 2026-09-07의 파일 기반 구현 기록이다. 2026-09-10부터 실제 공고 실행은
+> [PostgreSQL 검토 큐](c-registry-review.md)와 [DB Registry](../data/technology-registry-db.md)를
+> 사용한다. 아래의 파일 동작·미연동 문장을 최신 실행 상태로 해석하지 않는다.
+
 > 기준일: 2026-09-07
 >
 > 관련 Jira: `S15P21E102-81`, `S15P21E102-82`, `S15P21E102-88`

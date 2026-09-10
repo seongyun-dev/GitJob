@@ -51,6 +51,9 @@ public enum ErrorCode {
     GITHUB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "REPO-429-1", "GitHub API 호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."),
     GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "REPO-503-1", "GitHub API에 연결할 수 없습니다."),
 
+    // 분석 요청은 활성 Registry snapshot 없이 재현 가능한 이벤트를 만들 수 없다.
+    REGISTRY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "ANALYSIS-503-1",
+            "현재 분석 기준을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     // 기술 후보 검토 (관리자 화면). 승격은 레지스트리를 바꾸므로 "없는 후보"와
     // "이미 처리된 후보"를 구분해서 알린다. 관리자 둘이 같은 목록을 보고 같은
     // 행을 누르는 것은 오류가 아니라 정상이며, 409를 받은 쪽은 목록을 새로

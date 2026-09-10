@@ -3,6 +3,11 @@
 상태: 로컬 PostgreSQL·HTTP 왕복 구현 및 검증. B/FE·운영 연결은 미검증.
 기준일: 2026-09-08. 이슈: S15P21E102-33.
 
+2026-09-10 -199 후속: Registry 운영 기본은 PostgreSQL이다. B 기본 설정
+`technology-registry/v1`을 유지하되 DB의 명시적 활성 버전을 해석한다.
+[DB Registry 계약](../data/technology-registry-db.md)의 migration·import가 필요하며,
+이 문서의 변경은 서버 배포 완료를 의미하지 않는다.
+
 2026-09-09 -185 후속: 새 COHORT의 `matching_jobs`가 준비되어 있으면 분석 완료 시
 `job-matching/v2`도 원자적 저장 대상으로 계산한다. RECOMMENDATION에는 작은 reference만,
 공유 원본과 사용자별 평가는 002 projection에 분리한다. [부분 부합 계약](c-job-matching.md)에
@@ -37,11 +42,13 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | `POST /internal/v1/c/analyses/completed` | `user_id`, `analysis_id`, `cohort_snapshot_id`, `evidence`: 자동 Gap·추천·What-if·설명 |
 | `POST /internal/v1/c/public-repositories/completed` | -157 `batch`, `include_partial=false`: COMPLETE/REUSED 우선 공개 기술 관측 |
 | `POST /internal/v1/c/trends/completed` | `tech_id`, `source`, `periods`: JOB `demand_snapshot_ids` 또는 GITHUB 공식 형식 `csv_text`·`source_uri`·`source_version` |
+| `POST /internal/v1/c/archive-trends/completed` | -201: `tech_id`, `periods`, `granularity`, `inputs`의 검증된 export 상대 경로·metadata와 저장된 PUBLIC_GITHUB ID. [Archive 계약](c-archive-trend.md) |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록. `user_id`, page/size, `include_conditional=false` |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-posting` | 동일 저장 평가의 상세. `user_id`, `job_id` |
-| `GET /internal/v1/c/registry` | 실행 중인 정확한 Registry Snapshot. 현재 기본 `registry-20260908.1` |
+| `GET /internal/v1/c/registry` | 실행 중인 정확한 Registry Snapshot과 meta의 schema/content version·SHA-256 |
+| `GET/POST /internal/v1/c/registry/reviews/...` | -88: 미해결 원문 조회·수동 결정·재처리. [검토 큐 요청·충돌 계약](c-registry-review.md) |
 | `GET /internal/v1/c/contracts` | 실제 Pydantic 완료 event의 JSON Schema. 구현이 계약 원본 |
 | `GET /internal/v1/c/intake/status` | 완료 입력 감시의 활성/실행 여부, 최근 poll의 완료·실패·보류 수, 공개 분할 진행 및 DB 결과 ID |
 
@@ -93,6 +100,22 @@ run lineage가 필요하며, 작은 표본 결과를 전체 완료로 표시하�
 `calculation_snapshot_id`는 설명을 붙이기 전 계산 ID로 구분한다.
 
 ## 완료 입력의 자동 실행
+
+### Registry 실행 설정
+
+- `C_REGISTRY_BACKEND=postgres`가 기본이다. `C_COMPUTE_DATABASE_URL` 또는 기존
+  `POSTGRES_*` 연결 설정으로 public Registry 테이블을 읽는다.
+- `C_REGISTRY_VERSION=technology-registry/v1`이 기본 선택값이며 실제 계산에는
+  시작 시 해석한 불변 `registry-YYYYMMDD.N`과 내용 SHA-256을 고정한다.
+- 파일은 `C_REGISTRY_BACKEND=file`을 명시한 테스트·로컬 모드에서만 사용한다.
+  `C_REGISTRY_PATH`가 비어 있으면 기존 승인 seed 파일을 읽는다. DB 장애의 대체재가 아니다.
+- DB/Registry가 준비되지 않아도 `/health`는 살아 있고 `/ready`와 계산은 503
+  `C_REGISTRY_UNAVAILABLE`이다. DB 복구·import 이후 Worker를 재시작한다.
+- B는 신규 요청 생성 시 같은 family를 불변 버전으로 바꾸어 기존 event 필드에 넣는다.
+  요청 재전송과 기존 분석 재사용은 원래 버전을 유지한다. C의 현재 Registry와 다른
+  cohort/Evidence를 섞어 계산하지 않는다. 활성 버전을 바꿀 때에는 진행 중 분석을
+  먼저 마치거나 원 버전 Worker로 처리하고, 새 버전 cohort를 준비한 뒤 전환한다.
+  미완료 요청을 단순히 새 버전으로 바꿔 재전송하지 않는다.
 
 `C_INTAKE_CONFIG`가 가리키는 로컬 JSON 설정을 지정하면 기존 `python -m worker`의
 lifespan이 입력 감시를 시작하고 종료 시 중단한다. 별도 수동 submit 명령은 필요 없다.
@@ -218,6 +241,7 @@ Invoke-RestMethod "$env:C_COMPUTE_URL/internal/v1/c/intake/status" -Headers $hea
 | 관찰 | 의미와 다음 확인 |
 |---|---|
 | 서비스 시작 자체 실패 | 설정 파일/mount/DB·token 설정/Registry를 확인. 이 경우 status API도 없을 수 있음 |
+| 인증 후 `C_REGISTRY_UNAVAILABLE` 503 | Registry 미준비로 intake도 시작하지 못함. `configured=false` 응답이 아니다. 승인/무결성/migration 문제를 해결한 뒤 Worker를 재시작 |
 | `configured=false` | 자동 intake 미설정, HTTP-only 모드. 자동화를 원하면 파일 mount와 `C_INTAKE_CONFIG`를 설정하고 재시작 |
 | `configured=true`, `running=false` | 감시 thread가 실행 중이 아님. 시작/종료 상태와 Worker 로그 확인 |
 | `last_poll.failed > 0` | 원본/manifest hash·경로·수량·크기·DB 등 입력/실행 오류 가능. 입력과 checkpoint를 보존한 채 검증 조건과 로그의 error type 확인 |

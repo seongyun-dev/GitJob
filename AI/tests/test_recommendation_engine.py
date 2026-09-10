@@ -196,6 +196,44 @@ def test_zero_increase_is_real_zero_and_multiple_missing_technologies_are_not_au
         assert candidate.what_if.newly_matched_job_ids == ()
 
 
+def test_job_gain_precedes_prerequisite_readiness_without_adding_prerequisites():
+    cohort = make_cohort(
+        (
+            make_job("react-gain", (("react",),)),
+            make_job("needs-both", (("docker",), ("redis",))),
+        )
+    )
+    result = recommend(cohort)
+    first = result.candidates[0]
+    assert first.tech_id == "react"
+    assert first.what_if.increased_count == 1
+    assert first.missing_prerequisite_tech_ids == ("javascript",)
+    assert "javascript" not in result.held.held_tech_ids
+    assert first.what_if.newly_matched_job_ids == ("react-gain",)
+    assert result.algorithm_version == "c-recommendation/lexicographic/v3"
+    assert result.tie_break_rule.startswith("gain-desc,prerequisites-ready,")
+
+
+def test_prerequisite_readiness_breaks_equal_gain_and_legacy_v2_remains_readable():
+    from recommendation.engine import _snapshot_id
+
+    result = recommend(
+        make_cohort(
+            (make_job("react", (("react",),)), make_job("docker", (("docker",),)))
+        )
+    )
+    assert [item.tech_id for item in result.candidates] == ["docker", "react"]
+    old = result.model_dump(mode="json", exclude={"snapshot_id"})
+    old["algorithm_version"] = "c-recommendation/lexicographic/v2"
+    old["tie_break_rule"] = (
+        "prerequisites-ready,gain-desc,required-count-desc,"
+        "uncertainty-asc,total-count-desc,tech-id-asc"
+    )
+    old["snapshot_id"] = _snapshot_id(old)
+    restored = RecommendationSnapshot.model_validate(old)
+    assert restored.model_dump(mode="json") == old
+
+
 def test_deterministic_rank_max_three_and_json_roundtrip_preserve_snapshot_and_counts():
     cohort = make_cohort(
         tuple(

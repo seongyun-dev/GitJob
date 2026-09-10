@@ -1,8 +1,10 @@
 # QA·검증 계획
 
-> 상태: 기능·통합·데이터·복원력 검증 기준
+> 상태: 현재 MVP 기능·통합·데이터·복원력 검증 기준
 >
-> 기준일: 2026-08-28
+> 기준일: 2026-09-10
+>
+> 검증 완료 주장과 남은 인수는 [현재 상태](../2026-09-10-current-status.md) 및 기능별 검증 기록을 함께 확인한다.
 
 ## 1. 품질 목표
 
@@ -14,7 +16,7 @@ GitJob의 품질은 “화면이 열리는가”만으로 판단하지 않는다
 |---|---|---|
 | Unit | Registry mapping, level rule, status transition, score/status derivation | JUnit/Pytest |
 | Integration | PostgreSQL·Redis·Kafka·HDFS adapter, repository, event consumer | Testcontainers/Compose |
-| API | auth, repository, analysis, profile, demand, recommendation, Q&A | REST contract test |
+| API | auth, repository, analysis, profile, demand, recommendation, trend | REST contract test |
 | E2E | 로그인→저장소→분석→Evidence→추천 흐름 | Browser test |
 | Data | raw→Parquet→Fact→Snapshot, row/checksum/duplicate | fixture + SQL/assertion |
 | Load | worker/partition/volume별 처리량·lag·p95 | 고정 dataset benchmark |
@@ -53,20 +55,18 @@ GitJob의 품질은 “화면이 열리는가”만으로 판단하지 않는다
 ### 수요·추세·추천
 
 - job demand는 중복 공고를 deduplicate한 분모와 기간을 함께 표시한다.
-- JOB/GITHUB/STACKOVERFLOW 지표는 단위·기간·source별로 분리된다.
+- JOB/GITHUB 지표는 단위·기간·source별로 분리된다.
 - 출처가 없는 기간을 interpolation하거나 임의 composite score로 표시하지 않는다.
 - Skill Gap 상태는 Personal Level에서 기계적으로 파생된다.
 - 추천은 후보·점수 분해·Evidence 요구·반대 신호·data gap을 함께 반환한다.
 - 데이터가 준비되지 않으면 dummy 대신 `PREPARING`/`INSUFFICIENT_DATA`를 반환한다.
 
-### AI·Q&A
+### 근거 설명
 
 - AI 설명의 모든 수치·레벨·순위가 Fact Pack 또는 Evidence에 연결된다.
 - 검증 실패 시 `RULE_TEMPLATE` 또는 `INSUFFICIENT_EVIDENCE`로 안전하게 fallback한다.
-- Q&A 답변에 source URL·질문/답변 식별자·accepted 여부가 있다.
-- `SO-RAG-001`은 필수 흐름이며, 검색 근거가 부족하면 `INSUFFICIENT_EVIDENCE`로 종료한다.
-- Stack Overflow 질문량을 객관적인 기술 난이도로 문구화하지 않는다.
-- 질문 quota·queue 포화·GPU 부족을 사용자와 운영자에게 각각 맞는 문구로 표시한다.
+- 설명에 사용한 Fact Pack·Evidence·규칙 버전과 미확정 상태를 보존한다.
+- Stack Overflow/Pain/FAQ/RAG와 프로젝트 Template 추천은 현재 MVP 수용 기준에서 제외한다.
 
 ## 4. 데이터 품질 검사
 

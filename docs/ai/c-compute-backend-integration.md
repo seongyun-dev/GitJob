@@ -1,5 +1,11 @@
 # B ↔ C compute 연동 (미착수)
 
+> 아래 운영 상태는 2026-09-09 관측 기록이다. 2026-09-10 -199/-88 변경은 로컬에서만
+> 검증했으며, 새 버전은 public Registry V3와 C Compute 003까지 필요하다. 과거의
+> `schema_version=1` 또는 `/ready=200` 기록을 새 코드의 배포 인수로 사용하지 않는다.
+> 현재 실행 설정은 [런타임](c-compute-runtime.md), [DB Registry](../data/technology-registry-db.md),
+> [검토 큐](c-registry-review.md)를 따른다. 실제 서버 상태는 배포 시 다시 확인해야 한다.
+
 C compute 런타임은 운영에서 준비를 마쳤다. 계산을 실제로 돌리려면 입력을 넣어 주는 쪽이
 필요한데 그것이 아직 없다. 이 문서는 무엇이 되어 있고 무엇이 남았는지 남긴다.
 

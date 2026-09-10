@@ -9,6 +9,7 @@ import psycopg
 import pytest
 
 from worker.store import (
+    MIGRATION_VERSION,
     Artifact,
     ComputeStore,
     IdempotencyConflict,
@@ -214,7 +215,7 @@ def test_artifact_failure_rolls_back_all_results_and_event_completion(store):
     store.fail(ticket, "INVALID_RESULT")
 
 
-@pytest.mark.parametrize("migration_index", [0, 1])
+@pytest.mark.parametrize("migration_index", range(MIGRATION_VERSION))
 def test_applied_migration_checksum_cannot_be_changed(store, tmp_path, migration_index):
     from worker.store import MIGRATION_FILES
 
@@ -231,4 +232,4 @@ def test_all_forward_migrations_are_ready(store):
         versions = conn.execute(
             "SELECT version FROM c_compute.schema_version ORDER BY version"
         ).fetchall()
-    assert versions == [(1,), (2,)]
+    assert versions == [(version,) for version in range(1, MIGRATION_VERSION + 1)]

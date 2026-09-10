@@ -299,6 +299,13 @@ run_all_checks() {
           else
             skip worker-ready "C_COMPUTE_TOKEN 미설정 — 계산 API가 설계상 비활성 (스키마 확인 불가)"
           fi
+        elif [[ "$ready_body" == *C_REGISTRY_UNAVAILABLE* ]]; then
+          needs_action worker-ready "Registry 미준비 — 승인 snapshot과 Worker 시작 로그 확인 필요" \
+            "Registry V11 migration, 승인 C snapshot import/alias 활성화를 확인한다.
+    docs/data/technology-registry-db.md의 B/C 전환 순서에 따라 Worker를 재시작하고,
+    C /registry의 version/hash를 승인 import와 비교한다. B CURRENT는 별도이며 연결 전 호환을 확인한다.
+    이후 완료 공고 입력을 새 event로 처리하여 /job-cohorts/resolve 성공까지 확인한다.
+    /health 성공만으로 분석 트래픽을 열지 않는다."
         elif [[ "$ready_body" == *C_MIGRATION_REQUIRED* ]]; then
           needs_action worker-ready "c_compute 스키마 없음" \
             "worker 컨테이너 안에서 실행한다. 컨테이너가 이미 가진 값으로 DSN을 만들므로 env 파일에 추가할 것은 없다.

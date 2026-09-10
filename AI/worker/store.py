@@ -12,7 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-MIGRATION_VERSION = 2
+MIGRATION_VERSION = 4
 MIGRATION_FILE = (
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/001_c_compute.sql"
@@ -21,6 +21,10 @@ MIGRATION_FILES = (
     MIGRATION_FILE,
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/002_job_matching_projection.sql",
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/003_registry_review.sql",
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/004_registry_review_source_identity.sql",
 )
 
 
@@ -93,6 +97,7 @@ class Artifact:
     payload: dict[str, Any]
     stream: str
     matching: dict[str, Any] | None = None
+    review_records: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self):
         if self.kind not in {
@@ -109,6 +114,8 @@ class Artifact:
             raise ValueError("invalid snapshot stream")
         if self.matching is not None and self.kind != "RECOMMENDATION":
             raise ValueError("only recommendation snapshots have matching rows")
+        if self.review_records and self.kind != "COHORT":
+            raise ValueError("only cohort snapshots have Registry review records")
 
     @property
     def snapshot_id(self) -> str:
@@ -341,6 +348,10 @@ class ComputeStore:
                 )
                 if artifact.matching is not None:
                     self._store_matching(conn, artifact, snapshot_id)
+                if artifact.review_records:
+                    from worker.reviews import insert_reviews
+
+                    insert_reviews(conn, artifact.review_records, snapshot_id)
                 conn.execute(
                     """INSERT INTO c_compute.head(kind, owner, stream, snapshot_id, occurred_at, event_id)
                        VALUES (%s, %s, %s, %s, %s, %s)
@@ -550,6 +561,66 @@ class ComputeStore:
                 (snapshot_id, owner or ""),
             ).fetchone()
             return dict(row) if row else None
+
+    def query_reviews(self, *, status=None, after=None, limit: int = 50):
+        from worker.reviews import query_reviews
+
+        with self._connect() as conn:
+            return query_reviews(conn, status=status, after=after, limit=limit)
+
+    def get_review(self, review_id: str):
+        from worker.reviews import get_review
+
+        with self._connect() as conn:
+            return get_review(conn, review_id)
+
+    def resolve_review(
+        self,
+        *,
+        review_id: str,
+        mapper,
+        actor: str,
+        note: str,
+        idempotency_key: str,
+        expected_version: int,
+        tech_id: str,
+    ):
+        from worker.reviews import resolve_review
+
+        with self._connect() as conn:
+            return resolve_review(
+                conn,
+                review_id=review_id,
+                mapper=mapper,
+                actor=actor,
+                note=note,
+                idempotency_key=idempotency_key,
+                expected_version=expected_version,
+                tech_id=tech_id,
+            )
+
+    def reprocess_review(
+        self,
+        *,
+        review_id: str,
+        mapper,
+        actor: str,
+        note: str,
+        idempotency_key: str,
+        expected_version: int,
+    ):
+        from worker.reviews import reprocess_review
+
+        with self._connect() as conn:
+            return reprocess_review(
+                conn,
+                review_id=review_id,
+                mapper=mapper,
+                actor=actor,
+                note=note,
+                idempotency_key=idempotency_key,
+                expected_version=expected_version,
+            )
 
     @staticmethod
     def _matching_header(conn, snapshot_id: str, owner: str) -> dict | None:

@@ -3,6 +3,7 @@
 import hmac
 import logging
 import os
+import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from job.demand import JOB_DEMAND_AGGREGATION_VERSION, DemandSnapshot
 from recommendation.evidence import EvidenceAnalysis
 from registry.contracts import TechnologyRegistry, load_registry
 from registry.mapper import RegistryMapper
+from worker.archive_input import ArchiveInputUnavailable, ArchiveTrendFields
 from worker.lease import LeaseHeartbeat
 from worker.store import (
     Artifact,
@@ -101,6 +103,10 @@ class TrendCompleted(Event):
     source_uri: str | None = None
 
 
+class ArchiveTrendCompleted(Event, ArchiveTrendFields):
+    """Trusted local activity references plus immutable C public snapshots."""
+
+
 class BodyLimit:
     """Enforce a limit even for chunked requests before Pydantic parses JSON."""
 
@@ -156,7 +162,21 @@ def configured_database_url() -> str | None:
     )
 
 
-def default_registry() -> TechnologyRegistry:
+def default_registry(*, dsn: str | None = None) -> TechnologyRegistry:
+    from registry.db import PostgresRegistryStore, RegistryStoreError
+
+    backend = os.getenv("C_REGISTRY_BACKEND", "postgres")
+    if backend == "postgres":
+        dsn = dsn or configured_database_url()
+        if not dsn:
+            raise RegistryStoreError("C Registry database is not configured")
+        source = PostgresRegistryStore(dsn)
+        selected = source.resolve_version(
+            os.getenv("C_REGISTRY_VERSION", "technology-registry/v1")
+        )
+        return source.load_registry(selected.registry_version)
+    if backend != "file":
+        raise RegistryStoreError("C_REGISTRY_BACKEND must be postgres or file")
     configured = os.getenv("C_REGISTRY_PATH")
     path = (
         Path(configured)
@@ -181,6 +201,7 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
     if kind == "JOB_BATCH":
         from job.input_union import INPUT_UNION_VERSION
         from job.requirements import JOB_REQUIREMENTS_SCHEMA_VERSION
+        from registry.review import REVIEW_QUEUE_VERSION
 
         versions.update(
             parser=JOB_REQUIREMENT_PARSER_VERSION,
@@ -188,6 +209,7 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
             aggregation=JOB_DEMAND_AGGREGATION_VERSION,
             input_union=INPUT_UNION_VERSION,
             requirements=JOB_REQUIREMENTS_SCHEMA_VERSION,
+            review_queue=REVIEW_QUEUE_VERSION,
         )
     elif kind == "ANALYSIS":
         from job.matching import JOB_MATCHING_VERSION
@@ -220,6 +242,38 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
     return versions
 
 
+def startup_registry(*, dsn: str | None = None) -> TechnologyRegistry | None:
+    """Retry only startup DB interruptions; a loaded snapshot stays process-pinned."""
+    from registry.db import RegistryStoreError
+
+    for attempt in range(1, 4):
+        try:
+            return default_registry(dsn=dsn)
+        except psycopg.OperationalError as exc:
+            # Exception messages can contain connection details. Log only safe tags.
+            LOGGER.warning(
+                "C Registry startup DB failure attempt=%s/3 error_type=%s sqlstate=%s",
+                attempt,
+                type(exc).__name__,
+                exc.sqlstate,
+            )
+            if attempt == 3:
+                # The process supervisor can restart after DB recovery. Keeping a
+                # live process with registry=None would never retry until rollout.
+                raise RuntimeError("Registry startup retries exhausted") from None
+            time.sleep(attempt)
+        except (RegistryStoreError, psycopg.Error) as exc:
+            LOGGER.error(
+                "C Registry requires setup or repair error_type=%s; "
+                "check migrations and approved import, then restart Worker",
+                type(exc).__name__,
+            )
+            # Missing approval/config/schema is not fixed by repeated DB reads.
+            # Keep liveness and authenticated /ready=503 available for diagnosis.
+            return None
+    return None  # All three attempts above either return or raise.
+
+
 def create_compute_app(
     *,
     store: ComputeStore | None = None,
@@ -231,8 +285,9 @@ def create_compute_app(
 ) -> FastAPI:
     app = create_health_app("worker")
     app.add_middleware(BodyLimit, limit=max_body_bytes)
-    registry = registry or default_registry()
-    mapper = RegistryMapper(registry)
+    if registry is None:
+        registry = startup_registry(dsn=getattr(store, "_dsn", None))
+    mapper = RegistryMapper(registry) if registry is not None else None
     token = token if token is not None else os.getenv("C_COMPUTE_TOKEN", "")
     if store is None:
         dsn = configured_database_url()
@@ -253,7 +308,7 @@ def create_compute_app(
 
     configured_intake = intake_config or os.getenv("C_INTAKE_CONFIG")
     intake_runner = None
-    if configured_intake:
+    if configured_intake and registry is not None:
         from worker.intake import configured_runner
 
         if store is None or len(token) < 32:
@@ -285,6 +340,8 @@ def create_compute_app(
             or not hmac.compare_digest(supplied.encode(), token.encode())
         ):
             raise HTTPException(401, "INTERNAL_AUTH_REQUIRED")
+        if registry is None:
+            raise HTTPException(503, "C_REGISTRY_UNAVAILABLE")
 
     def database() -> ComputeStore:
         if store is None:
@@ -308,6 +365,12 @@ def create_compute_app(
         # trace_id is delivery diagnostics, not computation input or idempotency identity.
         request_payload.pop("trace_id")
         request_payload["compute_versions"] = compute_versions(kind, registry)
+        if isinstance(event, ArchiveTrendCompleted):
+            from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION
+
+            request_payload["compute_versions"]["archive_trend"] = (
+                ARCHIVE_TREND_ALGORITHM_VERSION
+            )
         ticket = db.claim(
             event_id=event.event_id,
             kind=kind,
@@ -439,6 +502,23 @@ def create_compute_app(
             },
         )
 
+    @app.exception_handler(ArchiveInputUnavailable)
+    async def archive_input_unavailable(request: Request, exc: ArchiveInputUnavailable):
+        LOGGER.error(
+            "Archive input unavailable error_type=%s errno=%s activity_path=%r endpoint=%s",
+            exc.error_type,
+            exc.errno,
+            exc.activity_path,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "ARCHIVE_INPUT_UNAVAILABLE",
+                "message": "Archive input cannot be read; check the input mount and permissions",
+            },
+        )
+
     @app.exception_handler(Exception)
     async def compute_error(request: Request, exc: Exception):
         return JSONResponse(
@@ -460,6 +540,12 @@ def create_compute_app(
 
     prefix = "/internal/v1/c"
     auth = [Depends(authorized)]
+
+    from worker.review_api import install_review_routes
+
+    install_review_routes(
+        app, prefix=prefix, auth=auth, database=database, mapper=mapper
+    )
 
     @app.get(prefix + "/intake/status", dependencies=auth)
     def intake_status():
@@ -505,6 +591,11 @@ def create_compute_app(
         return {
             "message": "C Registry snapshot",
             "data": registry.model_dump(mode="json"),
+            "meta": {
+                "schema_version": registry.schema_version,
+                "registry_version": registry.registry_version,
+                "registry_sha256": digest(registry.model_dump(mode="json")),
+            },
         }
 
     @app.get(prefix + "/contracts", dependencies=auth)
@@ -519,6 +610,7 @@ def create_compute_app(
                     AnalysisCompleted,
                     PublicReposCompleted,
                     TrendCompleted,
+                    ArchiveTrendCompleted,
                 )
             },
         }
@@ -552,6 +644,8 @@ def create_compute_app(
             cohort = JobCohort.model_validate(
                 snapshot(event.cohort_snapshot_id, None, "COHORT")["payload"]
             )
+            if cohort.registry_version != registry.registry_version:
+                raise ValueError("cohort and runtime Registry versions differ")
             result = build_recommendations(
                 cohort,
                 event.evidence,
@@ -833,6 +927,19 @@ def create_compute_app(
             ]
 
         return execute(event, "PUBLIC_REPO", None, compute)
+
+    @app.post(prefix + "/archive-trends/completed", dependencies=auth)
+    def archive_completed(event: ArchiveTrendCompleted):
+        from worker.archive_input import build_archive_artifact
+
+        return execute(
+            event,
+            "TREND",
+            None,
+            lambda: [
+                build_archive_artifact(event, registry=registry, snapshot=snapshot)
+            ],
+        )
 
     @app.post(prefix + "/trends/completed", dependencies=auth)
     def trend_completed(event: TrendCompleted):

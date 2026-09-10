@@ -47,7 +47,7 @@ Schema는 `TechnologyRegistry.model_json_schema()`의 결과와 테스트에서 
 | `technologies` | 승인된 canonical technology 배열 |
 | `mappings` | 특정 입력 surface에 한정된 승인 mapping 배열 |
 
-같은 Registry 내용을 수정해서 과거 결과를 덮어쓰지 않는다. mapping/category/status가 바뀌면 새 `registry_version`을 발행하고 각 소비 결과에 사용한 버전을 기록한다. 배포 승인과 Dataset Replay 여부·범위는 `S15P21E102-143`의 운영 정책에서 결정한다.
+같은 Registry 내용을 수정해서 과거 결과를 덮어쓰지 않는다. mapping/category/status가 바뀌면 새 `registry_version`을 발행하고 각 소비 결과에 사용한 버전을 기록한다. 2026-09-10 현재 활성화·버전 보존·B/C 전환은 [DB 운영 계약](technology-registry-db.md), 선택한 원본의 새 계산과 검토 결정 경계는 [검토 큐 계약](../ai/c-registry-review.md)을 따른다. 전사 승인자/주기 등 조직 운영 정책의 확정은 `S15P21E102-143`의 별도 범위다.
 
 ## 4. Canonical technology
 
@@ -156,6 +156,12 @@ python -m ruff format --check registry tests/test_registry_contracts.py tests/te
 
 `AI/registry/review.py`의 `ReviewStore`는 `job-technology-classification/v1`의
 `UNKNOWN`·`AMBIGUOUS` mapping을 `registry-review-queue/v1` JSON snapshot에 저장한다.
+
+**2026-09-10 후속:** 이 절은 초기 로컬 도구 기록이다. 실제 C 공고 실행은
+`c_compute.registry_review`에 결과와 함께 원자적으로 저장하고 내부 조회/결정 API를
+제공한다. [현재 DB 검토 계약](../ai/c-registry-review.md)에 요청·충돌·재처리 경계를
+정의했다. 아래의 협의 표 중 DB 저장·API 필드는 그 문서로 구체화되었으며, B의 관리자
+인증과 Registry 신규 항목 승인 기능은 별도다.
 `ingest`의 안정적인 `review_id`는 동일 snapshot의 재입력을 중복 저장하지 않으며,
 `query`는 `PENDING`·`RESOLVED`별 조회를 제공한다. 요구유형 충돌만 있는
 `MATCHED / REVIEW_REQUIRED`는 이 Registry 미해결 큐의 대상이 아니다.

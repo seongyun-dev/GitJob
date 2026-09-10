@@ -117,7 +117,7 @@ API 명세서 예시는 `{"repoFullNames": [...]}`였으나 브랜치가 없었�
 | `repositoryFullName` | GitHub 저장소 응답(정규 표기) | 이름이 바뀐 저장소의 옛 이름이 이벤트에 남는다 |
 | `commitSha` | GitHub 브랜치 응답의 tip | 임의의 commit을 분석시킬 수 있다 |
 | `analysisId`·`analysisRepositoryId` | 서버 생성 UUID | 남의 분석 ID를 덮어쓸 수 있다 |
-| `registryVersion` | `gitjob.analysis.request.registry-version` | 판정 기준을 골라 결과를 왜곡할 수 있다 |
+| `registryVersion` | `technology_registry`의 `CURRENT` 행 | 판정 기준을 골라 결과를 왜곡할 수 있다 |
 
 저장소 접근 권한은 별도로 확인하지 않는다. `GET /repos/{owner}/{repo}` **호출의
 성공 자체가 권한의 증거**다. GitHub은 권한 없는 저장소에도 404를 주기 때문에,
@@ -198,8 +198,10 @@ GitHub은 한도 초과와 권한 부족을 **둘 다 403**으로 응답한다. 
 
 | 키 | 환경변수 | 기본값 |
 | --- | --- | --- |
-| `gitjob.analysis.request.registry-version` | `ANALYSIS_REGISTRY_VERSION` | `technology-registry/v1` |
 | `gitjob.analysis.request.poll-after-seconds` | `ANALYSIS_POLL_AFTER_SECONDS` | `2` |
+
+Registry 버전 환경변수는 사용하지 않는다. `CurrentRegistryVersion`이 DB의 CURRENT
+버전을 조회하고 Outbox에 고정한다. C snapshot import용 alias와는 별도 승인 경로다.
 
 ## 검증
 

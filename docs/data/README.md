@@ -1,8 +1,10 @@
 # 데이터 플랫폼·파이프라인 문서
 
-> 상태: 수집·저장·정규화·품질 설계 기준
+> 상태: 현재 수집·저장·정규화·품질 계약과 과거 설계 기록
 >
-> 기준일: 2026-08-28
+> 기준일: 2026-09-10
+>
+> 현재 MVP는 채용·GitHub 데이터 경로를 사용한다. Stack Exchange 관련 절은 과거 설계 기록이며 현재 실행·수용 범위에 포함하지 않는다.
 
 ## 1. 데이터 원칙
 
@@ -11,7 +13,7 @@ GitJob의 데이터는 “화면에 빠르게 보여줄 서비스 데이터”�
 | 계층 | 저장 대상 | 기준 저장소 |
 |---|---|---|
 | Service | 사용자, 분석 실행, Evidence, Registry, 정규화 공고, 집계·추천 Snapshot | PostgreSQL |
-| Raw/History | 원본 payload, Stack Exchange dump, 장기 분석 이력, Parquet | HDFS / Parquet |
+| Raw/History | 원본 payload, 장기 분석 이력, Parquet | HDFS / Parquet |
 | Event | 수집·분석 요청/결과·재처리 event | Kafka |
 | Cache/Session | 세션, 조회 cache, 작업 보조 상태 | Redis |
 
@@ -24,15 +26,14 @@ PostgreSQL은 raw 본문 전체를 대체하지 않는다. HDFS/Parquet dataset�
 ```text
 외부 source
   ├─ Worknet / Saramin job posting
-  ├─ GitHub repository·activity
-  └─ Stack Exchange API / dump
+  └─ GitHub repository·activity
           ↓
        Collector
           ↓ raw event
         Kafka
           ├─ C1 Archiver → HDFS/Parquet
           ├─ C2 Extractor/Normalizer → Fact·정규화 DB
-          └─ C3 Aggregator → demand·trend·pain Snapshot
+          └─ C3 Aggregator → demand·trend Snapshot
                           ↓
                  PostgreSQL Service API
 ```
@@ -49,8 +50,6 @@ PostgreSQL은 raw 본문 전체를 대체하지 않는다. HDFS/Parquet dataset�
 | Career | 목록·상세 채용공고 | **기준 A 미통과 · 소유자 판단으로 수집** (2026-09-10) | `jobs.collected` |
 | JobKorea | 목록·상세 채용공고 | **기준 A 미통과 · 소유자 판단으로 수집** (2026-09-10) | `jobs.collected` |
 | GitHub | 사용자가 권한을 부여한 public/private 저장소 개발 활동·저장소 기술 신호 | 일 단위, API quota 내 최대 5,000/hour 기준 | `repos.raw` |
-| Stack Exchange API | 질문·답변·tag 신호 | 주 단위, 최대 10,000/day 기준 | `posts.raw` |
-| Stack Exchange dump | Posts·Tags·PostLinks | 최신 dump 확인 후 batch intake | Parquet → replay |
 
 ### 기준 A 미통과 source 3종을 소유자 판단으로 수집한다 (2026-09-10, `-196`)
 
@@ -107,11 +106,13 @@ Notion 데이터 파이프라인 초안의 논리 topic은 `posts.raw`, `jobs.ra
 |---|---|---|
 | C1 Archiver | raw event를 HDFS/Parquet에 적재 | event offset을 경로·metadata에 포함 |
 | C2 Extractor | 기술·요구사항·Fact·Registry mapping | `(source, source_id, dict_version)` upsert |
-| C3 Aggregator | 월/분기 trend, 수요, Pain 집계 | `(tech_id, period)` Snapshot replace/upsert |
+| C3 Aggregator | 월/분기 trend·수요 집계 | `(tech_id, period)` Snapshot replace/upsert |
 
 현재 `Infra/.env.example`의 `gitjob.source.events`, `gitjob.analysis.requests`, `gitjob.analysis.results`, `gitjob.analysis.dlq`는 애플리케이션 코드가 들어오기 전의 provisional topic이다. 최종 topic명·partition·retention·consumer group은 위 논리 계약과 맞춰 확정한다.
 
-## 5. Stack Exchange dump 처리
+## 5. 과거 설계: Stack Exchange dump 처리
+
+> 현재 MVP 제외 범위다. 아래 내용은 당시 재처리 설계를 보존하기 위한 기록이며 실행 작업 목록이 아니다.
 
 대규모 Stack Exchange 데이터는 API 호출 대신 dump를 받을 수 있다.
 
@@ -187,7 +188,6 @@ GitHub 공개 활동 추세는 GitHub Innovation Graph KR의 분기 Programming 
 |---|---|---|---|
 | 채용 수요 | 공고 건수·비율 | 월/선택 기간 | 표본·분모·지역·직무를 공개 |
 | GitHub 활동 | 분기별 `num_pushers` | 분기 | 개인 활동·star·인기도로 해석하지 않음 |
-| Stack Overflow | 질문 수·share·unanswered·accepted | 월/Corpus 기간 | 질문 수를 난이도로 표현하지 않음 |
 
 서로 다른 출처를 weighted score로 합치지 않는다. API와 화면은 source, unit, granularity, period, snapshotAt, denominator을 분리해 전달한다.
 
@@ -235,7 +235,7 @@ GitHub 공개 활동 추세는 GitHub Innovation Graph KR의 분기 Programming 
 2. PostgreSQL migration과 핵심 schema 작성
 3. raw intake·Parquet writer·checksum/manifest 구현
 4. Registry·정규화·duplicate/review queue 구현
-5. Evidence·demand·trend·Pain Snapshot 생성
+5. Evidence·demand·JOB/GITHUB trend Snapshot 생성
 6. quality result·DLQ·replay·lineage API 연결
 7. worker/partition 벤치마크와 복원력 실험 기록
 

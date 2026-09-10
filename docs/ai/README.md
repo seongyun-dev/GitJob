@@ -4,9 +4,15 @@
 >
 > 기준일: 2026-09-08 · 구현 기준: `ce4c24f` · 관련 Jira: S15P21E102-29/31/33/36/88/160
 
+> 2026-09-10 계약 정합성 후속: Registry 운영 기본을 DB로 전환(-199), 공고 미해결
+> 검토 항목을 계산 결과와 함께 DB에 저장(-88), Career/GameJob 완료 checksum 보완(-200),
+> GH Archive 기간별 기술 활동 계산(-201), 증가 공고 수 우선 추천(-202)을 추가했다.
+> 아래 링크의 최신 계약이 기준이며, 이번 변경은 로컬 구현·검증으로 운영 배포는 하지 않았다.
+
 > 2026-09-09 후속 -183/-184/-185: 채용공고 정규화·필수/우대 조건 보존·공고별 부분 부합을
 > 추가했다. [부분 부합 계약과 검증 한계](c-job-matching.md), [요구절 모델](c-job-requirements.md)을
-> 참고한다. 이 후속 기능의 실제 PostgreSQL·B/FE·운영 인수는 아직 완료되지 않았다.
+> 참고한다. 최신 로컬 PostgreSQL 검증과 아직 남은 B/FE·운영 인수는
+> [검증 기록 10절](c-mvp-verification.md#10-2026-09-10-계약-정합성-후속)을 구분해서 읽는다.
 
 ## 1. 3분 요약
 
@@ -30,6 +36,7 @@ C는 **사용자가 사용한 것으로 확인된 기술과 공고의 기술 조
 | 기능 / Jira | 제공하는 결과·핵심 동작 | 상세 계약 / 주요 코드 |
 |---|---|---|
 | 정규화·요구유형·검수 / -81·-82·-88 | 기술 alias를 Registry ID로 통일, 필수/우대/일반과 미확정 분리, 근거·검토 이력 보존 | [Registry](../data/2026-09-08-technology-registry-mvp.md), [분류·품질](c-job-demand.md) · [classifier.py](../../AI/job/classifier.py), [review.py](../../AI/registry/review.py) |
+| DB Registry·검토 실행 / -199·-88 | B의 기본 선택값을 불변 DB 버전으로 해석, UNKNOWN/AMBIGUOUS 원문·결정 이력의 원자적 저장과 API | [DB 운영 계약](../data/technology-registry-db.md), [검토 큐](c-registry-review.md) |
 | 공고별 부분 부합 / -183·-184·-185 | 필수/우대별 충족·부족·미확정과 원문 근거, 고정 목록/상세. 기존 What-if와 별도 | [부분 부합](c-job-matching.md), [요구절](c-job-requirements.md) · [matching.py](../../AI/job/matching.py) |
 | 공고 통합·수요 / -29 | 출처별 최신 관측을 합쳐 유효 공고 집합 확정, 기술별 distinct 공고 수·분모·비율 | [코호트·수요](c-job-demand.md) · [input_union.py](../../AI/job/input_union.py), [cohort.py](../../AI/job/cohort.py), [demand.py](../../AI/job/demand.py) |
 | Evidence 소비·Gap / -33 | 확인 보유/범위 내 미보유/미확정 구분, 레벨·관측·참여·귀속 프로필 보존 | [Evidence 정책](c-recommendation.md) · [evidence.py](../../AI/recommendation/evidence.py) |
@@ -37,6 +44,7 @@ C는 **사용자가 사용한 것으로 확인된 기술과 공고의 기술 조
 | 근거 설명 / -36 | 같은 Snapshot의 수요·Evidence·증가 공고를 한국어 Rule 문장으로 설명 | [설명 계약](c-recommendation-explanation.md) · [explanation.py](../../AI/recommendation/explanation.py) |
 | 공개 Repo 분석 / -160 | Artifact 크기/hash 확인 후 기술 관측, 분할 실행·재개·전체 결과 게시 | [관측 의미](c-public-analysis.md), [파이프라인](c-public-pipeline.md) · [public_analysis.py](../../AI/github/public_analysis.py), [public_pipeline.py](../../AI/github/public_pipeline.py) |
 | 출처별 Trend / -31 | JOB 월별 수요와 Innovation Graph KR 언어별 분기 지표를 각각 반환 | [Trend 계약](c-public-trend.md) · [job.py](../../AI/trend/job.py), [github.py](../../AI/trend/github.py) |
+| GH Archive 기술 활동 / -201 | 기간별 이벤트와 공개 기술 관측을 repo_id로 결합, 표본·coverage·입력 계보와 함께 저장 | [Archive 계약](c-archive-trend.md) · [archive.py](../../AI/trend/archive.py) |
 | 자동 실행·저장·조회 / -33 | 완료 manifest 감지/완료 API 호출, 재시도·멱등성·사용자 격리·DB 불변 저장 | [런타임](c-compute-runtime.md), [클라이언트](c-compute-client.md) · [intake.py](../../AI/worker/intake.py), [api.py](../../AI/worker/api.py), [store.py](../../AI/worker/store.py) |
 
 기능별 예외·DTO·계산 버전은 표의 상세 계약이 기준이다. HTTP의 실제 JSON Schema는 인증된 `GET /internal/v1/c/contracts`에서 확인한다. Python 함수의 인자명과 HTTP DTO 필드가 같다고 가정하지 않는다.
@@ -56,7 +64,8 @@ B가 사용자 저장소 Facts/Rule/참여·귀속을 분석한다. B는 준비�
 - A: 원재료 수집·발행. C: 의미 판정·집계·추천 계산. B: 개인 분석 엔진·사용자 인증·서비스 조회.
 - C는 B의 AST/Rule/blame 분석을 중복 구현하지 않는다. 공개 저장소 관측으로 사용자의 L3를 만들지 않는다.
 - C 내부 API의 `user_id`는 B가 인증한 값이다. 브라우저가 C 서비스 토큰을 가지고 직접 호출하는 구조가 아니다.
-- Registry 검수의 C `ReviewStore`는 파일 기반 검토·재처리 구현이다. B 관리자 승인 API/운영 DB 연동 완료를 뜻하지 않는다.
+- Registry 실행 기본은 DB이며 기존 파일 `ReviewStore`는 로컬 도구로 남긴다. 운영 실행 코드는
+  공고 완료 시 DB 검토 큐를 함께 저장한다. B 관리자 인증·Registry 신규 기술/alias 승인 UI는 별도 경계다.
 
 ## 4. 중요한 판단과 이유
 
@@ -74,7 +83,7 @@ B 레벨, 검증 상태, 기술 관측, 참여, SELF 귀속을 따로 보존한�
 
 필수 조건은 AND/OR를 유지하며 우대를 필수로 바꾸지 않는다. 모호한 조건을 추측해서 통과시키지 않고 검토 대상으로 남긴다. What-if에는 기술 하나만 추가하고 선행 기술까지 자동 보유 처리하지 않는다.
 
-예를 들어 현재 12개, 추가 후 27개라면 증가 공고는 15개다. `WHAT_IF` 목록도 **신규 15개**이며 27개 전체가 아니다. 추천은 증가 수·필수 수요 등을 순서대로 비교하는 규칙이지 근거 없는 종합 점수가 아니다.
+예를 들어 현재 12개, 추가 후 27개라면 증가 공고는 15개다. `WHAT_IF` 목록도 **신규 15개**이며 27개 전체가 아니다. 추천 v3은 증가 공고 수를 먼저 비교하고, 동률일 때 선행기술 준비 여부·수요 등을 비교한다. 근거 없는 종합 점수는 만들지 않는다.
 
 ### 모르는 것과 0을 구분한다
 
@@ -83,12 +92,12 @@ B 레벨, 검증 상태, 기술 관측, 참여, SELF 귀속을 따로 보존한�
 ## 5. 실행·연결을 시작하는 순서
 
 1. [AI 개발 환경](../../AI/README.md)으로 Python 3.12와 저장소의 requirements를 준비한다.
-2. [런타임](c-compute-runtime.md)에 따라 별도 DB migration, 내부 token, 실행 Registry를 준비한다. `/health`는 생존 확인이고 인증된 `/ready`는 DB migration 준비 확인이다.
+2. [런타임](c-compute-runtime.md)에 따라 public Flyway V3, C migration 003까지와 내부 token을 준비하고, [Registry를 DB에 import·활성화](../data/technology-registry-db.md)한다. `/health`는 생존 확인이고 인증된 `/ready`는 실행 Registry와 DB migration 준비 확인이다.
 3. 공고 자동화는 `C_INTAKE_CONFIG`와 보존된 완료 입력 디렉터리를 설정한다. 공개 분석은 허용한 고정 HDFS root와 별도 checkpoint를 사용한다.
 4. `GET /internal/v1/c/intake/status`로 처리 상태를 보고, `POST /internal/v1/c/job-cohorts/resolve`로 현재 기준의 코호트 ID를 얻는다. resolve는 조회이며 계산 요청이 아니다.
 5. B에서 `POST /internal/v1/c/analyses/completed`로 실제 Evidence와 코호트 ID를 보낸다. 반환된 저장 Snapshot ID로 결과와 공고 목록을 조회한다. 실패 재전달은 [클라이언트 규칙](c-compute-client.md)을 따른다.
 
-운영 준비 현황과 B 연동에 남은 일은 [B ↔ C compute 연동](c-compute-backend-integration.md)에 있다. 2026-09-09 기준 2번(스키마·token)까지 끝났고 3번 이후는 착수 전이다.
+운영 준비 현황과 B 연동에 남은 일은 [B ↔ C compute 연동](c-compute-backend-integration.md)에 있다. 그 문서의 2026-09-09 스키마·token 기록은 이전 배포 기준이며, 새 V3/003·DB Registry를 적용했다는 뜻은 아니다.
 
 배포 대상 주소·비밀값은 문서 예제를 그대로 쓰지 않는다. 자동 입력의 `as_of`는 명시한 기준 시각이며 저절로 현재 시각으로 이동하지 않는다. 기준 변경과 운영 입력 보존은 실행 설정에서 관리한다.
 

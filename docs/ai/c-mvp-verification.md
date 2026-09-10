@@ -10,8 +10,9 @@
 
 구현 브랜치 `feat/S15P21E102-33-branch`의 `ce4c24f801fe9c1f88f5caf13084620f2e6d082b`까지를 기준으로 한다. 기준점 `edfa96db1e75c45931c3b08cc2408b7b8fa26a5b` 이후 기능별 로컬 커밋 25개, 변경 파일 78개다. 이후 문서 편집을 위한 새 실행 결과나 현재 원격/배포 상태를 뜻하지 않는다.
 
-2~6절은 위 초기 기준의 기록이다. 후속 리뷰 보완은 7~8절, 최신 월별 집계 분리와 전체
-**1060개** 검증 결과는 9절을 확인한다. 각 절의 원본 데이터·코드 버전을 구분한다.
+2~6절은 위 초기 기준의 기록이다. 후속 리뷰 보완은 7~8절, 월별 집계 분리와 당시
+**1060개** 검증 결과는 9절, 2026-09-10 DB·Archive 계약 정합성 후속은 10절을 확인한다.
+각 절의 원본 데이터·코드 버전을 구분한다.
 
 9/8 구현 검증 당시 push·MR·merge·배포를 하지 않았다. 원래 develop checkout은 변경하지 않았고 테스트 Worker/DB는 검증 후 중지했다. 이미지·테스트 DB·원본 검증 자료는 보존했다.
 
@@ -245,3 +246,160 @@ quality version과 그에 따른 신규 cohort ID만 달라졌다. 이 비교는
 계산 버전은 `job-cohort-quality/v5`, JOB Trend `c-job-monthly-demand/v1`이다.
 새 dependency·DB migration·환경 변수·API 경로는 없다. Docker 재빌드·운영 배포·B/FE 인수는
 실행하지 않았으며 8절의 공개 v4 결과는 재사용한 검증 기록이다.
+
+## 10. 2026-09-10 계약 정합성 후속
+
+기준 브랜치: `feat/S15P21E102-199-branch`, 시작점 `ba5bbe4`.
+대상은 -199 DB Registry/B 기본값, -88 실제 DB 검토 큐, -200 완료 입력 checksum,
+-201 Archive 기간별 계산, -202 증가 공고 수 우선 추천, -127/-143 정책 문서 정리다.
+
+검증된 동작:
+
+- Registry를 기존 public 테이블에 불변 버전/hash/provenance로 저장하고 읽는다.
+  family alias는 명시적으로 활성화하며 DB 오류·내용 변조를 JSON fallback으로 숨기지 않는다.
+  B 신규 요청의 concrete version 고정과 C app 재시작 후 같은 DB 내용 조회를 확인했다.
+- UNKNOWN/AMBIGUOUS는 공고 결과와 같은 transaction으로 저장한다. 조회·수동 결정,
+  revision/idempotency 충돌·다중 사이트 ID 분리·저장 실패 rollback을 실제 로컬 PG에서 확인했다.
+- Career/GameJob 실제 writer 함수가 출력한 fixture 파일을 C 완료 입력 경로로 소비했다.
+  이는 원 사이트 네트워크 수집이나 과거 완료 파일 수정 검증이 아니다.
+- Archive exporter의 CSV/NDJSON·metadata를 수정 없이 C API로 전달해 Trend 저장·조회했다.
+  6개월 합계를 월별로 재라벨하는 입력은 거절한다. Parquet semi-join 자체는 코드·단위 검사만
+  수행했고 실제 Spark/HDFS 데이터로 실행하지 않았다.
+- 추천 v3은 증가 공고 수를 최우선으로 정렬하고 기존 v1/v2 저장 결과 조회를 보존한다.
+
+최종 전체 AI 테스트는 **1518 passed / 0 failed / 2 skipped**이며 실제 격리 PostgreSQL을
+포함한다. 두 skip은 `test_compute_matching.py`의 실행 모드별 대체 경로 검사다.
+변경 Python 28개 Ruff check 통과, 27개 format check 통과이며 Career의 기존 포맷
+차이 2곳은 그대로 두었다. 독립 리뷰에서 재현한 검토 ID 충돌과 동시 Registry import
+deadlock을 수정한 후의 결과다.
+
+Java 21의 전체 BE 테스트는 격리 PostgreSQL에 Flyway V1~V3를 적용한 context까지
+**113 tests / 0 failures / 5 skipped**다. skip은 테스트 코드의 선택적 통합 환경 조건이다.
+Compose config와 Worker에 모든 C migration이 포함되는 정적 검사도 통과했다.
+변경 Python의 Ruff 검사를 수행했으며 Career crawler의 두 포맷 차이는 기존 상태로
+보존했다. 별도 type checker 설정은 없다.
+
+운영 DB/서버/수집 원본은 변경하지 않았다. 이번 결과는 실제 B Evidence 생성의 정확도,
+운영 월별 Archive 모집단, B/FE 연결, 새 Worker/Spark 이미지 빌드·배포를 증명하지 않는다.
+이 인수는 배포 시 별도로 수행해야 한다. 과거 family-only 미완료 요청은 새 활성 버전으로
+자동 치환하지 않고 [DB 전환 계약](../data/technology-registry-db.md)에 따라 처리한다.
+
+## 11. 2026-09-10 MR !80 리뷰 보완 검증
+
+기준: `refactor/S15P21E102-203-branch`의 `e4bcf9f` 이후 로컬 보완.
+운영 서버·DB·수집 데이터는 변경하지 않았다.
+
+| 수정 범위 | 검증된 동작 |
+|---|---|
+| -88 공고 검토 저장 | 004 migration으로 300자 초과 원천 ID 보존, 다른 원문 변형의 review ID v3 분리, 같은 입력 멱등성 및 이전 v2 수동 결정/action 보존 |
+| -88 자동 실행/원자성 | 검토 준비 실패 후 동일 입력 재시도 완료, 결과·검토의 rollback, 두 DB 연결의 동일 항목 삽입이 1행/2코호트 참조로 수렴 |
+| -201 Archive 전달 | export 파일·metadata·CLI stdout hash 일치, 상류 hash 별도 보존, 입력 mount 누락 503 후 복구하여 같은 event로 저장·조회 성공 |
+| -201 입력량 | 요청 누적 64 MiB/100,000행 제한과 전체 거절, 월별 Top10k 5개+Top20k 1개의 70,000행 지원 |
+| -199/-143 전환 | 시작 일시 오류의 제한적 재시도, 승인 Registry 부재 fail-closed, 새 계산 버전 코호트 재생성, 과거 결과 조회 보존 및 혼합 Registry 계산 거절 |
+| CI/FE | Worker와 같은 Python Linux 이미지의 비DB 회귀 단계, SO 없는 JOB/GITHUB 표시와 공용 주석 일치 |
+
+최종 전체 AI 테스트: **1540 passed / 0 failed / 3 skipped**. 격리 PostgreSQL16에서
+public V1~V3와 C Compute 001~004를 사용했다. skip은 PostgreSQL/메모리 모드의
+대체 경로 2건과 Windows에서 실행할 수 없는 POSIX 권한 검사 1건이다.
+
+Java 21 전체 BE 테스트: **114 tests / 0 failures / 5 skipped**(109 통과).
+새 격리 DB에 Flyway V1~V3를 적용한 애플리케이션 context가 통과했다. Docker 의존
+CDC 통합 3건과 별도 schema 검증 2건은 Docker Engine이 없어 실행하지 않았다.
+
+FE lint/typecheck/build, 변경 Python 16개 Ruff check/format, Bash 문법 및 Jenkinsfile
+Groovy parse, diff 공백 검사를 통과했다. 실제 Jenkins Pipeline 실행과 Docker 이미지
+build/start는 이 검증에 포함하지 않는다. 비DB CI와 같은 테스트 선택을 Windows에서
+직접 실행한 결과는 62 passed / 1 POSIX skip / 2 DB deselected다. Linux CI에서는
+예상 밖 skip을 실패로 처리한다.
+
+합성 검토 10,000건의 로컬 PostgreSQL 저장은 약 7.45초, 동일 입력 재전달은 약
+7.17초였고 중복되지 않았다. 검증 transaction은 rollback했다. 실제 운영 네트워크의
+처리량이나 기존 구현 대비 성능 향상률을 의미하지 않는다.
+
+독립 리뷰에서 찾은 Jenkins Python 환경 가정, SO 공용 주석, CI의 Archive 상한/마운트
+회귀 누락을 보완했다. 이번에 선택한 수정 범위의 최종 검토에서 미해결 코드 결함은
+확인되지 않았다. Registry
+승인/버전 고정, 수동 결정 감사, 공고 결과 원자성, 실제 0과 불명 구분, 공고 매칭·추천
+계산 규칙은 유지했다. review v3/004, Archive 503 및 누적 상한은 각 실행 계약에 반영했다.
+
+Linux WSL에서 0555 디렉터리·0444 파일의 UID 10001 읽기 성공·쓰기 거절은 확인했다.
+다만 **실제 exporter Python 실행→다른 UID Worker 컨테이너 mount**는
+검증하지 않았다. 실제 Spark/HDFS 월별 데이터, 운영 migration·이미지 배포, B 완료
+callback·사용자 API·FE E2E는 별도 인수 항목이다. 배포 시 004 적용과 승인 Registry,
+새 코호트 준비를 생략하지 않는다.
+
+## 12. 2026-09-10 MR !80 2차 리뷰 보완
+
+기준: `dcc75bd3` 이후 로컬 보완. 과거 v1/v2 파일 검토 큐를 다시 수집할 때
+기존 결정을 찾지 못하는 문제를 고쳤다. 과거 고정 ID로 재현한 동일 입력 4→8건
+중복은 4건 유지로 바뀌며, 수동 결정·attempt를 보존한다. v1에서 빠졌던 dataset
+필드는 과거 ID 결합으로 확인하고, 사이트·원문이 다르면 별도 v3 항목을 만든다.
+DB와 파일의 원문 비교·v3 source digest를 공유하지만 기존 ID/hash bytes와 계산
+버전, API 형식, DB migration은 바꾸지 않았다.
+
+Spark의 NULL 집계 오류가 중복 repo 오류로 먼저 표시되던 진단 순서를 보완했다.
+이 회귀는 Spark 집계 결과를 대체해 NULL·실제 중복·정상 요약 분기를 확인한 것이며
+실제 Spark/HDFS 실행을 뜻하지 않는다. CI 비DB 선택에 기술 활동·추천과
+단일/합집합 공고 검토 근거 비교를 추가했다. `test_compute_review.py`와
+`test_registry_rollout.py`는 실제 PostgreSQL 의존이라 비DB gate에 넣지 않는다.
+
+의도적으로 유지한 동작도 재검증했다. 최신 revision의 수동 결정 교정은 이전/새
+attempt와 DB action을 보존한다. 지역 등 조건으로 제외된 공고의 미등록 기술
+근거는 두 발행 경로 모두 남는다. Registry 미준비 시 설정된 intake를 미설정으로
+응답하지 않고 인증 후 503을 반환한다. 과거 결과 조회는 유지하지만 서로 다른
+Registry 입력을 섞는 새 계산은 거절한다. 정책 token과 파일 schema의 구분 및
+단일 승인 버전 전환/동시 alias 활성화의 제한을 각 운영 계약에 명시했다.
+
+최종 전체 AI 테스트: **1550 passed / 0 failed / 3 skipped**, 격리 PostgreSQL16
+포함. skip은 PG/메모리 대체 경로 2건과 Windows POSIX 권한 검사 1건이다.
+CI와 같은 선택을 Windows에서 실행한 결과는 **107 passed / 1 POSIX skipped /
+2 DB deselected**다. Linux CI의 예상 밖 skip 실패 정책은 유지한다.
+변경 Python 8개 Ruff check/format, Bash 문법, diff check를 통과했다.
+독립 리뷰에서도 변경 범위의 미해결 결함은 확인되지 않았다.
+
+이번 라운드에 BE·FE 제품 코드는 바꾸지 않아 빌드/전체 테스트를 다시 돌리지
+않았다. 실제 Jenkins/Docker 실행, 운영 migration·Registry 전환, 실제 수집 입력과
+B/FE E2E는 미검증이다. 11절의 운영 인수 항목은 계속 남는다.
+
+## 13. 2026-09-10 !46 반영 develop과의 충돌 해결
+
+기준: !80 `e2dda8a`와 develop `bdba4d9`의 통합. B 분석 요청은 !46의
+`CurrentRegistryVersion`을 유지하고, 기존 분석 재사용 시 버전을 다시 조회하지
+않는 회귀를 보존했다. 오류 enum과 DB 운영 문서는 양쪽 변경을 함께 반영했다.
+
+중복 C V3는 V11로 옮기고 V4가 이미 만든 복합키·자동 채번·FK를 재정의하지 않는다.
+develop의 V1~V10 파일은 수정하지 않았다. C snapshot import는 B의 CURRENT나
+관리자 DRAFT를 바꾸지 않는 RETIRED 행으로 저장한다. C alias는 기존 이름을 유지하고
+schema/version 복합 FK와 hash 검증을 보존한다. B 원본 버전의 메타데이터를
+추측해 채우거나 같은 버전에 다른 C 내용을 덮어쓰지 않는다.
+
+검증 결과:
+
+- 실제 로컬 PostgreSQL16 새 DB에서 Spring Boot/Flyway V1~V11 적용 성공 및 이력
+  11건을 확인했다. 별도 DB 회귀에서도 V1~V10 뒤 V11을 적용하고 C import/load/alias
+  활성화 후 B CURRENT·기존 header·Evidence 규칙 수가 변하지 않는 것을 확인했다.
+- AI 전체 **1741 passed / 5 skipped / 0 failed**. PostgreSQL claim·C compute·Registry
+  경로를 포함한다. skip은 Windows symlink/POSIX 권한 2건, Kafka 강제 종료 통합
+  1건, PG/메모리 전용 대체 경로 2건이다.
+- BE 전체 **151 passed / 21 skipped / 0 failed** (172 tests). skip은 Docker 의존
+  CDC 3건, Registry draft 7건, 후보 저장 9건, schema validation 2건이다.
+- FE lint·typecheck/build, 변경 Python 3개 Ruff check/format, Compose config,
+  Bash 구문, diff check를 통과했다. Python 검증 환경에 최신 저장소의
+  requirements/requirements-dev에 이미 선언된 의존성을 설치했고 선언·lockfile은
+  바꾸지 않았다.
+
+이 결과는 충돌 해결 및 로컬 호환 검증이다. B CURRENT와 C import alias의 자동
+동기화나 B→C 실제 결과의 버전 호환 인수까지 완료했다는 뜻이 아니다. 운영 배포,
+실제 Kafka/Spark/HDFS 및 B/FE E2E는 실행하지 않았다. 과거 !80 단독 C V3를 적용한
+실험 DB는 정식 develop V3와 이력이 다르므로 자동 repair 대상이 아니다.
+
+검증 중 추가된 develop `e3ca286`의 C1 Archiver 변경도 충돌 없이 반영했다.
+이 최종 동기화 뒤 Archiver·Archive·Registry DB/rollout 관련 회귀는 **80 passed /
+1 Windows POSIX skipped**이며 Compose config와 추가 shell 문법도 통과했다.
+위 전체 AI/BE/FE 결과는 `bdba4d9` 통합 기준이며, 후속 변경은 이 좁은 회귀로
+확인했다. 실제 Spark 스트리밍이나 Archiver 운영 기동을 실행한 것은 아니다.
+
+푸시 시점에 추가된 develop `259d352`의 Final v2 FE 디자인도 반영했다. Trend 두
+화면의 충돌은 새 카드/상세 레이아웃을 유지하면서 SO 출처를 제외하는 방식으로
+해결했다. 최종 FE lint·typecheck/build를 재실행해 통과했다. 브라우저 시각 QA나
+실 API 연결은 실행하지 않았으며 AI/BE 변경은 이 추가 동기화에 없다.

@@ -314,9 +314,13 @@ services:
       # explicit DB migration are configured. Process /health stays liveness.
       C_COMPUTE_TOKEN: ${C_COMPUTE_TOKEN:-}
       C_COMPUTE_LEASE_SECONDS: ${C_COMPUTE_LEASE_SECONDS:-120}
+      C_REGISTRY_BACKEND: ${C_REGISTRY_BACKEND:-postgres}
+      C_REGISTRY_VERSION: ${C_REGISTRY_VERSION:-technology-registry/v1}
+      C_REGISTRY_PATH: ${C_REGISTRY_PATH:-}
       C_INTAKE_CONFIG: ${C_INTAKE_CONFIG:-}
       C_ARTIFACT_ROOT: ${C_ARTIFACT_ROOT:-}
       C_ARTIFACT_URI_PREFIX: ${C_ARTIFACT_URI_PREFIX:-}
+      C_ARCHIVE_ACTIVITY_ROOT: ${C_ARCHIVE_ACTIVITY_ROOT:-}
       POSTGRES_HOST: ${DB_HOST:-postgres}
       POSTGRES_PORT: ${DB_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-gitjob}

@@ -1,10 +1,10 @@
 # Backend 설계 문서
 
-> 상태: API·도메인 설계 기준
+> 상태: 구현된 기반과 남은 C/FE 인수 경계
 >
-> 기준일: 2026-08-28
+> 기준일: 2026-09-10
 >
-> 현재 레포의 `BE/`에는 애플리케이션 소스가 아직 없으므로, 이 문서는 Notion 요구사항·기능명세·API 명세를 실제 구현으로 옮길 때 사용하는 계약서다.
+> 현재 `BE/`에는 Spring Boot 기반, OAuth·저장소·분석 요청·Outbox와 C 호출을 위한 코드가 있다. 구현·로컬 검증·운영 인수 구분은 [현재 상태](../2026-09-10-current-status.md)를 따른다.
 
 ## 1. Backend 책임
 
@@ -15,7 +15,7 @@ Backend는 다음 책임을 가진다.
 - 비동기 분석 Job 생성·상태·취소·재실행·Snapshot 관리
 - GitHub 분석 결과를 기술 Profile/Evidence로 조회
 - 목표 직무·채용 수요·Skill Gap·학습 후보·성장 로드맵 조회
-- Trend, Stack Overflow Pain/FAQ/Q&A와 검수된 AI 설명 제공
+- JOB/GITHUB Trend와 근거 기반 Rule/AI 설명 제공
 - 운영 지표, 데이터 품질, lineage와 사용자 데이터 삭제 제공
 
 ## 2. 기술 기준
@@ -33,9 +33,9 @@ Backend는 다음 책임을 가진다.
 
 Notion의 개발 환경은 Spring Boot/JPA/Java 21, React, PostgreSQL, Redis, Kafka, Spark/Hadoop/Python, Docker/AWS/Nginx/Jenkins를 기준으로 한다. 기존 초기 회의록의 Java 17·MySQL 표기는 이전 논의로 분류하고 최신 기준과 혼용하지 않는다.
 
-## 3. 권장 모듈 구조
+## 3. 논리 모듈 경계
 
-소스가 들어오면 기능 경계를 다음처럼 분리한다. 실제 패키지명은 팀 컨벤션 확정 후 조정한다.
+현재 패키지와 후속 기능 경계는 다음 책임을 기준으로 나눈다. 아래 이름은 논리 경계이며 실제 패키지 구조와 일대일 대응을 강제하지 않는다.
 
 ```text
 com.gitjob
@@ -46,8 +46,7 @@ com.gitjob
 ├── evidence     # Fact → Evidence, L0~L3, repository/personal level
 ├── job          # job_role, posting, demand snapshot
 ├── recommendation # skill gap, recommendation, learning target, roadmap
-├── trend        # JOB/GITHUB/STACKOVERFLOW source signal
-├── qa            # Pain Topic, FAQ, RAG 질문/답변
+├── trend        # JOB/GITHUB source signal
 └── ops           # metric, unmatched fact, quality, data deletion
 ```
 
@@ -72,8 +71,7 @@ ERD Notion 페이지는 현재 비어 있으므로 아래는 요구사항을 만
 | `job_role` / `user_target` | 지원 직무 마스터와 사용자 목표 직무·지역·경력 |
 | `job_posting` | raw 위치, 정규화 값, source, duplicate/inclusion 상태 |
 | `job_demand_snapshot` | 직무·기간·분모·registry version별 기술 건수/비율 |
-| `source_fact_pack` | JOB/GITHUB/STACKOVERFLOW 지표의 출처·단위·기간 |
-| `pain_topic` / `faq` | 반복 문제, 질문 비중, 답변 신호, 검수 상태·출처 |
+| `source_fact_pack` | JOB/GITHUB 지표의 출처·단위·기간 |
 | `recommendation_snapshot` | 후보·점수 분해·반대 신호·data gap·formula version |
 | `learning_target` | 현재 학습 기술 1건 또는 팀 확정 정책에 따른 목록 |
 | `pipeline_run` / `dataset_artifact` / `quality_result` | 수집·분석 실행, 위치·checksum·품질 결과 |
@@ -220,35 +218,41 @@ POST /api/v1/analyses
 | `GET` | `/api/v1/me/learning-target` | 선택 학습 기술 조회 |
 | `PUT` | `/api/v1/me/learning-target` | 학습 기술 선택·변경 |
 | `GET` | `/api/v1/me/roadmap` | Evidence 규칙 기반 Growth Roadmap |
-| `GET` | `/api/v1/technologies/{techId}/project-templates` | 검수된 프로젝트 Template |
 
 ### 추세·학습 지원·운영
 
 | Method | URI | 기능 |
 |---|---|---|
-| `GET` | `/api/v1/technologies/{techId}/trends` | JOB/GITHUB/SO 출처별 추세 |
+| `GET` | `/api/v1/technologies/{techId}/trends` | JOB/GITHUB 출처별 추세 |
 | `GET` | `/api/v1/trends/compare` | 후보 기술 교차 비교, merged score 없음 |
 | `GET` | `/api/v1/tech-radar` | R2/R5 계산 Tech Radar |
-| `GET` | `/api/v1/technologies/{techId}/pain-topics` | 반복 문제 Topic |
-| `GET` | `/api/v1/technologies/{techId}/faqs` | 검수된 FAQ |
-| `POST` | `/api/v1/qa/questions` | 비동기 기술 Q&A 질의 등록 |
-| `GET` | `/api/v1/qa/questions/{questionId}` | Q&A 답변·인용 조회 |
 | `GET` | `/api/v1/me/explanations` | Fact 기반 AI/Rule 설명 |
 | `GET` | `/api/v1/ops/metrics` | 운영 지표·lag·DLQ·quota |
 | `GET` | `/api/v1/ops/unmatched-facts` | Registry 미매칭 Fact |
 
 ## 8. 레벨·Evidence 규칙
 
-레벨은 “숙련도”가 아니라 발견·적용·활용·심화 근거의 누적 상태다.
+현재 기준은 `level-policy/v2`다. 레벨은 숙련도나 운영 능력 점수가 아니라
+기술의 직접 의존성·실제 구현·사용자 작성 근거를 구분한다.
+원본은 [사용자 기술 증거 판별 정책 v2](https://app.notion.com/p/78215fc50ec7823d81e481e5ce71e50e),
+C 소비 계약은 [Evidence와 보유 판정](../ai/c-recommendation.md)이다.
+`S15P21E102-127` 계약 정합성 보완, 기준일 2026-09-10.
 
 | 수준 | 예시 규칙 |
 |---|---|
-| `L0` 발견 | 직접 의존성, build plugin, container image |
-| `L1` 적용 | 설정 키, import, annotation |
-| `L2` 활용 | 핵심 API 호출, 해당 라인에 대한 본인 기여 |
-| `L3` 심화 | 테스트, retry/backoff, DLQ, metric/tracing, timeout/circuit breaker |
+| `L0` 미확인 | 정책상 직접 의존성 미확인. 분석 실패를 기술 미사용으로 단정하지 않음 |
+| `L1` 의존성 확인 | 파일·Commit 근거가 있는 직접 의존성 |
+| `L2` 프로젝트 구현 확인 | 직접 의존성·승인된 구현 근거·저장소 참여 자격 확인 |
+| `L3` 사용자 직접 구현 확인 | L2 조건과 사용자 작성 구현 라인 근거 확인 |
 
-Repository Level은 저장소에 기술이 사용된 수준이고, Personal Level은 본인 기여까지 확인된 수준이다. 둘을 합쳐 단일 숙련도 숫자로 표시하지 않는다.
+저장소의 기술 관측과 사용자의 참여·귀속을 별도로 보존한다. 접근 권한만으로 참여를
+인정하거나 서로 다른 저장소의 근거를 합쳐 L3로 만들지 않는다. import·설정만으로
+실제 구현을 확정하지 않으며 retry·DLQ·테스트 등 운영성 근거도 L3로 자동 승격하지 않는다.
+레벨이 미확정이어도 독립적으로 확인된 기술 관측은 삭제하지 않는다. 추천의 보유 판정과
+Evidence 레벨은 서로 다른 계약이며, 미확정 상태는 `UNKNOWN`으로 남긴다.
+
+이전 발견/적용/활용/심화 표는 폐기된 설계다. 새 producer는 v2를 적용해야 한다.
+실제 Fact 추출·규칙 평가·작성자 귀속 구현과 운영 인수는 이 문서 정리만으로 완료되지 않는다.
 
 Evidence 응답에는 다음을 포함한다.
 
@@ -265,7 +269,8 @@ Evidence 응답에는 다음을 포함한다.
 Transactional Outbox가 구현되어 있고, 저장된 이벤트는 Debezium CDC가 Kafka로
 발행한다(백엔드가 직접 발행하는 폴링 relay는 롤백 경로로만 남겨 둔다).
 저장소 목록·브랜치 조회와 분석 요청 API가 그 앞단에 연결되어 있다.
-Worker 결과 처리와 분석 상태 조회는 아직 연결 전이다.
+!46의 Worker 결과 이벤트 소비·분석 상태 반영 코드도 포함되어 있다.
+실제 Kafka 소비부터 사용자 조회·C 계산까지의 운영 인수 완료와는 구분한다.
 [저장소 선택·분석 요청](repository-analysis-request.md),
 [Outbox·CDC 구현·SQL 적용·복구 안내](analysis-outbox.md),
 [저장소 분석 Worker](repository-analysis-worker.md)를 참고한다. `Infra/compose`와 Dockerfile은 `BE/gradlew`, Java 21,
@@ -277,7 +282,7 @@ Worker 결과 처리와 분석 상태 조회는 아직 연결 전이다.
 4. 저장소 선택·분석 Job 상태 전이 구현
 5. Worker 결과를 Evidence Snapshot으로 저장
 6. 프로필·직무·Gap·추천 API 연결
-7. Q&A/설명·운영 API와 권한·품질 검증 추가
+7. 설명·운영 API와 권한·품질 검증 추가
 
 `JPA_DDL_AUTO`는 로컬·Docker·운영 모두 `validate`다. Hibernate가 스키마를 만들거나 고치지 않는 대신 Flyway가 `db/migration`을 기동 시 적용하고, Spring Boot가 Flyway를 Hibernate보다 먼저 실행하므로 `validate`가 도는 시점에는 스키마가 이미 있다. 엔티티와 스키마가 어긋나면 기동 시점에 바로 드러난다. CDC의 롤·publication은 비밀번호 치환이 필요해 마이그레이션이 아니라 `db/cdc/cdc_prerequisites.sql`로 남아 있다.
 
@@ -292,7 +297,7 @@ Worker 결과 처리와 분석 상태 조회는 아직 연결 전이다.
 - polling만 제공할지 SSE/WebSocket push를 병행할지
 - 목표 직무 변경 시 즉시 재계산할지 조회 시 계산할지
 - 추천 점수 계산 위치(R5 산출값 전달 vs Backend 계산)
-- Template·FAQ·AI 설명의 사전 생성/조회 시점
+- AI 설명의 사전 생성/조회 시점
 - `/lineage`를 일반 사용자에게 노출할지 운영자 전용으로 둘지
 
 ## 11. 원문 출처

@@ -10,10 +10,16 @@ from fastapi.testclient import TestClient
 from test_compute_api import REGISTRY, TOKEN
 from test_job_cohort import batch, criteria, posting
 
+from registry.mapper import RegistryMapper
 from Saramin_Collector_V1.crawler import CrawlResult, write_outputs
 from worker.api import create_compute_app
-from worker.intake import IntakeConfig, IntakeRunner
-from worker.store import ComputeStore, apply_migration
+from worker.intake import (
+    IntakeConfig,
+    IntakeRunner,
+    JobOutput,
+    publish_job_input_set,
+)
+from worker.store import ComputeStore, Ticket, apply_migration
 
 
 def completed(root, source, identifier, *, at="2026-09-07T00:00:00Z", **changes):
@@ -72,6 +78,78 @@ def resolve(client, query):
     identifier = response.json()["data"]["cohort_snapshot_id"]
     value = client.get("/internal/v1/c/snapshots/" + identifier).json()["data"]
     return identifier, value["payload"]
+
+
+def test_review_preparation_failure_after_claim_is_heartbeated_and_failed(
+    monkeypatch,
+) -> None:
+    value = batch(posting("review-preparation", required=("QuantumDB",)))
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    events = []
+
+    class Store:
+        lease_seconds = 120
+
+        def claim(self, **kwargs):
+            return Ticket(
+                event_id=kwargs["event_id"],
+                kind=kwargs["kind"],
+                owner=kwargs["owner"],
+                occurred_at=kwargs["occurred_at"],
+                status="RUNNING",
+                token="owned-token",
+                attempt=1,
+                results=[],
+            )
+
+        def complete(self, *_args):
+            raise AssertionError("review preparation must fail before completion")
+
+        def fail(self, _ticket, code):
+            events.append(("fail", code))
+
+    class Heartbeat:
+        def __init__(self, _store, _ticket):
+            pass
+
+        def __enter__(self):
+            events.append(("heartbeat", "enter"))
+            return self
+
+        def __exit__(self, *_args):
+            events.append(("heartbeat", "exit"))
+            return False
+
+    monkeypatch.setattr("worker.intake.LeaseHeartbeat", Heartbeat)
+
+    def fail_review_preparation(*_args):
+        assert events == [("heartbeat", "enter")]
+        raise RuntimeError("review preparation failed")
+
+    monkeypatch.setattr("worker.jobs.job_review_records", fail_review_preparation)
+
+    with pytest.raises(RuntimeError, match="review preparation failed"):
+        publish_job_input_set(
+            (output,),
+            criteria(),
+            store=Store(),
+            mapper=RegistryMapper(REGISTRY),
+            registry=REGISTRY,
+        )
+
+    assert events == [
+        ("heartbeat", "enter"),
+        ("heartbeat", "exit"),
+        ("fail", "INPUT_UNION_COMPUTE_FAILED"),
+    ]
 
 
 def test_configured_union_combines_sources_and_source_filter_cannot_be_masked(runtime):
