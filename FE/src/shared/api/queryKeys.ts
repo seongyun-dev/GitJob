@@ -39,6 +39,13 @@ export const queryKeys = {
   technologyCandidates: (limit: number) => ['admin', 'technology-candidates', limit] as const,
   registryStatus: () => ['admin', 'registry'] as const,
 
+  // 관리자 모니터링 — 티켓 210. `admin` 접두를 공유하므로 후보 검토의 뮤테이션이
+  // 무효화하는 `['admin']` 범위에 함께 들어간다. 모니터링은 뮤테이션이 없고 주기
+  // 갱신만 하므로 그 무효화가 해가 되지 않는다.
+  monitoringOverview: () => ['admin', 'monitoring', 'overview'] as const,
+  monitoringTimeseries: (metric: string) =>
+    ['admin', 'monitoring', 'timeseries', metric] as const,
+
   // 매칭 계열 — target이 키의 일부
   matching: (analysisId: string, target: unknown) => ['matching', analysisId, target] as const,
   matchingSkillGap: (analysisId: string, target: unknown) =>

@@ -266,6 +266,56 @@ body,
   }
 
   /*
+   * 관리자 모니터링의 비대칭 2열 · 티켓 210.
+   *
+   * 확정 디자인 `Admin Monitoring v2`가 정한 비율이다. 그래프 줄은 `1.35fr 1fr`
+   * (CPU·Memory가 Network보다 넓다), 아래 줄은 `1fr 1.35fr`(Disk보다 이벤트 표가 넓다).
+   * 두 값을 뒤집어 놓으면 두 줄의 세로선이 어긋나 보이므로 함께 둔다.
+   *
+   * 페이지에서 `grid-cols-[...]`로 적지 않는 이유는 이 파일 위쪽 주석과 같다 — 배치는
+   * 공통 규칙이고 큰 화면 보완을 화면마다 반복하지 않는다.
+   */
+  .gj-mon-charts,
+  .gj-mon-detail {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  @media (width >= 1024px) {
+    .gj-mon-charts {
+      grid-template-columns: 1.35fr 1fr;
+      gap: 14px;
+    }
+    .gj-mon-detail {
+      grid-template-columns: 1fr 1.35fr;
+      gap: 14px;
+    }
+  }
+
+  /*
+   * Server Detail의 행 · 티켓 210.
+   *
+   * 열 폭은 확정 디자인의 `190px repeat(4,1fr) 120px`이고 `ServerDetailTable`의 헤더가
+   * 같은 값을 쓴다. 좁은 화면에서는 2열로 접히고, 서버 이름과 상태 배지는 각각 한 줄을
+   * 차지한다(컴포넌트의 `max-lg:col-span-full`).
+   *
+   * 인라인 스타일로 두지 않은 이유는 미디어 쿼리가 필요하기 때문이다. 인라인이면 큰
+   * 화면용 행과 좁은 화면용 행을 따로 만들게 되고 같은 셀 코드가 두 벌이 된다.
+   */
+  .gj-mon-row {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  @media (width >= 1024px) {
+    .gj-mon-row {
+      grid-template-columns: 190px repeat(4, minmax(0, 1fr)) 120px;
+      align-items: center;
+    }
+  }
+
+  /*
    * 대표 + 후보 3열. Final의 nextskill `463 370 370`에 대응한다.
    * 첫 칸을 넓게 둬 1순위가 시각적으로 구분된다.
    */

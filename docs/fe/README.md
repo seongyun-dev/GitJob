@@ -6,7 +6,7 @@
 >
 > `S15P21E102-192`로 Vite/React 주요 화면 초안이 `develop`에 들어왔다. 화면 존재는 실계정 B/C API 연결 완료를 뜻하지 않는다.
 >
-> `FE/src/shared/`(봉투·페이징·오류 코드·캐시 키)의 실제 계약은 [FE shared API 계약](shared-api-contract.md)을 따른다. 아래 6장·7장의 폴더 구조와 상태 목록은 2026-08-28 초안이며, 구현된 구조는 Notion 프론트엔드 설계 3장과 그 문서가 우선한다.
+> `FE/src/shared/`(봉투·페이징·오류 코드·캐시 키)의 실제 계약은 [FE shared API 계약](shared-api-contract.md)을 따른다. 관리자 운영 화면은 [Admin System Monitoring 화면](admin-monitoring-screen.md)을 따른다 — 인프라가 바뀔 때 고칠 곳(topology config)과 도메인 상태·공용 UI 상태의 구분이 거기 있다. 아래 6장·7장의 폴더 구조와 상태 목록은 2026-08-28 초안이며, 구현된 구조는 Notion 프론트엔드 설계 3장과 그 문서가 우선한다.
 
 ## 1. Frontend 책임
 

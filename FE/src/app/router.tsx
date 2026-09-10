@@ -2,6 +2,8 @@ import { createBrowserRouter } from 'react-router'
 import { AppLayout } from '@/app/layouts/AppLayout'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { SystemStatesPage } from '@/app/pages/SystemStatesPage'
+import { AdminLayout } from '@/features/admin/layouts/AdminLayout'
+import { SystemMonitoringPage } from '@/features/admin/monitoring/pages/SystemMonitoringPage'
 import { TechnologyCandidatePage } from '@/features/admin/pages/TechnologyCandidatePage'
 import { AnalysisProgressPage } from '@/features/analysis/pages/AnalysisProgressPage'
 import { RepositorySelectionPage } from '@/features/analysis/pages/RepositorySelectionPage'
@@ -52,6 +54,30 @@ export const router = createBrowserRouter([
   // 티켓 156. GitHub 토큰이 폐기·만료됐을 때 `providers.tsx` 전역 가드가 보내는 곳.
   // Final v2 `#connect`가 앱 내비게이션 없는 독립 화면이라 AppLayout 밖에 둔다.
   { path: '/onboarding/github', element: <GithubConnectPage /> },
+  /*
+   * 관리자 전용 · 티켓 210. 사용자 여정의 일부가 아니라 운영 화면이라 `AppLayout`이
+   * 아닌 전용 셸을 쓴다. 확정 디자인 `Admin Monitoring v2`의 헤더가 `ADMIN` 배지와
+   * 관리자 화면 두 개만 갖기 때문이다.
+   *
+   * `/`보다 앞에 둔다. 정적 세그먼트가 splat보다 먼저 매칭되므로 순서에 의존하지는
+   * 않지만, 읽는 사람이 `admin/*`가 아래 `*` 404로 떨어지지 않는다는 것을 바로 알 수
+   * 있게 한다.
+   *
+   * 기본 진입 화면(index)이 Monitoring이다. Technology Registry는 티켓 14에서 쓰던
+   * `admin/technology-candidates` 경로를 그대로 유지한다 — 경로를 바꾸면 팀이
+   * 공유해 둔 링크가 깨진다.
+   *
+   * 라우트를 숨기지 않는 이유는 숨겨도 보호가 되지 않기 때문이다. 접근 제어는 BE가
+   * `/api/v1/admin/**`를 ADMIN으로 제한해서 한다.
+   */
+  {
+    path: '/admin',
+    element: <AdminLayout />,
+    children: [
+      { index: true, element: <SystemMonitoringPage /> },
+      { path: 'technology-candidates', element: <TechnologyCandidatePage /> },
+    ],
+  },
   {
     path: '/',
     element: <AppLayout />,
@@ -81,11 +107,6 @@ export const router = createBrowserRouter([
 
       // 티켓 204 · Final v2 15. 팀 내부 표기 레퍼런스라 헤더 네비게이션에는 넣지 않는다.
       { path: 'system-states', element: <SystemStatesPage /> },
-
-      // 관리자 전용. 위 경로들과 달리 사용자 여정의 일부가 아니라 운영 화면이다.
-      // 라우트를 숨기지 않는 이유는 숨겨도 보호가 되지 않기 때문이다. 접근
-      // 제어는 BE가 /api/v1/admin/** 를 ADMIN 으로 제한해서 한다.
-      { path: 'admin/technology-candidates', element: <TechnologyCandidatePage /> },
 
       { path: '*', element: <NotFoundPage /> },
     ],
