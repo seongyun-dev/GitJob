@@ -1,3 +1,4 @@
+import { githubLoginUrl } from '@/features/auth/api/authUrls'
 import { NAV_LABELS } from '@/features/landing/landingPreviewData'
 
 /**
@@ -7,7 +8,11 @@ import { NAV_LABELS } from '@/features/landing/landingPreviewData'
  * 내비게이션 항목은 아직 목적지 라우트가 없다. 눌리지 않는 텍스트로 두어
  * 죽은 링크를 만들지 않는다.
  *
- * 로그인 버튼은 TODO(auth) 때문에 비활성이다. 근거는 LandingPage 주석.
+ * 로그인 버튼은 티켓 156에서 연결했다. 비활성으로 둔 근거가 "인증 흐름 확정 후"였고,
+ * GitHub 단독 로그인으로 확정되어 조건이 풀렸다.
+ *
+ * `<a>`인 것은 진입 엔드포인트가 302로 GitHub에 넘기기 때문이다. 브라우저 최상위
+ * 이동이어야 하므로 `<button onClick>`으로 `fetch`하면 안 된다.
  */
 export function LandingHeader() {
   return (
@@ -25,14 +30,12 @@ export function LandingHeader() {
         ))}
       </nav>
 
-      <button
-        type="button"
-        disabled
-        title="로그인 진입점은 인증 흐름 확정 후 연결됩니다."
-        className="rounded-xl border border-white/40 bg-white/10 px-5 py-[11px] text-[13.5px] font-bold text-white backdrop-blur-[14px] transition-colors not-disabled:hover:bg-white/20 disabled:cursor-not-allowed"
+      <a
+        href={githubLoginUrl()}
+        className="rounded-xl border border-white/40 bg-white/10 px-5 py-[11px] text-[13.5px] font-bold text-white backdrop-blur-[14px] transition-colors hover:bg-white/20"
       >
         로그인
-      </button>
+      </a>
     </header>
   )
 }

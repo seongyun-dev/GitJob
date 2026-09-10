@@ -15,10 +15,13 @@ import '@/features/landing/landing.css'
  */
 
 /*
- * TODO(auth): SSAFY → GitHub 연결 흐름 확정 후 Landing CTA 연결.
- * Related: S15P21E102-181/182, S15P21E102-155/156
+ * Landing CTA는 티켓 156(S15P21E102-155 `[FE] GitHub 연결 화면`의 하위)에서 연결했다.
+ * 막아 둔 조건이 "인증 흐름 확정 후"였고, GitHub 단독 로그인으로 확정되어
+ * Login·Primary CTA 모두 진입점을 갖는다.
  *
- * 확정 전까지 Login·Primary CTA는 Final의 시각만 유지하고 동작을 막아 둔다.
+ * 둘 다 같은 곳(`/api/v1/auth/github`)으로 간다. 로그인 수단이 GitHub 하나뿐이라
+ * 두 버튼이 갈라질 이유가 아직 없다. 공급자가 늘면 그때 로그인 전용 화면이
+ * 선택을 맡는다 — 그 화면의 소유 티켓은 아직 모른다.
  */
 
 /**

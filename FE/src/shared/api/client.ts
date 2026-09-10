@@ -20,7 +20,12 @@ import type { ApiSuccess } from '@/shared/types/api'
  * 같은 오리진으로 요청하므로 CORS 없이 세션 쿠키가 오간다.
  */
 const API_ROOT = import.meta.env.VITE_API_BASE_URL ?? '/api'
-const API_BASE_URL = `${API_ROOT.replace(/\/$/, '')}/v1`
+
+/**
+ * OAuth 시작처럼 `fetch`가 아니라 브라우저 이동으로 호출하는 엔드포인트도 있어
+ * 내보낸다. 베이스 계산이 두 곳에 생기면 위 주석의 함정을 한쪽만 피하게 된다.
+ */
+export const API_BASE_URL = `${API_ROOT.replace(/\/$/, '')}/v1`
 
 /**
  * 서버가 봉투로 내려준 실패를 그대로 담는 오류.

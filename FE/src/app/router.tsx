@@ -1,9 +1,11 @@
-import { createBrowserRouter, RouterProvider } from 'react-router'
+import { createBrowserRouter } from 'react-router'
 import { AppLayout } from '@/app/layouts/AppLayout'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { TechnologyCandidatePage } from '@/features/admin/pages/TechnologyCandidatePage'
 import { AnalysisProgressPage } from '@/features/analysis/pages/AnalysisProgressPage'
 import { RepositorySelectionPage } from '@/features/analysis/pages/RepositorySelectionPage'
+import { AuthCallbackPage } from '@/features/auth/pages/AuthCallbackPage'
+import { GithubConnectPage } from '@/features/auth/pages/GithubConnectPage'
 import { EvidenceDetailPage } from '@/features/evidence/pages/EvidenceDetailPage'
 import { EvidenceOverviewPage } from '@/features/evidence/pages/EvidenceOverviewPage'
 import { LandingPage } from '@/features/landing/pages/LandingPage'
@@ -29,17 +31,30 @@ import { TrendPage } from '@/features/trend/pages/TrendPage'
  *     이름을 따랐다.
  *
  * S9(파이프라인 운영)는 A조 소유이므로 라우트를 만들지 않는다.
- * 로그인·GitHub 연결 화면(Final `#login`·`#connect`)은 Auth 정책이 확정되지 않았고
- * 별도 티켓(155·156) 소유라 이 초안에서 만들지 않는다.
+ *
+ * 155·156은 GitHub 연결 화면(Final v2 `#connect`)이고 이 브랜치에서 만들었다. 192의
+ * 주석은 155·156이 로그인 화면까지 소유한다고 적었는데 Jira 확인 결과 아니었다.
+ * Final v2 `02 SSAFY Login`에 해당하는 로그인 전용 화면은 아직 소유 티켓을 모른다.
+ *
+ * 라우터 인스턴스를 내보내는 이유는 React 밖에서도 이동해야 하기 때문이다 — 쿼리
+ * 실패를 한곳에서 받아 GitHub 재연결 화면으로 보내는 데 쓴다(`app/providers.tsx`).
+ * 같은 파일에서 컴포넌트를 함께 내보내면 Fast Refresh가 동작하지 않으므로
+ * `RouterProvider`는 `main.tsx`에 둔다.
  */
-const router = createBrowserRouter([
+export const router = createBrowserRouter([
   // S1 Landing · 티켓 191. 배경이 화면 전체를 덮어야 해서 AppLayout 밖에 둔다.
   // 정적 경로가 splat보다 먼저 매칭되므로 아래 `*`가 `/`를 가로채지 않는다.
   { path: '/', element: <LandingPage /> },
+  // 티켓 156. GitHub 토큰이 폐기·만료됐을 때 `providers.tsx` 전역 가드가 보내는 곳.
+  // Final v2 `#connect`가 앱 내비게이션 없는 독립 화면이라 AppLayout 밖에 둔다.
+  { path: '/onboarding/github', element: <GithubConnectPage /> },
   {
     path: '/',
     element: <AppLayout />,
     children: [
+      // 티켓 156. 경로는 BE `github.oauth.frontend-callback-url`이 정한다.
+      // 이 라우트가 없으면 로그인 성공 직후 `*`로 떨어져 404가 보인다.
+      { path: 'auth/callback', element: <AuthCallbackPage /> },
       // 티켓 117. 백엔드 OAUTH_ALLOWED_REDIRECT_PATHS의 기본 목적지와 같은 경로다.
       { path: 'onboarding/repositories', element: <RepositorySelectionPage /> },
       // 초안 · 세부 기능은 티켓 136
@@ -63,7 +78,3 @@ const router = createBrowserRouter([
     ],
   },
 ])
-
-export function AppRouter() {
-  return <RouterProvider router={router} />
-}

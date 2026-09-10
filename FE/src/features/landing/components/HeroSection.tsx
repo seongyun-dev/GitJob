@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { githubLoginUrl } from '@/features/auth/api/authUrls'
 import { HERO_HIGHLIGHTS } from '@/features/landing/landingPreviewData'
 
 /**
@@ -37,15 +38,17 @@ export function HeroSection() {
       </p>
 
       <div className="lp-rise flex flex-wrap gap-3" style={{ '--lp-delay': '330ms' } as CSSProperties}>
-        {/* TODO(auth): LandingPage 주석 참고. 흐름 확정 전까지 비활성. */}
-        <button
-          type="button"
-          disabled
-          title="GitHub 연동 진입점은 인증 흐름 확정 후 연결됩니다."
-          className="rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-[26px] py-4 text-[15px] font-bold text-white shadow-[0_14px_30px_rgba(31,60,140,0.34)] transition-shadow not-disabled:hover:shadow-[0_18px_38px_rgba(31,60,140,0.42)] disabled:cursor-not-allowed"
+        {/*
+          티켓 156에서 연결했다. `<a>`인 것은 진입 엔드포인트가 302로 GitHub에 넘기기
+          때문이다. `redirectTo`를 넘기지 않아 목적지는 BE 허용 목록의 첫 항목이 된다.
+          기본값을 양쪽에 적어 두면 갈라지므로 BE 한 곳만 갖게 한다.
+        */}
+        <a
+          href={githubLoginUrl()}
+          className="rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-[26px] py-4 text-[15px] font-bold text-white shadow-[0_14px_30px_rgba(31,60,140,0.34)] transition-shadow hover:shadow-[0_18px_38px_rgba(31,60,140,0.42)]"
         >
           GitHub 연동 시작
-        </button>
+        </a>
         {/*
           둘러보기의 목적지 화면(S4 공고 매칭)은 아직 라우트가 없다.
           가짜 경로로 보내 404를 띄우는 대신 같은 화면의 미리보기로 스크롤한다.
