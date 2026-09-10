@@ -464,6 +464,79 @@ NameNode 가 죽어 회차만 로컬에 남은 경우) 다시 스크립트를 �
 그대로 확인하도록 만든 이유가 여기 있다 — 대상을 잘못 잡은 기록은 재계산으로는
 드러나지 않는다.
 
+### 14.2 노트북 회차를 운영 HDFS 로 돌리는 구성 수정 (2026-09-10)
+
+§14.1 이 "진짜 사고는 구성 오류"로 지목한 `.env.wsl` 의 `WEBHDFS_URL` 을
+실제로 고쳤다. 이전에는 조치가 "실행 위치를 `j15e102a` 로 옮긴다" 하나뿐이었고
+그것은 인프라 조율에 막혀 있다. 그동안 노트북 회차가 계속 노트북 HDFS 로
+쌓이므로, **실행 위치를 옮기지 않고도 적재 대상만 운영으로 돌리는 경로**를 만든
+것이다. 서버 등록이 끝나면 이 우회는 필요 없어진다.
+
+#### 주소를 바꾸는 것만으로는 안 된다
+
+WebHDFS 의 읽기·쓰기는 두 홉이다. NameNode 가 `307` 로 답하고 바이트는 그
+`Location` 이 가리키는 DataNode 로 간다. 그런데 그 `Location` 에는 DataNode 가
+스스로 광고하는 **컨테이너 호스트명**이 들어간다. 2026-09-10 실측:
+
+```text
+$ curl -i -X PUT "http://100.70.66.38:9870/webhdfs/v1/tmp/probe?op=CREATE&user.name=hadoop"
+HTTP/1.1 307 Temporary Redirect
+Location: http://hdfs-datanode3:9864/webhdfs/v1/tmp/probe?op=CREATE&...
+```
+
+`hdfs-datanode3` 은 Compose 네트워크 밖에서 해석되지 않는다. `WEBHDFS_URL` 만
+운영 NameNode 로 바꾸면 첫 홉은 되고 두 번째 홉에서 죽는다.
+
+#### 조치 — 리다이렉트 대상 재작성
+
+`WEBHDFS_DATANODE_HOSTS` 를 새로 뒀다. `common.webhdfs.rewrite_datanode_host`
+가 `307` `Location` 의 호스트를 이 표로 갈아끼운 뒤 따라간다. **비워 두면
+아무것도 하지 않는다** — 데이터 노드 위에서는 이름이 그대로 해석되므로 그것이
+기본값이고, 컨테이너 동작은 달라지지 않는다.
+
+오른쪽 포트가 서로 다른 이유는 DataNode 3대가 내부적으로 모두 `9864` 를
+쓰고 `compose.ec2-data.yaml` 이 이를 호스트의 서로 다른 포트로 공개하기
+때문이다.
+
+| Location 의 호스트 | 노트북에서 닿는 주소 |
+|---|---|
+| `hdfs-datanode:9864` | `100.70.66.38:9864` |
+| `hdfs-datanode2:9864` | `100.70.66.38:9866` |
+| `hdfs-datanode3:9864` | `100.70.66.38:9867` |
+
+표에 없는 DataNode 로 리다이렉트되면 따라가지 않고 즉시 실패한다. 표가 설정돼
+있다는 것은 호출자가 클러스터 밖이라는 뜻이므로, 목록에 없는 노드도 어차피
+해석되지 않는다. 여기서 실패하면 빠진 항목이 이름으로 드러나고, 그냥 따라가면
+DNS 타임아웃만 남는다.
+
+#### 곁들여 드러난 것 — urllib 가 GET 리다이렉트를 몰래 따라갔다
+
+`urllib` 은 `307` 을 GET 에서는 자동으로 따라가고 PUT 에서는 따라가지 않는다.
+그래서 재작성을 넣은 직후 **쓰기는 되는데 읽기만 DNS 로 죽는** 상태가 됐다.
+`OPEN` 의 명시적 `307` 분기가 urllib 에 가려 실행되지 않았기 때문이다.
+전송 계층이 리다이렉트를 따라가지 않도록 막아 두 동사를 같은 경로로 만들었다.
+
+#### 검증 (2026-09-10, 운영 클러스터 실측)
+
+수집기 코드 경로(`sink_from_env` → `upload_run`)를 그대로 태워 임시 경로에
+왕복시키고 지웠다.
+
+```text
+uploaded=3  unchanged=0  failed=0
+  hdfs:///tmp/gitjob-verify/verify/dt=2026-09-10/VERIFY-.../job_analysis_input.json
+  hdfs:///tmp/gitjob-verify/verify/dt=2026-09-10/VERIFY-.../postings.csv
+  hdfs:///tmp/gitjob-verify/verify/dt=2026-09-10/VERIFY-.../manifest.json
+read back = b'{"verify":"manifest.json"}'      # 같은 재작성 경로로 되읽음
+DELETE /tmp/gitjob-verify → {"boolean":true}   # 정리 후 GETFILESTATUS 404
+```
+
+#### 남는 것
+
+이것은 **적재 대상**을 고친 것이고 **실행 위치**는 그대로 노트북이다. §14.1 의
+"수집 스케줄을 `j15e102a` 에 등록"은 여전히 남아 있고, 노트북이 꺼져 있으면
+그 회차가 없다는 위험도 그대로다. Kafka 발행도 별개다 — 운영 브로커에는 아직
+`-108` 토픽 3종이 없어서, 발행 경로는 이 수정의 대상이 아니다.
+
 ### 문제
 
 Repo 활동량 집계와 Top-N 산출(`S15P21E102-109`)에는 정해진 기간의 GitHub 이벤트가

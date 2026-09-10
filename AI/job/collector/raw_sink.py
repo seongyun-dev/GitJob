@@ -34,7 +34,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from common.webhdfs import WebHdfsClient, WebHdfsError, normalize_hdfs_path
+from common.webhdfs import (
+    WebHdfsClient,
+    WebHdfsError,
+    normalize_hdfs_path,
+    parse_datanode_hosts,
+)
 
 __all__ = [
     "DEFAULT_RAW_ROOT",
@@ -206,6 +211,10 @@ def sink_from_env(
         client=WebHdfsClient(
             base_url=base_url,
             user=(values.get("WEBHDFS_USER") or "hadoop").strip() or "hadoop",
+            # Set only when the run is off the cluster network — a laptop
+            # writing to the operational NameNode over Tailscale. Unset in
+            # the deployed collector, where the redirect resolves as-is.
+            datanode_hosts=parse_datanode_hosts(values.get("WEBHDFS_DATANODE_HOSTS")),
         ),
         raw_root=(values.get("RAW_ROOT") or DEFAULT_RAW_ROOT).strip()
         or DEFAULT_RAW_ROOT,

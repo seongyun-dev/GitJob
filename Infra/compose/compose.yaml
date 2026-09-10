@@ -289,6 +289,9 @@ services:
       # runtime with no Hadoop CLI and no JRE (S15P21E102-105).
       WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
       WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      # Empty on the data node; set only when the WebHDFS 307 redirect names a
+      # DataNode this container cannot resolve. See `.env.example`.
+      WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
       RAW_ROOT: ${RAW_ROOT:-hdfs:///gitjob/raw}
     expose:
       - "8080"
@@ -398,6 +401,9 @@ services:
       GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
       WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
       WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      # Empty on the data node; set only when the WebHDFS 307 redirect names a
+      # DataNode this container cannot resolve. See `.env.example`.
+      WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
     logging: *default-logging
 
   # The apache/hadoop image runs as user hadoop. Docker creates a fresh named

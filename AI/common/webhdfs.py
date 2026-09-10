@@ -17,6 +17,74 @@ class WebHdfsError(RuntimeError):
     """Raised when WebHDFS cannot preserve an immutable object."""
 
 
+def parse_datanode_hosts(value: str | None) -> dict[str, str]:
+    """Parse `WEBHDFS_DATANODE_HOSTS` into a redirect rewrite table.
+
+    ### Why a rewrite table exists
+
+    A WebHDFS read or write is two hops: the NameNode answers `307` and the
+    bytes move against the `Location` it names. That `Location` carries the
+    DataNode's *own* advertised hostname — inside the operational cluster
+    `http://hdfs-datanode3:9864/...` — and Hadoop offers no way to make it
+    anything else per client.
+
+    In the container the name resolves and nothing here is needed. From
+    outside the Compose network it does not, so a run collects and then
+    silently keeps its files locally, which is the failure S15P21E102-189 and
+    `docs/data/README.md` §14.1 record. Rewriting the redirect target is what
+    lets a caller off the cluster network finish the second hop.
+
+    Format is `container-host:port=reachable-host:port`, comma separated:
+
+        hdfs-datanode:9864=100.70.66.38:9864,hdfs-datanode2:9864=100.70.66.38:9866
+
+    The ports differ on the right because all three DataNodes serve `9864`
+    inside the network and `compose.ec2-data.yaml` publishes them on distinct
+    host ports. Unset means no rewriting — the in-cluster default.
+    """
+
+    table: dict[str, str] = {}
+    for entry in (value or "").split(","):
+        item = entry.strip()
+        if not item:
+            continue
+        source, separator, target = item.partition("=")
+        source, target = source.strip(), target.strip()
+        if not separator or not source or not target:
+            raise ValueError(
+                "WebHDFS datanode host map entries must be "
+                f"'host:port=host:port', got {item!r}"
+            )
+        table[source] = target
+    return table
+
+
+def rewrite_datanode_host(location: str, table: Mapping[str, str]) -> str:
+    """Point a `307` `Location` at a host the caller can actually reach.
+
+    An empty table returns the location untouched — the in-cluster default,
+    where the DataNode name already resolves.
+
+    An unmapped host raises rather than being followed as-is. A configured
+    table means the caller is off the cluster network, so an unlisted DataNode
+    — a fourth one added on the server, say — cannot resolve either. Failing
+    here names the missing entry; following the URL would spend the whole
+    timeout in DNS and report only a bare connection error.
+    """
+
+    if not table:
+        return location
+    parsed = urllib.parse.urlsplit(location)
+    replacement = table.get(parsed.netloc) or table.get(parsed.hostname or "")
+    if replacement is None:
+        raise WebHdfsError(
+            f"WebHDFS redirected to {parsed.netloc!r}, which is absent from the "
+            "DataNode host map (WEBHDFS_DATANODE_HOSTS) and is not reachable "
+            "from here"
+        )
+    return urllib.parse.urlunsplit(parsed._replace(netloc=replacement))
+
+
 @dataclass(frozen=True)
 class WebHdfsResponse:
     """One WebHDFS HTTP response. HTTP error statuses are not raised."""
@@ -35,6 +103,25 @@ class WebHdfsTransport(Protocol):
         body: Path | bytes | None = None,
         timeout: float,
     ) -> WebHdfsResponse: ...
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Surface WebHDFS redirects instead of letting urllib chase them.
+
+    urllib follows a `307` on GET by itself but not on PUT, so `OPEN` used to
+    take a hidden path that `CREATE` never did. That asymmetry hid a bug: the
+    second hop names a DataNode by its container hostname, and a silent follow
+    skips `rewrite_datanode_host`, so from off the cluster network a write
+    succeeded while a read failed DNS. Both verbs now come back as a `307`
+    that `WebHdfsClient` follows deliberately.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# One opener, built once: `urlopen` installs the redirect-following default.
+_OPENER = urllib.request.build_opener(_NoRedirectHandler)
 
 
 class UrllibWebHdfsTransport:
@@ -69,14 +156,15 @@ class UrllibWebHdfsTransport:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _OPENER.open(request, timeout=timeout) as response:
                 return WebHdfsResponse(
                     status=int(response.status),
                     headers=dict(response.headers),
                     body=response.read(),
                 )
         except urllib.error.HTTPError as exc:
-            # CREATE returns 307 for PUT; its Location is handled explicitly.
+            # OPEN and CREATE both return 307; the Location is handled
+            # explicitly by the caller, never by urllib.
             with exc:
                 return WebHdfsResponse(
                     status=int(exc.code),
@@ -98,6 +186,9 @@ class WebHdfsClient:
     user: str = "hadoop"
     timeout: float = 120.0
     transport: WebHdfsTransport = field(default_factory=UrllibWebHdfsTransport)
+    # `container-host:port` -> `reachable-host:port` for the `307` second hop.
+    # Empty is the in-cluster default; see `parse_datanode_hosts`.
+    datanode_hosts: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         base = self.base_url.strip()
@@ -111,6 +202,9 @@ class WebHdfsClient:
         if self.timeout <= 0:
             raise ValueError("timeout must be positive")
         self.base_url = base.rstrip("/")
+
+    def _redirect_target(self, location: str) -> str:
+        return rewrite_datanode_host(location, self.datanode_hosts)
 
     def exists(self, path: str | PurePosixPath) -> bool:
         response = self._call("GET", path, "GETFILESTATUS")
@@ -148,7 +242,9 @@ class WebHdfsClient:
             location = _header(response.headers, "Location")
             if not location:
                 raise WebHdfsError("WebHDFS OPEN returned no redirect Location")
-            response = self.transport.request("GET", location, timeout=self.timeout)
+            response = self.transport.request(
+                "GET", self._redirect_target(location), timeout=self.timeout
+            )
         if response.status != 200:
             raise self._error("read object", response)
         return response.body
@@ -195,7 +291,10 @@ class WebHdfsClient:
         if not location:
             raise WebHdfsError("WebHDFS CREATE returned no redirect Location")
         written = self.transport.request(
-            "PUT", location, body=content, timeout=self.timeout
+            "PUT",
+            self._redirect_target(location),
+            body=content,
+            timeout=self.timeout,
         )
         if written.status != 201:
             raise self._error("upload temporary object", written)

@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
+from common.webhdfs import parse_datanode_hosts
+
 from collector.gharchive.events import (
     GITHUB_EVENTS_TOPIC,
     publisher_from_env,
@@ -45,6 +47,7 @@ WEBHDFS_URL_ENV = "WEBHDFS_URL"
 KAFKA_BOOTSTRAP_ENV = "KAFKA_BOOTSTRAP_SERVERS"
 RAW_ROOT_ENV = "RAW_ROOT"
 WEBHDFS_USER_ENV = "WEBHDFS_USER"
+WEBHDFS_DATANODE_HOSTS_ENV = "WEBHDFS_DATANODE_HOSTS"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -275,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
                 raw_root=arguments.raw_root,
                 user=arguments.webhdfs_user,
                 timeout=arguments.timeout,
+                # Only set when publishing from off the cluster network; see
+                # `common.webhdfs.parse_datanode_hosts`.
+                datanode_hosts=parse_datanode_hosts(
+                    os.environ.get(WEBHDFS_DATANODE_HOSTS_ENV)
+                ),
             )
             publish = publish_downloaded_range(
                 sink,

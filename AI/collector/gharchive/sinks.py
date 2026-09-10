@@ -32,6 +32,7 @@ from common.webhdfs import (
     WebHdfsError,
     WebHdfsResponse,
     WebHdfsTransport,
+    rewrite_datanode_host,
 )
 
 from collector.gharchive.historical import (
@@ -201,6 +202,10 @@ class WebHdfsSink:
     user: str = DEFAULT_WEBHDFS_USER
     timeout: float = 120.0
     transport: WebHdfsTransport = field(default_factory=UrllibWebHdfsTransport)
+    # `container-host:port` -> `reachable-host:port` for the `307` second hop,
+    # for a publisher off the cluster network. See `common.webhdfs
+    # .parse_datanode_hosts`; empty is the in-cluster default.
+    datanode_hosts: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         base = self.base_url.strip()
@@ -268,6 +273,11 @@ class WebHdfsSink:
         target = redirect.headers.get("Location")
         if not target:
             raise HdfsSinkError("WebHDFS CREATE returned no redirect Location")
+        try:
+            target = rewrite_datanode_host(target, self.datanode_hosts)
+        except WebHdfsError as error:
+            # This module reports Raw publication failures as HdfsSinkError.
+            raise HdfsSinkError(str(error)) from error
         written = self.transport.request(
             "PUT",
             target,
