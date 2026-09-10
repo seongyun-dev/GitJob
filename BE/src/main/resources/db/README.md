@@ -8,6 +8,7 @@
 | `migration/` | **Flyway** (Spring Boot 자동설정) | backend 기동 시 자동 |
 | `cdc/` | 사람 | Debezium을 쓸 때 1회 수동 |
 | `c-compute/` | **C조 자체 러너** (`python -m worker.migrate`) | 수동 |
+| `migrations/` | **저장소 분석 Worker 운영자** (`psql -f`) | analysis-worker 기동 전 수동 |
 
 ## `migration/` 과 `c-compute/` 를 합치지 않는 이유
 
@@ -23,13 +24,17 @@ Flyway로 통합하면 세 가지가 깨진다.
 
 기능적으로 겹치지도 않는다. Flyway는 `public`만, C 러너는 `c_compute`만 만든다.
 
-이 디렉터리는 한때 `migrations/`(복수)였다. `migration/`과 s 한 글자 차이라, 새 Flyway
-마이그레이션을 복수 쪽에 넣으면 **에러 없이 조용히 무시되는** 함정이 있었다.
+`c-compute/`는 한때 `migrations/`(복수)였다. 현재 복수형 디렉터리는
+`repo_analysis` 스키마를 위한 별도 수동 SQL만 둔다. `migration/`과 s 한 글자 차이라,
+새 Flyway 마이그레이션을 복수 쪽에 넣으면 여전히 **에러 없이 조용히 무시된다.**
 
 - `migration/`: Flyway가 읽는다. `V<번호>__<설명>.sql` 규칙을 지켜야 하고, 이름이 어긋나면
   무시된다. 적용 이력은 `flyway_schema_history`에 남는다.
 - `c-compute/`: `AI/worker/store.py`가 경로를 하드코딩해 읽고, 이력은
   `c_compute.schema_version`에 남긴다. Flyway는 이 디렉터리를 보지 않는다.
+- `migrations/`: 저장소 checkout에서 운영자가 `psql -f`로 적용한다. 현재
+  `002_repo_analysis.sql`만 있으며 `repo_analysis` 스키마를 만든다. Flyway와 C조 러너는
+  이 디렉터리를 읽지 않고, Worker 이미지에도 자동으로 포함하거나 적용하지 않는다.
 
 `c_compute`는 대응하는 JPA 엔티티가 없어 Hibernate `validate` 대상이 아니다. 그래서
 적용하지 않아도 backend는 정상 기동하고, worker 컨테이너도 healthy로 뜬다. 준비가 안 된

@@ -1,7 +1,9 @@
 package com.example.git_job.auth.domain;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.EnumType;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -59,6 +61,15 @@ public class User {
      */
     @Column(name = "access_token", columnDefinition = "TEXT")
     private String accessToken;
+
+    /**
+      * 권한. DB 에서만 바뀐다 -- 로그인 흐름은 이 값을 읽기만 하고, 승격은
+      * 운영자가 직접 UPDATE 한다. 설정 파일의 허용 목록으로 하면 누가 관리자인지가
+      * 배포 산출물에 박히고 사람이 바뀔 때마다 재배포해야 한다.
+      */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false, length = 16)
+    private Role role = Role.USER;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

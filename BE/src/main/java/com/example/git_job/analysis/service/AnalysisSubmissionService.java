@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
  * <p>{@link AnalysisRequestService}가 요구하는 선행 조건을 여기서 갖춘다. 즉 GitHub
  * 권한 확인, 브랜치 존재 확인과 SHA 확정, 서버가 만드는 ID·Registry 버전이다.
  * 클라이언트가 보낸 값 중 실제로 쓰는 것은 저장소 이름과 브랜치 이름뿐이고,
- * 나머지는 모두 GitHub 응답이나 서버 설정에서 가져온다.</p>
+ * 나머지는 모두 GitHub 응답이나 서버가 정한다.</p>
  *
  * <p>GitHub 호출은 트랜잭션 밖에서 끝낸다. 외부 왕복 두 번을 트랜잭션 안에 넣으면
  * 그동안 DB 커넥션을 붙잡고 있게 된다.</p>
@@ -40,6 +40,7 @@ public class AnalysisSubmissionService {
     private final AnalysisJobRepository analysisJobs;
     private final AnalysisRequestService analysisRequestService;
     private final AnalysisRequestProperties properties;
+    private final CurrentRegistryVersion currentRegistryVersion;
 
     public Submission submit(long userId, String repositoryFullName, String branchName, String traceId) {
         var coordinate = RepositoryCoordinate.of(repositoryFullName, branchName);
@@ -79,7 +80,7 @@ public class AnalysisSubmissionService {
                 branch.name(),
                 branch.commitSha(),
                 RepositoryAnalysisMode.SNAPSHOT,
-                properties.registryVersion());
+                currentRegistryVersion.resolve());
 
         // 이벤트 계약은 traceId를 필수로 요구한다. 필터가 항상 채우지만, 비어 있을 때
         // 계약 위반으로 500을 내는 대신 새 값을 만들어 요청 자체는 살린다.

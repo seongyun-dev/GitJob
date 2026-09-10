@@ -50,6 +50,11 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    consumer:
+      # Offsets are committed after the listener returns, so a crash mid-apply
+      # replays instead of losing the result. AnalysisResultService is idempotent.
+      enable-auto-commit: false
+      auto-offset-reset: earliest
     producer:
       acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -64,9 +69,9 @@ spring:
 gitjob:
   analysis:
     request:
-      # 요청 시점의 판정 기준을 이벤트에 박아 둔다. Registry가 바뀌어도 과거 분석을
-      # 그대로 재현할 수 있어야 하므로 클라이언트가 보낸 값을 쓰지 않는다.
-      registry-version: ${ANALYSIS_REGISTRY_VERSION:technology-registry/v1}
+      # 판정 기준 Registry 버전은 여기 없다. technology_registry의 CURRENT 행을
+      # 읽는다(CurrentRegistryVersion). 설정으로 두면 실재하지 않는 버전이 기본값으로
+      # 앉을 수 있고, 그 값으로 규칙을 조회하면 조용히 0행이 나온다.
       poll-after-seconds: ${ANALYSIS_POLL_AFTER_SECONDS:2}
     outbox:
       # CDC uses Debezium, not a Spring Kafka producer. POLLING is a deliberate rollback option.
@@ -84,6 +89,10 @@ gitjob:
     topics:
       repository-analysis:
         requests: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:gitjob.repository-analysis.requests.v1}
+        results: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:gitjob.repository-analysis.results.v1}
+    consumer:
+      repository-analysis-results:
+        group-id: ${ANALYSIS_RESULTS_CONSUMER_GROUP:gitjob-analysis-results}
 
 jwt:
   secret: ${JWT_SECRET:gitjob-local-jwt-secret-key-change-me}

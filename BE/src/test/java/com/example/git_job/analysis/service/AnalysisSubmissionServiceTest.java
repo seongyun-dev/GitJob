@@ -50,6 +50,7 @@ class AnalysisSubmissionServiceTest {
     private GithubAccessTokenProvider accessTokenProvider;
     private AnalysisJobRepository analysisJobs;
     private AnalysisRequestService analysisRequestService;
+    private CurrentRegistryVersion currentRegistryVersion;
     private AnalysisSubmissionService service;
 
     @BeforeEach
@@ -58,9 +59,11 @@ class AnalysisSubmissionServiceTest {
         accessTokenProvider = mock(GithubAccessTokenProvider.class);
         analysisJobs = mock(AnalysisJobRepository.class);
         analysisRequestService = mock(AnalysisRequestService.class);
+        currentRegistryVersion = mock(CurrentRegistryVersion.class);
+        when(currentRegistryVersion.resolve()).thenReturn("registry-20260908.9");
         service = new AnalysisSubmissionService(githubRepositoryClient, accessTokenProvider,
-                analysisJobs, analysisRequestService,
-                new AnalysisRequestProperties("technology-registry/v9", 3));
+                analysisJobs, analysisRequestService, new AnalysisRequestProperties(3),
+                currentRegistryVersion);
 
         when(accessTokenProvider.accessTokenOf(USER_ID)).thenReturn(TOKEN);
         when(analysisJobs.findFirstByUserIdAndRepositoryIdAndStatusInOrderByRequestedAtDesc(
@@ -100,7 +103,8 @@ class AnalysisSubmissionServiceTest {
         assertEquals("octocat/GitJob", payload.repositoryFullName());
         assertEquals("feature/cdc", payload.branchName());
         assertEquals(SHA, payload.commitSha());
-        assertEquals("technology-registry/v9", payload.registryVersion());
+        // 설정이 아니라 technology_registry의 CURRENT 행에서 온 값이다.
+        assertEquals("registry-20260908.9", payload.registryVersion());
         assertEquals(RepositoryAnalysisMode.SNAPSHOT, payload.analysisMode());
         assertTrue(payload.analysisId().startsWith("an_"));
         assertTrue(payload.analysisRepositoryId().startsWith("ar_"));

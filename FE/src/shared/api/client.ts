@@ -128,12 +128,18 @@ export async function put<T>(path: string, body: unknown): Promise<T> {
 }
 
 /**
- * 신규 생성 쓰기용. `POST /analyses`가 유일한 소비자다(티켓 S15P21E102-117).
+ * 생성·행위 호출용. `POST /analyses`(티켓 117)와 관리자 결정(티켓 14)이 쓴다.
  *
  * `put`과 본문이 같지만 method가 계약의 일부다. 호출부에서 `request`에 직접
  * `{ method: 'POST' }`를 넘기면 봉투 해제 코드가 기능마다 복제된다.
+ *
+ * `body`가 선택인 이유는 본문 없는 POST가 있기 때문이다(초안 발행). 넘기지
+ * 않으면 `request`가 Content-Type을 붙이지 않고 빈 본문으로 나간다.
  */
-export async function post<T>(path: string, body: unknown): Promise<T> {
-  const envelope = await request<T>(path, { method: 'POST', body: JSON.stringify(body) })
+export async function post<T>(path: string, body?: unknown): Promise<T> {
+  const envelope = await request<T>(path, {
+    method: 'POST',
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
   return envelope.data
 }

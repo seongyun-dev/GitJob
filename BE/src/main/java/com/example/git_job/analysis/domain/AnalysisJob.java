@@ -32,7 +32,12 @@ import org.springframework.data.domain.Persistable;
 public class AnalysisJob implements Persistable<String> {
 
     public static final String STATUS_QUEUED = "QUEUED";
+    /** Terminal. docs/fe/shared-api-contract.md §JobStatus. */
+    public static final String STATUS_SUCCEEDED = "SUCCEEDED";
+    public static final String STATUS_FAILED = "FAILED";
     public static final String STAGE_WAITING_FOR_WORKER = "WAITING_FOR_WORKER";
+    public static final String STAGE_COMPLETED = "COMPLETED";
+    public static final String STAGE_FAILED = "FAILED";
 
     /**
      * Statuses that mean a job still owns its repository, so a second request for the
@@ -109,6 +114,36 @@ public class AnalysisJob implements Persistable<String> {
                 Objects.requireNonNull(branchName, "branchName must not be null"),
                 Objects.requireNonNull(commitSha, "commitSha must not be null"),
                 Objects.requireNonNull(requestedAt, "requestedAt must not be null"));
+    }
+
+    /**
+     * The worker finished and the evidence has been written.
+     *
+     * <p>Only an in-progress job moves. A duplicate result event finds the job
+     * already terminal and must not reopen it, and neither must a result that
+     * arrives after the user cancelled.</p>
+     *
+     * @return false when the job was not in progress, so the caller can skip
+     */
+    public boolean succeed(Instant completedAt) {
+        return finish(STATUS_SUCCEEDED, STAGE_COMPLETED, null, completedAt);
+    }
+
+    /** The analysis cannot be produced. {@code errorCode} is what the UI switches on. */
+    public boolean fail(String errorCode, Instant completedAt) {
+        return finish(STATUS_FAILED, STAGE_FAILED,
+                Objects.requireNonNull(errorCode, "errorCode must not be null"), completedAt);
+    }
+
+    private boolean finish(String status, String stage, String errorCode, Instant completedAt) {
+        if (!IN_PROGRESS_STATUSES.contains(this.status)) {
+            return false;
+        }
+        this.status = status;
+        this.currentStage = stage;
+        this.errorCode = errorCode;
+        this.completedAt = Objects.requireNonNull(completedAt, "completedAt must not be null");
+        return true;
     }
 
     @Override

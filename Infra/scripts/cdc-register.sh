@@ -45,14 +45,21 @@ config="$(sed \
   "$CONNECTOR_TEMPLATE")"
 
 echo "Registering connector '$connector_name' against $database_host:$database_port/$database_name"
-status="$(printf '%s' "$config" | compose exec -T kafka-connect \
-  curl -sS -o /tmp/cdc-register-response.json -w '%{http_code}' \
+# Body and status come back on the same stream rather than through a file inside
+# the container. Git Bash rewrites an argument that looks like an absolute path
+# (/tmp/x becomes C:/Users/.../Temp/x), so the earlier `-o /tmp/...` form pointed
+# curl at a directory the container does not have. It failed on Windows only, and
+# only at the moment of registration.
+response="$(printf '%s' "$config" | compose exec -T kafka-connect \
+  curl -sS -w '\n%{http_code}' \
   -X PUT -H 'Content-Type: application/json' --data @- \
   "http://localhost:8083/connectors/$connector_name/config")"
+status="${response##*$'\n'}"
+body="${response%$'\n'*}"
 
 if [[ "$status" != "200" && "$status" != "201" ]]; then
   echo "Connector registration failed (HTTP $status):" >&2
-  compose exec -T kafka-connect cat /tmp/cdc-register-response.json >&2 || true
+  echo "$body" >&2
   exit 1
 fi
 

@@ -89,6 +89,19 @@ interface PageParams { page?: number; perPage?: number }
 | `EVD-404-2` | Registry에 없는 techId | `SHOW_NOT_FOUND` |
 | `EVD-404-3` | 해당 Snapshot에서 근거 0건 — 오류가 아니라 정상 빈 결과 | `SILENT_EMPTY` |
 
+관리자 화면(티켓 14)의 코드는 넷 다 `SHOW_INLINE_ERROR`다. 화면 전체를 오류로 덮으면
+다른 후보를 계속 처리할 수 없는데, 실제로 막힌 것은 그 한 행이다.
+
+| 코드 | BE 상수 | HTTP | 발생 상황 | 화면 처리 |
+|---|---|---|---|---|
+| `ADMIN-400-1` | `INVALID_TECHNOLOGY_ID` | 400 | 기술 식별자 형식 오류 | `SHOW_INLINE_ERROR` |
+| `ADMIN-404-1` | `TECHNOLOGY_CANDIDATE_NOT_FOUND` | 404 | 후보 없음 | `SHOW_INLINE_ERROR` |
+| `ADMIN-409-1` | `TECHNOLOGY_CANDIDATE_ALREADY_DECIDED` | 409 | 다른 관리자가 이미 처리 | `SHOW_INLINE_ERROR` |
+| `ADMIN-409-2` | `REGISTRY_DRAFT_EMPTY` | 409 | 발행할 초안 없음 | `SHOW_INLINE_ERROR` |
+
+`ADMIN-409-1`은 장애가 아니다. 관리자 둘이 같은 목록을 보고 같은 행을 누르는 일이 있고,
+목록을 새로 읽으면 무엇이 어떻게 처리됐는지 그대로 보인다.
+
 **삭제** (BE에 없고 명세와 충돌): `AUTH-403-1` `AUTH-409-1` `REPO-400-1` `REPO-422-1` `COMMON-400-1` `COMMON-404-1` `COMMON-429-1` `COMMON-503-1`
 
 `SHOW_SELECTION_LOCKED` 액션도 함께 삭제한다. 명세는 진행 중 분석이 있으면 `REPO-409-1`로 선택을 잠그지만, BE는 이 경우를 오류가 아니라 **200 + "이미 진행 중인 분석이 있습니다."**로 응답한다 (`AnalysisController.requestAnalysis`, `submission.created() == false`). 대응 코드가 없는 액션은 두지 않는다.
@@ -103,6 +116,8 @@ interface PageParams { page?: number; perPage?: number }
 | `['me']` | BE 미구현 | `GET /me` 없음 |
 | `['analysis', analysisId, ...]` (증거 계열) | BE 미구현 | 설계 4-1 · `staleTime: Infinity` |
 | `['matching', analysisId, target, ...]` (매칭 계열) | BE 미구현 | 설계 4-1 · 기본 staleTime |
+| `['admin', 'technology-candidates', limit]` | BE 구현됨 | 티켓 14 · 분석마다 늘어나므로 기본 staleTime |
+| `['admin', 'registry']` | BE 구현됨 | 〃 · 승격·거절이 둘 다 무효화한다 |
 
 증거·매칭 두 계열 분리는 설계 4-1의 확정 규약이므로 BE 미구현이어도 키 구조는 유지한다.
 

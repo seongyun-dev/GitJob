@@ -63,6 +63,7 @@ import tools.jackson.databind.json.JsonMapper;
 class AnalysisOutboxCdcIntegrationTest {
     private static final String TOPIC = "gitjob.repository-analysis.requests.v1";
     private static final String CONNECTOR = "analysis-outbox-test";
+    private static final long OWNER_ID = 1L;
     private static final String CDC_PASSWORD = "isolated-cdc-test-password";
     private static final Duration EVENT_TIMEOUT = Duration.ofSeconds(90);
     private final JsonMapper mapper = JsonMapper.builder().build();
@@ -234,6 +235,12 @@ class AnalysisOutboxCdcIntegrationTest {
                 .replace("__DATABASE_NAME__", postgres.getDatabaseName());
         new ResourceDatabasePopulator(new ByteArrayResource(cdcSql.getBytes(StandardCharsets.UTF_8)))
                 .execute(dataSource);
+        // analysis_job.user_id references "user" since V4, so the owner of these jobs has to
+        // exist. Inserted with an explicit id because every enqueue below uses OWNER_ID.
+        jdbc.update("""
+                INSERT INTO "user" (user_id, github_id, github_login, name)
+                VALUES (?, ?, 'octocat', 'Octo Cat')
+                """, OWNER_ID, OWNER_ID);
         // validate: this database was built from the deployment SQL, so the entity mapping
         // is checked against exactly what production applies.
         entityManagers = AnalysisJpaSupport.entityManagerFactory(dataSource, "validate");
@@ -248,7 +255,8 @@ class AnalysisOutboxCdcIntegrationTest {
         context.registerBean(AnalysisJobRepository.class, () -> analysisJobs);
         context.registerBean(JpaTransactionManager.class, () -> transactions);
         context.registerBean(RepositoryAnalysisKafkaProperties.class,
-                () -> new RepositoryAnalysisKafkaProperties(TOPIC));
+                () -> new RepositoryAnalysisKafkaProperties(
+                        TOPIC, "gitjob.repository-analysis.results.v1"));
         context.registerBean(JsonMapper.class, () -> mapper);
         context.registerBean(AnalysisRequestService.class);
         context.refresh();
@@ -294,7 +302,7 @@ class AnalysisOutboxCdcIntegrationTest {
      * per (user, repository), and these tests need several rows in flight at once.
      */
     private RepositoryAnalysisRequestedEvent enqueue(String suffix) {
-        return service.enqueueAuthorized(1L, new RepositoryAnalysisRequestPayload(
+        return service.enqueueAuthorized(OWNER_ID, new RepositoryAnalysisRequestPayload(
                 "an_" + suffix, "ar_" + suffix, nextRepositoryId.incrementAndGet(),
                 "octocat/gitjob", "feature/cdc",
                 "0123456789abcdef0123456789abcdef01234567", RepositoryAnalysisMode.SNAPSHOT,

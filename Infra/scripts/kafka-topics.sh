@@ -28,7 +28,8 @@
 # beginning is the design basis, so nothing may age out and nothing may be
 # compacted away by key.
 #
-# Not declared here: `gitjob.repository-analysis.requests.v1` and the Debezium
+# Not declared here: `gitjob.repository-analysis.requests.v1` (Debezium creates it)
+# and the Debezium
 # Connect internal topics. Those belong to S15P21E102-121 and the connector,
 # and -102 §3.2 explicitly leaves their ownership open. Creating them here
 # would settle a boundary this script has no standing to settle.
@@ -61,6 +62,10 @@ TOPICS=(
   "github.events:6"
   "so.raw:3"
   "jobs.collected:3"
+  # The analysis worker publishes here and the backend consumes it. Unlike the
+  # requests topic, no connector creates it, and auto-create is off. 3 partitions
+  # matches the requests topic so one analysis keeps a single degree of parallelism.
+  "gitjob.repository-analysis.results.v1:3"
 )
 
 RETENTION_MS="-1"
@@ -70,7 +75,15 @@ CLEANUP_POLICY="delete"
 REPLICATION_FACTOR=1
 
 kafka_topics() {
-  compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+  # The leading `//` is not a typo. Git Bash rewrites an argument that looks
+  # like an absolute path, so `/opt/kafka/...` reached docker as
+  # `C:/Program Files/Git/opt/kafka/...` and exec failed inside the container.
+  # A doubled slash survives that rewrite and means the same thing on Linux, so
+  # this works on both without a platform-specific variable.
+  #
+  # MSYS_NO_PATHCONV=1 is not an option here: the same command line also
+  # carries host paths (--env-file, -f) that do need converting.
+  compose exec -T kafka //opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 "$@"
 }
 

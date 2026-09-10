@@ -8,8 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# git is the repository analysis consumer's fetch mechanism; curl backs the
+# Compose healthchecks.
 RUN apt-get update \
-  && apt-get install --no-install-recommends --yes curl \
+  && apt-get install --no-install-recommends --yes curl git \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --system --uid 10001 --create-home appuser
 

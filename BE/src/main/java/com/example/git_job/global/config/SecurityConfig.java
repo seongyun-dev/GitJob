@@ -51,6 +51,10 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/swagger-ui/**"
                         ).permitAll()
+                        // 관리자 전용. 여기서 하는 일은 Registry 변경이고, Registry는
+                        // 모든 사용자의 기술 프로필이 판정되는 기준이다. 로그인한
+                        // 아무나 후보를 승격하면 한 사람이 전체 판정을 바꾼다.
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 // traceId는 인증보다 먼저 부여한다. JWT 만료·위조 요청은 인증 필터에서

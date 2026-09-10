@@ -72,7 +72,7 @@ public class GithubOAuthService {
         // 클라이언트가 보낸 값이 아니라 이 subject를 사용자 식별의 근거로 삼는다.
         String sessionToken = jwtTokenProvider.createToken(
                 String.valueOf(user.getUserId()),
-                Role.USER.name(),
+                user.getRole().name(),
                 githubUser.login(),
                 Instant.now()
         );

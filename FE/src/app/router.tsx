@@ -1,6 +1,7 @@
 import { createBrowserRouter, RouterProvider } from 'react-router'
 import { AppLayout } from '@/app/layouts/AppLayout'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
+import { TechnologyCandidatePage } from '@/features/admin/pages/TechnologyCandidatePage'
 import { AnalysisProgressPage } from '@/features/analysis/pages/AnalysisProgressPage'
 import { RepositorySelectionPage } from '@/features/analysis/pages/RepositorySelectionPage'
 import { EvidenceDetailPage } from '@/features/evidence/pages/EvidenceDetailPage'
@@ -52,6 +53,12 @@ const router = createBrowserRouter([
       { path: 'trends', element: <TrendPage /> },
       { path: 'trends/:techId', element: <TrendDetailPage /> },
       { path: 'mypage', element: <MyPage /> },
+
+      // 관리자 전용. 위 경로들과 달리 사용자 여정의 일부가 아니라 운영 화면이다.
+      // 라우트를 숨기지 않는 이유는 숨겨도 보호가 되지 않기 때문이다. 접근
+      // 제어는 BE가 /api/v1/admin/** 를 ADMIN 으로 제한해서 한다.
+      { path: 'admin/technology-candidates', element: <TechnologyCandidatePage /> },
+
       { path: '*', element: <NotFoundPage /> },
     ],
   },

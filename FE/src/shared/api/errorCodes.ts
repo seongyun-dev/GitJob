@@ -72,6 +72,13 @@ const ERROR_ACTIONS: Readonly<Record<string, ErrorAction>> = {
   'REPO-429-1': 'SHOW_RATE_LIMIT',
   'REPO-503-1': 'SHOW_RETRY',
 
+  // 기술 후보 검토(관리자) — 넷 다 해당 행 옆에 붙인다. 화면 전체를 오류로
+  // 덮으면 다른 후보를 계속 처리할 수 없고, 실제로 막힌 것은 그 한 행이다.
+  'ADMIN-400-1': 'SHOW_INLINE_ERROR',
+  'ADMIN-404-1': 'SHOW_INLINE_ERROR',
+  'ADMIN-409-1': 'SHOW_INLINE_ERROR',
+  'ADMIN-409-2': 'SHOW_INLINE_ERROR',
+
   // FE 합성
   [CLIENT_NETWORK]: 'SHOW_RETRY',
   [CLIENT_ENVELOPE]: 'SHOW_GENERIC_ERROR',

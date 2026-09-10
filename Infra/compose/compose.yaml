@@ -216,6 +216,8 @@ services:
       KAFKA_TOPIC_ANALYSIS_RESULTS: ${KAFKA_TOPIC_ANALYSIS_RESULTS:-gitjob.analysis.results}
       KAFKA_TOPIC_ANALYSIS_DLQ: ${KAFKA_TOPIC_ANALYSIS_DLQ:-gitjob.analysis.dlq}
       KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:-gitjob.repository-analysis.requests.v1}
+      # Consumed here: the worker's verdicts, evidence and unmatched dependencies.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
       ANALYSIS_OUTBOX_MODE: ${ANALYSIS_OUTBOX_MODE:-CDC}
       ANALYSIS_OUTBOX_ENABLED: ${ANALYSIS_OUTBOX_ENABLED:-true}
       ANALYSIS_OUTBOX_POLL_INTERVAL: ${ANALYSIS_OUTBOX_POLL_INTERVAL:-2s}
@@ -336,6 +338,55 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    logging: *default-logging
+
+  # Consumes gitjob.repository-analysis.requests.v1 and fetches the requested
+  # commit onto local disk. Separate from `worker` (C's compute HTTP API) because
+  # a consumer and a web service restart and scale differently; same image, other
+  # command, as with `collector`.
+  analysis-worker:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    restart: unless-stopped
+    command: ["python", "-m", "analysis"]
+    environment:
+      APP_ENV: ${APP_ENV:-docker}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      # The topic B publishes to. Deliberately not KAFKA_TOPIC_ANALYSIS_REQUESTS,
+      # which belongs to C's worker and is a different topic.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:-gitjob.repository-analysis.requests.v1}
+      # Its own DLQ. C's worker uses KAFKA_TOPIC_ANALYSIS_DLQ for a different payload
+      # shape, and mixing them leaves whoever drains it guessing.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ:-gitjob.repository-analysis.dlq.v1}
+      # Worker -> backend. Failures ride this topic too: the DLQ is for operators,
+      # and a failure that lives only there leaves analysis_job at QUEUED forever.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
+      ANALYSIS_CONSUMER_GROUP: ${ANALYSIS_CONSUMER_GROUP:-gitjob-repository-analysis}
+      # Must exceed the slowest clone. Below it the broker hands this consumer's
+      # partitions to someone else, who then clones the same repository again.
+      KAFKA_MAX_POLL_INTERVAL_MS: ${ANALYSIS_MAX_POLL_INTERVAL_MS:-900000}
+      ANALYSIS_CLONE_TIMEOUT_SECONDS: ${ANALYSIS_CLONE_TIMEOUT_SECONDS:-600}
+      ANALYSIS_CLAIM_LEASE_SECONDS: ${ANALYSIS_CLAIM_LEASE_SECONDS:-900}
+      # A repository that times out is a transient failure on every delivery.
+      # Without a cap it is redelivered forever and its partition never moves.
+      ANALYSIS_MAX_ATTEMPTS: ${ANALYSIS_MAX_ATTEMPTS:-5}
+      ANALYSIS_MAX_REPOSITORY_BYTES: ${ANALYSIS_MAX_REPOSITORY_BYTES:-2147483648}
+      ANALYSIS_WORK_ROOT: ${ANALYSIS_WORK_ROOT:-/tmp/gitjob-analysis}
+      ANALYSIS_MAX_FILE_BYTES: ${ANALYSIS_MAX_FILE_BYTES:-1048576}
+      ANALYSIS_MAX_FILES: ${ANALYSIS_MAX_FILES:-50000}
+      # Manifest scan. A manifest is a small file; anything larger is generated
+      # or hostile, and reading it costs more than its dependency list is worth.
+      ANALYSIS_MAX_MANIFEST_BYTES: ${ANALYSIS_MAX_MANIFEST_BYTES:-524288}
+      ANALYSIS_MAX_MANIFESTS: ${ANALYSIS_MAX_MANIFESTS:-500}
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-gitjob}
+      POSTGRES_USER: ${POSTGRES_USER:-gitjob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # No healthcheck: the process serves no port. It refuses to start when Kafka,
+    # the database or the claim table is missing, so a running container has
+    # already proved its dependencies.
     logging: *default-logging
 
   repo-snapshot-bootstrap:

@@ -34,6 +34,11 @@ export const queryKeys = {
   analysisRepositories: (analysisId: string) =>
     ['analysis', analysisId, 'repositories'] as const,
 
+  // 관리자 — 후보 목록과 레지스트리 상태. 승격·거절이 둘 다 바꾸므로
+  // 한 뮤테이션이 두 키를 모두 무효화한다.
+  technologyCandidates: (limit: number) => ['admin', 'technology-candidates', limit] as const,
+  registryStatus: () => ['admin', 'registry'] as const,
+
   // 매칭 계열 — target이 키의 일부
   matching: (analysisId: string, target: unknown) => ['matching', analysisId, target] as const,
   matchingSkillGap: (analysisId: string, target: unknown) =>

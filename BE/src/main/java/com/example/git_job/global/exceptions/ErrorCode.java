@@ -49,7 +49,16 @@ public enum ErrorCode {
     // 뒤지게 되므로, 저장소 상태 때문이라는 것이 드러나는 코드를 따로 둔다.
     REPOSITORY_NOT_ANALYZABLE(HttpStatus.CONFLICT, "REPO-409-1", "보관되었거나 비활성화된 저장소는 분석할 수 없습니다."),
     GITHUB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "REPO-429-1", "GitHub API 호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."),
-    GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "REPO-503-1", "GitHub API에 연결할 수 없습니다.");
+    GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "REPO-503-1", "GitHub API에 연결할 수 없습니다."),
+
+    // 기술 후보 검토 (관리자 화면). 승격은 레지스트리를 바꾸므로 "없는 후보"와
+    // "이미 처리된 후보"를 구분해서 알린다. 관리자 둘이 같은 목록을 보고 같은
+    // 행을 누르는 것은 오류가 아니라 정상이며, 409를 받은 쪽은 목록을 새로
+    // 읽으면 누가 어떻게 처리했는지 그대로 보인다.
+    TECHNOLOGY_CANDIDATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ADMIN-404-1", "기술 후보를 찾을 수 없습니다."),
+    TECHNOLOGY_CANDIDATE_ALREADY_DECIDED(HttpStatus.CONFLICT, "ADMIN-409-1", "이미 처리된 기술 후보입니다."),
+    REGISTRY_DRAFT_EMPTY(HttpStatus.CONFLICT, "ADMIN-409-2", "발행할 레지스트리 초안이 없습니다."),
+    INVALID_TECHNOLOGY_ID(HttpStatus.BAD_REQUEST, "ADMIN-400-1", "기술 식별자 형식이 올바르지 않습니다.");
 
 
 

@@ -31,9 +31,13 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 __all__ = [
+    "ConsumedMessage",
+    "ConsumerTransport",
     "KafkaError",
+    "KafkaPythonConsumer",
     "KafkaPythonTransport",
     "KafkaTransport",
+    "consumer_from_env",
     "transport_from_env",
 ]
 
@@ -194,6 +198,7 @@ class KafkaPythonTransport:
 
 def transport_from_env(
     env: Mapping[str, str] | None = None,
+    default_client_id: str = "gitjob-collector",
 ) -> KafkaPythonTransport | None:
     """Build a transport, or `None` when no broker is configured."""
 
@@ -204,8 +209,178 @@ def transport_from_env(
     servers = tuple(part.strip() for part in raw.split(",") if part.strip())
     if not servers:
         return None
-    client_id = (values.get("KAFKA_CLIENT_ID") or "gitjob-collector").strip()
+    client_id = (values.get("KAFKA_CLIENT_ID") or default_client_id).strip()
     return KafkaPythonTransport(
         bootstrap_servers=servers,
-        client_id=client_id or "gitjob-collector",
+        client_id=client_id or default_client_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Consumer side. Deliberately the mirror image of the producer above: a
+# Protocol, one real adapter, and a `*_from_env` that returns `None` when no
+# broker is configured, so tests inject a fake and never open a socket.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConsumedMessage:
+    """One message, with the fields a handler and an operator need."""
+
+    topic: str
+    partition: int
+    offset: int
+    key: bytes | None
+    value: bytes
+    headers: tuple[tuple[str, bytes], ...] = ()
+
+    def header(self, name: str) -> bytes | None:
+        for key, value in self.headers:
+            if key == name:
+                return value
+        return None
+
+
+@runtime_checkable
+class ConsumerTransport(Protocol):
+    """The three calls a consumer loop needs."""
+
+    def poll(self, timeout_ms: int) -> list[ConsumedMessage]:
+        """Return the messages ready now, or an empty list."""
+
+    def commit(self) -> None:
+        """Commit the offsets of everything returned so far."""
+
+    def close(self) -> None:
+        """Leave the group and release the connection."""
+
+
+@dataclass
+class KafkaPythonConsumer:
+    """`kafka-python` adapter for at-least-once consumption.
+
+    Three settings carry the weight and none of them are defaults.
+
+    `enable_auto_commit=False`: the loop commits after the work is done. With
+    auto-commit an offset advances on a timer, so a crash mid-work silently
+    drops the message.
+
+    `max_poll_records=1`: one unit of work per poll keeps the time between
+    polls bounded by a single job rather than a batch.
+
+    `max_poll_interval_ms`: the broker evicts a consumer that does not poll
+    within this window and hands its partitions to someone else, who then
+    redoes the same work. It has to exceed the slowest job, which for repository
+    analysis is a clone, so it is configurable rather than left at five minutes.
+    """
+
+    bootstrap_servers: tuple[str, ...]
+    topic: str
+    group_id: str
+    client_id: str = "gitjob-analysis"
+    # Above ANALYSIS_CLONE_TIMEOUT_SECONDS (600s) plus parsing. Equal values mean a
+    # clone that runs to its timeout loses the partition before it can report.
+    max_poll_interval_ms: int = 900_000
+    session_timeout_ms: int = 45_000
+    _consumer: object | None = field(default=None, init=False, repr=False)
+
+    def _ensure_consumer(self) -> object:
+        if self._consumer is not None:
+            return self._consumer
+        try:
+            from kafka import KafkaConsumer
+        except ImportError as error:  # pragma: no cover - environment specific
+            raise KafkaError(
+                "kafka-python is not installed; add it to AI/requirements.txt "
+                "or leave KAFKA_BOOTSTRAP_SERVERS unset to run without Kafka"
+            ) from error
+        try:
+            self._consumer = KafkaConsumer(
+                self.topic,
+                bootstrap_servers=list(self.bootstrap_servers),
+                group_id=self.group_id,
+                client_id=self.client_id,
+                enable_auto_commit=False,
+                max_poll_records=1,
+                max_poll_interval_ms=self.max_poll_interval_ms,
+                session_timeout_ms=self.session_timeout_ms,
+                # An analysis request that was published while no consumer
+                # existed still has to be processed once one appears.
+                auto_offset_reset="earliest",
+            )
+        except Exception as error:  # pragma: no cover - environment specific
+            raise KafkaError(f"could not connect a consumer: {error}") from error
+        return self._consumer
+
+    def poll(self, timeout_ms: int) -> list[ConsumedMessage]:
+        consumer = self._ensure_consumer()
+        try:
+            batches = consumer.poll(timeout_ms=timeout_ms)  # type: ignore[attr-defined]
+        except Exception as error:
+            raise KafkaError(f"poll of {self.topic} failed: {error}") from error
+        messages: list[ConsumedMessage] = []
+        for records in batches.values():
+            for record in records:
+                messages.append(
+                    ConsumedMessage(
+                        topic=record.topic,
+                        partition=record.partition,
+                        offset=record.offset,
+                        key=record.key,
+                        value=record.value,
+                        headers=tuple(record.headers or ()),
+                    )
+                )
+        return messages
+
+    def commit(self) -> None:
+        consumer = self._ensure_consumer()
+        try:
+            consumer.commit()  # type: ignore[attr-defined]
+        except Exception as error:
+            # Losing a commit means redelivery, which the handler is built to
+            # absorb. Losing it silently would not be.
+            raise KafkaError(f"commit on {self.topic} failed: {error}") from error
+
+    def close(self) -> None:
+        consumer, self._consumer = self._consumer, None
+        if consumer is None:
+            return
+        try:
+            consumer.close()  # type: ignore[attr-defined]
+        except Exception as error:  # noqa: BLE001 - shutdown must not raise
+            print(f"kafka consumer close failed: {error}", file=sys.stderr)
+
+
+def consumer_from_env(
+    topic: str,
+    group_id: str,
+    env: Mapping[str, str] | None = None,
+) -> KafkaPythonConsumer | None:
+    """Build a consumer, or `None` when no broker is configured."""
+
+    values = os.environ if env is None else env
+    raw = (values.get("KAFKA_BOOTSTRAP_SERVERS") or "").strip()
+    if not raw:
+        return None
+    servers = tuple(part.strip() for part in raw.split(",") if part.strip())
+    if not servers:
+        return None
+    return KafkaPythonConsumer(
+        bootstrap_servers=servers,
+        topic=topic,
+        group_id=group_id,
+        client_id=(values.get("KAFKA_CLIENT_ID") or "gitjob-analysis").strip()
+        or "gitjob-analysis",
+        max_poll_interval_ms=_positive_int(
+            values.get("KAFKA_MAX_POLL_INTERVAL_MS"), 900_000
+        ),
+    )
+
+
+def _positive_int(raw: str | None, default: int) -> int:
+    try:
+        value = int((raw or "").strip())
+    except ValueError:
+        return default
+    return value if value > 0 else default

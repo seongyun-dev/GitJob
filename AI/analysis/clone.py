@@ -1,0 +1,221 @@
+"""Fetch exactly one commit of one repository onto local disk.
+
+### Why not `git clone --branch`
+
+The contract says the worker analyzes `commit_sha` even after the branch moves,
+and between the request and this fetch the branch usually has moved. Cloning a
+branch and hoping the SHA is still reachable is a race. Fetching the SHA
+directly is not: GitHub serves it or it does not exist.
+
+    git init
+    git remote add origin <url>
+    git fetch --depth 1 origin <sha>
+    git checkout FETCH_HEAD
+
+`--depth 1` downloads that one commit's tree. Contribution analysis will need
+history later; that is a larger `--depth`, not a different mechanism.
+
+### Failures are split before they are reported
+
+A network blip should be retried; a deleted repository should not. Retrying a
+deleted repository forever is how a consumer group stops making progress, so
+anything not recognised as transient is treated as terminal and sent to the DLQ,
+where it is visible instead of silently looping.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+__all__ = [
+    "CloneResult",
+    "PermanentCloneError",
+    "RepositoryCloner",
+    "TransientCloneError",
+    "UnsafeWorkPathError",
+]
+
+
+class CloneError(RuntimeError):
+    """Base for fetch failures, carrying the code that reaches the operator."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class TransientCloneError(CloneError):
+    """Worth retrying: the offset is not committed and the claim is released."""
+
+
+class PermanentCloneError(CloneError):
+    """Not worth retrying: recorded, sent to the DLQ, offset committed."""
+
+
+class UnsafeWorkPathError(ValueError):
+    """A checkout target is not an isolated directory below the work root."""
+
+
+# Matched against git's stderr. Everything unmatched is permanent on purpose.
+_TRANSIENT = (
+    re.compile(r"could not resolve host", re.I),
+    re.compile(r"connection (timed out|reset|refused)", re.I),
+    re.compile(r"failed to connect", re.I),
+    re.compile(r"the remote end hung up", re.I),
+    re.compile(r"unable to access .*: (50\d|429)", re.I),
+    re.compile(r"rate limit", re.I),
+    re.compile(r"early eof", re.I),
+)
+_NOT_FOUND = re.compile(r"(repository not found|not found|does not exist)", re.I)
+# git asks for a username when a repository is private or missing. With
+# GIT_TERMINAL_PROMPT=0 it fails instead of hanging, and this is that failure.
+_NEEDS_AUTH = re.compile(
+    r"(could not read username|authentication failed|terminal prompts disabled)", re.I
+)
+
+
+@dataclass(frozen=True)
+class CloneResult:
+    path: Path
+    bytes_on_disk: int
+
+
+@dataclass
+class RepositoryCloner:
+    """One fetch per call. The caller owns cleanup of `work_root`."""
+
+    work_root: Path
+    github_base_url: str = "https://github.com"
+    timeout_seconds: int = 600
+    max_bytes: int = 2 * 1024 * 1024 * 1024
+
+    def fetch(self, full_name: str, commit_sha: str, into: str) -> CloneResult:
+        target = self._target(into)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        target.mkdir(parents=True)
+
+        url = f"{self.github_base_url.rstrip('/')}/{full_name}.git"
+        self._git(["init", "--quiet"], target, "init")
+        self._git(["remote", "add", "origin", url], target, "remote")
+        self._git(
+            [
+                "-c",
+                "protocol.version=2",
+                "fetch",
+                "--depth",
+                "1",
+                "--quiet",
+                "origin",
+                commit_sha,
+            ],
+            target,
+            "fetch",
+        )
+        self._git(["checkout", "--quiet", "FETCH_HEAD"], target, "checkout")
+
+        size = _directory_bytes(target)
+        if size > self.max_bytes:
+            # Checked after the fact because git cannot be asked in advance.
+            # Left to the caller to clean up, as with any other failure.
+            raise PermanentCloneError(
+                "REPOSITORY_TOO_LARGE",
+                f"{full_name} is {size} bytes on disk, over the {self.max_bytes} limit",
+            )
+        return CloneResult(path=target, bytes_on_disk=size)
+
+    def cleanup(self, into: str) -> None:
+        """Remove one checkout only after repeating the containment check."""
+
+        target = self._target(into)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+
+    def _target(self, into: str) -> Path:
+        """Resolve a non-symlinked child without trusting its identifier."""
+
+        requested = Path(into)
+        if requested.is_absolute():
+            raise UnsafeWorkPathError("work target must be relative")
+
+        root = self.work_root.resolve()
+        candidate = root.joinpath(requested)
+        current = root
+        for part in requested.parts:
+            current = current / part
+            if current.is_symlink() or current.is_junction():
+                raise UnsafeWorkPathError(
+                    "work target must not traverse a symbolic link or junction"
+                )
+
+        resolved = candidate.resolve()
+        if resolved == root or not resolved.is_relative_to(root):
+            raise UnsafeWorkPathError("work target must be a child of the work root")
+        return resolved
+
+    def _git(self, args: list[str], cwd: Path, operation: str) -> None:
+        """`operation` is reported separately: args[0] may be a `-c` override."""
+        environment = {
+            **os.environ,
+            # Never block waiting for credentials that this process does not
+            # have. Private repositories fail fast instead of hanging until the
+            # broker takes the partition away.
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GCM_INTERACTIVE": "never",
+        }
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                ["git", *args],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                env=environment,
+                check=False,
+            )
+        except FileNotFoundError as error:
+            raise PermanentCloneError(
+                "GIT_NOT_AVAILABLE", "git is not installed"
+            ) from error
+        except subprocess.TimeoutExpired as error:
+            raise TransientCloneError(
+                "CLONE_TIMEOUT", f"git {operation} exceeded {self.timeout_seconds}s"
+            ) from error
+        if completed.returncode != 0:
+            raise _classify(operation, completed.stderr)
+
+
+def _classify(operation: str, stderr: str) -> CloneError:
+    text = stderr.strip()
+    if _NEEDS_AUTH.search(text):
+        # Indistinguishable from "deleted" without a credential, and the answer
+        # to both is the same: this worker cannot fetch it.
+        return PermanentCloneError(
+            "REPOSITORY_NOT_ACCESSIBLE",
+            f"git {operation} needs credentials this worker has none of",
+        )
+    if _NOT_FOUND.search(text):
+        return PermanentCloneError(
+            "REPOSITORY_NOT_FOUND",
+            f"git {operation} could not find the repository or commit",
+        )
+    for pattern in _TRANSIENT:
+        if pattern.search(text):
+            return TransientCloneError(
+                "GITHUB_UNAVAILABLE", f"git {operation} failed: {text[:200]}"
+            )
+    return PermanentCloneError("CLONE_FAILED", f"git {operation} failed: {text[:200]}")
+
+
+def _directory_bytes(root: Path) -> int:
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            total += path.stat().st_size
+    return total

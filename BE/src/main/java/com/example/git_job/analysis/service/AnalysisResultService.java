@@ -1,0 +1,89 @@
+package com.example.git_job.analysis.service;
+
+import com.example.git_job.analysis.domain.AnalysisJob;
+import com.example.git_job.analysis.event.RepositoryAnalysisResultEvent;
+import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload;
+import com.example.git_job.analysis.outbox.AnalysisEvidenceStore;
+import com.example.git_job.analysis.outbox.TechnologyCandidateStore;
+import com.example.git_job.analysis.repository.AnalysisJobRepository;
+import java.time.Instant;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Applies one analysis result: writes the evidence and closes the job.
+ *
+ * <p>The worker cannot do this itself. {@code analysis_job} and
+ * {@code analysis_evidence} are mapped here and every deployment boots with
+ * {@code ddl-auto=validate}, so a second writer in another language would make
+ * each column change a two-repository migration. The result travels as an
+ * event and this is where it lands.</p>
+ *
+ * <h2>Idempotency</h2>
+ *
+ * <p>Delivery is at-least-once, so the same result arrives more than once. The
+ * job's own status is the marker: only an in-progress job is finished, and a
+ * repeat finds it terminal and stops. That needs no extra table and gives the
+ * cancel case the right answer for free — a result that lands after the user
+ * cancelled must not reopen the job.</p>
+ *
+ * <p>Evidence and status move in one transaction. A finished job with no
+ * evidence reads as "this repository uses nothing", which is a normal result
+ * and therefore indistinguishable from the bug.</p>
+ */
+@Service
+@RequiredArgsConstructor
+public class AnalysisResultService {
+
+    private static final Logger log = LoggerFactory.getLogger(AnalysisResultService.class);
+
+    private final AnalysisJobRepository jobs;
+    private final AnalysisEvidenceStore evidence;
+    private final TechnologyCandidateStore candidates;
+
+    /**
+     * @return what happened, so the caller can log it and tests can assert on it
+     */
+    @Transactional
+    public Applied apply(RepositoryAnalysisResultEvent event) {
+        RepositoryAnalysisResultPayload payload = event.payload();
+        AnalysisJob job = jobs.findById(payload.analysisId()).orElse(null);
+        if (job == null) {
+            // The worker analyzed something this service has no record of. Retrying
+            // will not create it, so the message is consumed rather than replayed.
+            log.warn("Result for unknown analysis: analysisId={}, eventId={}",
+                    payload.analysisId(), event.eventId());
+            return Applied.UNKNOWN_JOB;
+        }
+
+        Instant now = Instant.now();
+        boolean moved = payload.failed()
+                ? job.fail(payload.errorCode(), now)
+                : job.succeed(now);
+        if (!moved) {
+            log.info("Result ignored, job already {}: analysisId={}, eventId={}",
+                    job.getStatus(), payload.analysisId(), event.eventId());
+            return Applied.ALREADY_TERMINAL;
+        }
+
+        int written = evidence.insertAll(payload.analysisId(), job.getUserId(),
+                payload.registryVersion(), payload.evidence(), now);
+        // The worker can only say what this repository declared. How many people
+        // a candidate would serve is an aggregate across every user, so it is
+        // computed here from the observations rather than sent in the event.
+        int observed = candidates.record(payload.analysisId(), job.getUserId(),
+                job.getRepositoryId(), payload.candidates(), now);
+        jobs.save(job);
+
+        log.info("Analysis closed: analysisId={}, status={}, technologies={}, evidence={},"
+                        + " candidates={}, traceId={}",
+                payload.analysisId(), job.getStatus(), payload.technologies().size(),
+                written, observed, event.traceId());
+        return payload.failed() ? Applied.FAILED : Applied.SUCCEEDED;
+    }
+
+    public enum Applied { SUCCEEDED, FAILED, ALREADY_TERMINAL, UNKNOWN_JOB }
+}

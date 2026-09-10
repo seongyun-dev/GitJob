@@ -267,7 +267,8 @@ Transactional Outbox가 구현되어 있고, 저장된 이벤트는 Debezium CDC
 저장소 목록·브랜치 조회와 분석 요청 API가 그 앞단에 연결되어 있다.
 Worker 결과 처리와 분석 상태 조회는 아직 연결 전이다.
 [저장소 선택·분석 요청](repository-analysis-request.md),
-[Outbox·CDC 구현·SQL 적용·복구 안내](analysis-outbox.md)를 참고한다. `Infra/compose`와 Dockerfile은 `BE/gradlew`, Java 21,
+[Outbox·CDC 구현·SQL 적용·복구 안내](analysis-outbox.md),
+[저장소 분석 Worker](repository-analysis-worker.md)를 참고한다. `Infra/compose`와 Dockerfile은 `BE/gradlew`, Java 21,
 `/actuator/health`, `bootJar`를 실행 계약으로 사용한다. 전체 Backend 구현 순서는 다음과 같다.
 
 1. Spring Boot 기본 실행·Actuator·공통 오류 envelope 작성
