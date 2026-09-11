@@ -1,8 +1,9 @@
 # FE shared API 계약 — BE 실구현 기준
 
 > 상태: 결정 확정 (2026-09-09, FE 담당) · 코드 반영은 `S15P21E102-170` 브랜치에서 진행
+> · 1-6은 `S15P21E102-208`에서 추가 (2026-09-11, B조 API 명세서 v0.1 기준)
 >
-> 기준일: 2026-09-09
+> 기준일: 2026-09-11
 >
 > 기준 코드: BE `origin/develop` `13b2a92` —
 > `global/response/ApiResponse.java` · `global/response/ErrorResponse.java` ·
@@ -141,6 +142,58 @@ const API_BASE_URL = `${API_ROOT.replace(/\/$/, '')}/v1`
 
 이 값을 그대로 base로 쓰면 dev(변수 미설정)만 맞고 **운영 빌드는 `/api/me/...`로 나가 BE에 닿지 못한다.** 환경 변수 정의는 인프라 소유이므로 `FE/.env.example`을 따로 두지 않는다.
 
+### 1-6. Evidence 조회 계약 (BE 미구현 — 티켓 208에서 선고정)
+
+엔드포인트가 아직 없다(명세 상태 `시작 전`). 그런데도 응답 타입을 먼저 고정하는
+이유는 137·138이 화면을 붙일 때 계약을 다시 정하지 않게 하려는 것이다.
+
+**근거는 [B조 API 명세서](https://app.notion.com/p/3d7a6b738a2880c69427df7300fa6c18)
+v0.1이다.** 이 문서 머리말의 우선순위 규칙("BE에 구현된 것은 BE 코드를 따르고, 아직
+없는 것만 Notion 명세를 유지한다")대로, 둘 다 BE에 없으므로 명세가 기준이다.
+필드명·타입·optional 여부를 명세의 예시 응답에서 그대로 옮겼다.
+
+| 기능 ID | 엔드포인트 | 화면 | FE 타입 |
+|---|---|---|---|
+| B-FN-010 | `GET /me/profile` | S6 | `TechnologyProfile` |
+| B-FN-011 | `GET /me/technologies/{techId}/evidence` | S7 | `TechnologyEvidence` |
+
+코드는 `FE/src/features/evidence/api/`에 있다. `types.ts`가 타입,
+`parseEvidence.ts`가 런타임 검증, `evidenceApi.ts`가 경로·쿼리다.
+
+쿼리 파라미터는 전부 optional이고 **기본값을 서버가 정한다**(`scopeType` 기본 `ALL`,
+`includeExcluded` 기본 false). FE가 기본값을 만들어 보내면 서버 기본값이 바뀔 때 두
+곳이 어긋나므로 지정하지 않은 값은 보내지 않는다.
+
+응답 구조에서 놓치기 쉬운 것 넷.
+
+- **레벨은 항상 두 개가 함께 온다**(`repoLevel` · `personalLevel`). 명세가 "하나만
+  내려보내면 화면에서 축이 혼동된다"고 적었다. 둘을 합쳐 단일 숙련도 숫자로 만들지
+  않는다.
+- **`criteria`는 필수다.** 명세가 "숫자를 반환하므로 criteria 객체를 반드시 함께
+  반환한다"고 못 박는다. 수치의 출처이므로 값과 함께 화면에 남아야 한다.
+- **`partial`·`missingScope`**가 같은 응답에 실린다. 일부 저장소 분석이 실패한
+  결과를 감추고 목록만 보여주면 사용자는 전체를 본 것으로 오해한다.
+- **`unmetRules`·`nextActions`는 객체 배열이다.** 각각 `{rule, description}`,
+  `{fromLevel, targetLevel, ruleId, message}`다. 문자열 배열이 아니다.
+
+오류 코드는 각 명세의 `실패 응답 정의` 표를 `errorCodes.ts`에 반영했다.
+`PRF-404-1`(종료된 분석 없음) · `PRF-409-1`(지정 분석 진행 중) · `ANL-403-1`(남의
+analysisId) · `EVD-404-1`(그 기술 근거 0건) · `EVD-404-2`(Registry에 없는 techId).
+
+**타입 선언만 두지 않고 런타임 검증을 함께 둔다.** 이 계약은 실제 응답으로 확인한 적이
+없으므로 선언만 두면 어긋났을 때 `undefined`가 화면 깊은 곳까지 흘러간다.
+`parseEvidence`가 `data` 안쪽을 검사하고, 어긋나면 `CLIENT-ENVELOPE`로 끊는다
+(1-3의 기존 매핑을 쓰고 새 코드를 만들지 않는다). 명세의 예시 응답 두 건이 그대로
+통과하는 것과, 구 필드명·문자열 배열·미정의 카테고리가 거부되는 것을 확인했다.
+
+**항목을 버리지 않고 응답 전체를 실패시킨다.** 근거 한 줄을 조용히 떨어뜨리면
+사용자는 실제보다 근거가 적다고 믿는데, 이 제품에서 그건 표시 오류가 아니라 사실
+왜곡이다.
+
+**알려진 필드만 옮겨 담는다.** 명세가 금지한 원본 코드 본문이나, 아래 2장의
+`contributionScore`처럼 FE 확정 규칙과 충돌하는 값이 실려 와도 FE 상태·캐시에
+들어오지 않는다.
+
 ## 2. 명세와의 차이 — 팀 공유 필요
 
 | 항목 | Notion 명세 (v1.0) | BE 실구현 | FE 채택 | 후속 |
@@ -154,6 +207,9 @@ const API_BASE_URL = `${API_ROOT.replace(/\/$/, '')}/v1`
 | 목록 필터 | `sort` `q` `includeForks` `includeArchived` `refresh` | 없음 (최근 갱신 순 고정) | 없음 | 117에서 필요하면 BE에 요청 |
 | 응답 `meta` | `generatedAt` `fetchedAt` `cached` | 없음 | 없음 | BE 구현 시 optional 복원 |
 | 저장소 항목 필드 | `repositoryId` `githubRepoId` `primaryLanguage` `sizeKb` `pushedAt` `permissions` … | `githubRepositoryId` `fullName` `name` `owner` `isPrivate` `defaultBranch` `description` `language` `updatedAt` `analyzable` | BE — 117에서 `features/analysis/api/`에 정의 | — |
+| Evidence `scopeType` | 조회 필터 `REPOSITORY`/`PERSONAL`/`ALL` (B-FN-011) | Registry `evaluation_scope`는 `REPOSITORY`/`PERSONAL` 2종 (`CK_EVIDENCE_RULE_SCOPE`) | 둘 다 — 층이 다르다. 필터는 3종(`ALL` 포함), 근거 항목의 소속은 2종 | — |
+| 본인 기여 표현 | `contributionScore: 0.4` (숫자) | 없음 | **미채택** — 타입에 넣지 않았다 | 아래 미결 6. FE 확정 규칙과 정면 충돌 |
+| 분석 상태 | `QUEUED` `RUNNING` `RATE_LIMITED` `SUCCEEDED` `PARTIAL_SUCCEEDED` `FAILED` `CANCELED` (7종) | `AnalysisJob`의 활성 상태 6종 (집합이 또 다름) | 미정 — `domain.ts`는 아직 6종(`PARTIAL_SUCCEEDED` 없음) | 미결 2와 같은 건. 136 착수 전 3자 확정 |
 | 콜백 실패 전달 | 성공·실패 모두 FE `/auth/callback`으로 302 | `AUTH-403-3`만 302, `AUTH-400-2`·`AUTH-403-4` 등은 BE 콜백 URL에서 JSON 직접 응답 | 매핑은 두되, 브라우저 이동 중이라 FE 코드가 관여하지 못함 | 실패도 302로 통일할지 BE 확인 |
 
 ## 3. 고정 enum 현황 (`FE/src/shared/types/domain.ts`)
@@ -172,10 +228,15 @@ const API_BASE_URL = `${API_ROOT.replace(/\/$/, '')}/v1`
 3. **204 사용 여부** — FE는 204를 `CLIENT-ENVELOPE`로 처리한다. BE가 204를 쓸 계획이면 봉투 규약부터 고쳐야 한다
 4. **콜백 실패 전달 방식** — 2장 마지막 행
 5. **BE 코드·enum 추가 시 FE 통보 절차** — `ErrorCode.java`·상태 문자열이 늘면 이 문서와 `errorCodes.ts`·`domain.ts`를 같은 MR에서 고칠지, 별도 알림으로 갈지
+6. **`contributionScore` 채택 여부** (208) — 명세 B-FN-011은 근거마다 `contributionScore: 0.4`라는 **비율 숫자**를 내려보낸다. 그런데 `shared/types/domain.ts`의 `ContributionLabel`은 "비율 값을 노출하지 않는다(와이어프레임 1-1 금지 규칙). **숫자를 받는 자리를 만들지 않는 것이 이 타입의 목적이다**"라고 적혀 있다. 확정 규칙 둘이 정면으로 충돌하므로 FE가 혼자 정하지 않고 필드를 받지 않았다. 셋 중 하나를 골라야 한다 — (가) 명세가 라벨(`SOLE_AUTHOR` 등)을 함께 주고 FE는 라벨만 쓴다, (나) 금지 규칙을 푼다, (다) 명세에서 뺀다. 화면 `09 Evidence Detail`의 `기여자` 열이 이 결정을 기다린다
+7. **`SILENT_EMPTY` 액션의 대응 코드 소멸** (208) — 예전 명세의 `EVD-404-3`이 유일한 사용처였는데 v0.1 B-FN-011 실패 표에서 빠졌고, 그 자리를 `EVD-404-1`이 대신하면서 처리도 `SHOW_EMPTY_WITH_CTA`로 바뀌었다. 액션 자체를 지우려면 `QueryStatePanel`의 표기 표까지 함께 고쳐야 해서(137·138 소유) 타입만 남겨 두었다
+8. **봉투 `meta` 복원 여부** (208) — 명세 v0.1은 `meta`에 `generatedAt`·`analysisId`·`datasetSnapshotId`·`registryVersion`을 정의한다. BE `ApiResponse`에 없어 FE는 제외한 상태인데(1-1), Evidence 응답은 `criteria` 안에 `registryVersion`을 따로 담고 있어 같은 값이 두 곳에 생길 수 있다. BE 구현 시 어느 쪽을 쓸지 정해야 한다
+9. **페이징 규약 재확인** (208) — 명세 v0.1이 "목록은 `page`·`size`·`totalCount`를 사용한다"고 다시 적었다. BE 실구현은 `page`(1-base)·`perPage`·`hasNext`이고 FE는 BE를 따랐다(1-2). 아직 구현되지 않은 목록 API(`/job-postings`·`/me/analyses` 등)가 어느 쪽으로 갈지 정해야 한다
 
 ## 5. 원문 출처
 
-- [B조 API 명세서](https://app.notion.com/p/3cdae4cfead28108a0a5cf55da67a004) · [B-FN-002 저장소 목록 조회](https://app.notion.com/p/3cdae4cfead28181bdcdc5b86eda8efa)
+- [B조 API 명세서 v0.1](https://app.notion.com/p/3d7a6b738a2880c69427df7300fa6c18) — 활성 API 37개. 1-6이 따르는 [B-FN-010 기술 프로필 조회](https://app.notion.com/p/8b9a6b738a2882949c5181d7c7a6c26b) · [B-FN-011 기술 Evidence 근거 조회](https://app.notion.com/p/f8ca6b738a2882caba2d81f58ab9c18a)
+- [B조 API 명세서(이전 판)](https://app.notion.com/p/3cdae4cfead28108a0a5cf55da67a004) · [B-FN-002 저장소 목록 조회](https://app.notion.com/p/3cdae4cfead28181bdcdc5b86eda8efa)
 - [프론트엔드 설계](https://app.notion.com/p/3ceae4cfead281c5bf9bf1863c5ce610) 4-1 캐시 키 · 5장 공통 컴포넌트 · 6-3 에러 코드 처리
 - BE 문서 [저장소 선택과 분석 요청](../be/repository-analysis-request.md)
 - BE 코드 `BE/src/main/java/com/example/git_job/` — `global/exceptions/ErrorCode.java` · `global/response/ApiResponse.java` · `global/response/ErrorResponse.java` · `global/security/JwtAuthenticationEntryPoint.java` · `analysis/controller/RepositoryController.java` · `analysis/controller/AnalysisController.java` · `analysis/controller/dto/PageResponse.java` · `analysis/domain/AnalysisJob.java`

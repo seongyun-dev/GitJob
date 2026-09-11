@@ -19,7 +19,15 @@ export type ErrorAction =
   | 'SHOW_NOT_FOUND'
   /** 성공한 Snapshot 없음 → 빈 상태 + "분석 시작" CTA */
   | 'SHOW_EMPTY_WITH_CTA'
-  /** 근거 0건 → 행 자체를 렌더하지 않는다. 오류가 아니므로 토스트도 띄우지 않는다 */
+  /**
+   * 근거 0건 → 행 자체를 렌더하지 않는다. 오류가 아니므로 토스트도 띄우지 않는다.
+   *
+   * 티켓 208 기준으로 이 액션에 매핑된 코드가 없다. 예전 명세의 `EVD-404-3`이
+   * 유일한 사용처였는데 v0.1의 B-FN-011 실패 표에서 빠졌고, 그 자리를 `EVD-404-1`이
+   * 대신하면서 처리도 `SHOW_EMPTY_WITH_CTA`로 바뀌었다. 액션 자체를 지우려면
+   * `QueryStatePanel`의 표기 표까지 함께 고쳐야 해서(137·138 소유) 여기서는 남겨
+   * 둔다. 계약 문서 미결에 올렸다.
+   */
   | 'SILENT_EMPTY'
   /** 호출 한도 초과 → 재시도 시각 안내, 자동 재시도 안 함 */
   | 'SHOW_RATE_LIMIT'
@@ -83,10 +91,22 @@ const ERROR_ACTIONS: Readonly<Record<string, ErrorAction>> = {
   [CLIENT_NETWORK]: 'SHOW_RETRY',
   [CLIENT_ENVELOPE]: 'SHOW_GENERIC_ERROR',
 
-  // 증거 조회 — BE 미구현. 137·138 착수 전 BE 구현을 확인한다 (설계 6-3장)
+  // 기술 프로필 조회 — BE 미구현. 명세 B-FN-010 `실패 응답 정의` (티켓 208)
+  // 종료된 분석이 없으면 오류 화면이 아니라 "분석 시작" 유도가 맞다. 명세도
+  // "분석 요청 유도 화면으로 이동"이라고 적었다.
+  'PRF-404-1': 'SHOW_EMPTY_WITH_CTA',
+  // 지정한 분석이 아직 진행 중. 잠시 뒤 다시 부르면 낫는 상태라 재시도로 둔다.
+  // 진행 상태 화면(S3)으로 보내는 편이 더 낫지만 그건 136이 정할 몫이라
+  // 대응 화면이 없는 액션을 지금 만들지 않는다(계약 1-3의 SHOW_SELECTION_LOCKED 선례).
+  'PRF-409-1': 'SHOW_RETRY',
+  // 남의 analysisId를 지정한 경우. 명세 B-FN-010 403.
+  'ANL-403-1': 'SHOW_FORBIDDEN',
+
+  // 증거 조회 — BE 미구현. 명세 B-FN-011 `실패 응답 정의` (티켓 208)
+  // 404지만 "그 기술의 근거가 0건"이다. 사용자가 특정 기술 상세로 들어온 상황이라
+  // 빈 화면을 조용히 두지 않고 재분석 CTA를 준다.
   'EVD-404-1': 'SHOW_EMPTY_WITH_CTA',
   'EVD-404-2': 'SHOW_NOT_FOUND',
-  'EVD-404-3': 'SILENT_EMPTY',
 }
 
 export function resolveErrorAction(code: string): ErrorAction {
