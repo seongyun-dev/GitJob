@@ -15,6 +15,7 @@ import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 @Slf4j
@@ -69,6 +70,28 @@ public class GlobalExceptionHandler {
                 e.getMostSpecificCause().getClass().getSimpleName()
         );
         return createErrorResponse(ErrorCode.INVALID_REQUEST_BODY);
+    }
+
+    /**
+     * 경로·쿼리 파라미터가 선언한 타입으로 변환되지 않는 요청을 처리한다.
+     * {@code ?includeRepositories=invalid}처럼 boolean·enum·숫자 자리에 다른 값이
+     * 들어온 경우다.
+     *
+     * <p>이 예외를 잡지 않으면 Spring 기본 오류 본문
+     * ({@code {timestamp, status, error, path}})이 그대로 나가 프로젝트 응답 봉투를
+     * 벗어난다. 클라이언트는 {@code code}로 분기하므로 그 응답을 해석하지 못한다.</p>
+     *
+     * <p>값은 로그에 남기지 않는다. 파라미터에 토큰·식별자가 실릴 수 있어 다른
+     * 핸들러와 같은 기준을 적용한다. 이름과 기대 타입만으로 원인 파악에 충분하다.</p>
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    protected ResponseEntity<ErrorResponse> handleTypeMismatch(
+            MethodArgumentTypeMismatchException e
+    ) {
+        Class<?> required = e.getRequiredType();
+        log.warn("parameter type mismatch: {} expected {}",
+                e.getName(), required == null ? "unknown" : required.getSimpleName());
+        return createErrorResponse(ErrorCode.INVALID_REQUEST_PARAMETER);
     }
 
     /**

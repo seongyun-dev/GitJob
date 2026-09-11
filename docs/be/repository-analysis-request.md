@@ -224,5 +224,5 @@ Registry 버전 환경변수는 사용하지 않는다. `CurrentRegistryVersion`
   이 기능이 그 토큰을 읽는 첫 소비자이므로 암호화 적용 시 `GithubAccessTokenProvider`
   한 곳만 고치면 되도록 통로를 좁혀 두었다.
 - **분석 상태 조회** `GET /api/v1/analyses/{analysisId}`. 응답의 `statusUrl`이
-  가리키는 경로이며 아직 없다.
+  가리키는 경로이며 구현되었다. 응답과 현재 범위는 [분석 진행 상태 조회](analysis-status.md)를 참고한다.
 - **저장소 선택 저장** `GET`/`PUT /api/v1/me/repositories/selection`.

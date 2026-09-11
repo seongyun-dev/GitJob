@@ -2,6 +2,8 @@ package com.example.git_job.analysis.controller;
 
 import com.example.git_job.analysis.controller.dto.AnalysisAcceptedResponse;
 import com.example.git_job.analysis.controller.dto.AnalysisCreateRequest;
+import com.example.git_job.analysis.controller.dto.AnalysisStatusResponse;
+import com.example.git_job.analysis.service.AnalysisStatusService;
 import com.example.git_job.analysis.service.AnalysisSubmissionService;
 import com.example.git_job.global.logging.TraceIdFilter;
 import com.example.git_job.global.response.ApiResponse;
@@ -11,9 +13,12 @@ import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -29,6 +34,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class AnalysisController {
 
     private final AnalysisSubmissionService analysisSubmissionService;
+    private final AnalysisStatusService analysisStatusService;
+
+    @GetMapping("/{analysisId}")
+    public ApiResponse<AnalysisStatusResponse> getStatus(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable String analysisId,
+            @RequestParam(defaultValue = "true") boolean includeRepositories) {
+        return ApiResponse.success("분석 진행 상태를 조회했습니다.",
+                analysisStatusService.get(CurrentUser.idOf(user), analysisId, includeRepositories));
+    }
 
     /**
      * 새로 등록하면 202, 같은 저장소 분석이 이미 진행 중이어서 그 Job을 그대로
