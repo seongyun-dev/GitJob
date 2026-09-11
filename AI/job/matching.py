@@ -17,14 +17,22 @@ from pydantic import (
     StringConstraints,
     model_validator,
 )
+from recommendation.evidence import (
+    EvidenceAnalysis,
+    HeldStatus,
+    consume_evidence,
+    consume_personal_assessments,
+    consume_personal_level_scope_complete_tech_ids,
+    consume_personal_levels,
+)
 
 from job.requirements import (
     JobRequirements,
     RequirementClause,
     RequirementKind,
+    RequirementLevel,
     UnresolvedRequirement,
 )
-from recommendation.evidence import EvidenceAnalysis, HeldStatus, consume_evidence
 
 if TYPE_CHECKING:
     from job.cohort import JobCohort
@@ -39,6 +47,12 @@ RATIO_ABSOLUTE_TOLERANCE = 5e-7
 
 CalculationId = StringConstraints(strict=True, pattern=r"^matching-[0-9a-f]{64}$")
 MatchingJobId = StringConstraints(strict=True, min_length=1, max_length=256)
+EvidenceInputVersion = Literal[
+    "evidence-consumption-input/v1",
+    "evidence-consumption-input/v2",
+    "evidence-consumption-input/v3",
+    "evidence-consumption-input/v4",
+]
 
 
 class MatchingResultTooLarge(ValueError):
@@ -90,6 +104,26 @@ class ClauseAssessment(MatchingModel):
     held_tech_ids: tuple[StrictStr, ...]
     missing_tech_ids: tuple[StrictStr, ...]
     unknown_tech_ids: tuple[StrictStr, ...]
+    verdict: (
+        Literal[
+            "SATISFIED",
+            "LEGACY_HELD_MATCH",
+            "LEVEL_BELOW_REQUIRED",
+            "TECHNOLOGY_NOT_HELD",
+            "EVIDENCE_SCOPE_INCOMPLETE",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+    personal_levels: dict[StrictStr, Literal["L0", "L1", "L2", "L3"]] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    assessment_ceilings: dict[StrictStr, Literal["L0", "L1", "L2", "L3"]] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    level_assessment_complete_tech_ids: tuple[StrictStr, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    assessment_ceiling_applied: StrictBool = False
 
     @model_validator(mode="after")
     def check_partition(self):
@@ -97,8 +131,93 @@ class ClauseAssessment(MatchingModel):
         flat = [item for group in groups for item in group]
         if len(flat) != len(set(flat)) or set(flat) != set(self.clause.tech_ids):
             raise ValueError("clause evidence partition mismatch")
+        if self.level_assessment_complete_tech_ids != tuple(
+            sorted(set(self.level_assessment_complete_tech_ids))
+        ):
+            raise ValueError("complete level assessments must be unique and sorted")
+        if not self.assessment_ceiling_applied and self.assessment_ceilings:
+            raise ValueError("assessment ceilings require ceiling-aware mode")
+        if self.clause.required_level is not None and self.verdict is None:
+            raise ValueError("levelled clause requires a verdict")
+        if self.clause.required_level is None and (
+            self.verdict is not None
+            or self.personal_levels
+            or self.assessment_ceilings
+            or self.level_assessment_complete_tech_ids
+            or self.assessment_ceiling_applied
+        ):
+            raise ValueError("unlevelled clause cannot carry level assessment metadata")
+        if self.verdict is not None:
+            if self.clause.required_level is None:
+                raise ValueError("level verdict requires a required level")
+            if not set(self.personal_levels) <= set(self.held_tech_ids):
+                raise ValueError("personal levels require held technologies")
+            if not set(self.assessment_ceilings) <= set(self.held_tech_ids):
+                raise ValueError("assessment ceilings require held technologies")
+            if not set(self.level_assessment_complete_tech_ids) <= set(
+                self.held_tech_ids
+            ):
+                raise ValueError("complete level assessments require held technologies")
+            if any(
+                _level_rank(level) > _level_rank(self.assessment_ceilings.get(tech))
+                for tech, level in self.personal_levels.items()
+                if tech in self.assessment_ceilings
+            ):
+                raise ValueError("personal level is above assessment ceiling")
+            qualifies = any(
+                _level_at_least(
+                    self.personal_levels.get(tech), self.clause.required_level
+                )
+                for tech in self.held_tech_ids
+            )
+            conclusively_below = bool(self.held_tech_ids) and all(
+                tech in self.personal_levels
+                and tech in self.level_assessment_complete_tech_ids
+                and (
+                    not self.assessment_ceiling_applied
+                    or (
+                        _level_at_least(
+                            self.assessment_ceilings.get(tech),
+                            self.clause.required_level,
+                        )
+                    )
+                )
+                for tech in self.held_tech_ids
+            )
+            if self.verdict == "SATISFIED" and not qualifies:
+                raise ValueError("satisfied level verdict requires a qualifying level")
+            if self.verdict == "LEGACY_HELD_MATCH" and (
+                not self.held_tech_ids
+                or self.personal_levels
+                or self.assessment_ceilings
+                or self.level_assessment_complete_tech_ids
+                or self.assessment_ceiling_applied
+            ):
+                raise ValueError("legacy held verdict cannot claim a personal level")
+            if self.verdict == "LEVEL_BELOW_REQUIRED" and (
+                bool(self.unknown_tech_ids) or not conclusively_below or qualifies
+            ):
+                raise ValueError("below-level verdict does not match evidence")
+            if self.verdict == "TECHNOLOGY_NOT_HELD" and (
+                self.held_tech_ids or self.unknown_tech_ids or self.personal_levels
+            ):
+                raise ValueError("not-held verdict does not match evidence")
+            if self.verdict == "EVIDENCE_SCOPE_INCOMPLETE" and (
+                qualifies
+                or not (
+                    self.unknown_tech_ids
+                    or (self.held_tech_ids and not conclusively_below)
+                )
+            ):
+                raise ValueError("incomplete verdict does not match evidence")
         expected = (
             "SATISFIED"
+            if self.verdict in {"SATISFIED", "LEGACY_HELD_MATCH"}
+            else "UNKNOWN"
+            if self.verdict == "EVIDENCE_SCOPE_INCOMPLETE"
+            else "UNSATISFIED"
+            if self.verdict
+            else "SATISFIED"
             if self.held_tech_ids
             else "UNKNOWN"
             if self.unknown_tech_ids
@@ -110,7 +229,11 @@ class ClauseAssessment(MatchingModel):
 
 
 def evaluate_clause(
-    clause: RequirementClause, decisions: dict[str, HeldStatus]
+    clause: RequirementClause,
+    decisions: dict[str, HeldStatus],
+    personal_levels: dict[str, str] | None = None,
+    assessment_ceilings: dict[str, str] | None = None,
+    level_assessment_complete_tech_ids: frozenset[str] = frozenset(),
 ) -> ClauseAssessment:
     groups = {status: [] for status in HeldStatus}
     for tech_id in clause.tech_ids:
@@ -119,13 +242,96 @@ def evaluate_clause(
         tuple(sorted(groups[status]))
         for status in (HeldStatus.HELD, HeldStatus.NOT_HELD, HeldStatus.UNKNOWN)
     )
+    levels = personal_levels or {}
+    level_values = (
+        {key: levels[key] for key in clause.tech_ids if key in levels}
+        if clause.required_level is not None
+        else {}
+    )
+    ceilings = assessment_ceilings or {}
+    ceiling_values = (
+        {key: ceilings[key] for key in clause.tech_ids if key in ceilings}
+        if clause.required_level is not None
+        else {}
+    )
+    complete_ids = (
+        tuple(sorted(set(clause.tech_ids) & level_assessment_complete_tech_ids))
+        if clause.required_level is not None
+        else ()
+    )
+    ceiling_aware = (
+        assessment_ceilings is not None and clause.required_level is not None
+    )
+    if clause.required_level is None:
+        verdict = None
+    elif personal_levels is None:
+        verdict = (
+            "LEGACY_HELD_MATCH"
+            if held
+            else "EVIDENCE_SCOPE_INCOMPLETE"
+            if unknown
+            else "TECHNOLOGY_NOT_HELD"
+        )
+    elif any(
+        decisions.get(tech, HeldStatus.UNKNOWN) is HeldStatus.HELD
+        and _level_at_least(levels.get(tech), clause.required_level)
+        for tech in clause.tech_ids
+    ):
+        verdict = "SATISFIED"
+    elif (
+        unknown
+        or any(tech not in levels for tech in held)
+        or any(tech not in level_assessment_complete_tech_ids for tech in held)
+        or (
+            ceiling_aware
+            and any(
+                not _level_at_least(ceilings.get(tech), clause.required_level)
+                for tech in held
+            )
+        )
+    ):
+        verdict = "EVIDENCE_SCOPE_INCOMPLETE"
+    elif held:
+        verdict = "LEVEL_BELOW_REQUIRED"
+    else:
+        verdict = "TECHNOLOGY_NOT_HELD"
     return ClauseAssessment(
         clause=clause,
-        status="SATISFIED" if held else "UNKNOWN" if unknown else "UNSATISFIED",
+        status="SATISFIED"
+        if verdict in {"SATISFIED", "LEGACY_HELD_MATCH"}
+        else "UNKNOWN"
+        if verdict == "EVIDENCE_SCOPE_INCOMPLETE"
+        else "UNSATISFIED"
+        if verdict
+        else "SATISFIED"
+        if held
+        else "UNKNOWN"
+        if unknown
+        else "UNSATISFIED",
         held_tech_ids=held,
         missing_tech_ids=missing,
         unknown_tech_ids=unknown,
+        verdict=verdict,
+        personal_levels=level_values,
+        assessment_ceilings=ceiling_values,
+        level_assessment_complete_tech_ids=complete_ids,
+        assessment_ceiling_applied=ceiling_aware,
     )
+
+
+def _level_at_least(value: str | None, required: RequirementLevel) -> bool:
+    return (
+        _level_rank(value)
+        >= {
+            RequirementLevel.L1: 1,
+            RequirementLevel.L2: 2,
+            RequirementLevel.L3: 3,
+        }[required]
+    )
+
+
+def _level_rank(value: str | None) -> int:
+    return {"L0": 0, "L1": 1, "L2": 2, "L3": 3}.get(value, -1)
 
 
 class ConditionAssessment(MatchingModel):
@@ -171,8 +377,24 @@ class ConditionAssessment(MatchingModel):
         return self
 
 
-def _conditions(clauses, unresolved, decisions):
-    evaluated = tuple(evaluate_clause(clause, decisions) for clause in clauses)
+def _conditions(
+    clauses,
+    unresolved,
+    decisions,
+    personal_levels=None,
+    assessment_ceilings=None,
+    level_assessment_complete_tech_ids=frozenset(),
+):
+    evaluated = tuple(
+        evaluate_clause(
+            clause,
+            decisions,
+            personal_levels,
+            assessment_ceilings,
+            level_assessment_complete_tech_ids,
+        )
+        for clause in clauses
+    )
     satisfied = sum(item.status == "SATISFIED" for item in evaluated)
     unknown = sum(item.status == "UNKNOWN" for item in evaluated)
     return ConditionAssessment(
@@ -239,6 +461,9 @@ def _job_sort(row: JobAssessment):
 
 class JobMatchingResult(MatchingModel):
     schema_version: Literal["job-matching/v1", "job-matching/v2"] = JOB_MATCHING_VERSION
+    evidence_input_version: EvidenceInputVersion | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     calculation_snapshot_id: Annotated[str, CalculationId] = ""
     user_id: StrictStr
     analysis_id: StrictStr
@@ -254,6 +479,11 @@ class JobMatchingResult(MatchingModel):
 
     @model_validator(mode="after")
     def check_jobs(self):
+        if (
+            self.schema_version == "job-matching/v2"
+            and self.evidence_input_version is None
+        ):
+            raise ValueError("job matching v2 requires an evidence input version")
         if len(self.jobs) > MAX_MATCHING_JOBS:
             raise MatchingResultTooLarge(
                 f"matching result exceeds {MAX_MATCHING_JOBS} jobs"
@@ -262,7 +492,7 @@ class JobMatchingResult(MatchingModel):
             raise ValueError("duplicate partial matching job")
         if self.jobs != tuple(sorted(self.jobs, key=_job_sort)):
             raise ValueError("partial matching must have stable ordering")
-        canonical = self.model_dump(mode="json", exclude={"calculation_snapshot_id"})
+        canonical = _matching_calculation_payload(self)
         expected = _calculation_id(canonical)
         if self.calculation_snapshot_id and self.calculation_snapshot_id != expected:
             raise ValueError("matching calculation ID mismatch")
@@ -279,6 +509,24 @@ class StoredClauseAssessment(MatchingModel):
     held_tech_ids: tuple[StrictStr, ...]
     missing_tech_ids: tuple[StrictStr, ...]
     unknown_tech_ids: tuple[StrictStr, ...]
+    verdict: (
+        Literal[
+            "SATISFIED",
+            "LEGACY_HELD_MATCH",
+            "LEVEL_BELOW_REQUIRED",
+            "TECHNOLOGY_NOT_HELD",
+            "EVIDENCE_SCOPE_INCOMPLETE",
+        ]
+        | None
+    ) = None
+    personal_levels: dict[StrictStr, Literal["L0", "L1", "L2", "L3"]] = Field(
+        default_factory=dict
+    )
+    assessment_ceilings: dict[StrictStr, Literal["L0", "L1", "L2", "L3"]] = Field(
+        default_factory=dict
+    )
+    level_assessment_complete_tech_ids: tuple[StrictStr, ...] = ()
+    assessment_ceiling_applied: StrictBool = False
 
 
 class StoredConditionAssessment(MatchingModel):
@@ -289,6 +537,9 @@ class StoredConditionAssessment(MatchingModel):
 
 
 class StoredJobAssessment(MatchingModel):
+    evidence_input_version: EvidenceInputVersion | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     required: StoredConditionAssessment
     preferred: StoredConditionAssessment
     required_status: Literal["FULL", "PARTIAL", "NONE", "UNKNOWN", "NOT_APPLICABLE"]
@@ -306,6 +557,21 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _calculation_id(value: dict[str, Any]) -> str:
     return "matching-" + sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _matching_calculation_payload(result: JobMatchingResult) -> dict[str, Any]:
+    canonical = result.model_dump(mode="json", exclude={"calculation_snapshot_id"})
+    if result.schema_version != "job-matching/v1":
+        return canonical
+
+    # job-matching/v1 predates level-aware clause metadata. Pydantic injects the
+    # new false default while reading an old embedded result, so remove only that
+    # absent historical field before checking the immutable calculation ID.
+    for job in canonical["jobs"]:
+        for condition_name in ("required", "preferred"):
+            for clause in job[condition_name]["clauses"]:
+                clause.pop("assessment_ceiling_applied", None)
+    return canonical
 
 
 def validate_job_matching(value: dict[str, Any]) -> JobMatchingResult:
@@ -341,6 +607,13 @@ def _stored_condition(value: ConditionAssessment) -> StoredConditionAssessment:
                 held_tech_ids=item.held_tech_ids,
                 missing_tech_ids=item.missing_tech_ids,
                 unknown_tech_ids=item.unknown_tech_ids,
+                verdict=item.verdict,
+                personal_levels=item.personal_levels,
+                assessment_ceilings=item.assessment_ceilings,
+                level_assessment_complete_tech_ids=(
+                    item.level_assessment_complete_tech_ids
+                ),
+                assessment_ceiling_applied=item.assessment_ceiling_applied,
             )
             for item in value.clauses
         ),
@@ -350,9 +623,12 @@ def _stored_condition(value: ConditionAssessment) -> StoredConditionAssessment:
     )
 
 
-def compact_job_assessment(value: JobAssessment) -> dict[str, Any]:
+def compact_job_assessment(
+    value: JobAssessment, *, evidence_input_version: EvidenceInputVersion
+) -> dict[str, Any]:
     """Keep only user-specific decisions; clauses/evidence live in matching_source."""
     return StoredJobAssessment(
+        evidence_input_version=evidence_input_version,
         required=_stored_condition(value.required),
         preferred=_stored_condition(value.preferred),
         required_status=value.required_status,
@@ -390,6 +666,13 @@ def restore_job_assessment(
 ) -> JobAssessment:
     job = MatchingJobInput.model_validate(source)
     stored = StoredJobAssessment.model_validate(assessment)
+    if (
+        stored.evidence_input_version is None
+        and job.requirements.schema_version != "job-requirements/v1"
+    ):
+        raise ValueError(
+            "stored evidence input version is required for levelled requirements"
+        )
     required_unresolved = tuple(
         item
         for item in job.requirements.unresolved
@@ -400,7 +683,18 @@ def restore_job_assessment(
         for item in job.requirements.unresolved
         if item.requirement_kind == RequirementKind.PREFERRED
     )
-    return JobAssessment(
+    if stored.evidence_input_version == "evidence-consumption-input/v4":
+        for condition, clauses in (
+            (stored.required, job.requirements.required),
+            (stored.preferred, job.requirements.preferred),
+        ):
+            for decision, clause in zip(condition.clauses, clauses):
+                if (
+                    clause.required_level is not None
+                    and not decision.assessment_ceiling_applied
+                ):
+                    raise ValueError("v4 stored clause requires ceiling-aware mode")
+    restored = JobAssessment(
         job=job,
         required=_restore_condition(
             stored.required, job.requirements.required, required_unresolved
@@ -410,15 +704,47 @@ def restore_job_assessment(
         ),
         required_status=stored.required_status,
     )
+    for condition in (restored.required, restored.preferred):
+        for clause in condition.clauses:
+            if clause.clause.required_level is None:
+                continue
+            if stored.evidence_input_version == "evidence-consumption-input/v4":
+                if not clause.assessment_ceiling_applied:
+                    raise ValueError("v4 stored clause requires ceiling-aware mode")
+            elif clause.assessment_ceiling_applied:
+                raise ValueError("legacy stored clause cannot use ceiling-aware mode")
+            if (
+                stored.evidence_input_version
+                not in {
+                    "evidence-consumption-input/v1",
+                    "evidence-consumption-input/v2",
+                }
+                and clause.verdict == "LEGACY_HELD_MATCH"
+            ):
+                raise ValueError("legacy held verdict requires evidence input v1 or v2")
+            if stored.evidence_input_version in {
+                "evidence-consumption-input/v1",
+                "evidence-consumption-input/v2",
+            } and clause.verdict not in {
+                "LEGACY_HELD_MATCH",
+                "TECHNOLOGY_NOT_HELD",
+                "EVIDENCE_SCOPE_INCOMPLETE",
+            }:
+                raise ValueError("legacy stored clause has a personal-level verdict")
+    return restored
 
 
 def matching_storage_rows(result: JobMatchingResult) -> dict[str, Any]:
     """Build bounded shared-source and per-user rows for one atomic publication."""
+    if result.evidence_input_version is None:
+        raise ValueError("matching storage requires an evidence input version")
     sources, assessments = [], []
     total_bytes = 0
     for position, row in enumerate(result.jobs):
         source = row.job.model_dump(mode="json")
-        assessment = compact_job_assessment(row)
+        assessment = compact_job_assessment(
+            row, evidence_input_version=result.evidence_input_version
+        )
         source_bytes = len(_canonical_bytes(source))
         assessment_bytes = len(_canonical_bytes(assessment))
         if source_bytes > MAX_MATCHING_SOURCE_BYTES:
@@ -483,6 +809,11 @@ def build_job_matching(
         analysis, user_id=user_id, analysis_id=analysis_id, tech_ids=ids
     )
     decisions = {key: item.status for key, item in selection.by_tech_id.items()}
+    (
+        personal_levels,
+        assessment_ceilings,
+        level_assessment_complete_tech_ids,
+    ) = _validated_personal_assessments(analysis, selection, ids)
     rows = []
     for job in cohort.matching_jobs:
         required = _conditions(
@@ -493,6 +824,9 @@ def build_job_matching(
                 if item.requirement_kind == RequirementKind.REQUIRED
             ),
             decisions,
+            personal_levels,
+            assessment_ceilings,
+            level_assessment_complete_tech_ids,
         )
         preferred = _conditions(
             job.requirements.preferred,
@@ -502,6 +836,9 @@ def build_job_matching(
                 if item.requirement_kind == RequirementKind.PREFERRED
             ),
             decisions,
+            personal_levels,
+            assessment_ceilings,
+            level_assessment_complete_tech_ids,
         )
         rows.append(
             JobAssessment(
@@ -513,6 +850,7 @@ def build_job_matching(
         )
     content = {
         "schema_version": JOB_MATCHING_VERSION,
+        "evidence_input_version": analysis.schema_version,
         "user_id": user_id,
         "analysis_id": analysis_id,
         "cohort_id": cohort.cohort_id,
@@ -522,7 +860,74 @@ def build_job_matching(
         "evidence_rule_version": analysis.evidence_rule_version,
         "criteria": cohort.criteria.model_dump(mode="json"),
         "strict_cohort_status": cohort.status.value,
-        "data_gaps": selection.data_gaps,
+        "data_gaps": tuple(sorted(set(selection.data_gaps) | _level_data_gaps(rows))),
         "jobs": tuple(sorted(rows, key=_job_sort)),
     }
     return JobMatchingResult(**content)
+
+
+def _validated_personal_assessments(
+    analysis: EvidenceAnalysis, selection, tech_ids: set[str] | None = None
+) -> tuple[
+    dict[str, str] | None,
+    dict[str, str] | None,
+    frozenset[str],
+]:
+    """Return the versioned personal axis without evidence-level fallbacks.
+
+    The existing evidence_level remains a repository-evidence compatibility
+    field.  It is deliberately not a fallback for personal_level.
+    """
+    if analysis.schema_version == "evidence-consumption-input/v3":
+        return (
+            consume_personal_levels(analysis, selection),
+            None,
+            consume_personal_level_scope_complete_tech_ids(analysis, selection),
+        )
+    if analysis.schema_version == "evidence-consumption-input/v4":
+        assessments = consume_personal_assessments(analysis, selection)
+        if tech_ids is not None:
+            assessments = {
+                key: item for key, item in assessments.items() if key in tech_ids
+            }
+        return (
+            {key: item.personal_level for key, item in assessments.items()},
+            {key: item.assessment_ceiling for key, item in assessments.items()},
+            frozenset(key for key, item in assessments.items() if item.scope_complete),
+        )
+    else:
+        # Old B envelopes predate an explicit personal axis. Preserve their
+        # historical held-only matching rather than treating evidence_level as
+        # a personal level or rewriting old snapshot meaning.
+        return None, None, frozenset()
+
+
+def _level_data_gaps(rows: list[JobAssessment]) -> set[str]:
+    gaps: set[str] = set()
+    for row in rows:
+        for condition in (row.required, row.preferred):
+            for assessment in condition.clauses:
+                if assessment.verdict != "EVIDENCE_SCOPE_INCOMPLETE":
+                    continue
+                required = assessment.clause.required_level
+                if required is None:  # Guard the persisted invariant for type checkers.
+                    continue
+                for tech in assessment.held_tech_ids:
+                    if tech not in assessment.personal_levels:
+                        gaps.add(f"PERSONAL_LEVEL_UNCONFIRMED:{tech}")
+                    elif assessment.assessment_ceiling_applied and (
+                        tech not in assessment.assessment_ceilings
+                    ):
+                        gaps.add(f"PERSONAL_LEVEL_ASSESSMENT_UNCONFIRMED:{tech}")
+                    elif assessment.assessment_ceiling_applied and not _level_at_least(
+                        assessment.assessment_ceilings[tech], required
+                    ):
+                        gaps.add(
+                            "ASSESSMENT_CEILING_BELOW_REQUIREMENT:"
+                            f"{tech}:{required.value}"
+                        )
+                    elif assessment.assessment_ceiling_applied and tech not in set(
+                        assessment.level_assessment_complete_tech_ids
+                    ):
+                        gaps.add(f"PERSONAL_LEVEL_SCOPE_INCOMPLETE:{tech}")
+    return gaps

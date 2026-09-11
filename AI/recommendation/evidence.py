@@ -18,7 +18,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
 from registry.contracts import TechId
 
 LEVEL_POLICY_VERSION = "level-policy/v2"
@@ -53,6 +52,7 @@ class RepositoryStatus(StrEnum):
 CommitSha = Annotated[str, StringConstraints(strict=True, pattern=r"^[a-f0-9]{40}$")]
 ObservationStatus = Literal["CONFIRMED", "NOT_OBSERVED", "UNKNOWN"]
 EvidenceLevel = Literal["L0", "L1", "L2", "L3"]
+_LEVEL_ORDER = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
 
 
 class EvidenceProof(EvidenceModel):
@@ -107,6 +107,11 @@ class TechnologyEvidence(EvidenceModel):
     tech_id: TechId
     fact_ids: tuple[NonBlank, ...] = Field(min_length=1)
     evidence_level: Literal["L0", "L1", "L2", "L3"] | None
+    # B's explicit user-attributed level.  C must never substitute the
+    # repository-level/evidence_level axis when evaluating a job requirement.
+    personal_level: Literal["L0", "L1", "L2", "L3"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     direct_dependency: StrictBool | None
     implementation_present: StrictBool | None
     user_participation: StrictBool | None
@@ -169,9 +174,35 @@ class RepositoryEvidence(EvidenceModel):
         return self
 
 
+class PersonalTechnologyAssessment(EvidenceModel):
+    """B's user-level conclusion and the highest level its rules can exclude."""
+
+    tech_id: TechId
+    personal_level: EvidenceLevel
+    assessment_ceiling: EvidenceLevel
+    attribution_status: Literal["COMPLETE", "PARTIAL", "UNKNOWN"]
+    missing_scope: tuple[NonBlank, ...] = ()
+
+    @field_validator("missing_scope")
+    @classmethod
+    def canonicalize_missing_scope(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(set(values)))
+
+    @model_validator(mode="after")
+    def level_must_not_exceed_ceiling(self) -> "PersonalTechnologyAssessment":
+        if _LEVEL_ORDER[self.personal_level] > _LEVEL_ORDER[self.assessment_ceiling]:
+            raise ValueError("personal level is above assessment ceiling")
+        if self.attribution_status != "COMPLETE" and not self.missing_scope:
+            raise ValueError("incomplete attribution requires missing scope")
+        return self
+
+
 class EvidenceAnalysis(EvidenceModel):
     schema_version: Literal[
-        "evidence-consumption-input/v1", "evidence-consumption-input/v2"
+        "evidence-consumption-input/v1",
+        "evidence-consumption-input/v2",
+        "evidence-consumption-input/v3",
+        "evidence-consumption-input/v4",
     ]
     user_id: NonBlank
     analysis_id: NonBlank
@@ -180,6 +211,7 @@ class EvidenceAnalysis(EvidenceModel):
     evidence_rule_version: NonBlank
     status: AnalysisStatus
     repositories: tuple[RepositoryEvidence, ...]
+    personal_assessments: tuple[PersonalTechnologyAssessment, ...] = ()
     data_gaps: tuple[NonBlank, ...] = ()
 
     @model_validator(mode="after")
@@ -187,6 +219,19 @@ class EvidenceAnalysis(EvidenceModel):
         repository_ids = [repository.repository_id for repository in self.repositories]
         if len(repository_ids) != len(set(repository_ids)):
             raise ValueError("duplicate repository snapshot in one analysis")
+        assessment_ids = [item.tech_id for item in self.personal_assessments]
+        if len(assessment_ids) != len(set(assessment_ids)):
+            raise ValueError("duplicate personal technology assessment")
+        if self.schema_version != "evidence-consumption-input/v4" and assessment_ids:
+            raise ValueError("personal assessments require evidence input v4")
+        if self.schema_version == "evidence-consumption-input/v4" and any(
+            evidence.personal_level is not None
+            for repository in self.repositories
+            for evidence in repository.technologies
+        ):
+            raise ValueError(
+                "v4 personal level must use aggregate personal assessments"
+            )
         return self
 
 
@@ -967,3 +1012,126 @@ def consume_evidence(
         data_gaps=tuple(sorted(gaps)),
         eligible_repository_ids=tuple(sorted(eligible_repositories)),
     )
+
+
+def consume_personal_levels(
+    analysis: EvidenceAnalysis, selection: HeldTechnologySelection
+) -> dict[str, EvidenceLevel]:
+    """Return only per-repository, proof-supported B personal levels.
+
+    A partial analysis does not erase an accepted positive observation from a
+    different (or the same partial) repository.  Missing coverage remains in
+    ``selection`` and is handled as an incomplete clause only when no positive
+    personal level can satisfy it.
+    """
+    if (
+        analysis.schema_version != "evidence-consumption-input/v3"
+        or analysis.level_policy_version != LEVEL_POLICY_VERSION
+    ):
+        return {}
+    order = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
+    levels: dict[str, EvidenceLevel] = {}
+    for decision in selection.technologies:
+        for profile in decision.profiles:
+            level = profile.reported.personal_level
+            if level is None or not profile.supporting_proofs:
+                continue
+            previous = levels.get(decision.tech_id)
+            if previous is None or order[level] > order[previous]:
+                levels[decision.tech_id] = level
+    return levels
+
+
+def consume_personal_level_scope_complete_tech_ids(
+    analysis: EvidenceAnalysis, selection: HeldTechnologySelection
+) -> frozenset[str]:
+    """Return v3 technologies whose observed level is safe for negative claims.
+
+    A proof-supported level is always usable as positive evidence. Declaring it
+    below a job requirement additionally needs complete repository coverage and
+    complete attribution across every selected repository.
+    """
+    if (
+        analysis.schema_version != "evidence-consumption-input/v3"
+        or analysis.level_policy_version != LEVEL_POLICY_VERSION
+        or analysis.status is not AnalysisStatus.COMPLETE
+        or not analysis.repositories
+    ):
+        return frozenset()
+    repository_ids = {repository.repository_id for repository in analysis.repositories}
+    if set(selection.eligible_repository_ids) != repository_ids or any(
+        repository.status is not RepositoryStatus.COMPLETE
+        or not repository.coverage_complete
+        for repository in analysis.repositories
+    ):
+        return frozenset()
+
+    levels = consume_personal_levels(analysis, selection)
+    complete = set()
+    for tech_id in levels:
+        decision = selection.by_tech_id[tech_id]
+        if all(
+            tech_id in repository.evaluated_tech_ids
+            for repository in analysis.repositories
+        ) and all(
+            profile.reported.attribution_status == "COMPLETE"
+            and profile.validation_status == "VALID"
+            and profile.observation_validation_status == "VALID"
+            for profile in decision.profiles
+        ):
+            complete.add(tech_id)
+    return frozenset(complete)
+
+
+class PersonalLevelAssessment(EvidenceModel):
+    tech_id: TechId
+    personal_level: EvidenceLevel
+    assessment_ceiling: EvidenceLevel
+    scope_complete: StrictBool
+    missing_scope: tuple[NonBlank, ...] = ()
+
+
+def consume_personal_assessments(
+    analysis: EvidenceAnalysis, selection: HeldTechnologySelection
+) -> dict[str, PersonalLevelAssessment]:
+    """Validate v4 aggregate personal conclusions against C's proof/coverage view.
+
+    Positive levels remain usable when another repository is partial. A negative
+    conclusion (LEVEL_BELOW_REQUIRED) is safe only when ``scope_complete`` is true
+    and the requested level is no higher than ``assessment_ceiling``.
+    """
+    if (
+        analysis.schema_version != "evidence-consumption-input/v4"
+        or analysis.level_policy_version != LEVEL_POLICY_VERSION
+    ):
+        return {}
+    decisions = selection.by_tech_id
+    eligible_repositories = set(selection.eligible_repository_ids)
+    result: dict[str, PersonalLevelAssessment] = {}
+    for reported in analysis.personal_assessments:
+        decision = decisions.get(reported.tech_id)
+        if (
+            decision is None
+            or decision.status is not HeldStatus.HELD
+            or not decision.supporting_proofs
+        ):
+            raise ValueError(
+                f"personal assessment requires proof-supported held technology: {reported.tech_id}"
+            )
+        coverage_complete = analysis.status is AnalysisStatus.COMPLETE and all(
+            repository.status is RepositoryStatus.COMPLETE
+            and repository.coverage_complete
+            and reported.tech_id in repository.evaluated_tech_ids
+            and repository.repository_id in eligible_repositories
+            for repository in analysis.repositories
+        )
+        result[reported.tech_id] = PersonalLevelAssessment(
+            tech_id=reported.tech_id,
+            personal_level=reported.personal_level,
+            assessment_ceiling=reported.assessment_ceiling,
+            scope_complete=(
+                coverage_complete and reported.attribution_status == "COMPLETE"
+            ),
+            missing_scope=reported.missing_scope,
+        )
+    return result

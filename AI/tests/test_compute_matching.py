@@ -27,6 +27,28 @@ from worker.store import (
 )
 
 
+def levelled_evidence_payload(level: str = "L1") -> dict:
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v3"
+    payload["repositories"][0]["technologies"][0]["personal_level"] = level
+    return payload
+
+
+def ceiling_evidence_payload(level: str = "L1", ceiling: str = "L1") -> dict:
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v4"
+    payload["personal_assessments"] = [
+        {
+            "tech_id": "java",
+            "personal_level": level,
+            "assessment_ceiling": ceiling,
+            "attribution_status": "COMPLETE",
+            "missing_scope": ["L2_L3_RULE_NOT_SUPPORTED"],
+        }
+    ]
+    return payload
+
+
 class MemoryStore:
     """HTTP/serialization test double; deliberately NOT PostgreSQL durability proof."""
 
@@ -186,7 +208,7 @@ def _prepare(client):
         user_id="user-1",
         analysis_id="analysis-1",
         cohort_snapshot_id=cohort,
-        evidence=make_analysis().model_dump(mode="json"),
+        evidence=levelled_evidence_payload(),
     )
     reply = client.post(PREFIX + "/analyses/completed", json=request)
     result_id = snapshot_ref(reply, "RECOMMENDATION")
@@ -237,6 +259,48 @@ def test_partial_matching_roundtrip_pages_detail_and_strict_whatif(client):
         PREFIX + "/analyses/completed", json={**request, "trace_id": str(uuid4())}
     )
     assert repeated.json() == original.json()
+
+
+def test_v4_ceiling_roundtrips_through_saved_matching_projection(client):
+    records = batch(
+        posting(
+            "levelled",
+            required=("Java",),
+            required_text="지원자격\n경력 5년 이상\nJava 경험",
+        )
+    )
+    cohort_id = snapshot_ref(
+        client.post(
+            PREFIX + "/job-batches/completed",
+            json=event(
+                batch=records.model_dump(mode="json"),
+                criteria=criteria().model_dump(mode="json"),
+            ),
+        ),
+        "COHORT",
+    )
+    response = client.post(
+        PREFIX + "/analyses/completed",
+        json=event(
+            user_id="user-1",
+            analysis_id="analysis-1",
+            cohort_snapshot_id=cohort_id,
+            evidence=ceiling_evidence_payload(),
+        ),
+    )
+    assert response.status_code == 200, response.text
+    result_id = snapshot_ref(response, "RECOMMENDATION")
+
+    listing = client.get(
+        PREFIX + f"/recommendations/{result_id}/matching-job-postings",
+        params={"user_id": "user-1"},
+    ).json()["data"]
+    clause = listing["items"][0]["required"]["clauses"][0]
+
+    assert clause["verdict"] == "EVIDENCE_SCOPE_INCOMPLETE"
+    assert clause["assessment_ceilings"] == {"java": "L1"}
+    assert clause["assessment_ceiling_applied"] is True
+    assert listing["items"][0]["required_status"] == "UNKNOWN"
 
 
 def test_partial_matching_auth_scope_and_pagination(client):
@@ -328,7 +392,7 @@ def test_only_uncertain_conditions_still_produce_partial_view_when_strict_is_emp
             user_id="user-1",
             analysis_id="analysis-1",
             cohort_snapshot_id=cohort_id,
-            evidence=make_analysis().model_dump(mode="json"),
+            evidence=levelled_evidence_payload("L3"),
         ),
     )
     result_id = snapshot_ref(completed, "RECOMMENDATION")

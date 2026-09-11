@@ -16,7 +16,7 @@ B는 직접 의존성·Rule 매칭·원천 제외·유효 참여·저자 귀속�
 
 ## 입력: EvidenceAnalysis와 구조화된 Proof
 
-호출은 `consume_evidence(analysis, user_id=..., analysis_id=..., tech_ids=...)`이다. `EvidenceAnalysis`는 `evidence-consumption-input/v1`과 정식 근거 입력인 `evidence-consumption-input/v2`를 받는다. 함수 시그니처는 유지한다.
+호출은 `consume_evidence(analysis, user_id=..., analysis_id=..., tech_ids=...)`이다. `EvidenceAnalysis`는 `evidence-consumption-input/v1`/`v2`와 개인 수준 입력 `evidence-consumption-input/v3`를 받는다. 함수 시그니처는 유지한다.
 
 공통 envelope:
 
@@ -35,6 +35,8 @@ B는 직접 의존성·Rule 매칭·원천 제외·유효 참여·저자 귀속�
 각 TechnologyEvidence:
 
 - tech_id, fact_ids, evidence_level(L0–L3 또는 null)
+- v3에서는 명시적 personal_level(L0–L3 또는 null). 이는 repository evidence_level과
+  다른 사용자 수준 축이며 C는 evidence_level을 personal_level의 fallback으로 쓰지 않는다.
 - direct_dependency, implementation_present, user_participation(boolean 또는 null)
 - implemented_by(SELF/OTHER/NONE/UNKNOWN), attribution_status(COMPLETE/PARTIAL/UNKNOWN)
 - proofs와 선택 source_refs. 이전 source_refs 문자열만으로 긍정 근거를 만들지 않는다.
@@ -95,15 +97,48 @@ eligible_repository_ids에는 accepted 참여가 확인된 repository만 들어�
 
 `build_gap(selection, demanded_tech_ids=...)`은 `technology-gap/v2`로 held/missing/unknown을 나눈다. UNKNOWN은 missing 후보가 아니다. CURRENT·What-if·선행기술 확인 모두 같은 확인 기술 집합을 사용한다. What-if는 기술 하나만 추가하며 preferred를 필수 gate로 사용하지 않는다.
 
+`consume_personal_levels()`는 v3에서 accepted supporting proof가 있는 repository
+profile의 personal_level만 취한다. 따라서 PARTIAL analysis라도 유효 positive proof는
+보유 수준으로 남고, proof/귀속/coverage가 미확정인 범위는 level을 만들어 내지 않는다.
+이는 개인 전체 능력의 부재가 아니라 품질 unknown이다.
+
+v4 입력은 B가 사용자 전체 저장소를 합산해 다음 aggregate를 전달한다. 같은 입력의
+repository proof와 C의 held/coverage 검증을 통과한 기술만 소비한다.
+
+```json
+{
+  "schema_version": "evidence-consumption-input/v4",
+  "personal_assessments": [
+    {
+      "tech_id": "java",
+      "personal_level": "L2",
+      "assessment_ceiling": "L2",
+      "attribution_status": "COMPLETE",
+      "missing_scope": ["L3_RULE_NOT_SUPPORTED"]
+    }
+  ]
+}
+```
+
+`personal_level`은 L0~L3 값이고 `UNKNOWN`은 수준 값이 아니다. `assessment_ceiling`은
+사용자 최고 수준이 아니라 B가 현재 Rule Pack과 수집·귀속 범위로 부재까지 판정 가능한
+최고 수준이다. aggregate personal level이 repository 증거와 연결되지 않으면 입력을
+거절한다. 누락/부분 귀속은 기술 미보유나 L0으로 축소하지 않는다.
+
 ## 버전과 저장 조회 호환
 
 - 현재 confirmed 정책: c-confirmed/eligible-observation/v1
-- 현재 추천 결과: recommendation-snapshot/v2, c-recommendation/lexicographic/v2
+- 현재 추천 결과 schema: recommendation-snapshot/v2; v3 personal 입력 계산은
+  c-recommendation/lexicographic/v4, v4 aggregate ceiling 입력 계산은
+  c-recommendation/lexicographic/v5
 - 현재 설명: c-fact-explanation/v2
 - 구 결과의 c-held/project-participation/v1 정책은 신규 계산에 사용하지 않는다.
 - LegacyHeldTechnologySelection / LegacyGapSnapshot은 기존 출력 모양 그대로 분리해 읽는다. RecommendationSnapshot은 schema discriminator로 구/신 결과를 구분한다.
 - 기존 snapshot에 새 default 필드를 끼워 넣거나 조회 시 재계산하지 않으므로 구 JSON payload/hash와 CURRENT/WHAT_IF 목록이 유지된다.
 - 신규 profile 저장 조회에서도 consumed flags, proof 검증 결과, 지원 근거와 범위를 재검증한다.
+- matching/recommendation v4는 v3 personal_level을, v5는 v4 aggregate와 ceiling을
+  추가 소비하지만, v1~v3 envelope과 기존 recommendation v1~v4 snapshot은 historical 결과를 재계산하거나 새 필드로
+  보정하지 않는다.
 
 ## Calibration과 검증 범위
 

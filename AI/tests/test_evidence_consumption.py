@@ -12,6 +12,8 @@ from recommendation.evidence import (
     HeldTechnologySelection,
     build_gap,
     consume_evidence,
+    consume_personal_assessments,
+    consume_personal_levels,
 )
 
 
@@ -74,6 +76,132 @@ def consume(payload: dict, tech_ids: tuple[str, ...] = ("java", "docker")):
         analysis_id="analysis-1",
         tech_ids=tech_ids,
     )
+
+
+def v4_analysis_payload(*, level: str = "L2", ceiling: str = "L2") -> dict:
+    payload = analysis_payload()
+    payload["schema_version"] = "evidence-consumption-input/v4"
+    payload["personal_assessments"] = [
+        {
+            "tech_id": "java",
+            "personal_level": level,
+            "assessment_ceiling": ceiling,
+            "attribution_status": "COMPLETE",
+            "missing_scope": (["L3_RULE_NOT_SUPPORTED"] if ceiling != "L3" else []),
+        }
+    ]
+    return payload
+
+
+def test_v4_requires_a_personal_level_and_assessment_ceiling_pair():
+    payload = v4_analysis_payload()
+    del payload["personal_assessments"][0]["assessment_ceiling"]
+
+    with pytest.raises(ValueError, match="assessment_ceiling"):
+        EvidenceAnalysis.model_validate(payload)
+
+
+def test_v4_rejects_personal_level_above_assessment_ceiling():
+    with pytest.raises(ValueError, match="above assessment ceiling"):
+        EvidenceAnalysis.model_validate(v4_analysis_payload(level="L3", ceiling="L2"))
+
+
+def test_v4_exposes_level_ceiling_and_complete_scope_separately():
+    analysis = EvidenceAnalysis.model_validate(v4_analysis_payload())
+    selection = consume_evidence(
+        analysis,
+        user_id="user-1",
+        analysis_id="analysis-1",
+        tech_ids=("java",),
+    )
+
+    assessment = consume_personal_assessments(analysis, selection)["java"]
+
+    assert assessment.personal_level == "L2"
+    assert assessment.assessment_ceiling == "L2"
+    assert assessment.scope_complete is True
+    assert assessment.missing_scope == ("L3_RULE_NOT_SUPPORTED",)
+
+
+def test_v4_partial_analysis_keeps_positive_level_but_not_below_level_certainty():
+    payload = v4_analysis_payload()
+    payload["status"] = "PARTIAL"
+    payload["repositories"][0].update(status="PARTIAL", coverage_complete=False)
+    analysis = EvidenceAnalysis.model_validate(payload)
+    selection = consume_evidence(
+        analysis,
+        user_id="user-1",
+        analysis_id="analysis-1",
+        tech_ids=("java",),
+    )
+
+    assessment = consume_personal_assessments(analysis, selection)["java"]
+
+    assert assessment.personal_level == "L2"
+    assert assessment.scope_complete is False
+
+
+def test_v4_partial_peer_repository_prevents_a_negative_level_conclusion():
+    payload = v4_analysis_payload(level="L1", ceiling="L3")
+    peer = json.loads(json.dumps(payload["repositories"][0]))
+    peer.update(
+        repository_id="repo-2",
+        repository_analysis_id="repo-analysis-2",
+        commit_sha="b" * 40,
+        status="PARTIAL",
+        coverage_complete=False,
+    )
+    for technology in peer["technologies"]:
+        for proof in technology["proofs"]:
+            proof.update(
+                evidence_id=proof["evidence_id"] + "-peer",
+                repository_id="repo-2",
+                repository_analysis_id="repo-analysis-2",
+                source_commit_sha="b" * 40,
+                attribution_commit_sha="b" * 40,
+            )
+    payload["repositories"].append(peer)
+    payload["status"] = "PARTIAL"
+    analysis = EvidenceAnalysis.model_validate(payload)
+    selection = consume_evidence(
+        analysis,
+        user_id="user-1",
+        analysis_id="analysis-1",
+        tech_ids=("java",),
+    )
+
+    assessment = consume_personal_assessments(analysis, selection)["java"]
+
+    assert assessment.personal_level == "L1"
+    assert assessment.assessment_ceiling == "L3"
+    assert assessment.scope_complete is False
+
+
+@pytest.mark.parametrize(
+    "schema_version",
+    ["evidence-consumption-input/v3", "evidence-consumption-input/v4"],
+)
+def test_personal_level_is_not_interpreted_under_an_unknown_level_policy(
+    schema_version,
+):
+    payload = v4_analysis_payload()
+    payload["schema_version"] = schema_version
+    payload["level_policy_version"] = "level-policy/future"
+    if schema_version == "evidence-consumption-input/v3":
+        payload.pop("personal_assessments")
+        payload["repositories"][0]["technologies"][0]["personal_level"] = "L2"
+    analysis = EvidenceAnalysis.model_validate(payload)
+    selection = consume_evidence(
+        analysis,
+        user_id="user-1",
+        analysis_id="analysis-1",
+        tech_ids=("java",),
+    )
+
+    if schema_version == "evidence-consumption-input/v3":
+        assert consume_personal_levels(analysis, selection) == {}
+    else:
+        assert consume_personal_assessments(analysis, selection) == {}
 
 
 def test_self_implementation_is_held_and_scan_scoped_absence_has_reason():

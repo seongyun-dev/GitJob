@@ -37,7 +37,11 @@ from job.contracts import (
 )
 from job.eligibility import FilterMatch, match_career_level, match_region
 from job.matching import MatchingJobInput
-from job.requirements import JOB_REQUIREMENTS_SCHEMA_VERSION, extract_job_requirements
+from job.requirements import (
+    JOB_REQUIREMENTS_SCHEMA_VERSION,
+    RequirementClause,
+    extract_job_requirements,
+)
 from registry.contracts import TechId, load_registry
 from registry.mapper import RegistryMapper
 
@@ -211,6 +215,11 @@ class CohortJob(CohortModel):
     content_hash: StrictStr
     raw_artifact_uri: StrictStr | None = None
     required_clauses: tuple[tuple[TechId, ...], ...] = Field(min_length=1)
+    # Additive v2 view.  The compact v1 clauses remain the legacy
+    # recommendation snapshot contract.
+    levelled_required_clauses: tuple[RequirementClause, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     preferred_tech_ids: tuple[TechId, ...] = ()
     general_tech_ids: tuple[TechId, ...] = ()
     technologies: tuple[TechnologyClassification, ...] = ()
@@ -223,6 +232,22 @@ class CohortJob(CohortModel):
         if any(not clause for clause in clauses):
             raise ValueError("required clauses must contain at least one technology")
         return tuple(sorted({tuple(sorted(set(clause))) for clause in clauses}))
+
+    @model_validator(mode="after")
+    def levelled_clauses_match_legacy_ids(self) -> "CohortJob":
+        if self.levelled_required_clauses is not None:
+            for clause in self.levelled_required_clauses:
+                RequirementClause.model_validate(clause.model_dump(mode="json"))
+                if clause.required_level is None or not clause.level_evidence_refs:
+                    raise ValueError("levelled clauses require level and evidence")
+            if (
+                tuple(
+                    sorted(clause.tech_ids for clause in self.levelled_required_clauses)
+                )
+                != self.required_clauses
+            ):
+                raise ValueError("levelled clauses must preserve required clause IDs")
+        return self
 
 
 class CohortExclusion(CohortModel):
@@ -771,6 +796,15 @@ def build_cohort(
                     else record.source_record_id
                 ),
                 required_clauses=clauses,
+                levelled_required_clauses=(
+                    requirements.required
+                    if criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+                    and tuple(
+                        sorted(clause.tech_ids for clause in requirements.required)
+                    )
+                    == clauses
+                    else None
+                ),
                 preferred_tech_ids=tuple(
                     sorted(
                         {

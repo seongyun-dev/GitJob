@@ -2,17 +2,20 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from job.classifier import classify_job_batch
 from job.contracts import JobAnalysisInputBatch, JobPostingInput
 from job.requirements import (
+    JOB_REQUIRED_LEVEL_POLICY_VERSION,
+    JOB_REQUIREMENTS_SCHEMA_VERSION,
     JobRequirements,
     RequirementKind,
+    RequirementLevel,
+    RequirementLevelEvidenceSource,
     UnresolvedReason,
     extract_job_requirements,
 )
 from JobKorea_Collector_V1.technology import extract_technology_mentions
+from pydantic import ValidationError
 from registry.contracts import load_registry
 from registry.mapper import RegistryMapper
 
@@ -24,17 +27,17 @@ def test_worknet_duty_heading_ends_navigation_sections():
     result = _analyze(
         "복리후생\n전형방법\n기업정보\n모집요강\n직무내용\nJava 개발\n회사소개\nPython 기반 회사"
     )
-    assert [c.tech_ids for c in result.required] == [("java",)]
+    assert result.required == ()
     assert not result.unresolved
 
 
 @pytest.mark.parametrize(
     "heading", ["담당업무", "주요업무", "직무내용", "responsibilities"]
 )
-def test_supported_duty_headings_make_technical_work_required(heading):
+def test_duty_headings_do_not_make_technical_work_a_requirement(heading):
     result = _analyze(f"{heading}\nReact 화면 개발\n회사소개\nPython 기반 회사")
 
-    assert [clause.tech_ids for clause in result.required] == [("react",)]
+    assert result.required == ()
     assert result.preferred == ()
     assert result.unresolved == ()
 
@@ -50,6 +53,7 @@ def _analyze(
     body: str,
     *,
     title: str = "백엔드 개발자",
+    career_level: str | None = "신입",
     shared_evidence: bool = False,
 ) -> JobRequirements:
     mentions = [
@@ -69,7 +73,7 @@ def _analyze(
             "company_name": "Example",
             "title": title,
             "raw_job_category": "백엔드/서버개발",
-            "career_level": "신입",
+            "career_level": career_level,
             "region": "서울",
             "description_text": body,
             "body_status": "TEXT_AVAILABLE",
@@ -166,6 +170,8 @@ def test_repeated_logical_clause_merges_evidence_without_losing_mentions() -> No
             UnresolvedReason.CARDINALITY_UNSUPPORTED,
         ),
         ("Java 및 Python 또는 Docker 경험", UnresolvedReason.LOGIC_UNSUPPORTED),
+        ("Java/Python 개발 경험", UnresolvedReason.LOGIC_UNSUPPORTED),
+        ("Java 외", UnresolvedReason.LOGIC_UNSUPPORTED),
     ],
 )
 def test_unsupported_grammar_is_retained_with_its_original_span(
@@ -272,6 +278,205 @@ def test_output_is_frozen_round_trippable_and_bound_to_the_source_record() -> No
         result.required = ()
 
 
+def test_required_level_contract_has_versioned_deterministic_lineage() -> None:
+    result = _analyze("자격요건\nJava 실무 개발 경험")
+
+    assert result.schema_version == JOB_REQUIREMENTS_SCHEMA_VERSION
+    assert result.schema_version == "job-requirements/v2"
+    assert result.level_policy_version == JOB_REQUIRED_LEVEL_POLICY_VERSION
+    clause = result.required[0]
+    assert clause.required_level is RequirementLevel.L2
+    assert clause.level_evidence_refs[0].source is (
+        RequirementLevelEvidenceSource.DIRECT_CLAUSE
+    )
+    assert clause.level_evidence_refs[0].text == "Java 실무 개발 경험"
+    assert clause.level_evidence_refs[0].mention_indices == (0,)
+    assert JobRequirements.model_validate_json(result.model_dump_json()) == result
+    assert (
+        result.model_dump_json()
+        == _analyze("자격요건\nJava 실무 개발 경험").model_dump_json()
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "career_level", "expected"),
+    [
+        ("자격요건\nJava 필수", "신입", RequirementLevel.L1),
+        ("자격요건\nJava 경험", None, RequirementLevel.L2),
+        ("자격요건\nJava 운영", "경력 1년 이상", RequirementLevel.L2),
+        ("자격요건\nJava 서비스 설계", None, RequirementLevel.L2),
+        ("자격요건\nJava 성능 최적화", None, RequirementLevel.L3),
+        ("자격요건\nJava 운영 책임", None, RequirementLevel.L3),
+        ("자격요건\nJava", "경력 5년 이상", RequirementLevel.L1),
+        ("자격요건\nJava", "과장 이상", RequirementLevel.L1),
+        ("자격요건\nJava 경력 3~7년", None, RequirementLevel.L2),
+        ("자격요건\nJava 기초 이해", "경력 8년 이상", RequirementLevel.L1),
+        ("자격요건\nJava 경험", "경력 8년 이상", RequirementLevel.L2),
+        ("자격요건\nJava", "경력 0년", RequirementLevel.L1),
+        ("자격요건\nPython을 활용한 개발이 가능한 분", None, RequirementLevel.L1),
+        ("자격요건\nJava 사용이 가능하신 분", None, RequirementLevel.L1),
+        ("자격요건\nDocker 기반 서비스 배포 및 운영 경험", None, RequirementLevel.L2),
+    ],
+)
+def test_required_level_boundaries_are_conservative(
+    body: str,
+    career_level: str | None,
+    expected: RequirementLevel,
+) -> None:
+    result = _analyze(body, career_level=career_level)
+
+    assert result.required[0].required_level is expected
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_levels"),
+    [
+        ("지원자격\n경력 5년 이상\nJava 필수", (RequirementLevel.L1,)),
+        ("자격요건: 경력 5년 이상\nJava 필수", (RequirementLevel.L1,)),
+        (
+            "지원자격\n경력 5년 이상\nJava 필수\nPython 필수",
+            (RequirementLevel.L1, RequirementLevel.L1),
+        ),
+        ("지원자격\n경력 5년 이상\nJava 경험", (RequirementLevel.L2,)),
+    ],
+)
+def test_technology_free_section_career_does_not_escalate_technology_levels(
+    body: str,
+    expected_levels: tuple[RequirementLevel, ...],
+) -> None:
+    result = _analyze(body, career_level=None)
+
+    assert tuple(clause.required_level for clause in result.required) == expected_levels
+    assert all(
+        evidence.source.value != "REQUIREMENT_SECTION"
+        for clause in result.required
+        for evidence in clause.level_evidence_refs
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Java 기초 이해, 경력 5년 이상",
+        "Java 관련 지식, 경력 5년 이상",
+        "Java 사용 가능, 경력 5년 이상",
+        "Java 활용 가능, 경력 5년 이상",
+        "Java 개발 가능, 경력 5년 이상",
+    ],
+)
+def test_explicit_low_intensity_signal_blocks_unbound_year_escalation(
+    line: str,
+) -> None:
+    result = _analyze(f"자격요건\n{line}", career_level=None)
+
+    assert result.required[0].required_level is RequirementLevel.L1
+
+
+def test_direct_technology_development_career_keeps_l3() -> None:
+    result = _analyze("자격요건\nJava 개발 경력 5년 이상", career_level=None)
+
+    assert result.required[0].required_level is RequirementLevel.L3
+
+
+def test_level_signal_stays_bound_to_each_comma_separated_technology() -> None:
+    result = _analyze(
+        "지원자격\nJava 개발 경력 5년 이상, Python 개발 경험",
+        career_level=None,
+    )
+
+    by_tech = {clause.tech_ids: clause.required_level for clause in result.required}
+    assert by_tech == {
+        ("java",): RequirementLevel.L3,
+        ("python",): RequirementLevel.L2,
+    }
+
+
+def test_calibrated_open_list_and_duty_examples_do_not_become_levelled_requirements():
+    open_list = _analyze("지원자격\nJava, React, JPA 등의 개발 경험")
+    duty = _analyze("담당업무\nJava Spring Boot REST API 설계 및 핵심 기능 개발")
+
+    assert open_list.required == ()
+    assert open_list.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
+    assert duty.required == ()
+    assert duty.unresolved == ()
+
+
+def test_calibrated_title_and_structured_skill_signals_do_not_create_requirements():
+    result = _analyze(
+        "기술스택\nDocker 최적화",
+        title="Java 경력 8년 아키텍처 리드",
+        career_level="경력 8년 이상",
+    )
+
+    assert result.required == ()
+    assert result.preferred == ()
+    assert result.unresolved == ()
+
+
+def test_calibrated_one_of_capability_is_one_l1_clause() -> None:
+    result = _analyze("지원자격\nJava, Python, Docker 중 1개 이상 활용 가능")
+
+    assert len(result.required) == 1
+    assert result.required[0].tech_ids == ("docker", "java", "python")
+    assert result.required[0].required_level is RequirementLevel.L1
+
+
+def test_grade_range_in_a_technology_clause_remains_unresolved() -> None:
+    result = _analyze("지원자격\nJava 대리~부장")
+
+    assert result.required == ()
+    assert result.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
+
+
+def test_unsupported_clause_stays_unresolved_without_inventing_a_level() -> None:
+    result = _analyze("자격요건\nJava 및 Python 또는 Docker 경험")
+
+    assert result.required == ()
+    assert result.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
+    assert "UNKNOWN" not in {level.value for level in RequirementLevel}
+
+
+def test_v1_payload_remains_readable_without_level_fields() -> None:
+    current = _analyze("자격요건\nJava 경험")
+    payload = current.model_dump(mode="json")
+    payload["schema_version"] = "job-requirements/v1"
+    payload.pop("level_policy_version")
+    for clause in payload["required"]:
+        clause.pop("required_level")
+        clause.pop("level_evidence_refs")
+
+    legacy = JobRequirements.model_validate(payload)
+
+    assert legacy.schema_version == "job-requirements/v1"
+    assert legacy.level_policy_version is None
+    assert legacy.required[0].required_level is None
+    assert "required_level" not in legacy.model_dump(mode="json")["required"][0]
+
+
+def test_v2_contract_rejects_missing_level_or_policy_version() -> None:
+    current = _analyze("자격요건\nJava 경험")
+    payload = current.model_dump(mode="json")
+    payload["required"][0].pop("required_level")
+
+    with pytest.raises(ValidationError):
+        JobRequirements.model_validate(payload)
+
+    payload = current.model_dump(mode="json")
+    payload.pop("level_policy_version")
+    with pytest.raises(ValidationError):
+        JobRequirements.model_validate(payload)
+
+    payload = current.model_dump(mode="json")
+    payload["required"][0]["required_level"] = "L3"
+    with pytest.raises(ValidationError):
+        JobRequirements.model_validate(payload)
+
+    payload = current.model_dump(mode="json")
+    payload["required"][0]["level_evidence_refs"][0]["mention_indices"] = [99]
+    with pytest.raises(ValidationError):
+        JobRequirements.model_validate(payload)
+
+
 def test_committed_a_to_c_fixture_runs_through_the_current_classifier() -> None:
     fixture = JobAnalysisInputBatch.model_validate_json(
         (AI_ROOT / "job/fixtures/job_analysis_input_v1.json").read_text(
@@ -287,6 +492,7 @@ def test_committed_a_to_c_fixture_runs_through_the_current_classifier() -> None:
 
     assert result.source_record_id == "jobkorea:fixture-1001"
     assert result.required[0].tech_ids == ("csharp",)
+    assert result.required[0].required_level is RequirementLevel.L2
     evidence = result.required[0].evidence_refs[0]
     assert fixture.records[0].description_text is not None
     assert (

@@ -10,7 +10,25 @@
 
 ## 후보 집합과 순서
 
-현재 알고리즘 버전은 `c-recommendation/lexicographic/v3`이다. 동일 cohort의 필수·우대·일반 수요에 관찰된 기술 중 C 정책에서 `NOT_HELD`인 기술만 후보에 넣는다. `HELD`와 `UNKNOWN`은 제외한다. 후보 최대 수는 3개다. `UNKNOWN`은 Gap의 `unknown_tech_ids`와 `data_gaps`로 전달하며 학습 부족으로 표현하지 않는다.
+legacy 알고리즘은 `c-recommendation/lexicographic/v1~v3`으로 그대로 읽는다. v3 B
+personal level과 levelled v2 REQUIRED clause를 함께 가진 새 계산은
+`c-recommendation/lexicographic/v4`를 사용한다. v4는 `personal_level >= required_level`
+으로 CURRENT를 계산하며 repo/evidence level을 개인 수준 fallback으로 쓰지 않는다.
+새 B aggregate 계약 `evidence-consumption-input/v4`는
+`c-recommendation/lexicographic/v5`로 분리한다. v5의 CURRENT와 L0→L1 What-if 숫자는
+동일한 personal level 비교를 쓰되, `assessment_ceiling`과 전체 저장소 coverage를
+snapshot에 고정한다. 요구 수준이 analyzer 상한보다 높으면
+`ASSESSMENT_CEILING_BELOW_REQUIREMENT:{tech_id}:{level}`, 귀속·coverage가 불완전하면
+`PERSONAL_LEVEL_SCOPE_INCOMPLETE:{tech_id}`를 품질 gap으로 남긴다. 이를 사용자 수준
+부족이나 기술 미보유로 바꾸지 않는다.
+동일 cohort의 필수·우대·일반 수요 중 `NOT_HELD`, 또는 명시적 personal L0 기술만 후보가
+될 수 있고 후보 최대 수는 3개다. `UNKNOWN`은 Gap의 `unknown_tech_ids`와 `data_gaps`로
+전달하며 학습 부족으로 표현하지 않는다.
+
+v3 cohort에 levelled v2 clause와 legacy clause가 섞여 있으면 전체 계산을 held-only
+legacy로 내리지 않는다. levelled 공고만 personal level로 평가하고 level 없는 REQUIRED
+공고는 `REQUIRED_LEVEL_UNCONFIRMED:{job_id}` 품질 gap으로 남겨 CURRENT/What-if 증가에
+보수적으로 포함하지 않는다.
 
 2026-09-10 사용자 결정 / S15P21E102-202: 채용 중심으로 증가 공고 수를 최우선에 둔다.
 선행기술은 안내·동률 기준이며 학습 완료나 기술 보유를 대신 확정하지 않는다.
@@ -33,7 +51,11 @@ Trend는 출처별 관측으로 별도 제공하며 이 순위에 가중치로 �
 
 ## What-if와 목록
 
-`simulate_what_if(cohort, selection, tech_id)`는 현재 held set과 `{tech_id}` 하나만 추가한 set을 비교한다. 이미 보유한 기술과 분석 범위 미확정 기술을 명시적으로 거절한다. 동일 cohort에서 각 `required_clauses`는 바깥 AND, 안쪽 OR로 평가한다. 예를 들어 `((java, python), (docker,))`는 `(Java 또는 Python) 및 Docker`다. 우대 기술은 필수 매칭에 쓰지 않는다. 비어 있거나 미확정인 필수 조건은 C1에서 검토로 보내며, 매칭 함수도 빈 조건을 false로 처리한다.
+legacy `simulate_what_if(cohort, selection, tech_id)`는 held set과 `{tech_id}` 하나를
+비교한다. v4의 신규 기술 What-if는 후보 personal level을 **L0에서 L1로만** 투영하며
+L2/L3를 가정하지 않는다. 동일 cohort에서 각 REQUIRED clause는 바깥 AND, 안쪽 ANY_OF다.
+한 대안의 personal level이 required level 이상이면 충족하며 PREFERRED는 eligibility
+gate가 아니다. 비어 있거나 미확정인 필수 조건은 검토로 남는다.
 
 각 결과는 `current_count`, `projected_count`, `increased_count`와 각각의 `current_job_ids`, `projected_job_ids`, `newly_matched_job_ids`를 반환한다. ID는 중복 없이 정렬한다.
 
@@ -50,7 +72,14 @@ Trend는 출처별 관측으로 별도 제공하며 이 순위에 가중치로 �
 
 ## 상태·품질·설명 Fact
 
-공고가 없거나 최소 표본 기준보다 작으면 `INSUFFICIENT_DATA`와 실제 분모를 반환하고 추천을 내지 않는다. 미보유 후보가 없고 미확정 기술이 있으면 `INSUFFICIENT_EVIDENCE`, 모두 평가됐고 후보가 없으면 `NO_CANDIDATES`다. 후보가 있고 품질/분석 누락이 있으면 `PARTIAL`, 그렇지 않으면 `READY`다. 의도한 기간·직무 필터 제외는 집계 제외 수에 남으며, 미확정 조건의 검토 수는 `data_gaps`에도 기록된다.
+공고가 없거나 최소 표본 기준보다 작으면 `INSUFFICIENT_DATA`와 실제 분모를 반환하고 추천을 내지 않는다. 미보유 후보가 없고 미확정 기술이 있으면 `INSUFFICIENT_EVIDENCE`, 모두 평가됐고 후보가 없으면 `NO_CANDIDATES`다. v4에서 HELD인데 personal_level이 없으면 후보를 새로 만들지 않고 `PERSONAL_LEVEL_UNCONFIRMED:{tech_id}` data gap을 남기며, 후보가 없을 때 `INSUFFICIENT_EVIDENCE`가 된다. 후보가 있고 품질/분석 누락이 있으면 `PARTIAL`, 그렇지 않으면 `READY`다. 의도한 기간·직무 필터 제외는 집계 제외 수에 남으며, 미확정 조건의 검토 수는 `data_gaps`에도 기록된다.
+
+v4 결과에는 `personal_levels`와 level-aware CURRENT/What-if IDs가 함께 snapshot에
+고정된다. v5에는 `assessment_ceilings`와
+`level_assessment_complete_tech_ids`도 함께 고정한다. 과거 recommendation v1~v4는
+기존 matcher와 hash를 그대로 유지한다.
+부분 matching projection은 기존 `matching_source`/`matching_job` JSONB를 재사용하므로
+이 수준 계약 추가에 DB migration은 없다.
 
 부분 분석에서 유효하게 관찰한 held 기술로 현재 부합을 계산할 수 있다. 이 숫자는 선택한 분석과 정책에서 확인된 기술 조건 부합 수이며 개인 전체 기술의 부재나 채용 합격 가능성을 뜻하지 않는다.
 

@@ -15,6 +15,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from registry.contracts import TechId
+from registry.mapper import MatchStatus
 
 from job.classifier import (
     JOB_REQUIREMENT_PARSER_VERSION,
@@ -28,10 +30,10 @@ from job.contracts import (
     RequirementType,
     SourceSurface,
 )
-from registry.contracts import TechId
-from registry.mapper import MatchStatus
 
-JOB_REQUIREMENTS_SCHEMA_VERSION = "job-requirements/v1"
+JOB_REQUIREMENTS_SCHEMA_VERSION = "job-requirements/v2"
+JOB_REQUIREMENTS_LEGACY_SCHEMA_VERSION = "job-requirements/v1"
+JOB_REQUIRED_LEVEL_POLICY_VERSION = "job-required-level-policy/v1"
 
 
 class RequirementKind(StrEnum):
@@ -47,6 +49,17 @@ class RequirementOperator(StrEnum):
     """
 
     ANY_OF = "ANY_OF"
+
+
+class RequirementLevel(StrEnum):
+    L1 = "L1"
+    L2 = "L2"
+    L3 = "L3"
+
+
+class RequirementLevelEvidenceSource(StrEnum):
+    DIRECT_CLAUSE = "DIRECT_CLAUSE"
+    CONSERVATIVE_DEFAULT = "CONSERVATIVE_DEFAULT"
 
 
 class UnresolvedReason(StrEnum):
@@ -93,15 +106,84 @@ class RequirementEvidence(RequirementModel):
         return self
 
 
+class RequirementLevelEvidence(RequirementModel):
+    source: RequirementLevelEvidenceSource
+    level: RequirementLevel
+    text: StrictStr
+    source_surface: SourceSurface | None = None
+    char_start: StrictInt | None = None
+    char_end: StrictInt | None = None
+    mention_indices: tuple[StrictInt, ...] = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def require_non_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("level evidence text must not be blank")
+        return value
+
+    @field_validator("mention_indices")
+    @classmethod
+    def canonicalize_mention_indices(cls, values: tuple[int, ...]) -> tuple[int, ...]:
+        if any(value < 0 for value in values):
+            raise ValueError("mention indices must be non-negative")
+        return tuple(sorted(set(values)))
+
+    @model_validator(mode="after")
+    def validate_location(self) -> "RequirementLevelEvidence":
+        located = self.source in {
+            RequirementLevelEvidenceSource.DIRECT_CLAUSE,
+        }
+        if located != (self.source_surface is not None):
+            raise ValueError("located level evidence requires a source surface")
+        if located != (self.char_start is not None and self.char_end is not None):
+            raise ValueError("located level evidence requires offsets")
+        if self.char_start is not None and (
+            self.char_start < 0 or self.char_end <= self.char_start
+        ):
+            raise ValueError("level evidence offsets must describe a non-empty range")
+        return self
+
+
 class RequirementClause(RequirementModel):
     operator: RequirementOperator = RequirementOperator.ANY_OF
     tech_ids: tuple[TechId, ...] = Field(min_length=1)
     evidence_refs: tuple[RequirementEvidence, ...] = Field(min_length=1)
+    required_level: RequirementLevel | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    level_evidence_refs: tuple[RequirementLevelEvidence, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("tech_ids")
     @classmethod
     def canonicalize_tech_ids(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(sorted(set(values)))
+
+    @model_validator(mode="after")
+    def validate_level_evidence(self) -> "RequirementClause":
+        if (self.required_level is None) != (not self.level_evidence_refs):
+            raise ValueError("required level and level evidence must appear together")
+        if self.required_level is None:
+            return self
+        evidence_level = max(
+            (item.level for item in self.level_evidence_refs),
+            key=lambda level: {"L1": 1, "L2": 2, "L3": 3}[level.value],
+        )
+        if self.required_level is not evidence_level:
+            raise ValueError("required level must equal the strongest level evidence")
+        clause_mentions = {
+            index
+            for evidence in self.evidence_refs
+            for index in evidence.mention_indices
+        }
+        if any(
+            not set(evidence.mention_indices).issubset(clause_mentions)
+            for evidence in self.level_evidence_refs
+        ):
+            raise ValueError("level evidence mention lineage must belong to the clause")
+        return self
 
 
 class UnresolvedRequirement(RequirementModel):
@@ -124,13 +206,43 @@ class UnresolvedRequirement(RequirementModel):
 
 
 class JobRequirements(RequirementModel):
-    schema_version: Literal["job-requirements/v1"] = JOB_REQUIREMENTS_SCHEMA_VERSION
+    schema_version: Literal["job-requirements/v1", "job-requirements/v2"] = (
+        JOB_REQUIREMENTS_SCHEMA_VERSION
+    )
     source_record_id: StrictStr
     content_hash: ContentHash
     parser_version: StrictStr
+    level_policy_version: Literal["job-required-level-policy/v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     required: tuple[RequirementClause, ...] = ()
     preferred: tuple[RequirementClause, ...] = ()
     unresolved: tuple[UnresolvedRequirement, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_versioned_level_contract(self) -> "JobRequirements":
+        levelled = tuple(
+            clause
+            for clause in (*self.required, *self.preferred)
+            if clause.required_level is not None or clause.level_evidence_refs
+        )
+        if self.schema_version == JOB_REQUIREMENTS_LEGACY_SCHEMA_VERSION:
+            if self.level_policy_version is not None or levelled:
+                raise ValueError("v1 requirements must not contain level fields")
+            return self
+        if self.level_policy_version != JOB_REQUIRED_LEVEL_POLICY_VERSION:
+            raise ValueError("v2 requirements require the current level policy version")
+        if any(
+            clause.required_level is None or not clause.level_evidence_refs
+            for clause in self.required
+        ):
+            raise ValueError("every v2 required clause needs a level and evidence")
+        if any(
+            clause.required_level is not None or clause.level_evidence_refs
+            for clause in self.preferred
+        ):
+            raise ValueError("preferred clauses do not carry a required level")
+        return self
 
     @property
     def required_count(self) -> int:
@@ -153,7 +265,8 @@ class JobRequirements(RequirementModel):
 _OR = re.compile(r"\bor\b|또는|혹은|아니면", re.IGNORECASE)
 _AND = re.compile(r"\band\b|및|그리고|&|\+", re.IGNORECASE)
 _ACTIVITY_CONJUNCTION = re.compile(
-    r"(?<!\w)(?:개발\s+및\s+운영|구축\s+및\s+운용|설계\s+및\s+구현)(?!\w)"
+    r"(?<!\w)(?:개발\s+및\s+운영|구축\s+및\s+(?:운영|운용)|"
+    r"설계\s+및\s+구현|배포\s+및\s+운영)(?!\w)"
 )
 _NEGATION = re.compile(
     r"없어도|무관|불필요|경험(?:이)?\s*없는|"
@@ -166,7 +279,11 @@ _CARDINALITY = re.compile(
     r"(?:두|둘|세|셋|네|넷)\s*(?:개|가지))\s*이상"
 )
 _UNCERTAIN_EXAMPLE = re.compile(
-    r"예시|예를|\betc\b|등(?=\s|[,.]|$|[을의])", re.IGNORECASE
+    r"예시|예를|\betc\b|등(?=\s|[,.]|$|[을의])|외(?=\s|[,.]|$)", re.IGNORECASE
+)
+_GRADE_RANGE = re.compile(
+    r"(?:사원|주임|대리|과장|차장|부장|임원)\s*(?:~|[-–—∼])\s*"
+    r"(?:사원|주임|대리|과장|차장|부장|임원)"
 )
 _ONE_OF = re.compile(r"중\s*(?:하나|1개)|\b(?:one|any)\s+of\b", re.IGNORECASE)
 _ONE_OF_PRELUDE = re.compile(
@@ -175,6 +292,55 @@ _ONE_OF_PRELUDE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_BOUNDARY = re.compile(r"(?:[;；。]|\.(?=\s))\s*")
+_YEAR_RANGE = re.compile(
+    r"(?<!\d)(\d{1,2})\s*(?:~|[-–—∼])\s*\d{1,2}\s*(?:년|years?)",
+    re.IGNORECASE,
+)
+_MINIMUM_YEARS = re.compile(
+    r"(?<!\d)(\d{1,2})\s*(?:년|years?)"
+    r"(?!\s*(?:이하|미만|↓|less\s+than|or\s+less))",
+    re.IGNORECASE,
+)
+_L3_ACTIVITY = re.compile(
+    r"아키텍처|대규모\s*(?:서비스\s*)?운영|최적화|리딩|"
+    r"운영\s*(?:총괄|책임)|(?:총괄|책임)\s*운영|"
+    r"\barchitect(?:ure|ing)?\b|\boptimi[sz](?:e|ation|ing)\b|\blead(?:ing)?\b",
+    re.IGNORECASE,
+)
+_L2_ACTIVITY = re.compile(
+    r"경험|실무|개발|운영|운용|구축|배포|설계|"
+    r"\bexperience\b|\bdevelop(?:ment|ing)?\b|\boperat(?:e|ion|ing)\b",
+    re.IGNORECASE,
+)
+_L1_CAPABILITY = re.compile(
+    r"(?:활용|사용|개발|프로그래밍)(?:이|가|을|를)?\s*(?:가능|할\s*수)|"
+    r"가능(?:자|하신\s*분)|\b(?:able\s+to|capable\s+of)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_L1_INTENSITY = re.compile(
+    r"기초\s*(?:이해|지식)|기본\s*(?:이해|지식)|(?:관련\s*)?지식|"
+    r"\bbasic\s+(?:understanding|knowledge)\b",
+    re.IGNORECASE,
+)
+_L1_ACTIVITY = re.compile(
+    r"기초\s*(?:이해|지식)|기본\s*(?:이해|지식)|이해|지식|교육|자격|사용|"
+    r"\bbasic\s+(?:understanding|knowledge)\b|신입",
+    re.IGNORECASE,
+)
+_JOB_GRADES = {
+    "사원": RequirementLevel.L1,
+    "주임": RequirementLevel.L2,
+    "대리": RequirementLevel.L2,
+    "과장": RequirementLevel.L3,
+    "차장": RequirementLevel.L3,
+    "부장": RequirementLevel.L3,
+    "임원": RequirementLevel.L3,
+}
+_LEVEL_ORDER = {
+    RequirementLevel.L1: 1,
+    RequirementLevel.L2: 2,
+    RequirementLevel.L3: 3,
+}
 
 _REQUIRED_HEADINGS = frozenset(
     {
@@ -186,12 +352,10 @@ _REQUIRED_HEADINGS = frozenset(
         "요구사항",
         "requirements",
         "required",
-        "담당업무",
-        "주요업무",
-        "업무내용",
-        "직무내용",
-        "responsibilities",
     }
+)
+_DUTY_HEADINGS = frozenset(
+    {"담당업무", "주요업무", "업무내용", "직무내용", "responsibilities"}
 )
 _PREFERRED_HEADINGS = frozenset(
     {"우대", "우대사항", "우대조건", "우대자격요건", "preferred", "nicetohave"}
@@ -221,6 +385,12 @@ def _heading_key(value: str | None) -> str:
 
 
 def _requirement_kind(item: TechnologyClassification) -> RequirementKind | None:
+    if item.location.source_surface is SourceSurface.TITLE:
+        return None
+    effective_section = item.parsed_section or item.evidence_section
+    effective_heading = _heading_key(effective_section)
+    if effective_heading in _GENERAL_HEADINGS or effective_heading in _DUTY_HEADINGS:
+        return None
     if item.requirement_class is RequirementClass.REQUIRED:
         return RequirementKind.REQUIRED
     if item.requirement_class is RequirementClass.PREFERRED:
@@ -247,7 +417,9 @@ def _surface(record: JobPostingInput, source: SourceSurface) -> str | None:
     return record.title if source is SourceSurface.TITLE else record.description_text
 
 
-def _section_kind(label: str) -> RequirementKind | Literal["GENERAL"] | None:
+def _section_kind(
+    label: str,
+) -> RequirementKind | Literal["GENERAL", "DUTY"] | None:
     heading = _heading_key(label)
     if heading in _REQUIRED_HEADINGS:
         return RequirementKind.REQUIRED
@@ -255,7 +427,95 @@ def _section_kind(label: str) -> RequirementKind | Literal["GENERAL"] | None:
         return RequirementKind.PREFERRED
     if heading in _GENERAL_HEADINGS:
         return "GENERAL"
+    if heading in _DUTY_HEADINGS:
+        return "DUTY"
     return None
+
+
+def _minimum_years(text: str) -> int | None:
+    range_match = _YEAR_RANGE.search(text)
+    if range_match is not None:
+        return int(range_match.group(1))
+    match = _MINIMUM_YEARS.search(text)
+    return int(match.group(1)) if match is not None else None
+
+
+def _signal_level(text: str) -> RequirementLevel | None:
+    if _L1_CAPABILITY.search(text) or _EXPLICIT_L1_INTENSITY.search(text):
+        return RequirementLevel.L1
+    years = _minimum_years(text)
+    if years is not None:
+        if years >= 5:
+            return RequirementLevel.L3
+        return RequirementLevel.L2 if years >= 1 else RequirementLevel.L1
+
+    grades = tuple(level for grade, level in _JOB_GRADES.items() if grade in text)
+    if grades:
+        # Multiple directly bound grades without a range use the minimum.
+        return min(grades, key=_LEVEL_ORDER.__getitem__)
+    if _L3_ACTIVITY.search(text):
+        return RequirementLevel.L3
+    if _L2_ACTIVITY.search(text):
+        return RequirementLevel.L2
+    if _L1_ACTIVITY.search(text):
+        return RequirementLevel.L1
+    return None
+
+
+def _level_evidence_sort_key(
+    evidence: RequirementLevelEvidence,
+) -> tuple[object, ...]:
+    source_order = {
+        RequirementLevelEvidenceSource.DIRECT_CLAUSE: 0,
+        RequirementLevelEvidenceSource.CONSERVATIVE_DEFAULT: 1,
+    }
+    return (
+        source_order[evidence.source],
+        evidence.source_surface.value if evidence.source_surface is not None else "",
+        evidence.char_start is None,
+        evidence.char_start if evidence.char_start is not None else 0,
+        evidence.char_end if evidence.char_end is not None else 0,
+        evidence.text,
+        evidence.mention_indices,
+    )
+
+
+def _required_level(
+    evidences: tuple[RequirementEvidence, ...],
+) -> tuple[RequirementLevel, tuple[RequirementLevelEvidence, ...]]:
+    direct_evidences = []
+    for evidence in evidences:
+        direct_level = _signal_level(evidence.text)
+        if direct_level is not None:
+            direct_evidences.append(
+                RequirementLevelEvidence(
+                    source=RequirementLevelEvidenceSource.DIRECT_CLAUSE,
+                    level=direct_level,
+                    text=evidence.text,
+                    source_surface=evidence.source_surface,
+                    char_start=evidence.char_start,
+                    char_end=evidence.char_end,
+                    mention_indices=evidence.mention_indices,
+                )
+            )
+    mention_indices = tuple(
+        sorted({index for evidence in evidences for index in evidence.mention_indices})
+    )
+    selected_evidences = direct_evidences
+    if not selected_evidences:
+        selected_evidences = [
+            RequirementLevelEvidence(
+                source=RequirementLevelEvidenceSource.CONSERVATIVE_DEFAULT,
+                level=RequirementLevel.L1,
+                text="no stronger level signal",
+                mention_indices=mention_indices,
+            )
+        ]
+
+    canonical = tuple(sorted(set(selected_evidences), key=_level_evidence_sort_key))
+    return max(
+        (item.level for item in canonical), key=_LEVEL_ORDER.__getitem__
+    ), canonical
 
 
 def _segment_bounds(surface: str, start: int, end: int) -> tuple[int, int]:
@@ -376,6 +636,71 @@ def _missing_operand_fragments(
     return tuple(dict.fromkeys(operands))
 
 
+def _independent_comma_evidence(
+    text: str,
+    evidence: RequirementEvidence,
+    items: list[TechnologyClassification],
+    spans: list[tuple[int, int, str, str | None]],
+) -> dict[str, RequirementEvidence] | None:
+    """Narrow only clearly self-contained comma-separated requirements.
+
+    ``Java 개발 경력 5년 이상, Python 개발 경험`` contains two complete
+    technology conditions. Keeping the whole line as evidence for both would
+    leak Java's five-year signal into Python. A bare list such as
+    ``Java, Python 개발 경력 5년 이상`` is deliberately left intact because
+    the trailing condition can apply to the whole list.
+    """
+    if evidence.char_start is None or evidence.char_end is None:
+        return None
+    boundaries = [0, *(match.end() for match in re.finditer(r"[,，]", text)), len(text)]
+    fragments: list[tuple[int, int]] = []
+    previous = boundaries[0]
+    for boundary in boundaries[1:]:
+        fragment_end = boundary
+        if boundary != len(text):
+            fragment_end -= 1
+        start, end = previous, fragment_end
+        while start < end and text[start].isspace():
+            start += 1
+        while end > start and text[end - 1].isspace():
+            end -= 1
+        if start < end:
+            fragments.append((start, end))
+        previous = boundary
+    if len(fragments) < 2:
+        return None
+
+    by_tech: dict[str, RequirementEvidence] = {}
+    for start, end in fragments:
+        fragment_spans = [span for span in spans if start <= span[0] and span[1] <= end]
+        tech_ids = {span[3] for span in fragment_spans if span[3] is not None}
+        if len(tech_ids) != 1 or _signal_level(text[start:end]) is None:
+            return None
+        tech_id = tech_ids.pop()
+        if tech_id in by_tech:
+            return None
+        mention_indices = tuple(
+            sorted(
+                {
+                    item.mention_index
+                    for item in items
+                    if item.tech_id == tech_id
+                    and item.mention_index in evidence.mention_indices
+                }
+            )
+        )
+        if not mention_indices:
+            return None
+        by_tech[tech_id] = RequirementEvidence(
+            source_surface=evidence.source_surface,
+            char_start=evidence.char_start + start,
+            char_end=evidence.char_start + end,
+            text=text[start:end],
+            mention_indices=mention_indices,
+        )
+    return by_tech
+
+
 def _unresolved_reason(
     text: str, items: list[TechnologyClassification]
 ) -> UnresolvedReason | None:
@@ -383,6 +708,8 @@ def _unresolved_reason(
         return UnresolvedReason.NEGATION_UNSUPPORTED
     if _CARDINALITY.search(text):
         return UnresolvedReason.CARDINALITY_UNSUPPORTED
+    if _GRADE_RANGE.search(text):
+        return UnresolvedReason.LOGIC_UNSUPPORTED
     if _UNCERTAIN_EXAMPLE.search(text):
         return UnresolvedReason.LOGIC_UNSUPPORTED
     if any(item.match_status is not MatchStatus.MATCHED for item in items):
@@ -519,7 +846,11 @@ def _parse_segment(
             raw_operands=unknown_operands or missing_fragments,
             evidence=evidence,
         )
-    return [((tech_id,), evidence) for tech_id in known_ids], None
+    independent = _independent_comma_evidence(text, evidence, items, spans)
+    return [
+        ((tech_id,), independent.get(tech_id, evidence) if independent else evidence)
+        for tech_id in known_ids
+    ], None
 
 
 def extract_job_requirements(
@@ -643,7 +974,7 @@ def extract_job_requirements(
                 and item.location.char_end is not None
             ):
                 by_raw[item.raw_technology.casefold()].append(item)
-        active_section: RequirementKind | Literal["GENERAL"] | None = None
+        active_section: RequirementKind | Literal["GENERAL", "DUTY"] | None = None
         offset = 0
         for line_with_end in record.description_text.splitlines(keepends=True):
             line = line_with_end.rstrip("\r\n")
@@ -767,13 +1098,27 @@ def extract_job_requirements(
         )
 
     def build_clauses(kind: RequirementKind) -> tuple[RequirementClause, ...]:
-        return tuple(
-            RequirementClause(
-                tech_ids=tech_ids,
-                evidence_refs=_merge_evidence(tuple(evidences)),
-            )
-            for tech_ids, evidences in sorted(clauses[kind].items())
-        )
+        built = []
+        for tech_ids, evidences in sorted(clauses[kind].items()):
+            merged_evidence = _merge_evidence(tuple(evidences))
+            if kind is RequirementKind.REQUIRED:
+                level, level_evidence = _required_level(merged_evidence)
+                built.append(
+                    RequirementClause(
+                        tech_ids=tech_ids,
+                        evidence_refs=merged_evidence,
+                        required_level=level,
+                        level_evidence_refs=level_evidence,
+                    )
+                )
+            else:
+                built.append(
+                    RequirementClause(
+                        tech_ids=tech_ids,
+                        evidence_refs=merged_evidence,
+                    )
+                )
+        return tuple(built)
 
     unresolved = sorted(
         unresolved,
@@ -789,6 +1134,7 @@ def extract_job_requirements(
         source_record_id=record.source_record_id,
         content_hash=record.content_hash,
         parser_version=JOB_REQUIREMENT_PARSER_VERSION,
+        level_policy_version=JOB_REQUIRED_LEVEL_POLICY_VERSION,
         required=build_clauses(RequirementKind.REQUIRED),
         preferred=build_clauses(RequirementKind.PREFERRED),
         unresolved=tuple(unresolved),

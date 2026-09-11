@@ -3,11 +3,15 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
-from test_evidence_consumption import analysis_payload
-from test_job_cohort import batch, criteria, posting
-
 from job.cohort import CohortCriteria, CohortJob, CohortStatus, JobCohort, build_cohort
+from job.requirements import (
+    RequirementClause,
+    RequirementEvidence,
+    RequirementLevel,
+    RequirementLevelEvidence,
+    RequirementLevelEvidenceSource,
+)
+from pydantic import ValidationError
 from recommendation.engine import (
     PrerequisiteRule,
     PrerequisiteSnapshot,
@@ -18,6 +22,8 @@ from recommendation.engine import (
     simulate_what_if,
 )
 from recommendation.evidence import EvidenceAnalysis, consume_evidence
+from test_evidence_consumption import analysis_payload
+from test_job_cohort import batch, criteria, posting
 
 
 def make_job(job_id: str, clauses, preferred=()) -> CohortJob:
@@ -140,6 +146,210 @@ def test_valid_l1_and_language_implementation_are_current_not_repeat_candidates(
             RecommendationSnapshot.model_validate_json(result.model_dump_json())
             == result
         )
+
+
+def test_v3_without_personal_levels_never_falls_back_to_held_only_matching():
+    cohort = build_cohort(batch(posting(required=("Java",))), criteria())
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v3"
+    payload["registry_version"] = cohort.registry_version
+
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+
+    assert result.algorithm_version == "c-recommendation/lexicographic/v4"
+    assert result.current_count == 0
+    assert result.current_job_ids == ()
+    assert result.status == "INSUFFICIENT_EVIDENCE"
+    assert result.candidates == ()
+    assert "PERSONAL_LEVEL_UNCONFIRMED:java" in result.data_gaps
+
+
+def test_v3_mixed_levelled_and_legacy_jobs_keeps_level_aware_matching():
+    levelled = RequirementClause(
+        tech_ids=("java",),
+        evidence_refs=(
+            RequirementEvidence(
+                source_surface="BODY",
+                char_start=0,
+                char_end=4,
+                text="Java",
+                mention_indices=(0,),
+            ),
+        ),
+        required_level=RequirementLevel.L2,
+        level_evidence_refs=(
+            RequirementLevelEvidence(
+                source=RequirementLevelEvidenceSource.CONSERVATIVE_DEFAULT,
+                level=RequirementLevel.L2,
+                text="fixture L2",
+                mention_indices=(0,),
+            ),
+        ),
+    )
+    levelled_job = make_job("levelled-l2", (("java",),)).model_copy(
+        update={"levelled_required_clauses": (levelled,)}
+    )
+    cohort = make_cohort((make_job("legacy-duty", (("java",),)), levelled_job))
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v3"
+    payload["repositories"][0]["technologies"][0]["personal_level"] = "L1"
+
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+
+    assert result.algorithm_version == "c-recommendation/lexicographic/v4"
+    assert result.personal_levels == {"java": "L1"}
+    assert result.current_job_ids == ()
+    assert result.current_count == 0
+    assert "REQUIRED_LEVEL_UNCONFIRMED:legacy-duty" in result.data_gaps
+    assert result.status == "INSUFFICIENT_EVIDENCE"
+
+
+def test_v4_with_only_legacy_jobs_keeps_required_levels_unconfirmed():
+    cohort = make_cohort((make_job("legacy-java", (("java",),)),))
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v4"
+    payload["personal_assessments"] = [
+        {
+            "tech_id": "java",
+            "personal_level": "L1",
+            "assessment_ceiling": "L3",
+            "attribution_status": "COMPLETE",
+            "missing_scope": [],
+        }
+    ]
+
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+
+    assert result.algorithm_version == "c-recommendation/lexicographic/v5"
+    assert result.current_job_ids == ()
+    assert result.current_count == 0
+    assert result.personal_levels == {"java": "L1"}
+    assert result.assessment_ceilings == {"java": "L3"}
+    assert "REQUIRED_LEVEL_UNCONFIRMED:legacy-java" in result.data_gaps
+    assert result.status == "INSUFFICIENT_EVIDENCE"
+
+
+def test_v3_l0_candidate_projects_only_l1_and_related_page_uses_same_ids():
+    cohort = build_cohort(batch(posting(required=("Java",))), criteria())
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v3"
+    payload["registry_version"] = cohort.registry_version
+    payload["repositories"][0]["technologies"][0]["personal_level"] = "L0"
+
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+    candidate = result.candidates[0]
+    page = list_related_jobs(
+        result, user_id="user-1", view="WHAT_IF", tech_id=candidate.tech_id
+    )
+
+    assert candidate.tech_id == "java"
+    assert candidate.evidence_status == "L0"
+    assert candidate.what_if.current_count == 0
+    assert candidate.what_if.projected_count == 1
+    assert candidate.what_if.newly_matched_job_ids == ("job-1",)
+    assert (
+        tuple(item.job_id for item in page.items)
+        == candidate.what_if.newly_matched_job_ids
+    )
+
+
+def test_v4_ceiling_is_preserved_and_marks_unassessable_requirement():
+    levelled = RequirementClause(
+        tech_ids=("java",),
+        evidence_refs=(
+            RequirementEvidence(
+                source_surface="BODY",
+                char_start=0,
+                char_end=4,
+                text="Java",
+                mention_indices=(0,),
+            ),
+        ),
+        required_level=RequirementLevel.L2,
+        level_evidence_refs=(
+            RequirementLevelEvidence(
+                source=RequirementLevelEvidenceSource.CONSERVATIVE_DEFAULT,
+                level=RequirementLevel.L2,
+                text="fixture L2",
+                mention_indices=(0,),
+            ),
+        ),
+    )
+    job = make_job("levelled-l2", (("java",),)).model_copy(
+        update={"levelled_required_clauses": (levelled,)}
+    )
+    cohort = make_cohort((job,))
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v4"
+    payload["registry_version"] = cohort.registry_version
+    payload["personal_assessments"] = [
+        {
+            "tech_id": "java",
+            "personal_level": "L1",
+            "assessment_ceiling": "L1",
+            "attribution_status": "COMPLETE",
+            "missing_scope": ["L2_L3_RULE_NOT_SUPPORTED"],
+        }
+    ]
+
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+
+    assert result.algorithm_version == "c-recommendation/lexicographic/v5"
+    assert result.personal_levels == {"java": "L1"}
+    assert result.assessment_ceilings == {"java": "L1"}
+    assert result.level_assessment_complete_tech_ids == ("java",)
+    assert "ASSESSMENT_CEILING_BELOW_REQUIREMENT:java:L2" in result.data_gaps
+
+
+def test_v5_complete_assessment_ids_must_be_canonical():
+    from recommendation.engine import _snapshot_id
+
+    levelled = RequirementClause(
+        tech_ids=("java",),
+        evidence_refs=(
+            RequirementEvidence(
+                source_surface="BODY",
+                char_start=0,
+                char_end=4,
+                text="Java",
+                mention_indices=(0,),
+            ),
+        ),
+        required_level=RequirementLevel.L1,
+        level_evidence_refs=(
+            RequirementLevelEvidence(
+                source=RequirementLevelEvidenceSource.CONSERVATIVE_DEFAULT,
+                level=RequirementLevel.L1,
+                text="fixture L1",
+                mention_indices=(0,),
+            ),
+        ),
+    )
+    cohort = make_cohort(
+        (
+            make_job("levelled-l1", (("java",),)).model_copy(
+                update={"levelled_required_clauses": (levelled,)}
+            ),
+        )
+    )
+    payload = make_analysis().model_dump(mode="json")
+    payload["schema_version"] = "evidence-consumption-input/v4"
+    payload["personal_assessments"] = [
+        {
+            "tech_id": "java",
+            "personal_level": "L1",
+            "assessment_ceiling": "L3",
+            "attribution_status": "COMPLETE",
+            "missing_scope": [],
+        }
+    ]
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+    forged = result.model_dump(mode="json", exclude={"snapshot_id"})
+    forged["level_assessment_complete_tech_ids"] = ["java", "java"]
+    forged["snapshot_id"] = _snapshot_id(forged)
+
+    with pytest.raises(ValueError, match="unique and sorted"):
+        RecommendationSnapshot.model_validate(forged)
 
 
 def test_preferred_never_gates_and_or_is_not_an_and():

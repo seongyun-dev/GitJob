@@ -9,6 +9,45 @@
 없으면 자동 100%가 아니며, 조건 해석 또는 사용자 근거가 미확정이면 전체 비율은 null이다.
 기술 요건 충족 비율은 합격 가능성이나 개인 숙련도 점수가 아니다.
 
+`job-requirements/v2` REQUIRED clause는 `required_level(L1~L3)`과 그
+`level_evidence_refs`를 함께 가진다. `evidence-consumption-input/v3`에서는 B가
+명시한 `personal_level(L0~L3)`만 이 수준과 비교한다. 과거 `evidence_level`은
+repository 관측 축이므로 개인 수준의 fallback으로 쓰지 않는다. v3에서 accepted
+proof가 뒷받침하는 positive personal level은 분석이 PARTIAL이어도 보존하지만,
+관측되지 않았거나 level/proof/범위가 불완전한 기술은 수준이 아니라 Evidence 품질
+unknown이다.
+
+`evidence-consumption-input/v4`는 repository별 임시 personal level 대신 B가 전체
+선택 저장소를 합산한 `personal_assessments[]`를 소비한다. 각 항목은 `tech_id`,
+`personal_level`, `assessment_ceiling`, `attribution_status`, `missing_scope[]`를 가진다.
+`assessment_ceiling`은 B의 현재 Rule Pack과 귀속 범위로 그 기술의 수준 부재를 판정할
+수 있는 최고 단계다. `personal_level`보다 낮을 수 없으며, C는 repository
+`evidence_level`을 둘 중 어느 값으로도 대체하지 않는다.
+
+양성 판정은 보수적으로 지우지 않는다. 따라서 유효 proof의 personal level이 공고
+요구 이상이면 다른 저장소가 PARTIAL이어도 `SATISFIED`다. 반대로 수준 부족은 모든
+선택 저장소가 COMPLETE·coverage complete·해당 기술 평가 완료·사용자 참여 확인이고,
+B 귀속 상태가 COMPLETE이며 `assessment_ceiling >= required_level`일 때만 확정한다.
+상한이 요구보다 낮거나 coverage/귀속이 불완전하면 `LEVEL_BELOW_REQUIRED`가 아니라
+`EVIDENCE_SCOPE_INCOMPLETE`다. 완전 범위에서 기술 evidence 자체가 없는 경우만 기존
+`TECHNOLOGY_NOT_HELD`다.
+
+수준 clause의 `verdict`는 다음 중 하나다: `SATISFIED`(ANY_OF 중 하나가
+personal level 이상), `LEVEL_BELOW_REQUIRED`(완결적인 보유 evidence는 있으나
+수준 부족), `TECHNOLOGY_NOT_HELD`(완결적인 부재),
+`EVIDENCE_SCOPE_INCOMPLETE`(범위·proof·personal level 미확정). 공고 문장 자체가
+미해석이면 기존 `unresolved`/outer UNKNOWN으로 보존한다. PREFERRED는 같은 방식으로
+보이되 REQUIRED eligibility를 탈락시키지 않는다.
+
+v1/v2 Evidence 입력은 personal level 축이 없던 역사 입력이다. 이 경우 추천의 기존
+held-only 의미와 일치하도록 proof-supported HELD 조건을 `LEGACY_HELD_MATCH`로
+표시한다. 이는 사용자 수준이 공고 요구 이상이라는 판정이 아니며, 신규 v3/v4 입력에는
+사용하지 않는다.
+
+`job-requirements/v2`의 levelled clause assessment는 personal level이 비어도
+`EVIDENCE_SCOPE_INCOMPLETE` verdict를 반드시 저장한다. verdict가 없는 historical
+assessment는 level field 자체가 없던 requirements v1만 legacy read로 허용한다.
+
 기존 CURRENT/WHAT_IF의 엄격한 전체 필수 충족 기준은 유지한다. 부분 부합 결과는
 해당 목록이나 증가 수에 합산하지 않는다. 확정된 마감/필터 불일치, 본문 미확보,
 원본 충돌은 부분 부합 목록에도 포함하지 않는다. 필터 또는 공고 상태 자체가
@@ -30,6 +69,9 @@
 `matching_calculation`은 계산 ID·작은 metadata·전체/적격/조건부 count를,
 `matching_job`은 안정 position과 사용자별 held/missing/unknown 판정만 보존한다.
 추천 payload에는 전체 결과 대신 `job_matching_ref(job-matching-storage/v2)`만 둔다.
+compact 사용자 assessment 행은 바깥 `evidence_input_version`을 필수로 저장하고 각
+수준 clause의 ceiling-aware mode와 대조한다. 따라서 v4 저장 행에서 ceiling 필드를
+삭제해 legacy 수준 부족 판정으로 바꾸는 입력은 조회 시 무결성 오류다.
 세 저장은 기존 추천 snapshot/head/event 완료와 같은 transaction에서 게시한다.
 같은 cohort 원본을 다른 사용자가 평가해도 요구절/evidence는 공유 원본을 참조한다.
 게시된 shared source와 assessment 행의 UPDATE/DELETE는 DB trigger가 거절한다. 런타임
@@ -155,14 +197,14 @@ shared source 1행 512 KiB, 사용자 assessment 1행 64 KiB, 논리 결과 전�
 - 시/도 별칭·복수 지역, 신입/경력무관/혼합 경력을 해석하되 미확정은 확정 불일치와 구분한다.
 - Worknet 상세의 경력·근무지는 표 설명이나 기업 주소가 아니라 해당 항목 값을 읽는다.
   `직무내용`은 기존 담당업무와 동일하게 해석한다. 원문 본문은 유지한다.
-- `담당업무`, `주요업무`, `직무내용`, `responsibilities`의 기술 업무 문장은 REQUIRED
-  분모에 포함한다. 이는 해당 기술이 업무 수행에 필요하다는 제품 정책이며 지원 자격
-  전체 충족 표시는 아니다. React 화면 개발 같은 기술 업무는 포함하지만 회사소개·기업소개의
-  기술 언급과 일반 기술스택 나열은 포함하지 않는다.
+- `담당업무`, `주요업무`, `직무내용`, `responsibilities`의 기술 업무 문장은 현재
+  `job-requirements/v2`에서 지원자 REQUIRED clause로 만들지 않는다. 회사소개·기업소개와
+  일반 기술스택 나열도 마찬가지로 요구절이 아니다. 지원자격/자격요건 등 명시적 requirement
+  surface의 근거만 levelled REQUIRED clause가 될 수 있다.
 - 새 입력 버전은 `worknet-collector/v2`, `saramin-collector/v2`,
   `gamejob-collector/v2`, `jobkorea-crawler/v2`다. 기존 v1 데이터는 변경하지 않는다.
 - C 분류 `job-requirement-rules/v6`, 품질 `job-cohort-quality/v6`,
-  요구절 `job-requirements/v1`, 부분 평가 `job-matching/v2`, 저장 표현
+  요구절 `job-requirements/v2`(v1 read 호환), 부분 평가 `job-matching/v2`, 저장 표현
   `job-matching-storage/v2`를 새 계산에 기록한다.
 
 ## 동일 표본 필터 영향 비교
