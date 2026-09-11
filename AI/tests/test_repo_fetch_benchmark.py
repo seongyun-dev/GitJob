@@ -1,4 +1,5 @@
 import json
+from http.client import IncompleteRead
 from pathlib import Path
 
 import pytest
@@ -277,6 +278,22 @@ def test_5xx_and_timeout_are_bounded_retries() -> None:
     )
     assert [record.http_status for record in outcome.records] == [0, 200]
     assert outcome.records[0].error == "TimeoutError: slow"
+
+
+def test_incomplete_read_is_a_bounded_transient_retry() -> None:
+    transport = ScriptedTransport(
+        [IncompleteRead(b"partial", 10), response(200, {"ok": True})]
+    )
+    client = GitHubClient(
+        "token", transport=transport, max_attempts=2, sleep=lambda _: None
+    )
+
+    outcome = client.get_json(
+        "/fixture", stage=Stage.METADATA, endpoint_category="fixture"
+    )
+
+    assert [record.http_status for record in outcome.records] == [0, 200]
+    assert outcome.records[0].error.startswith("IncompleteRead:")
 
 
 def test_truncated_tree_is_partial_without_subtree_calls(tmp_path: Path) -> None:

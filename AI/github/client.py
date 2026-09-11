@@ -13,6 +13,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from http.client import IncompleteRead
 from typing import Any, Protocol
 
 API_ROOT = "https://api.github.com"
@@ -233,7 +234,7 @@ class GitHubClient:
                     headers=headers,
                     timeout=self.timeout,
                 )
-            except (OSError, TimeoutError) as exc:
+            except (IncompleteRead, OSError, TimeoutError) as exc:
                 records.append(
                     RequestRecord(
                         stage=stage,
