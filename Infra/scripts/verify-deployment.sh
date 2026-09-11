@@ -140,6 +140,22 @@ run_all_checks() {
     skip schema "core 프로필이 이 호스트에 없다"
   fi
 
+  # --- Kafka topic contract --------------------------------------------------
+  if ! profile_enabled core; then
+    skip kafka-topics "core 프로필이 이 호스트에 없다"
+  elif ! running kafka; then
+    undetermined kafka-topics "kafka 컨테이너가 이 호스트에 없다"
+  else
+    if kafka_topic_check="$($SCRIPT_DIR/kafka-topics.sh --check 2>&1)"; then
+      ok kafka-topics "필수 topic과 partition 계약 일치"
+    else
+      needs_action kafka-topics "필수 topic 검증 실패" \
+        "service 호스트에서 확인·생성한다.
+    ENV_FILE=$ENV_FILE COMPOSE_OVERRIDE_FILE=$COMPOSE_OVERRIDE_FILE PROFILES=core \\
+      ./Infra/scripts/kafka-topics.sh"
+    fi
+  fi
+
   # --- CDC database objects ---------------------------------------------------
   # cdc_heartbeat comes from a migration; the role and the publication do not, because
   # they need a password substituted in and cannot be re-run. See db/README.md.
@@ -322,6 +338,34 @@ run_all_checks() {
       *)
         undetermined worker-ready "응답 코드 $ready_code" ;;
     esac
+  fi
+
+  # --- Repository analysis consumer -----------------------------------------
+  # This process has no HTTP endpoint. Its startup checks Kafka, PostgreSQL,
+  # repo_analysis.event_claim and tree-sitter grammars before entering the
+  # consumer loop, so a stable running state is its readiness contract.
+  if ! profile_enabled data; then
+    skip analysis-worker-ready "data 프로필이 이 호스트에 없다"
+  else
+    analysis_worker_id="$(service_container_id analysis-worker 2>/dev/null || true)"
+    if [[ -z "$analysis_worker_id" ]]; then
+      needs_action analysis-worker-ready "analysis-worker 컨테이너가 없다" \
+        "data profile 배포와 repo_analysis migration 적용 여부를 확인한다."
+    else
+      analysis_worker_status="$(docker inspect --format '{{.State.Status}}' "$analysis_worker_id" 2>/dev/null || true)"
+      analysis_worker_restarts="$(docker inspect --format '{{.RestartCount}}' "$analysis_worker_id" 2>/dev/null || true)"
+      if [[ "$analysis_worker_status" == "running" ]]; then
+        ok analysis-worker-ready "repository analysis consumer 실행 중 (restarts=${analysis_worker_restarts:-unknown})"
+      else
+        needs_action analysis-worker-ready \
+          "analysis-worker 상태=${analysis_worker_status:-unknown}, restarts=${analysis_worker_restarts:-unknown}" \
+          "로그를 확인한다.
+    docker logs --tail 100 $analysis_worker_id
+repo_analysis.event_claim 누락이면 service 호스트에서 실행한다.
+    ENV_FILE=.env.service COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml PROFILES=core \\
+      ./Infra/scripts/repo-analysis-migrate.sh"
+      fi
+    fi
   fi
 }
 

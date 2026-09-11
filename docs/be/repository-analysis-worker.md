@@ -533,22 +533,39 @@ fact마다 조회하는 방식은 모양이 틀렸다. 저장소 하나가 수�
 ## 배포 전
 
 ```bash
-# 1) 저장소 checkout에서 claim 테이블을 수동 적용한다.
-psql -v ON_ERROR_STOP=1 -f BE/src/main/resources/db/migrations/002_repo_analysis.sql
+# 1) service 호스트에서 자동 생성이 꺼진 Kafka topic을 준비한다.
+ENV_FILE=.env.service \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml \
+PROFILES=core \
+  ./Infra/scripts/kafka-topics.sh
 
-# 2) 기동
+# 2) claim 테이블을 적용한다. 재실행해도 안전하다.
+ENV_FILE=.env.service \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml \
+PROFILES=core \
+  ./Infra/scripts/repo-analysis-migrate.sh
+
+# 3) 기동
 PROFILES=core,data ./Infra/scripts/up.sh
 ```
 
 이 SQL은 Flyway의 `migration/`이나 C조 러너의 `c-compute/` 대상이 아니다. Worker
-이미지에도 자동으로 포함되지 않으므로 위 명령은 배포에 사용할 저장소 checkout에서
-analysis-worker 기동 전에 실행한다. `python -m worker.migrate`도 이 테이블을 만들지 않는다.
+이미지에도 자동으로 포함되지 않는다. `deploy.sh`는 service core가 준비된 직후 위
+helper를 실행하고, 그 뒤 data 호스트의 analysis-worker를 기동한다.
+`python -m worker.migrate`도 이 테이블을 만들지 않는다.
+
+Kafka broker는 자동 topic 생성을 비활성화했다. 배포는 요청·결과·DLQ topic을 각각
+3 partition으로 먼저 생성한다. 첫 Outbox event가 올 때까지 Debezium의 topic 생성을
+기다리면 빈 환경에서 consumer가 `topic not found` 상태로 남고 결과 발행도 보장되지
+않기 때문이다.
 
 Kafka·DB·claim 테이블·tree-sitter 문법 중 하나라도 없으면 **프로세스가 뜨기를 거부한다.** 환경변수 하나가
 빠져 조용히 놀고 있는 consumer는 조용한 토픽과 구분되지 않고, 그건 며칠 뒤에 발견된다.
 
 Compose healthcheck는 두지 않았다. 포트를 열지 않는 프로세스이고, 기동 자체가 이미
-의존성을 증명한다. `Infra/scripts/healthcheck.sh`의 점검 대상에도 넣지 않았다.
+의존성을 증명한다. 대신 `Infra/scripts/healthcheck.sh`와
+`verify-deployment.sh`가 컨테이너의 안정적인 `running` 상태를 확인해 재시작 루프를
+배포 성공으로 판정하지 않는다.
 
 ## 검증
 

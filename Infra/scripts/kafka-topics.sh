@@ -28,11 +28,11 @@
 # beginning is the design basis, so nothing may age out and nothing may be
 # compacted away by key.
 #
-# Not declared here: `gitjob.repository-analysis.requests.v1` (Debezium creates it)
-# and the Debezium
-# Connect internal topics. Those belong to S15P21E102-121 and the connector,
-# and -102 §3.2 explicitly leaves their ownership open. Creating them here
-# would settle a boundary this script has no standing to settle.
+# Repository analysis owns three explicit topics. Auto-create is disabled and
+# an empty deployment has no outbox event for Debezium to route yet, so relying
+# on first traffic leaves both the consumer and result producer unready. Three
+# partitions matches the connector's topic.creation.default.partitions setting
+# and the existing result-topic contract.
 #
 # Idempotent: `--create --if-not-exists` leaves an existing topic alone. It
 # does **not** change the partition count of a topic that already exists —
@@ -62,10 +62,9 @@ TOPICS=(
   "github.events:6"
   "so.raw:3"
   "jobs.collected:3"
-  # The analysis worker publishes here and the backend consumes it. Unlike the
-  # requests topic, no connector creates it, and auto-create is off. 3 partitions
-  # matches the requests topic so one analysis keeps a single degree of parallelism.
+  "gitjob.repository-analysis.requests.v1:3"
   "gitjob.repository-analysis.results.v1:3"
+  "gitjob.repository-analysis.dlq.v1:3"
 )
 
 RETENTION_MS="-1"

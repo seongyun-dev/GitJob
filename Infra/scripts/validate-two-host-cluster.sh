@@ -115,6 +115,16 @@ if grep -qE 'compose\.ec2-data\.yaml([^.-]|$)' Infra/scripts/deploy.sh; then
   exit 1
 fi
 
+# Repository analysis must not be started before its explicitly owned schema
+# exists, and a restart loop must make both health gates fail closed.
+grep -Fq 'PROFILES=core bash Infra/scripts/repo-analysis-migrate.sh' Infra/scripts/deploy.sh
+grep -Fq 'PROFILES=core bash Infra/scripts/kafka-topics.sh' Infra/scripts/deploy.sh
+grep -Fq 'spark-worker worker analysis-worker collector' Infra/scripts/healthcheck.sh
+grep -Fq 'analysis-worker-ready' Infra/scripts/verify-deployment.sh
+for topic in requests results dlq; do
+  grep -Fq "gitjob.repository-analysis.${topic}.v1:3" Infra/scripts/kafka-topics.sh
+done
+
 live_report="$({
   printf '%s\n' 'Live datanodes (4):'
   printf '%s\n' 'Name: 172.18.0.1:9866'

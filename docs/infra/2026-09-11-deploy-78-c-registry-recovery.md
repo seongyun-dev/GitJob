@@ -74,3 +74,21 @@ worker-ready    OK    C compute 준비됨
 mapping 58개의 내용이 동일한 것도 확인했다. 운영 DB의 alias와 `c_compute` migration은
 영속 상태이므로 #78과 같은 develop deploy를 다시 실행해도 이 준비 단계에서 실패하지
 않는다.
+
+## 6. 후속 서버 점검에서 발견한 repository analysis 누락
+
+후속 develop 배포 뒤 HDFS·Spark와 C Worker는 정상이었지만 `analysis-worker`가
+`repo_analysis.event_claim` 누락으로 재시작 중이었다. 이 SQL은 Python consumer가
+소유해 Spring Flyway 대상이 아니지만, 기존 배포는 문서의 수동 선행 조건을 실행하지
+않았고 두 health gate도 해당 컨테이너를 검사하지 않았다.
+
+후속 수정은 service core 기동 직후 `repo-analysis-migrate.sh`를 재실행 안전하게
+적용한 뒤 data 서비스를 기동하도록 순서를 고정했다. `healthcheck.sh`와
+`verify-deployment.sh`에도 `analysis-worker`의 안정적인 `running` 상태를 추가해 같은
+누락이 다시 생기면 배포가 즉시 실패하도록 했다.
+
+migration 적용 뒤 consumer process는 실행됐지만, 자동 topic 생성이 꺼진 broker에
+repository-analysis 요청·결과·DLQ topic이 하나도 없어 `topic not found`가 이어졌다.
+세 topic을 각각 3 partition으로 `kafka-topics.sh`의 선언 대상에 넣고, deploy가
+service core 직후 생성·검증하도록 보완했다. 최종 준비 검사는 topic 계약도 별도
+항목으로 판정한다.

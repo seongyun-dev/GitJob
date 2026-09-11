@@ -19,7 +19,7 @@ if profile_enabled data; then
   # The data profile expects all three logical DataNodes. During a rollout,
   # check the existing NameNode/DataNode-1 first, run the targeted DN2/DN3
   # up command, and invoke this full check only after both new nodes are up.
-  services+=(hdfs-namenode hdfs-datanode hdfs-datanode2 hdfs-datanode3 spark-master spark-worker worker collector)
+  services+=(hdfs-namenode hdfs-datanode hdfs-datanode2 hdfs-datanode3 spark-master spark-worker worker analysis-worker collector)
 fi
 if profile_enabled ci; then
   services+=(jenkins)
@@ -44,12 +44,13 @@ while (( SECONDS < deadline )); do
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container_id")"
     printf '%-14s %-10s %s\n' "$service" "$status" "$health"
 
-    if [[ "$status" == "exited" || "$status" == "dead" || "$health" == "unhealthy" ]]; then
+    if [[ "$status" != "running" || "$health" == "unhealthy" ]]; then
       printf '\n%s logs:\n' "$service" >&2
       compose logs --tail=80 "$service" >&2 || true
       exit 1
     fi
-    [[ "$health" == "healthy" ]] || all_healthy=false
+    [[ "$health" == "healthy" || "$health" == "no-healthcheck" ]] \
+      || all_healthy=false
   done
 
   if [[ "$all_healthy" == true ]]; then

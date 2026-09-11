@@ -301,6 +301,26 @@ start_service_core() {
      ENV_FILE=$(quote_for_remote "$service_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2.yaml) PROFILES=core HEALTHCHECK_TIMEOUT_SECONDS=180 bash Infra/scripts/healthcheck.sh"
 }
 
+prepare_repository_analysis_schema() {
+  echo "Preparing repository analysis schema on ${service_user}@${service_host}..."
+  remote_exec "$service_host" "$service_user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$service_path")
+     ENV_FILE=$(quote_for_remote "$service_env_file") \
+       COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2.yaml) \
+       PROFILES=core bash Infra/scripts/repo-analysis-migrate.sh"
+}
+
+prepare_kafka_topics() {
+  echo "Preparing Kafka topics on ${service_user}@${service_host}..."
+  remote_exec "$service_host" "$service_user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$service_path")
+     ENV_FILE=$(quote_for_remote "$service_env_file") \
+       COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2.yaml) \
+       PROFILES=core bash Infra/scripts/kafka-topics.sh"
+}
+
 # nginx is recreated explicitly at the end. Two separate reasons make a plain
 # `up -d` insufficient, and both were found the hard way on 2026-09-09.
 #
@@ -383,6 +403,8 @@ verify_deployment() {
 
 refresh_checkout "$service_host" "$service_user" "$service_path" "$deploy_ref"
 start_service_core
+prepare_kafka_topics
+prepare_repository_analysis_schema
 build_service_images
 start_service_app
 
