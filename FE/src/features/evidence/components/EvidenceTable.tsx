@@ -14,7 +14,8 @@ import type { ReactNode } from 'react'
  * 행은 만들지 않는다. 기술명·Level·파일 경로는 전부 조회 API가 주는 값이다.
  */
 const COLUMNS = ['기술', 'PERSONAL', 'REPOSITORY', '대표 EVIDENCE', ''] as const
-const TEMPLATE = 'minmax(0,206fr) 150px 110px minmax(0,319fr) 44px'
+/** 본문 행(`EvidenceRows`)이 같은 값을 써야 헤더와 밀리지 않으므로 내보낸다. */
+export const EVIDENCE_TABLE_TEMPLATE = 'minmax(0,206fr) 150px 110px minmax(0,319fr) 44px'
 
 export function EvidenceTable({ children }: { children: ReactNode }) {
   return (
@@ -25,7 +26,7 @@ export function EvidenceTable({ children }: { children: ReactNode }) {
       */}
       <div
         className="hidden gap-[18px] border-b border-brand-line px-[22px] py-3 text-[10.5px] font-extrabold tracking-[0.12em] text-brand-faint lg:grid"
-        style={{ gridTemplateColumns: TEMPLATE }}
+        style={{ gridTemplateColumns: EVIDENCE_TABLE_TEMPLATE }}
       >
         {COLUMNS.map((label, index) => (
           <span key={label === '' ? `col-${index}` : label} className="truncate">

@@ -11,6 +11,9 @@ import {
   useAnalysisRequests,
   useRepositoryList,
 } from '@/features/analysis/hooks/useRepositoryAnalysis'
+import { DesignMockBadge } from '@/mocks/DesignMockBadge'
+import { DESIGN_FIXTURES_ENABLED } from '@/mocks/designFixtures'
+import { REPOSITORY_LIST } from '@/mocks/fixtures/repositoryList'
 
 /**
  * S3 분석 대상 저장소 선택 · 티켓 S15P21E102-117.
@@ -89,7 +92,17 @@ export function RepositorySelectionPage() {
   const repositories = useRepositoryList(page)
   const submission = useAnalysisRequests()
 
-  const items = repositories.data?.items
+  /*
+   * 디자인 fixture가 켜져 있으면 목록을 서버에서 보지 않는다. 이 화면의 목록은 BE와
+   * GitHub OAuth 연결이 모두 살아 있어야 채워지는데, 레이아웃을 잡는 동안 둘을 띄워
+   * 두는 비용이 크다.
+   *
+   * `withDesignFixture`를 쓰지 않고 직접 분기하는 이유는 대체해야 하는 것이 값 하나가
+   * 아니라 **조회 상태 전체**이기 때문이다. 값만 갈아끼우면 fixture 목록과 오류 패널이
+   * 함께 보여 무엇을 보고 있는지 알 수 없다.
+   */
+  const items = DESIGN_FIXTURES_ENABLED ? REPOSITORY_LIST : repositories.data?.items
+  const showQueryState = !DESIGN_FIXTURES_ENABLED
   const selectedList = [...selected.values()]
 
   /** 선택 해제 시 그 저장소의 브랜치·결과까지 함께 정리한다. 남겨 두면 재선택 때 되살아난다. */
@@ -166,7 +179,10 @@ export function RepositorySelectionPage() {
   return (
     <div>
       <header className="max-w-[640px]">
-        <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">REPOSITORY</p>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">REPOSITORY</p>
+          <DesignMockBadge />
+        </div>
         <h1 className="mt-2 text-[26px] leading-[1.16] font-[750] tracking-[-0.045em] text-brand-ink sm:text-[30px] lg:text-[34px]">
           분석할 프로젝트를 선택해주세요
         </h1>
@@ -182,9 +198,11 @@ export function RepositorySelectionPage() {
             저장소 목록
           </h2>
 
-          {repositories.isPending && <LoadingPanel label="저장소 목록을 불러오는 중입니다." />}
+          {showQueryState && repositories.isPending && (
+            <LoadingPanel label="저장소 목록을 불러오는 중입니다." />
+          )}
 
-          {repositories.isError && (
+          {showQueryState && repositories.isError && (
             <ErrorPanel error={repositories.error} onRetry={() => void repositories.refetch()} />
           )}
 
@@ -207,12 +225,15 @@ export function RepositorySelectionPage() {
                   />
                 ))}
               </ul>
-              <Pagination
-                page={page}
-                hasNext={repositories.data?.hasNext ?? false}
-                disabled={repositories.isFetching}
-                onChange={setPage}
-              />
+              {/* fixture 목록에는 다음 페이지가 없다. 누를 수 없는 컨트롤을 두지 않는다. */}
+              {showQueryState && (
+                <Pagination
+                  page={page}
+                  hasNext={repositories.data?.hasNext ?? false}
+                  disabled={repositories.isFetching}
+                  onChange={setPage}
+                />
+              )}
             </>
           )}
         </section>

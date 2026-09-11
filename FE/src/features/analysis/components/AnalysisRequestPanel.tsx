@@ -126,7 +126,11 @@ export function AnalysisRequestPanel({
       <button type="button" onClick={onSubmit} disabled={!canSubmit} className={PRIMARY_CTA}>
         {isSubmitting
           ? '분석을 등록하는 중입니다…'
-          : submittable.length === 0
+          : repositories.length === 0
+            ? // 아직 아무것도 고르지 않은 상태. 아래 "모두 등록되었습니다"로 떨어지면
+              // 하지 않은 일을 했다고 말하게 된다.
+              '분석할 Repository를 고르세요'
+            : submittable.length === 0
             ? // 고른 저장소가 모두 접수된 상태. "0개 분석 시작"으로 읽히지 않게 문구를 바꾼다.
               '모두 등록되었습니다'
             : isRetry
