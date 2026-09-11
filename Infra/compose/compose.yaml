@@ -293,6 +293,21 @@ services:
       # DataNode this container cannot resolve. See `.env.example`.
       WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
       RAW_ROOT: ${RAW_ROOT:-hdfs:///gitjob/raw}
+    volumes:
+      # Collector resume state. The schedule passes
+      # `--cursor ../data/<site>/cursor.json` and WORKDIR is /app, so both the
+      # cursor and the identity store beside it land under /data.
+      #
+      # Without this the container has no mounts at all: the cursor lives on
+      # the container filesystem and dies with it, every run starts with
+      # `ids_known_before_run=0`, and the same posting is collected again. The
+      # 2026-09-08..11 manifests show that happening on every first run of a
+      # day, at 12.8% of all records.
+      #
+      # A named volume rather than a bind mount, matching postgres-data and
+      # kafka-data: the state belongs to the deployment, not to a host path
+      # that has to exist and be writable by uid 1000 first.
+      - collector-state:/data
     expose:
       - "8080"
     healthcheck:
@@ -764,6 +779,10 @@ volumes:
   postgres-data:
   redis-data:
   kafka-data:
+  # Per-source collector cursors and posting-identity stores, under
+  # /data/<site>/. Losing this re-collects postings already held in HDFS Raw;
+  # it does not lose the postings themselves.
+  collector-state:
   hdfs-namenode-data:
   hdfs-datanode-data:
   hdfs-datanode2-data:

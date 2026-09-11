@@ -82,6 +82,11 @@ from job.collector import (
     pipeline_run_id_for,
 )
 from job.collector.http import BlockedError, HttpError, PoliteHttpClient
+from job.collector.identity import (
+    Decision,
+    PostingIdentityStore,
+    identity_path_for,
+)
 from job.collector.raw_sink import sink_from_env, write_upload_record
 from job.contracts import (
     JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
@@ -244,6 +249,11 @@ class CrawlResult:
     # simply gets no resume state.
     cursor: Cursor | None = None
     cursor_path: Path | None = None
+    # Cross-run identity, persisted next to the cursor and for the same reason:
+    # only once the batch is on disk. The cursor forgets its ids the moment the
+    # run's date range moves; this store carries no range and does not.
+    identity: PostingIdentityStore | None = None
+    identity_path: Path | None = None
 
 
 ProgressCallback = Callable[[str], None]
@@ -332,6 +342,12 @@ class CareerCrawler:
         cursor = Cursor.load(self.config.cursor_path, self.config)
         already = set(cursor.collected_ids)
         resumed_count = len(already)
+        identity_path = identity_path_for(self.config.cursor_path)
+        identity = PostingIdentityStore.load(identity_path, source_site=SOURCE_SITE)
+        identity_known_before = len(identity)
+        new_postings = 0
+        updated_changed_content = 0
+        skipped_same_content = 0
 
         records: list[JobPostingInput] = []
         body_status_counts: Counter[str] = Counter()
@@ -426,12 +442,34 @@ class CareerCrawler:
                         continue
 
                     assert record is not None
+
+                    # The cursor above only knows ids, so it cannot tell a
+                    # posting that was re-listed unchanged from one whose body
+                    # moved. That needs the content hash, and the hash needs
+                    # the detail page — so this decision is made after the
+                    # fetch, not at the listing.
+                    decision = identity.record(
+                        item.source_posting_id, record.content_hash
+                    )
+
+                    # The cursor claims the posting either way: within this
+                    # date range it has been dealt with, and re-fetching it in
+                    # a resumed run would only reach the same conclusion.
+                    already.add(item.source_posting_id)
+                    cursor.collected_ids.append(item.source_posting_id)
+
+                    if decision is Decision.UNCHANGED:
+                        skipped_same_content += 1
+                        continue
+                    if decision is Decision.CHANGED:
+                        updated_changed_content += 1
+                    else:
+                        new_postings += 1
+
                     records.append(record)
                     body_status_counts[record.body_status.value] += 1
                     technology_mention_count += len(record.technology_mentions)
                     category_counts[category] += 1
-                    already.add(item.source_posting_id)
-                    cursor.collected_ids.append(item.source_posting_id)
 
                 # Advanced in memory only. Persisting here is what made an
                 # interrupted run lose postings permanently — the cursor
@@ -520,6 +558,11 @@ class CareerCrawler:
                 "records_by_category": dict(sorted(category_counts.items())),
                 "skipped_out_of_range": skipped_out_of_range,
                 "skipped_already_collected": skipped_resumed,
+                # `records` is new + updated; a skipped_same_content posting was
+                # fetched and judged, not collected, so it is counted apart.
+                "new_postings": new_postings,
+                "updated_changed_content": updated_changed_content,
+                "skipped_same_content": skipped_same_content,
                 "skipped_undated": skipped_undated,
                 "detail_errors": len(detail_errors),
                 "invalid_records": len(invalid_records),
@@ -546,6 +589,13 @@ class CareerCrawler:
                 "ids_known_before_run": resumed_count,
                 "ids_known_after_run": len(already),
             },
+            # Separate from `resume` on purpose: resume is scoped to this run's
+            # date range and resets with it, identity is not and does not.
+            "identity": {
+                "identity_path": str(identity_path) if identity_path else None,
+                "postings_known_before_run": identity_known_before,
+                "postings_known_after_run": len(identity),
+            },
             "stopped_reason": stopped_reason,
             "detail_error_samples": detail_errors[:20],
             "invalid_record_samples": invalid_records[:20],
@@ -555,6 +605,8 @@ class CareerCrawler:
             manifest=manifest,
             cursor=cursor,
             cursor_path=self.config.cursor_path,
+            identity=identity,
+            identity_path=identity_path,
         )
 
     def _in_range(self, posted_on: date) -> bool:
@@ -686,6 +738,9 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
     # trusts the cursor and skips them without reporting anything.
     if result.cursor is not None:
         result.cursor.save(result.cursor_path)
+    # Same rule, same reason: a posting is only "seen" once its batch exists.
+    if result.identity is not None:
+        result.identity.save(result.identity_path)
 
     return {"json": json_path, "csv": csv_path, "manifest": manifest_path}
 

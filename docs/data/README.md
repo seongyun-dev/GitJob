@@ -1146,6 +1146,15 @@ C조 범위다.
 - 범위: pinned commit과 실제 Git tree SHA 분리, cache/checkpoint metadata-only repair, 실행 provenance 보강
 - 상세: [Repo Snapshot tree_sha lineage correction](2026-09-08-repo-snapshot-tree-sha-correction.md)
 
+## 채용공고 회차 간 중복과 posting identity
+
+- Jira: `S15P21E102-215`
+- 측정: 2026-09-11 운영 HDFS 전수 — 레코드 16,394건 중 **2,102건(12.8%)이 재수집분**
+- 원인: `Cursor`가 run의 date range에 묶여 있어 날짜가 바뀌면 이미 본 id를 폐기(`ids_known_before_run=0`), 그리고 collector 컨테이너에 마운트가 없어 커서 자체가 유실
+- 판정: identity는 `source_site` + `source_posting_id`, `content_hash`는 변경 감지 전용. 최초 `NEW` / 동일 `UNCHANGED`(미방출) / 변경 `CHANGED`(update 방출)
+- 범위: `/data/<site>/identity.json`(range 무관) 추가, collector에 `collector-state` 볼륨, HDFS Raw는 불변 유지
+- 상세: [채용공고 회차 간 중복과 posting identity store](2026-09-11-collector-posting-identity.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
