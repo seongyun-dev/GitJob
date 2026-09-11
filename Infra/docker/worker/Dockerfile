@@ -39,6 +39,13 @@ COPY BE/src/main/resources/db/c-compute/004_registry_review_source_identity.sql 
 ENV C_REGISTRY_REPOSITORY_ROOT=/opt/gitjob-provenance
 RUN python -c "from pathlib import Path; from registry.contracts import load_registry; load_registry(Path('registry/data/technology_registry_20260911_1.json'), repository_root=Path('/opt/gitjob-provenance'))"
 
+# Collector resume state (`collector-state:/data`). Created here, before the
+# volume is ever mounted, because Docker seeds a fresh named volume from the
+# image's directory — ownership included. Without this the volume is created
+# root-owned and `appuser` cannot write the cursor or the identity store, so
+# every run starts with an empty id set and re-collects postings.
+RUN mkdir -p /data && chown appuser:appuser /data
+
 EXPOSE 8080
 USER appuser
 CMD ["python", "-m", "worker"]
