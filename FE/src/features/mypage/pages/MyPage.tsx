@@ -4,7 +4,7 @@ import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * 마이페이지 · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `14 My Page`).
+ * 마이페이지 · 티켓 S15P21E102-212 (확정 디자인 `Final v2`의 `14 My Page`).
  *
  * v2 구조: hero(+재분석 CTA) → `372 / 956` split → 이력 표 → 각주.
  * 다른 화면과 달리 **패널이 왼쪽**이다. 계정·연결이 맥락이고 이력이 본문이기 때문이다.
@@ -119,6 +119,18 @@ export function MyPage() {
                 </Link>
               }
             />
+            {/*
+              티켓 212 · Final v2 `14 My Page`가 최근 분석 카드에 두는 이동 두 개.
+              분석 요약 값과 달리 목적지 화면이 이미 있어 데이터 없이도 이동한다.
+            */}
+            <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <Link to="/evidence" className="rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]">
+                My Evidence 열기
+              </Link>
+              <Link to="/jobs" className="rounded-xl border border-brand-line bg-white px-5 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active">
+                공고 매칭
+              </Link>
+            </div>
           </DataRegion>
 
           <DataRegion

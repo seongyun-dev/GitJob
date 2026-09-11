@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { githubLoginUrl } from '@/features/auth/api/authUrls'
 import { HERO_HIGHLIGHTS } from '@/features/landing/landingPreviewData'
+import { handleHashLinkClick } from '@/features/landing/scrollToHash'
 
 /**
  * Hero 좌측 열. 카피와 CTA만 담당하고 미리보기 패널은 ProductPreview가 그린다.
@@ -50,11 +51,17 @@ export function HeroSection() {
           GitHub 연동 시작
         </a>
         {/*
-          둘러보기의 목적지 화면(S4 공고 매칭)은 아직 라우트가 없다.
-          가짜 경로로 보내 404를 띄우는 대신 같은 화면의 미리보기로 스크롤한다.
+          티켓 212에서 목적지를 소개 섹션으로 바꿨다. 191은 "둘러보기의 목적지 화면(S4
+          공고 매칭)은 아직 라우트가 없다"며 같은 화면의 미리보기 패널로 스크롤했는데,
+          그 패널은 바로 옆에 이미 보이고 있어서 눌러도 움직이지 않는 것처럼 보였다.
+
+          이제 아래에 소개 섹션이 있으므로 그 첫 장으로 내려간다. `/jobs`로 보내지
+          않는 이유는 둘러보기가 로그인 전 동작이기 때문이다 — 공고 매칭 화면은 분석
+          결과가 있어야 채워진다.
         */}
         <a
-          href="#landing-preview"
+          href="#service-intro"
+          onClick={handleHashLinkClick}
           className="rounded-xl border border-white/35 bg-white/10 px-6 py-4 text-[15px] font-bold text-white backdrop-blur-[14px] transition-[background-color,transform] duration-200 hover:-translate-y-px hover:bg-white/20 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
         >
           서비스 둘러보기

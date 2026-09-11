@@ -5,7 +5,7 @@ import { StatStrip } from '@/shared/ui/StatStrip'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * 추천 기술 상세 · 티켓 S15P21E102-204
+ * 추천 기술 상세 · 티켓 S15P21E102-212
  * (확정 디자인 `Final v2`의 `11 Recommended Technology Detail`).
  *
  * v2 구조: hero(+Personal / Target / What-if 3축) → `956/372` split →
@@ -88,9 +88,41 @@ export function TechnologyDetailPage() {
               />
             </DataRegion>
           ))}
+
+          {/*
+            v2가 04 섹션 뒤에 두는 안내와 이동. "Task를 완료해도 Level은 바뀌지
+            않는다"는 이 제품의 핵심 규칙이라 추천 근거 값이 없어도 문장을 남긴다.
+            재분석 진입은 마이페이지가 가지고 있다.
+          */}
+          <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+            <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
+              AFTER IMPLEMENTATION
+            </p>
+            <p className="mt-2 text-[13px] leading-[1.7] text-brand-muted">
+              Evidence는 자동으로 올라가지 않습니다. 구현을 GitHub에 Push한 뒤 다시 분석해야
+              본인 Commit 근거로 판정됩니다.
+            </p>
+            <Link to="/mypage" className="mt-4 block rounded-xl border border-brand-line bg-white px-5 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active">
+              구현 후 GitHub 다시 분석
+            </Link>
+          </section>
         </div>
 
         <div className="grid gap-4">
+          {/*
+            v2는 What-if 수치(`12 → 27 +15`)와 함께 이동을 둔다. 수치는 C조 계산
+            결과라 옮기지 않고, 값에 기대지 않는 이동만 남긴다.
+          */}
+          <DataRegion
+            eyebrow="WHAT-IF"
+            title="확보하면 무엇이 달라지나"
+            hint="목표 Level을 가정했을 때 새로 충족되는 공고를 봅니다."
+          >
+            <Link to="/what-if" className="block rounded-xl border border-brand-line bg-white px-5 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active">
+              새로 충족되는 공고 보기
+            </Link>
+          </DataRegion>
+
           <DataRegion
             eyebrow="TREND"
             title="이 기술의 트렌드"

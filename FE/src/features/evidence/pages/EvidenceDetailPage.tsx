@@ -4,7 +4,7 @@ import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * Evidence 상세 · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `09 Evidence Detail`).
+ * Evidence 상세 · 티켓 S15P21E102-212 (확정 디자인 `Final v2`의 `09 Evidence Detail`).
  *
  * v2 구조: 목록 복귀 링크 → hero → Level 2칸(Personal / Repository) →
  * `956/372` split(근거 표 | 다음 Level 안내) → 각주.
@@ -84,17 +84,37 @@ export function EvidenceDetailPage() {
           </div>
         </div>
 
-        <DataRegion
-          eyebrow="NEXT LEVEL"
-          title="다음 Level 판정 기준"
-          hint="어떤 근거가 더 확인되면 Level이 올라가는지 표시됩니다."
-        >
-          <StateCard
-            kind="PREPARING"
-            title="판정 기준 준비 중"
-            description="기준은 기술마다 달라 등급 정책과 조회 API가 준비된 뒤 표시합니다. 화면에서 만들어내지 않습니다."
-          />
-        </DataRegion>
+        {/* 오른쪽 열이 둘로 늘어 `gj-split`의 한 칸 안에서 다시 쌓는다. */}
+        <div className="grid gap-4">
+          <DataRegion
+            eyebrow="NEXT LEVEL"
+            title="다음 Level 판정 기준"
+            hint="어떤 근거가 더 확인되면 Level이 올라가는지 표시됩니다."
+          >
+            <StateCard
+              kind="PREPARING"
+              title="판정 기준 준비 중"
+              description="기준은 기술마다 달라 등급 정책과 조회 API가 준비된 뒤 표시합니다. 화면에서 만들어내지 않습니다."
+            />
+          </DataRegion>
+
+          {/*
+            v2가 근거 표 옆에 두는 `Kafka 추천 기술 상세 →`. 기술명은 조회 API가
+            주는 값이라 붙이지 않는다. `techId`는 실제 route param이라 그대로 넘긴다.
+          */}
+          <DataRegion
+            eyebrow="NEXT SKILL"
+            title="추천 기술 상세"
+            hint="이 기술을 다음 Level로 올리는 학습 안내로 이동합니다."
+          >
+            <Link
+              to={techId === undefined ? '/recommendations' : `/technologies/${techId}`}
+              className="block rounded-xl border border-brand-line bg-white px-5 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+            >
+              추천 기술 상세 →
+            </Link>
+          </DataRegion>
+        </div>
       </div>
 
       <PageFootnote>

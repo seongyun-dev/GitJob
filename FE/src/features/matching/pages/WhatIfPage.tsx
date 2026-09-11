@@ -4,7 +4,7 @@ import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * What-if · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `03 What-if`).
+ * What-if · 티켓 S15P21E102-212 (확정 디자인 `Final v2`의 `03 What-if`).
  *
  * v2 구조: hero → 후보 순위 칩 → `571 / 757` split(가정 카드 | NEWLY MATCHED) → 각주.
  *
@@ -79,6 +79,13 @@ export function WhatIfPage() {
             description="어떤 공고가 새로 충족되는지, 그 공고가 어떤 기술을 요구하는지 함께 표시합니다."
           />
         </DataRegion>
+      </div>
+
+      {/* v2가 각주 위에 두는 복귀 이동. 가정을 접고 전체 공고로 돌아간다. */}
+      <div className="mt-4 flex justify-end">
+        <Link to="/jobs" className="rounded-xl border border-brand-line bg-white px-5 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active">
+          전체 공고로 돌아가기
+        </Link>
       </div>
 
       <PageFootnote>

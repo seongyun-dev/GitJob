@@ -6,7 +6,7 @@ import { StatStrip } from '@/shared/ui/StatStrip'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * 공고 매칭 · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `02 Job Match`).
+ * 공고 매칭 · 티켓 S15P21E102-212 (확정 디자인 `Final v2`의 `02 Job Match`).
  *
  * v2 구조: hero(+공고 Snapshot) → 필터 레일 `260 / 1082` → 지표 3연(실측 `332.7 x 3`)
  * → `956/372` split(공고별 기술요건 대조 | 요약 패널) → 각주.
@@ -93,6 +93,13 @@ export function JobMatchPage() {
                   className="mt-4 block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
                 >
                   부족한 기술 자세히 보기
+                </Link>
+                {/* v2는 Gap 보기 바로 아래에 추천 화면 이동을 주 버튼으로 둔다. */}
+                <Link
+                  to="/recommendations"
+                  className="mt-2.5 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
+                >
+                  다음 기술 추천 보기
                 </Link>
               </DataRegion>
             </div>

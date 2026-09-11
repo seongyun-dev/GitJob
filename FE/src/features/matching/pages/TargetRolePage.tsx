@@ -4,7 +4,7 @@ import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
- * 목표 직무 선택 · 티켓 S15P21E102-204
+ * 목표 직무 선택 · 티켓 S15P21E102-212
  * (확정 디자인 `Final v2`의 `16 Target Role Selection`).
  *
  * v2 구조: hero(+우측 분석 요약) → 직무 카드 3열(실측 `437.3 x 3`, gap 16) → 각주.
@@ -55,6 +55,25 @@ export function TargetRolePage() {
           title="요구 기술 대조"
           description="자주 요구되는 기술과 내 Evidence를 기술 단위로 나란히 놓아 어느 직무가 가까운지 비교합니다."
         />
+      </div>
+
+      {/*
+        v2가 카드 아래 두는 직무 확정 바. 직무 이름과 공고 수는 조회 API가 주지만
+        다음 화면으로 가는 이동은 그 값과 무관하다. 직무를 고르지 않아도 공고 매칭
+        화면에서 바꿀 수 있으므로(아래 문구가 그렇게 약속한다) 이동을 막지 않는다.
+      */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-[18px] border border-brand-line bg-white px-[22px] py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+        <div className="min-w-0">
+          <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
+            SELECTED ROLE
+          </p>
+          <p className="mt-1.5 text-[13.5px] leading-[1.6] text-brand-muted">
+            언제든 공고 매칭 화면에서 직무를 바꿀 수 있습니다.
+          </p>
+        </div>
+        <Link to="/jobs" className="shrink-0 rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]">
+          공고 매칭으로
+        </Link>
       </div>
 
       <PageFootnote>
