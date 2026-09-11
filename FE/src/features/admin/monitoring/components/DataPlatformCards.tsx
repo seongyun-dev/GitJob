@@ -1,6 +1,6 @@
 import type { MonitoringOverview } from '@/features/admin/monitoring/api/monitoringApi'
 import type { CoverageState } from '@/features/admin/monitoring/model/monitoringState'
-import { Pill } from '@/shared/ui/Pill'
+import { AdminBadge } from '@/features/admin/monitoring/ui/StatusBadge'
 
 /**
  * Data Platform · 티켓 S15P21E102-210.
@@ -15,6 +15,10 @@ import { Pill } from '@/shared/ui/Pill'
  *
  * 숫자 자리에 `N/A`를 두고 값을 만들지 않는다. 확정 디자인도 같은 표기이며, 그 자리에
  * 0이나 그럴듯한 수치를 넣으면 운영자는 파이프라인이 동작한다고 읽는다.
+ *
+ * 카드는 디자인의 3장이 아니라 4장이다 — `coverage`에 Kafka topic 축이 있다. 배치는
+ * `index.css` `.gj-mon-platforms`(1280부터 4열)로, 3열 격자에 넣어 한 장이 고아가 되던
+ * 것을 고쳤다. 카드 치수는 디자인의 padding 20px 22px.
  */
 
 /**
@@ -57,9 +61,9 @@ const PLATFORMS: readonly {
 
 function CoverageBadge({ state }: { state: CoverageState }) {
   if (state === 'COLLECTED') {
-    return <Pill tone="success">COLLECTED</Pill>
+    return <AdminBadge tone="success">COLLECTED</AdminBadge>
   }
-  return <Pill tone="neutral">PREPARING</Pill>
+  return <AdminBadge tone="neutral">PREPARING</AdminBadge>
 }
 
 export function DataPlatformCards({
@@ -78,13 +82,13 @@ export function DataPlatformCards({
         </span>
       </div>
 
-      <div className="gj-cards">
+      <div className="gj-mon-platforms">
         {PLATFORMS.map((platform) => {
           const state = coverage[platform.key]
           return (
             <div
               key={platform.key}
-              className="rounded-[18px] border border-brand-line bg-white px-5 py-4 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
+              className="rounded-[18px] border border-brand-line bg-white px-[22px] py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
             >
               <div className="flex items-center justify-between gap-2.5">
                 <span className="text-[14px] font-[750] text-brand-ink">{platform.name}</span>

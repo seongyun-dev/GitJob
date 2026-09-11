@@ -226,6 +226,20 @@ services:
       ANALYSIS_OUTBOX_SEND_TIMEOUT: ${ANALYSIS_OUTBOX_SEND_TIMEOUT:-10s}
       ANALYSIS_OUTBOX_RETRY_DELAY: ${ANALYSIS_OUTBOX_RETRY_DELAY:-5s}
       ANALYSIS_OUTBOX_MAX_RETRY_DELAY: ${ANALYSIS_OUTBOX_MAX_RETRY_DELAY:-5m}
+      # Admin monitoring reads Prometheus server-side; the browser never calls it.
+      # Without these the container cannot see the values in the env file, and
+      # application.yaml resolves base-url to "" — which the service reports as
+      # NOT_CONFIGURED, indistinguishable on screen from a deliberate opt-out.
+      # Left empty by default: the address is on the admin network and a private
+      # IP baked into the image silently points at the wrong host elsewhere.
+      PROMETHEUS_BASE_URL: ${PROMETHEUS_BASE_URL:-}
+      PROMETHEUS_TIMEOUT: ${PROMETHEUS_TIMEOUT:-3s}
+      PROMETHEUS_SCRAPE_INTERVAL: ${PROMETHEUS_SCRAPE_INTERVAL:-15s}
+      PROMETHEUS_CLUSTER: ${PROMETHEUS_CLUSTER:-gitjob}
+      # Quick Access links. Served in the response, not bundled into the frontend,
+      # so the admin hosts stay out of a public JS bundle.
+      GRAFANA_ADMIN_URL: ${GRAFANA_ADMIN_URL:-}
+      PROMETHEUS_ADMIN_URL: ${PROMETHEUS_ADMIN_URL:-}
     expose:
       - "8080"
     healthcheck:

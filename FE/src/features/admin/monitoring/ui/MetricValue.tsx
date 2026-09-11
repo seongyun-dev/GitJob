@@ -28,6 +28,22 @@ const LEVEL_BAR: Readonly<Record<UsageLevel, string>> = {
  * `text`가 `null`이면 값을 얻지 못한 것이다. 그때는 임계치 색을 쓰지 않는다 — 회색이
  * "모른다"를 뜻하고, 파란색은 "정상 범위"를 뜻하기 때문이다.
  */
+/**
+ * 확정 디자인 `Admin Monitoring v2`의 숫자 크기 단계.
+ *   sm 18 — Infra Map 서버 카드의 CPU/MEM
+ *   md 22 — Server Detail 셀
+ *   card 26 — 상단 요약 카드
+ *   lg 28 — CPU·Memory 차트 범례
+ *   hero 44 — Disk Capacity 합계 (letter-spacing -.05em · line-height 1)
+ */
+const SIZE_CLASS = {
+  sm: 'text-[18px]',
+  md: 'text-[22px]',
+  card: 'text-[26px] leading-[1.1]',
+  lg: 'text-[28px]',
+  hero: 'text-[44px] leading-none tracking-[-0.05em]',
+} as const
+
 export function MetricValue({
   text,
   level = 'NORMAL',
@@ -36,11 +52,10 @@ export function MetricValue({
 }: {
   text: string | null
   level?: UsageLevel
-  size?: 'sm' | 'md' | 'lg'
+  size?: keyof typeof SIZE_CLASS
   unit?: string
 }) {
-  const sizeClass =
-    size === 'lg' ? 'text-[28px]' : size === 'md' ? 'text-[22px]' : 'text-[18px]'
+  const sizeClass = SIZE_CLASS[size]
 
   if (text === null) {
     return (

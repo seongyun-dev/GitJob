@@ -23,10 +23,20 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * REST 요청의 세션 토큰을 검증해 SecurityContext에 인증 사용자를 설정한다.
  * 토큰은 HttpOnly 쿠키 {@code SESSION}에서 읽고, 없을 때만 Bearer 헤더를 본다.
  *
- * <p>토큰이 없는 요청은 여기서 거절하지 않고 통과시킨다. 공개 경로는 그대로
- * 허용되고, 인증 필요 경로는 SecurityConfig의 {@code authenticated()} 규칙이
- * 거절한다. 반면 토큰이 있는데 유효하지 않으면 경로와 무관하게 즉시 401로
- * 응답해, 위조 토큰이 공개 경로를 통해 조용히 무시되는 상황을 막는다.</p>
+ * <p>이 필터는 <b>거절하지 않는다.</b> 토큰이 없으면 그대로 통과시키고, 토큰이 있는데
+ * 만료·위조·형식 오류로 유효하지 않으면 SecurityContext를 비운 채 통과시킨다 — 즉
+ * 익명 요청과 같아진다. 허용 여부는 SecurityConfig의 인가 규칙이 정한다. 공개 경로는
+ * 열리고, {@code authenticated()}·{@code hasRole()} 경로는 {@code ExceptionTranslationFilter}가
+ * {@link JwtAuthenticationEntryPoint}로 401을 내리므로 응답 형태는 이전과 같다.</p>
+ *
+ * <p>이전에는 무효 토큰을 경로와 무관하게 여기서 즉시 401로 끊었다(위조 토큰이 공개
+ * 경로에서 조용히 무시되는 것을 막으려는 의도). 그러나 공개 경로에서 무시된 위조 토큰은
+ * 아무 권한도 얻지 못하므로 막는 것이 없었고, 대신 <b>만료된 세션 쿠키를 가진 사용자가
+ * 로그인 진입점({@code /api/v1/auth/github})조차 401을 받아 재로그인이 막혔다</b>
+ * (2026-09-11 로컬 재현). 세션 수명이 30분이고 로그아웃 API가 없어, 탭을 열어 둔 사용자는
+ * 쿠키를 손으로 지우기 전까지 서비스에 돌아올 수 없었다. 공개 모니터링 화면도 같은 이유로
+ * 열리지 않았다. 브라우저가 만료 쿠키를 자동으로 실어 보내는 것은 정상 동작이므로, 서버가
+ * 그것을 "무효 토큰"이 아니라 "없는 토큰"처럼 다루는 편이 맞다.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -37,16 +47,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String TOKEN_REFRESH_PATH = "/api/v1/auth/refresh";
 
     private final JwtTokenProvider jwtTokenProvider;
-    private final JwtAuthenticationEntryPoint authenticationEntryPoint;
 
     /**
      * 토큰 갱신 요청은 이 필터를 건너뛴다 (S15P11E207-1715).
      *
-     * <p>갱신은 Access Token이 <b>이미 만료된 상태</b>에서 호출된다. 이 필터는
-     * 토큰이 있는데 유효하지 않으면 경로와 무관하게 401로 끊으므로, 건너뛰지
-     * 않으면 만료된 Header가 함께 실려온 갱신 요청이 Controller에 닿지 못한다.
-     * 클라이언트가 Header를 빼주기를 기대하는 것보다 서버에서 보장하는 편이
-     * 안전하다. 인증은 HttpOnly 쿠키의 Refresh Token으로 대신한다.</p>
+     * <p>갱신은 Access Token이 <b>이미 만료된 상태</b>에서 호출된다. 필터가 무효 토큰을
+     * 익명으로 통과시키게 바뀐 뒤에는 건너뛰지 않아도 Controller에 닿지만, 갱신 경로에서
+     * 만료 토큰을 파싱하는 일 자체가 불필요하므로 그대로 둔다. 인증은 HttpOnly 쿠키의
+     * Refresh Token으로 대신한다.</p>
      */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -112,9 +120,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // 정리는 TraceIdFilter가 요청 종료 시 일괄 수행한다(S15P11E207-1582).
             MDC.put(TraceIdFilter.USER_ID, principal.userId());
         } catch (JwtException | IllegalArgumentException exception) {
+            // 무효 토큰은 익명으로 다룬다. 여기서 401을 커밋하지 않는다 — 허용 여부는 뒤의
+            // 인가 규칙이 정하고, 거절될 때는 ExceptionTranslationFilter가 같은 EntryPoint로
+            // 같은 봉투를 내린다. 원인(만료·위조·blacklist)은 남기지 않는다: 토큰 내용이
+            // 섞일 수 있고, 공격자에게 어떤 검증에서 걸렸는지 알려 줄 이유도 없다.
             SecurityContextHolder.clearContext();
-            authenticationEntryPoint.commence(request, response, null);
-            return;
         }
 
         filterChain.doFilter(request, response);

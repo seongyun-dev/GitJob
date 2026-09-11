@@ -58,7 +58,7 @@ function ExternalLink({
 
 export function QuickAccessPanel({ links }: { links: MonitoringOverview['links'] }) {
   return (
-    <aside className="rounded-[18px] border border-brand-line bg-white p-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+    <aside className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
       <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
         QUICK ACCESS
       </p>

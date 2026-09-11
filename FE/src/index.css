@@ -56,6 +56,13 @@
   --breakpoint-3xl: 1920px;
 }
 
+/* Infra Map의 Kafka 스트림 점선 흐름. 확정 디자인 `Admin Monitoring v2`의 `gj-flow` 그대로. */
+@keyframes gj-flow {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+
 html,
 body,
 #root {
@@ -285,11 +292,75 @@ body,
   @media (width >= 1024px) {
     .gj-mon-charts {
       grid-template-columns: 1.35fr 1fr;
-      gap: 14px;
+      gap: 12px;
     }
     .gj-mon-detail {
       grid-template-columns: 1fr 1.35fr;
-      gap: 14px;
+      gap: 12px;
+    }
+  }
+
+  /*
+   * 관리자 화면 셸 · 티켓 210.
+   *
+   * `.gj-shell`(1520px)은 확정 디자인 v2의 로그인 이후 화면 값이다. 관리자 디자인
+   * `GitJob Admin Monitoring v2`는 본문을 `max-width:1328px · padding 40px 48px 96px`로
+   * 따로 잡는다. 앱 셸을 그대로 쓰면 1440~1920에서 카드가 디자인보다 100~190px 넓게
+   * 늘어나 비율이 다 달라진다(2026-09-11 디자인 대조). 패딩 단계는 `.gj-shell`과 같다.
+   */
+  .gj-shell-admin {
+    width: 100%;
+    margin-inline: auto;
+    max-width: 1328px;
+    padding: 1.75rem 1.25rem 3.5rem;
+  }
+  @media (width >= 640px) {
+    .gj-shell-admin {
+      padding-inline: 2rem;
+    }
+  }
+  @media (width >= 1024px) {
+    .gj-shell-admin {
+      padding: 2.5rem 3rem 6rem;
+    }
+  }
+
+  /*
+   * 관리자 요약 카드 행 · 티켓 210. 디자인 `repeat(4,1fr) gap 12px`.
+   * `.gj-stats`(gap 16)는 evidence·jobmatch가 쓰는 공용 값이라 건드리지 않는다.
+   * 카드 수는 topology config가 정하므로 4를 박지 않고 auto-fit으로 받는다 — 서버가
+   * 3대가 되어 5장이 되면 한 줄에 못 들어가고 접힌다.
+   */
+  .gj-mon-stats {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  @media (width >= 1024px) {
+    .gj-mon-stats {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+  }
+
+  /*
+   * Data Platform 카드 · 티켓 210. 디자인은 3장 `repeat(3,1fr)`인데 BE `coverage`가
+   * 4개 축(HDFS·Spark·Collector·Kafka topic)을 주므로 4장이다. `.gj-cards`의 3열에
+   * 넣으면 한 장이 다음 줄에 홀로 남았다. 본문 왼쪽 열(≈844px)에 4장이 들어가는
+   * 1280부터 4열, 그 아래는 2열.
+   */
+  .gj-mon-platforms {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (width >= 640px) {
+    .gj-mon-platforms {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (width >= 1280px) {
+    .gj-mon-platforms {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
   }
 

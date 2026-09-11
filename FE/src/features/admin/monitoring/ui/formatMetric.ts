@@ -22,6 +22,17 @@ export function formatPercent(value: number | null): string | null {
   return `${Math.round(value)}%`
 }
 
+/**
+ * `23.4` → `23`. 단위 없이 숫자만. 디자인의 Server Detail이 `23` 크게 · `%` 작게 나눠
+ * 그리므로, 그 자리에서는 `MetricValue`의 `unit`으로 `%`를 따로 붙인다.
+ */
+export function percentNumber(value: number | null): string | null {
+  if (value === null) {
+    return null
+  }
+  return String(Math.round(value))
+}
+
 /** `216000000000, 400000000000` → `216 / 400 GB`. 한쪽이라도 없으면 `null`. */
 export function formatCapacity(
   usedBytes: number | null,

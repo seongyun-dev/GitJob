@@ -65,6 +65,10 @@ const ERROR_ACTIONS: Readonly<Record<string, ErrorAction>> = {
   'AUTH-400-2': 'REDIRECT_TO_ONBOARDING',
   'AUTH-400-1': 'SHOW_GENERIC_ERROR',
 
+  // 인가 — 로그인은 됐지만 관리자가 아니다. 권한은 DB에서 부여하므로 재로그인·재시도로는
+  // 풀리지 않는다. 세션 만료(AUTH-401-*)와 같은 안내를 하면 사용자가 없는 관리자 로그인을 찾는다.
+  'AUTH-403-2': 'SHOW_FORBIDDEN',
+
   // GitHub 연결 — 권한을 다시 받아야 한다
   'AUTH-403-3': 'RECONNECT_GITHUB',
   'AUTH-403-4': 'RECONNECT_GITHUB',

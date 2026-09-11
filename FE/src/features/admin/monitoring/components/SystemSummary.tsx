@@ -5,10 +5,10 @@ import { cpuMemoryLevel } from '@/features/admin/monitoring/model/thresholds'
 import { formatPercent, formatSeconds } from '@/features/admin/monitoring/ui/formatMetric'
 import { MetricValue } from '@/features/admin/monitoring/ui/MetricValue'
 import {
+  AdminBadge,
   PrometheusStateBadge,
   UpBadge,
 } from '@/features/admin/monitoring/ui/StatusBadge'
-import { Pill } from '@/shared/ui/Pill'
 
 /**
  * System Summary · 티켓 S15P21E102-210.
@@ -18,7 +18,9 @@ import { Pill } from '@/shared/ui/Pill'
  * `repeat(4,1fr)`과 같아지지만, 서버가 3대가 되면 5장이 되어 다음 줄로 넘어간다.
  * 카드를 늘리지 않고 서버 수를 고정하는 쪽이 더 위험하다.
  *
- * 배치는 `index.css`의 `.gj-stats`를 쓴다. 확정 디자인 v2의 지표 행과 같은 격자다.
+ * 배치는 `index.css`의 `.gj-mon-stats`(gap 12px)를 쓴다. 카드 치수는 확정 디자인
+ * `Admin Monitoring v2`에서 읽었다 — padding 20px 22px · 지표 행 gap 18px margin-top 16px ·
+ * 숫자 26px · 설명 12px margin-top 12px.
  */
 
 function SummaryCard({
@@ -33,12 +35,12 @@ function SummaryCard({
   description: string
 }) {
   return (
-    <div className="flex flex-col rounded-[18px] border border-brand-line bg-white px-5 py-4 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+    <div className="flex flex-col rounded-[18px] border border-brand-line bg-white px-[22px] py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
       <div className="flex items-center justify-between gap-2.5">
         <span className="truncate text-[14px] font-[750] text-brand-ink">{name}</span>
         {badge}
       </div>
-      <div className="mt-3.5 flex gap-5">
+      <div className="mt-4 flex gap-[18px]">
         {metrics.map((metric) => (
           <div key={metric.label}>
             <p className="text-[11.5px] text-brand-faint">{metric.label}</p>
@@ -53,7 +55,7 @@ function SummaryCard({
 
 export function SystemSummary({ view }: { view: MonitoringView }) {
   return (
-    <div className="gj-stats">
+    <div className="gj-mon-stats">
       {view.servers.map((server) => {
         const metrics = server.metrics
         const up = serverUpState(view, server)
@@ -69,6 +71,7 @@ export function SystemSummary({ view }: { view: MonitoringView }) {
                   <MetricValue
                     text={formatPercent(metrics?.cpuPercent ?? null)}
                     level={cpuMemoryLevel(metrics?.cpuPercent ?? null)}
+                    size="card"
                   />
                 ),
               },
@@ -78,6 +81,7 @@ export function SystemSummary({ view }: { view: MonitoringView }) {
                   <MetricValue
                     text={formatPercent(metrics?.memoryPercent ?? null)}
                     level={cpuMemoryLevel(metrics?.memoryPercent ?? null)}
+                    size="card"
                   />
                 ),
               },
@@ -100,12 +104,13 @@ export function SystemSummary({ view }: { view: MonitoringView }) {
             value: (
               <MetricValue
                 text={view.targets === null ? null : `${view.targets.up}/${view.targets.total}`}
+                size="card"
               />
             ),
           },
           {
             label: 'Scrape',
-            value: <MetricValue text={formatSeconds(view.scrapeIntervalSeconds)} />,
+            value: <MetricValue text={formatSeconds(view.scrapeIntervalSeconds)} size="card" />,
           },
         ]}
         description={
@@ -128,14 +133,14 @@ export function SystemSummary({ view }: { view: MonitoringView }) {
         name={view.monitoring.dashboardLabel ?? 'Grafana'}
         badge={
           view.links.grafanaUrl === null ? (
-            <Pill tone="neutral">링크 없음</Pill>
+            <AdminBadge tone="neutral">링크 없음</AdminBadge>
           ) : (
-            <Pill tone="accent">링크 설정됨</Pill>
+            <AdminBadge tone="accent">링크 설정됨</AdminBadge>
           )
         }
         metrics={[
-          { label: 'Dashboards', value: <MetricValue text={null} /> },
-          { label: 'Datasource', value: <MetricValue text={null} /> },
+          { label: 'Dashboards', value: <MetricValue text={null} size="card" /> },
+          { label: 'Datasource', value: <MetricValue text={null} size="card" /> },
         ]}
         description="대시보드 수와 데이터소스 상태는 Grafana API 연동 후 표시됩니다."
       />

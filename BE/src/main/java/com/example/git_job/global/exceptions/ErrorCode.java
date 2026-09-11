@@ -19,6 +19,10 @@ public enum ErrorCode {
 
     ANALYSIS_NOT_FOUND(HttpStatus.NOT_FOUND, "AN-404-1", "분석을 찾을 수 없습니다."),
     ANALYSIS_ACCESS_DENIED(HttpStatus.FORBIDDEN, "AUTH-403-1", "본인 소유의 분석만 조회할 수 있습니다."),
+    // Security 필터 단계의 인가 실패. 지금 hasRole 제한은 /api/v1/admin/** → ADMIN 하나뿐이라
+    // 이 코드가 뜨는 상황은 곧 "로그인은 됐지만 관리자가 아니다"이다. 재로그인으로는 해소되지
+    // 않으므로(권한은 DB에서 부여) 클라이언트는 이 코드를 세션 만료(AUTH-401-*)와 다르게 안내한다.
+    ADMIN_ROLE_REQUIRED(HttpStatus.FORBIDDEN, "AUTH-403-2", "관리자 권한이 필요합니다."),
 
     INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "G-500", "서버 내부 오류가 발생했습니다."),
     INVALID_REQUEST_BODY(HttpStatus.BAD_REQUEST, "G-400-1", "요청 본문이 올바르지 않습니다."),

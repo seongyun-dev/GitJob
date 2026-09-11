@@ -7,7 +7,8 @@ import { StateCard } from '@/shared/ui/StateCard'
 /**
  * Disk Capacity · 티켓 S15P21E102-210.
  *
- * 확정 디자인의 큰 사용률 숫자, 임계치 표시가 있는 바, 서버별 줄에 대응한다.
+ * 확정 디자인의 큰 사용률 숫자(44px), 임계치 표시가 있는 바(14px · margin-top 18px),
+ * 서버별 줄에 대응한다. 카드 padding은 디자인의 22px 24px.
  *
  * 전체 사용률을 서버 비율의 평균으로 내지 않는다. 400GB 서버와 100GB 서버의 비율을
  * 평균하면 실제 사용량과 무관한 값이 나온다. 바이트를 더한 뒤 비율을 낸다.
@@ -46,10 +47,11 @@ export function DiskCapacity({ view }: { view: MonitoringView }) {
   const summary = totals(view)
 
   return (
-    <div className="rounded-[18px] border border-brand-line bg-white px-6 py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+    <div className="rounded-[18px] border border-brand-line bg-white px-6 py-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
       <h3 className="text-[13px] font-[750] text-brand-ink">Disk Capacity</h3>
+      {/* 디자인 `두 서버 합산 · node_filesystem`. 서버 수는 config가 정하므로 숫자로. */}
       <p className="mt-1 text-[12px] text-brand-faint">
-        전체 서버 합산 · root 파일시스템
+        {view.servers.length}개 서버 합산 · node_filesystem
       </p>
 
       {summary === null ? (
@@ -66,7 +68,7 @@ export function DiskCapacity({ view }: { view: MonitoringView }) {
             <MetricValue
               text={formatPercent(summary.percent)}
               level={diskLevel(summary.percent)}
-              size="lg"
+              size="hero"
             />
             <span className="text-[14px] font-bold text-brand-muted tabular-nums">
               {formatCapacity(summary.usedBytes, summary.totalBytes)}
@@ -74,7 +76,7 @@ export function DiskCapacity({ view }: { view: MonitoringView }) {
           </div>
 
           {/* 임계치 표시. 눈금 위치는 `thresholds.ts`가 정한다. */}
-          <div className="relative mt-4 h-3.5 rounded-sm bg-[#EEF1F6]">
+          <div className="relative mt-[18px] h-3.5 rounded-sm bg-[#EEF1F6]">
             <div
               className={`absolute inset-y-0 left-0 rounded-sm ${
                 diskLevel(summary.percent) === 'CRITICAL'
@@ -108,7 +110,7 @@ export function DiskCapacity({ view }: { view: MonitoringView }) {
         </>
       )}
 
-      <div className="mt-4 flex flex-col">
+      <div className="mt-[18px] flex flex-col">
         {view.servers.map((server) => {
           const percent = server.metrics?.diskPercent ?? null
           return (

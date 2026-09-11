@@ -45,7 +45,7 @@ function ChartCard({
   children: ReactNode
 }) {
   return (
-    <div className="rounded-[18px] border border-brand-line bg-white px-6 py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+    <div className="rounded-[18px] border border-brand-line bg-white px-6 py-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h3 className="text-[13px] font-[750] text-brand-ink">{title}</h3>

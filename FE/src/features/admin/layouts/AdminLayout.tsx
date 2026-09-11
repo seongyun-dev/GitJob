@@ -85,7 +85,8 @@ export function AdminLayout() {
   return (
     <div className="min-h-full text-brand-ink" style={{ background: ADMIN_BACKDROP }}>
       <AdminHeader />
-      <main className="gj-shell">
+      {/* 앱 셸(1520)이 아니라 관리자 디자인의 1328. 이유는 `index.css` `.gj-shell-admin`. */}
+      <main className="gj-shell-admin">
         <Outlet />
       </main>
     </div>

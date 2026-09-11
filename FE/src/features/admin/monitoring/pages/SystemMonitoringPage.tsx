@@ -120,7 +120,10 @@ export function SystemMonitoringPage() {
   const waitingForNetwork = overview.fetchStatus === 'paused'
 
   return (
-    <section className="flex flex-col gap-4">
+    // 섹션 간격은 확정 디자인의 리듬을 따른다. hero→카드 28 · 카드→지도 28 · 지도→차트 16 ·
+    // 차트→디테일 12 · 디테일→Server Detail 28 · →Data Platform 28. 균일한 gap 하나로 두면
+    // 디자인이 묶어 둔 것(차트·디테일)과 떼어 둔 것(섹션)이 같은 거리로 보인다.
+    <section>
       <PageHero
         eyebrow="SYSTEM MONITORING"
         title="시스템 운영 상태"
@@ -142,22 +145,28 @@ export function SystemMonitoringPage() {
         }
       />
 
-      {failure !== null && <LoadFailure error={failure} />}
+      {failure !== null && (
+        <div className="mt-7">
+          <LoadFailure error={failure} />
+        </div>
+      )}
 
       {view === null && failure === null && (
-        <StateCard
-          kind="LOADING"
-          title={
-            waitingForNetwork
-              ? '네트워크 연결을 기다리는 중입니다'
-              : '운영 상태를 불러오는 중입니다'
-          }
-          description={
-            waitingForNetwork
-              ? '이 브라우저가 오프라인으로 판정되어 요청을 보내지 못했습니다. 연결이 돌아오면 자동으로 다시 조회합니다.'
-              : 'Prometheus에서 서버 지표와 수집 상태를 읽고 있습니다.'
-          }
-        />
+        <div className="mt-7">
+          <StateCard
+            kind="LOADING"
+            title={
+              waitingForNetwork
+                ? '네트워크 연결을 기다리는 중입니다'
+                : '운영 상태를 불러오는 중입니다'
+            }
+            description={
+              waitingForNetwork
+                ? '이 브라우저가 오프라인으로 판정되어 요청을 보내지 못했습니다. 연결이 돌아오면 자동으로 다시 조회합니다.'
+                : 'Prometheus에서 서버 지표와 수집 상태를 읽고 있습니다.'
+            }
+          />
+        </div>
       )}
 
       {view !== null && (
@@ -172,7 +181,7 @@ export function SystemMonitoringPage() {
           */}
           {!view.reachable && (
             <div
-              className="rounded-[18px] border border-brand-line bg-white px-5 py-4 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
+              className="mt-7 rounded-[18px] border border-brand-line bg-white px-5 py-4 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
               role="alert"
             >
               <div className="flex flex-wrap items-center gap-2.5">
@@ -189,18 +198,30 @@ export function SystemMonitoringPage() {
             </div>
           )}
 
-          <SystemSummary view={view} />
-          <InfrastructureMap view={view} />
-          <ResourceOverview cpu={cpu.data} memory={memory.data} network={network.data} />
-
-          <div className="gj-mon-detail">
+          {/* hero → 요약 카드 28 */}
+          <div className="mt-7">
+            <SystemSummary view={view} />
+          </div>
+          {/* 요약 카드 → 지도 28 */}
+          <div className="mt-7">
+            <InfrastructureMap view={view} />
+          </div>
+          {/* 지도 → 차트 16 · 차트 → 디테일 12. 디자인이 이 둘을 한 묶음으로 가깝게 둔다. */}
+          <div className="mt-4">
+            <ResourceOverview cpu={cpu.data} memory={memory.data} network={network.data} />
+          </div>
+          <div className="gj-mon-detail mt-3">
             <DiskCapacity view={view} />
             <RecentEvents />
           </div>
 
-          <ServerDetailTable view={view} />
+          {/* → Server Detail 28 (디자인 `margin:28px 4px 12px`의 28) */}
+          <div className="mt-7">
+            <ServerDetailTable view={view} />
+          </div>
 
-          <div className="gj-split">
+          {/* → Data Platform · Quick Access 28 */}
+          <div className="gj-split mt-7">
             <DataPlatformCards coverage={view.coverage} />
             <QuickAccessPanel links={view.links} />
           </div>

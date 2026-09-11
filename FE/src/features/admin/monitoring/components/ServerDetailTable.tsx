@@ -9,20 +9,20 @@ import {
 import type { UsageLevel } from '@/features/admin/monitoring/model/thresholds'
 import {
   formatCapacity,
-  formatPercent,
   megabytesPerSecond,
+  percentNumber,
   totalThroughput,
 } from '@/features/admin/monitoring/ui/formatMetric'
+import { AdminTable } from '@/features/admin/monitoring/ui/AdminTable'
 import { MetricValue, UsageBar } from '@/features/admin/monitoring/ui/MetricValue'
 import { UpBadge } from '@/features/admin/monitoring/ui/StatusBadge'
-import { TableScaffold } from '@/shared/ui/Scaffold'
 
 /**
  * Server Detail · 티켓 S15P21E102-210.
  *
  * 확정 디자인의 표를 옮긴 것이며 컬럼과 열 폭도 디자인에서 읽었다
- * (`190px repeat(4,1fr) 120px`). 골격은 `shared/ui/Scaffold`의 `TableScaffold`를 쓴다 —
- * 값이 없어도 무엇이 들어올 자리인지 남는다.
+ * (`190px repeat(4,1fr) 120px`). 표 카드는 `ui/AdminTable` — 흰 카드 안에 헤더 · 행 ·
+ * 각주(임계치)가 들어간다. 값은 디자인대로 숫자 22px 크게 · 단위(`%`·`MB/s`) 12px 작게.
  *
  * 행 격자를 인라인 스타일이 아니라 `index.css`의 `.gj-mon-row`에 둔 이유는 좁은 화면에서
  * 열이 접혀야 하기 때문이다. 인라인 스타일에는 미디어 쿼리를 쓸 수 없어, 그렇게 하면
@@ -30,9 +30,10 @@ import { TableScaffold } from '@/shared/ui/Scaffold'
  *
  * 행은 topology config 순서다. 서버가 늘면 행이 늘고 이 파일은 바뀌지 않는다.
  *
- * 디자인에 있는데 여기 없는 것이 둘이다. `Uptime 41d 6h`와 CPU 보조 표기의 `load 0.9`는
- * mock이다 — uptime을 주는 지표가 이번 API에 없고 `node_load1`은 S15P21E102-205의 수집
- * 확인 목록에 없어 BE가 질의하지 않는다. 자리를 비우는 편이 그럴듯한 숫자보다 정확하다.
+ * 디자인에 있는데 여기 없는 것이 셋이다. `Ubuntu 22.04`, `Uptime 41d 6h`, CPU 보조 표기의
+ * `load 0.9`는 mock이다 — OS·uptime을 주는 지표가 이번 API에 없고 `node_load1`은
+ * S15P21E102-205의 수집 확인 목록에 없어 BE가 질의하지 않는다. 자리를 비우는 편이
+ * 그럴듯한 숫자보다 정확하다.
  */
 
 const COLUMNS = ['SERVER', 'CPU', 'MEMORY', 'DISK', 'NETWORK', 'STATUS'] as const
@@ -48,12 +49,10 @@ function MetricCell({
   caption,
   label,
 }: {
+  /** 단위 없는 숫자 문자열. `percentNumber`·`megabytesPerSecond`가 만든다. */
   value: string | null
-  /**
-   * 값 문자열에 단위가 없을 때만 준다. `formatPercent`는 `%`를 이미 붙이므로
-   * 백분율 칸에서는 넘기지 않는다 — 넘기면 `23% %`가 된다.
-   */
-  unit?: string
+  /** 숫자 옆에 작게 붙는 단위. 디자인의 `23 %` · `6.2 MB/s`. */
+  unit: string
   /** 바에 쓰는 비율. 처리량처럼 상한이 없는 지표는 `null`이다. */
   percent: number | null
   level: UsageLevel
@@ -74,6 +73,7 @@ function MetricCell({
   )
 }
 
+/** 행. 디자인 padding 20px 24px · 행 사이 #EEF1F6. 헤더가 border-bottom 을 가지므로 첫 행은 위 선을 뺀다. */
 function ServerRow({ view, server }: { view: MonitoringView; server: ServerView }) {
   const metrics = server.metrics
   const cpuPercent = metrics?.cpuPercent ?? null
@@ -84,7 +84,7 @@ function ServerRow({ view, server }: { view: MonitoringView; server: ServerView 
   const name = server.node.displayName
 
   return (
-    <div className="gj-mon-row border-t border-brand-line py-4 first:border-t-0">
+    <div className="gj-mon-row border-t border-[#EEF1F6] px-6 py-5 first:border-t-0">
       <div className="max-lg:col-span-full">
         <code className="font-evidence text-[14px] font-bold text-brand-ink">{name}</code>
         <p className="mt-1.5 text-[12px] text-brand-faint">{server.node.name}</p>
@@ -100,14 +100,16 @@ function ServerRow({ view, server }: { view: MonitoringView; server: ServerView 
       </div>
 
       <MetricCell
-        value={formatPercent(cpuPercent)}
+        value={percentNumber(cpuPercent)}
+        unit="%"
         percent={cpuPercent}
         level={cpuMemoryLevel(cpuPercent)}
         caption={metrics?.cpuCores == null ? null : `${metrics.cpuCores} vCPU`}
         label={`${name} CPU`}
       />
       <MetricCell
-        value={formatPercent(memoryPercent)}
+        value={percentNumber(memoryPercent)}
+        unit="%"
         percent={memoryPercent}
         level={cpuMemoryLevel(memoryPercent)}
         caption={formatCapacity(
@@ -117,7 +119,8 @@ function ServerRow({ view, server }: { view: MonitoringView; server: ServerView 
         label={`${name} MEMORY`}
       />
       <MetricCell
-        value={formatPercent(diskPercent)}
+        value={percentNumber(diskPercent)}
+        unit="%"
         percent={diskPercent}
         level={diskLevel(diskPercent)}
         caption={formatCapacity(
@@ -160,17 +163,21 @@ export function ServerDetailTable({ view }: { view: MonitoringView }) {
         <span className="text-[12.5px] text-brand-faint">서버 간 비교 · 현재 값 기준</span>
       </div>
 
-      <TableScaffold columns={COLUMNS} template={TEMPLATE}>
+      <AdminTable
+        columns={COLUMNS}
+        template={TEMPLATE}
+        footer={
+          <>
+            임계치 · CPU/Memory {CPU_MEMORY_THRESHOLD.warning}% 주의 ·{' '}
+            {CPU_MEMORY_THRESHOLD.critical}% 경고 · Disk {DISK_THRESHOLD.warning}% 주의 ·{' '}
+            {DISK_THRESHOLD.critical}% 경고
+          </>
+        }
+      >
         {view.servers.map((server) => (
           <ServerRow key={server.node.id} view={view} server={server} />
         ))}
-      </TableScaffold>
-
-      <p className="mt-3 px-1 text-[12px] text-brand-faint">
-        임계치 · CPU/Memory {CPU_MEMORY_THRESHOLD.warning}% 주의 ·{' '}
-        {CPU_MEMORY_THRESHOLD.critical}% 경고 · Disk {DISK_THRESHOLD.warning}% 주의 ·{' '}
-        {DISK_THRESHOLD.critical}% 경고
-      </p>
+      </AdminTable>
     </section>
   )
 }
