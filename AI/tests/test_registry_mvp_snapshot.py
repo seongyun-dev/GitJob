@@ -5,6 +5,19 @@ from registry.mapper import MapperInput, MapperSource, RegistryMapper
 
 AI_ROOT = Path(__file__).resolve().parents[1]
 NEW_PATH = AI_ROOT / "registry/data/technology_registry_20260908_1.json"
+APPROVED_DB_PATH = AI_ROOT / "registry/data/technology_registry_20260911_1.json"
+
+
+def test_approved_db_snapshot_uses_a_version_distinct_from_the_b_seed():
+    legacy = load_registry(NEW_PATH, repository_root=AI_ROOT.parent)
+    approved = load_registry(APPROVED_DB_PATH, repository_root=AI_ROOT.parent)
+
+    assert legacy.registry_version == "registry-20260908.1"
+    assert approved.registry_version == "registry-20260911.1"
+    assert approved.registry_version != legacy.registry_version
+    assert approved.schema_version == legacy.schema_version
+    assert approved.technologies == legacy.technologies
+    assert approved.mappings == legacy.mappings
 
 
 def test_snapshot_retains_historical_entries_and_only_reviewed_additions():

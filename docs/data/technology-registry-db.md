@@ -47,17 +47,31 @@ child row를 한 transaction으로 넣고,
 B 관리자 작업 중인 `DRAFT`로도 취급하지 않는다. C alias 활성화는 B의 `CURRENT`를
 변경하지 않는다. 기존 B 버전과 같은 이름의 다른 snapshot은 import할 수 없으므로
 승인된 별도 concrete version을 사용한다.
-아래 명령은 예시이며 DSN과 source는 대상 환경의 승인값을 사용한다.
+운영 기본 승인본은 B seed와 버전명이 겹치지 않는
+`AI/registry/data/technology_registry_20260911_1.json`(`registry-20260911.1`)이다.
+기존 `registry-20260908.1` 파일은 B seed와 같은 이름이므로 운영 C import에 사용하지
+않는다. 아래 helper는 Worker 컨테이너 안에서 접속 정보를 조립하므로 비밀번호를 호스트
+명령행이나 로그에 노출하지 않으며, 동일 내용 재실행은 안전하다.
 
 ```bash
-cd AI
-python -m registry.db import \
-  --dsn "$C_COMPUTE_DATABASE_URL" \
-  --path /approved/technology_registry_new_version.json \
-  --repository-root .. \
-  --source-ref /approved/technology_registry_new_version.json \
-  --activate-alias
+ENV_FILE=.env.data \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
+PROFILES=data \
+  ./Infra/scripts/c-compute-migrate.sh
+
+ENV_FILE=.env.data \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
+PROFILES=data \
+  ./Infra/scripts/c-registry-import.sh
+
+ENV_FILE=.env.data \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
+PROFILES=data VERIFY_TIMEOUT_SECONDS=60 \
+  ./Infra/scripts/verify-deployment.sh
 ```
+
+Registry helper는 import와 alias 활성화 후 Worker를 재시작한다. 모든 release migration을
+적용한 뒤 마지막 명령으로 readiness를 확인한다.
 
 `--activate-alias`를 생략하면 immutable snapshot만 추가되고 현재 family pointer는
 움직이지 않는다. 활성화 전에는 대상 JSON의 repository-local provenance가 현재

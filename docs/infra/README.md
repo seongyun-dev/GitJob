@@ -23,6 +23,7 @@
 | [DataNode 간 재복제 경로 수정](2026-09-11-hdfs-datanode-hostname-rereplication-fix.md) | rack-a→rack-b 전송 실패의 원인인 hostname 설정 누락 수정, 정체된 배치 위반 90건 자동 해소 |
 | [HDFS·Spark Phase 9 분산 처리 검증](2026-09-11-hdfs-spark-two-host-phase9-distributed-verification.md) | shuffle canary·HDFS canary·1일치 GH Archive 실제 job, 단일 Worker 결과 일치와 노드 상실 자동 복구 재검증 |
 | [HDFS·Spark Phase 10 안정화 관측](2026-09-11-hdfs-spark-two-host-phase10-stabilization.md) | 31분 연속 관측 결과, 미관측 항목(실사용자 E2E·Kafka lag)과 tailnet 노출 범위 실측 |
+| [Jenkins Deploy #78 C Registry 복구](2026-09-11-deploy-78-c-registry-recovery.md) | 배포 후 Worker readiness 실패 원인, B/C Registry 버전 충돌 보정과 운영 DB 복구·재검증 기록 |
 | [운영 상태 감시](health-monitoring.md) | 배포와 무관한 주기 감시, 설치 방법, 감시하지 않는 것 |
 | [첫 운영 배포 기록](2026-09-09-first-production-deploy.md) | 배포 전후 상태, 배포 후 수동 단계, CDC 종단 검증, 이날 드러난 도구 결함 |
 | [지급 서버 사양·네트워크 실측](2026-08-31-server-inspection.md) | J15E102/J15E102A 실제 사양, runtime, UFW, private network 점검 결과 |
