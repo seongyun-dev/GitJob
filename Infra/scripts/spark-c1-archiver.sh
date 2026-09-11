@@ -37,6 +37,8 @@ master_url="${master_url:-spark://spark-master:7077}"
 topics="${TOPICS:-github.events,so.raw}"
 max_offsets="${MAX_OFFSETS_PER_TRIGGER:-10000}"
 once="${ONCE:-1}"
+spark_submit_network_args
+spark_submit_storage_args
 
 args=(
   --bootstrap-servers "$bootstrap"
@@ -52,8 +54,8 @@ compose exec -T spark-worker \
   /opt/spark/bin/spark-submit \
   --master "$master_url" \
   --deploy-mode client \
-  --conf spark.driver.bindAddress=0.0.0.0 \
-  --conf spark.driver.host=spark-worker \
+  "${SPARK_NETWORK_ARGS[@]}" \
+  "${SPARK_STORAGE_ARGS[@]}" \
   --conf "spark.hadoop.fs.defaultFS=${hdfs_uri}" \
   /opt/gitjob/spark/c1_archiver_stream.py \
   "${args[@]}"

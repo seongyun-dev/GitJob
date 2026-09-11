@@ -122,15 +122,20 @@ run_activity() {
   fi
   local container_activity_script="/tmp/gitjob-repo-activity-topn-${month//-/}.py"
   write_chain_state "$month" activity RUNNING "$activity_root" "$artifact_snapshot" 0 PENDING "" "$next_month"
-  # Run through the already-running Spark worker so spark.driver.host=spark-worker
-  # resolves to the driver container.  The current worktree source is copied to
-  # a unique /tmp path; no service recreate or image rebuild is required.
+  # Run through the already-running Spark worker. The current worktree source is
+  # copied to a unique /tmp path; no service recreate or image rebuild is
+  # required. Driver address/ports and HDFS replication come from the shared
+  # helpers so this path matches the other spark-*.sh wrappers on the two-host
+  # cluster (a literal spark.driver.host=spark-worker is unresolvable from the
+  # service-host executor, and an unset dfs.replication falls back to 3).
   compose cp "$REPO_ROOT/Infra/spark/repo_activity_topn.py" \
     "spark-worker:${container_activity_script}"
+  spark_submit_network_args
+  spark_submit_storage_args
   compose exec -T spark-worker /opt/spark/bin/spark-submit \
       --master "$master_url" --deploy-mode client \
-      --conf spark.driver.bindAddress=0.0.0.0 \
-      --conf spark.driver.host=spark-worker \
+      "${SPARK_NETWORK_ARGS[@]}" \
+      "${SPARK_STORAGE_ARGS[@]}" \
       --conf "spark.hadoop.fs.defaultFS=${hdfs_uri}" \
       "$container_activity_script" \
       --input "${raw_root%/}/gharchive/dt=${month}-*/*.json.gz" \

@@ -1,13 +1,28 @@
 # Infrastructure 문서 목차
 
-> 상태: WSL 실행 골격 구현, EC2 split 직접 pull/build 전환 준비
+> 상태: 2대 EC2 운영 배포 완료, S15P21E102-207 HDFS·Spark 2-host 분산 전환 진행 중
+> (S15P21E102-207 Phase 0-10 완료, 후속 항목은 Phase 10 문서 9절 참조)
 >
-> 기준일: 2026-08-31
+> 기준일: 2026-09-11
 
 ## 1. 문서 안내
 
 | 문서 | 내용 |
 |---|---|
+| [HDFS·Spark 2-Host 분리 계획](2026-09-10-hdfs-spark-two-host-split-plan.md) | S15P21E102-207 Tailscale 기반 DataNode·Spark Worker 확장, 단계별 gate와 롤백 계획 |
+| [HDFS·Spark Phase 0 사전점검](2026-09-10-hdfs-spark-two-host-phase0-preflight.md) | 양쪽 EC2의 Tailscale·자원·서비스·HDFS·Spark 기준선과 운영 checkout blocker |
+| [HDFS·Spark Phase 1 구현·정적 검증](2026-09-10-hdfs-spark-two-host-phase1-static-implementation.md) | Tailscale cluster Compose, 독립 worker project, rack mapping, Spark 공통 설정과 회귀 검증 |
+| [HDFS·Spark Phase 2 복구점 생성 차단](2026-09-10-hdfs-spark-two-host-phase2-recovery-point-blocked.md) | active WebHDFS writer와 EBS snapshot 권한 부재로 운영 변경 없이 중단한 기록 |
+| [HDFS·Spark Phase 2 Linux off-host 복구점](2026-09-10-hdfs-spark-two-host-phase2-linux-recovery-point.md) | saveNamespace와 NameNode metadata archive를 service 서버에 복사·검증한 완료 기록 |
+| [HDFS·Spark Phase 3 Data HDFS Tailscale 전환](2026-09-10-hdfs-spark-two-host-phase3-data-hdfs-tailscale.md) | NameNode와 기존 DataNode 3개의 롤링 Tailscale 전환, local bridge UFW 경계와 운영 검증 |
+| [HDFS·Spark Phase 4 Service DataNode-4 가입](2026-09-10-hdfs-spark-two-host-phase4-service-datanode4.md) | service 서버 독립 project/volume의 DataNode-4 가입, Docker proxy 주소 보정과 `/rack-b` 생성 |
+| [HDFS·Spark Phase 5 교차 host 복제 canary](2026-09-10-hdfs-spark-two-host-phase5-cross-host-replication.md) | canary 경로의 replication 2 교차 host 배치, 단일 DataNode 중지 read 검증과 재복제 미검증 한계 |
+| [HDFS·Spark Phase 6 Spark Master·Worker-1 전환](2026-09-10-hdfs-spark-two-host-phase6-spark-master-tailscale.md) | host network·Tailscale 전환, hostname 해석·wildcard bind 결함 수정과 내용 기반 결과 동일성 검증 |
+| [HDFS·Spark Phase 7 Service Spark Worker-2 가입](2026-09-11-hdfs-spark-two-host-phase7-service-spark-worker2.md) | 별도 project의 Worker-2 등록과 두 Tailscale IP ALIVE 확인, driver 주소 미고정으로 인한 executor 미참여 제약 |
+| [HDFS·Spark Phase 8 driver·BlockManager 포트 고정](2026-09-11-hdfs-spark-two-host-phase8-driver-port-pinning.md) | Tailscale 주소·고정 포트 적용, 두 host executor 등록과 교차 host task 수행 확인, UFW 불필요 근거 |
+| [DataNode 간 재복제 경로 수정](2026-09-11-hdfs-datanode-hostname-rereplication-fix.md) | rack-a→rack-b 전송 실패의 원인인 hostname 설정 누락 수정, 정체된 배치 위반 90건 자동 해소 |
+| [HDFS·Spark Phase 9 분산 처리 검증](2026-09-11-hdfs-spark-two-host-phase9-distributed-verification.md) | shuffle canary·HDFS canary·1일치 GH Archive 실제 job, 단일 Worker 결과 일치와 노드 상실 자동 복구 재검증 |
+| [HDFS·Spark Phase 10 안정화 관측](2026-09-11-hdfs-spark-two-host-phase10-stabilization.md) | 31분 연속 관측 결과, 미관측 항목(실사용자 E2E·Kafka lag)과 tailnet 노출 범위 실측 |
 | [운영 상태 감시](health-monitoring.md) | 배포와 무관한 주기 감시, 설치 방법, 감시하지 않는 것 |
 | [첫 운영 배포 기록](2026-09-09-first-production-deploy.md) | 배포 전후 상태, 배포 후 수동 단계, CDC 종단 검증, 이날 드러난 도구 결함 |
 | [지급 서버 사양·네트워크 실측](2026-08-31-server-inspection.md) | J15E102/J15E102A 실제 사양, runtime, UFW, private network 점검 결과 |
@@ -52,6 +67,8 @@ Kafka → Collector·Worker → HDFS/Parquet·Spark
 | `Infra/compose/compose.wsl.yaml` | 저장소에서 image build, 모든 host binding loopback |
 | `Infra/compose/compose.ec2.yaml` | 서비스/core EC2, 저장소 image build, Nginx HTTP 80과 private core listener |
 | `Infra/compose/compose.ec2-data.yaml` | Hadoop/Spark data EC2, 저장소 image build, remote core endpoint |
+| `Infra/compose/compose.ec2-data-cluster.yaml` | 기존 data volume을 유지한 Tailscale HDFS/Spark 전환 overlay |
+| `Infra/compose/compose.ec2-cluster-worker.yaml` | service EC2의 독립 DataNode-4·Spark Worker-2 project |
 | `Infra/compose/compose.ec2-ha.yaml` | EC2-A/B에서 `app`만 실행, 외부 HA state 사용 |
 
 현재 2대 구성에서는 `J15E102`에 `core + app`과 Jenkins를, `J15E102A`에

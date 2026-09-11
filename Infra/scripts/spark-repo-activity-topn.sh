@@ -27,14 +27,16 @@ input_path="${GHARCHIVE_RAW_INPUT:-${raw_root%/}/gharchive/dt=2026-08-*/*.json.g
 output_path="${REPO_ACTIVITY_OUTPUT:-${parquet_root%/}/github/repo_activity/period=2026-08/snapshot=s15p21e102-109-baseline}"
 expected_files="${GHARCHIVE_EXPECTED_FILES:-744}"
 top_n="${REPO_ACTIVITY_TOP_N:-100,500,1000,3000,5000,10000,20000}"
+spark_submit_network_args
+spark_submit_storage_args
 
 echo "Running GH Archive Repo Activity input=${input_path} output=${output_path} expected_files=${expected_files}"
 compose exec -T spark-worker \
   /opt/spark/bin/spark-submit \
   --master "$master_url" \
   --deploy-mode client \
-  --conf spark.driver.bindAddress=0.0.0.0 \
-  --conf spark.driver.host=spark-worker \
+  "${SPARK_NETWORK_ARGS[@]}" \
+  "${SPARK_STORAGE_ARGS[@]}" \
   --conf "spark.hadoop.fs.defaultFS=${hdfs_uri}" \
   /opt/gitjob/spark/repo_activity_topn.py \
   --input "$input_path" \

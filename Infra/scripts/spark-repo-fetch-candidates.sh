@@ -25,6 +25,8 @@ candidate_mode="${REPO_FETCH_CANDIDATE_MODE:-stratified}"
 phase_top_n="${REPO_FETCH_PHASE_TOP_N:-20000}"
 host_output="${REPO_FETCH_CANDIDATES_OUTPUT:-$REPO_ROOT/.local/repo-fetch-benchmark/candidates.json}"
 container_output="/tmp/gitjob-repo-fetch-candidates.json"
+spark_submit_network_args
+spark_submit_storage_args
 
 mkdir -p "$(dirname -- "$host_output")"
 
@@ -33,8 +35,8 @@ compose exec -T spark-worker \
   /opt/spark/bin/spark-submit \
   --master "$master_url" \
   --deploy-mode client \
-  --conf spark.driver.bindAddress=0.0.0.0 \
-  --conf spark.driver.host=spark-worker \
+  "${SPARK_NETWORK_ARGS[@]}" \
+  "${SPARK_STORAGE_ARGS[@]}" \
   --conf "spark.hadoop.fs.defaultFS=${hdfs_uri}" \
   /opt/gitjob/spark/repo_fetch_candidates.py \
   --input-root "$input_root" \

@@ -430,6 +430,46 @@ PROFILES=data \
 Worker를 실행한다. 일반 애플리케이션 배포에서는 HDFS volume을 삭제하거나
 재생성하지 않는다.
 
+### Tailscale 2-host HDFS/Spark 확장 준비
+
+`S15P21E102-207`의 단계별 전환에서는 기존 data project에
+`compose.ec2-data-cluster.yaml`을 사용하고, service 서버의 DataNode-4와 Spark
+Worker-2는 standalone `compose.ec2-cluster-worker.yaml`로 관리한다. 후자는 기존
+service/core Compose 파일과 함께 지정하지 않는다.
+
+Phase 2 복구점 생성 전에는 아래 정적 검증만 실행한다.
+
+```bash
+./Infra/scripts/validate-two-host-cluster.sh
+```
+
+실제 service 서버 worker project 제어는 이후 Phase에서 다음 명령을 사용한다.
+`CLUSTER_WORKER_PROFILES=hdfs-worker`와 `spark-worker`를 분리해 단계별로 가입한다.
+
+```bash
+ENV_FILE=.env.service CLUSTER_WORKER_PROFILES=hdfs-worker \
+  ./Infra/scripts/cluster-worker.sh config
+```
+
+`cluster-worker.sh up`은 HDFS 복구점, Tailscale 방화벽, 대상 Phase의 진입 gate가
+모두 확인된 뒤에만 실행한다. rollback에서도 `down --volumes`를 사용하지 않는다.
+
+Phase 3부터 data 서버의 NameNode와 DataNode 3개는 Tailscale 주소를 광고한다.
+`gitjob-data_default` bridge의 Collector/Worker가 같은 host의 Tailscale 주소와
+WebHDFS redirect를 사용할 수 있도록 UFW에는 source Docker subnet, destination
+`DATA_TS_IP`, HDFS port만 허용하는 local bridge 규칙이 필요하다. public interface
+허용 규칙으로 대체하지 않는다. 실제 전환 결과와 현재 포트는
+[Phase 3 운영 기록](../docs/infra/2026-09-10-hdfs-spark-two-host-phase3-data-hdfs-tailscale.md)을
+따른다.
+
+Phase 4부터 원격 DataNode는 Docker published NameNode RPC를 통과하므로 report의
+접속 주소가 data host의 bridge gateway로 보일 수 있다. 배포 시 확인한 주소를
+`SERVICE_DN_REGISTRATION_IP`에 넣어 `/rack-b`로 매핑하고, HDFS/Spark client는
+DataNode가 광고한 Tailscale hostname을 사용한다. service 서버 worker는 반드시
+별도 `gitjob-cluster-worker` project로 실행한다. 실제 가입 결과와 rollback 주의점은
+[Phase 4 운영 기록](../docs/infra/2026-09-10-hdfs-spark-two-host-phase4-service-datanode4.md)을
+따른다.
+
 ### split Jenkins 배포
 
 루트 `Jenkinsfile`은 `DEPLOYMENT_MODE=split`과 `develop` 기준으로 동작한다.
@@ -438,6 +478,12 @@ SSH하여 `git pull --ff-only origin develop` 후 로컬 Docker build와 Compose
 순서대로 수행한다. 각 서버에는 secret을 포함한 `.env.service` 또는 `.env.data`를
 미리 배치하고, Jenkins는 secret env 파일·GitLab token·PEM을 서버 간에 복사하지
 않는다. GitLab Integration webhook은 사용하지 않고 Poll SCM을 사용한다.
+
+data 서버 배포는 반드시 `compose.ec2-data-cluster.yaml`을 사용한다. split 배포에서
+과거 `compose.ec2-data.yaml`로 전체 data profile을 다시 올리면 NameNode의 Tailscale
+RPC publish와 HDFS/Spark host-network 설정이 제거되어 service 서버의 DataNode-4와
+Spark Worker-2 연결이 끊긴다. 배포 preflight, 기동, healthcheck와 최종 verify는 모두
+동일한 cluster overlay를 사용하며 필수 Tailscale 변수가 없으면 변경 전에 실패한다.
 
 현재 구성은 서비스와 데이터의 역할 분리이며 HA가 아니다. Kafka single broker,
 HDFS replication 1, local named volume은 각각 단일 장애점이다. PostgreSQL dump와

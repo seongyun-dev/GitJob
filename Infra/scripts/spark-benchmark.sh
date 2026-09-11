@@ -14,6 +14,13 @@ env_value() {
   sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$ENV_FILE" | tail -n 1
 }
 
+# The benchmark scales multiple workers inside one Compose project. In the
+# two-host layout every worker has a fixed host-network RPC/UI port, so local
+# --scale would collide and no longer measure the intended topology.
+cluster_data_ip="${DATA_TS_IP:-$(env_value DATA_TS_IP)}"
+[[ -z "$cluster_data_ip" ]] \
+  || die "spark-benchmark.sh --scale is single-host only; run the Phase 9 two-host canary instead"
+
 worker_values="${BENCHMARK_WORKERS:-1,2,4}"
 dataset_values="${BENCHMARK_DATASET_MULTIPLIERS:-1,2,4}"
 repeat_count="${BENCHMARK_REPEATS:-3}"

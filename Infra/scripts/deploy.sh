@@ -335,7 +335,7 @@ start_service_app() {
 start_data_app() {
   local compose
   local compose_environment
-  compose="$(compose_command "$data_path" "$data_env_file" compose.ec2-data.yaml)"
+  compose="$(compose_command "$data_path" "$data_env_file" compose.ec2-data-cluster.yaml)"
   compose_environment="$(data_compose_environment)"
 
   echo "Starting data app on ${data_user}@${data_host}..."
@@ -345,7 +345,7 @@ start_data_app() {
      test -f $(quote_for_remote "$data_env_file")
      ${compose_environment}${compose} --profile data config --quiet
      ${compose_environment}${compose} --profile data up -d --no-build
-     ENV_FILE=$(quote_for_remote "$data_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2-data.yaml) PROFILES=data HEALTHCHECK_TIMEOUT_SECONDS=300 bash Infra/scripts/healthcheck.sh"
+     ENV_FILE=$(quote_for_remote "$data_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2-data-cluster.yaml) PROFILES=data HEALTHCHECK_TIMEOUT_SECONDS=300 bash Infra/scripts/healthcheck.sh"
 }
 
 # Both hosts are checked before either is modified, so one run reports every
@@ -354,7 +354,7 @@ preflight_failures=0
 preflight_remote_env "$service_host" "$service_user" "$service_path" \
   "$service_env_file" compose.ec2.yaml || preflight_failures=$((preflight_failures + 1))
 preflight_remote_env "$data_host" "$data_user" "$data_path" \
-  "$data_env_file" compose.ec2-data.yaml || preflight_failures=$((preflight_failures + 1))
+  "$data_env_file" compose.ec2-data-cluster.yaml || preflight_failures=$((preflight_failures + 1))
 [[ "$preflight_failures" -eq 0 ]] \
   || die "preflight failed on $preflight_failures host(s); no host was modified"
 
@@ -396,7 +396,7 @@ verify_failures=0
 verify_deployment "$service_host" "$service_user" "$service_path" \
   "$service_env_file" compose.ec2.yaml core,app || verify_failures=$((verify_failures + 1))
 verify_deployment "$data_host" "$data_user" "$data_path" \
-  "$data_env_file" compose.ec2-data.yaml data || verify_failures=$((verify_failures + 1))
+  "$data_env_file" compose.ec2-data-cluster.yaml data || verify_failures=$((verify_failures + 1))
 [[ "$verify_failures" -eq 0 ]] \
   || die "deployment finished but ${verify_failures} host(s) are not ready; the checks above name the missing step"
 

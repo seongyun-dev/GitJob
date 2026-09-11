@@ -1,0 +1,131 @@
+# Standalone Compose project for the service-server HDFS/Spark workers.
+# Run with COMPOSE_PROJECT_NAME=gitjob-cluster-worker so the existing
+# gitjob service project is never recreated or adopted.
+
+name: ${CLUSTER_WORKER_PROJECT_NAME:-gitjob-cluster-worker}
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  hdfs-datanode4-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [hdfs-worker]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode4-data:/data
+    logging: *default-logging
+
+  hdfs-datanode4:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [hdfs-worker]
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      SERVICE_TS_IP: ${SERVICE_TS_IP:?SERVICE_TS_IP must be set}
+      CORE-SITE.XML_fs.defaultFS: hdfs://${DATA_TS_IP:?DATA_TS_IP must be set}:8020
+      HDFS-SITE.XML_dfs.client.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.datanode.address: ${SERVICE_TS_IP:?SERVICE_TS_IP must be set}:9866
+      HDFS-SITE.XML_dfs.datanode.hostname: ${SERVICE_TS_IP}
+      HDFS-SITE.XML_dfs.datanode.ipc.address: ${SERVICE_TS_IP}:9867
+      HDFS-SITE.XML_dfs.datanode.http.address: ${SERVICE_TS_IP}:9864
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+      HADOOP_HEAPSIZE_MAX: "${HDFS_DATANODE4_HEAP_MB:-768}"
+    cpus: "${HDFS_DATANODE4_CPUS:-0.50}"
+    mem_limit: "${HDFS_DATANODE4_MEMORY_LIMIT:-1536m}"
+    pids_limit: 256
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode4-data-init:
+        condition: service_completed_successfully
+    volumes:
+      - hdfs-datanode4-data:/data
+      - ./Infra/hadoop/check-datanode-live.awk:/opt/gitjob/hadoop/check-datanode-live.awk:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          hdfs dfsadmin -report 2>/dev/null
+          | awk -v expected_hostname="$${SERVICE_TS_IP}" -v expected_port=9866
+            -f /opt/gitjob/hadoop/check-datanode-live.awk
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  spark-worker2:
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    profiles: [spark-worker]
+    network_mode: host
+    restart: unless-stopped
+    # WorkerArguments evaluates Utils.localHostName() before --host is applied.
+    # On host networking this service would otherwise inherit the EC2 hostname,
+    # which the Spark base image cannot resolve (it has no nss-myhostname, unlike
+    # the Hadoop image), and the daemon dies with UnknownHostException. Phase 6
+    # hit exactly this on the data server.
+    hostname: spark-worker2
+    extra_hosts:
+      - "spark-worker2:${SERVICE_TS_IP:?SERVICE_TS_IP must be set}"
+    environment:
+      # WebUI.bind() falls back to 0.0.0.0 without SPARK_LOCAL_IP. That matters
+      # more here than on the data server: this host publishes 80/443, so a
+      # wildcard listener would put the worker UI on the public interface.
+      SPARK_LOCAL_IP: ${SERVICE_TS_IP}
+      SPARK_MASTER_URL: spark://${DATA_TS_IP:?DATA_TS_IP must be set}:7077
+      SERVICE_TS_IP: ${SERVICE_TS_IP}
+      SPARK_WORKER_HOST: ${SERVICE_TS_IP}
+      SPARK_WORKER_PORT: "7078"
+      SPARK_WORKER_WEBUI_PORT: "8084"
+      SPARK_WORKER_CORES: ${SPARK_WORKER2_CORES:-1}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER2_MEMORY:-1G}
+      SPARK_WORKER_OPTS: ${SPARK_WORKER2_OPTS:--Dspark.worker.cleanup.enabled=true}
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    cpus: "${SPARK_WORKER2_CPUS:-1.0}"
+    mem_limit: "${SPARK_WORKER2_MEMORY_LIMIT:-1536m}"
+    pids_limit: 256
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://${DATA_TS_IP}:7077
+      - --host
+      - ${SERVICE_TS_IP}
+      - --port
+      - "7078"
+      - --cores
+      - ${SPARK_WORKER2_CORES:-1}
+      - --memory
+      - ${SPARK_WORKER2_MEMORY:-1G}
+      - --webui-port
+      - "8084"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -ec '</dev/tcp/$${SERVICE_TS_IP}/8084'
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+volumes:
+  hdfs-datanode4-data:
+    name: ${HDFS_DATANODE4_VOLUME_NAME:-gitjob-cluster-worker-hdfs-datanode4-data}

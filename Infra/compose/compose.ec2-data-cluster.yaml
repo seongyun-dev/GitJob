@@ -1,0 +1,182 @@
+# Two-host HDFS/Spark overlay for the existing data-server Compose project.
+#
+# This file intentionally replaces compose.ec2-data.yaml during the phased
+# rollout. It preserves the base service names and named volumes, but gives
+# every daemon an address reachable over Tailscale. Do not apply it before the
+# Phase 2 NameNode recovery point exists.
+
+services:
+  collector:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+    environment:
+      WEBHDFS_URL: http://${DATA_TS_IP:?DATA_TS_IP must be set}:9870/webhdfs/v1
+      WEBHDFS_DATANODE_HOSTS: >-
+        ${DATA_TS_IP}:9864=${DATA_TS_IP}:9864,
+        ${DATA_TS_IP}:9874=${DATA_TS_IP}:9874,
+        ${DATA_TS_IP}:9884=${DATA_TS_IP}:9884,
+        ${SERVICE_TS_IP:?SERVICE_TS_IP must be set}:9864=${SERVICE_TS_IP}:9864
+
+  worker:
+    restart: unless-stopped
+    # Kept from compose.ec2-data.yaml: the base file declares no ordering for
+    # the analysis worker, so without this it can start before /gitjob exists
+    # and before the Spark master listens.
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+    environment:
+      HDFS_URI: hdfs://${DATA_TS_IP}:8020
+      SPARK_MASTER_URL: spark://${DATA_TS_IP}:7077
+
+  hdfs-namenode:
+    environment:
+      DATA_TS_IP: ${DATA_TS_IP}
+      SERVICE_TS_IP: ${SERVICE_TS_IP}
+      SERVICE_DN_REGISTRATION_IP: ${SERVICE_DN_REGISTRATION_IP:-}
+      CORE-SITE.XML_fs.defaultFS: hdfs://${DATA_TS_IP}:8020
+      CORE-SITE.XML_net.topology.script.file.name: /opt/gitjob/hadoop/topology.sh
+      CORE-SITE.XML_net.topology.script.number.args: "100"
+      HDFS-SITE.XML_dfs.namenode.rpc-address: ${DATA_TS_IP}:8020
+      HDFS-SITE.XML_dfs.namenode.rpc-bind-host: 0.0.0.0
+      HDFS-SITE.XML_dfs.client.use.datanode.hostname: "true"
+    ports:
+      - "${DATA_TS_IP}:8020:8020"
+      - "${DATA_TS_IP}:9870:9870"
+    volumes:
+      - ./Infra/hadoop/topology.sh:/opt/gitjob/hadoop/topology.sh:ro
+    # The NameNode is still on the bridge network. Its public RPC endpoint is
+    # bound to the host's Tailscale address, which is not a reliable hairpin
+    # route from the same container. Probe the process directly instead.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - hdfs dfsadmin -fs hdfs://127.0.0.1:8020 -report >/dev/null 2>&1
+
+  hdfs-datanode:
+    network_mode: host
+    environment:
+      CORE-SITE.XML_fs.defaultFS: hdfs://${DATA_TS_IP}:8020
+      HDFS-SITE.XML_dfs.client.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.address: ${DATA_TS_IP}:9866
+      HDFS-SITE.XML_dfs.datanode.hostname: ${DATA_TS_IP}
+      HDFS-SITE.XML_dfs.datanode.ipc.address: ${DATA_TS_IP}:9867
+      HDFS-SITE.XML_dfs.datanode.http.address: ${DATA_TS_IP}:9864
+    expose: !reset []
+
+  hdfs-datanode2:
+    network_mode: host
+    environment:
+      CORE-SITE.XML_fs.defaultFS: hdfs://${DATA_TS_IP}:8020
+      HDFS-SITE.XML_dfs.client.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.address: ${DATA_TS_IP}:9876
+      HDFS-SITE.XML_dfs.datanode.hostname: ${DATA_TS_IP}
+      HDFS-SITE.XML_dfs.datanode.ipc.address: ${DATA_TS_IP}:9877
+      HDFS-SITE.XML_dfs.datanode.http.address: ${DATA_TS_IP}:9874
+    expose: !reset []
+
+  hdfs-datanode3:
+    network_mode: host
+    environment:
+      CORE-SITE.XML_fs.defaultFS: hdfs://${DATA_TS_IP}:8020
+      HDFS-SITE.XML_dfs.client.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.use.datanode.hostname: "true"
+      HDFS-SITE.XML_dfs.datanode.address: ${DATA_TS_IP}:9886
+      HDFS-SITE.XML_dfs.datanode.hostname: ${DATA_TS_IP}
+      HDFS-SITE.XML_dfs.datanode.ipc.address: ${DATA_TS_IP}:9887
+      HDFS-SITE.XML_dfs.datanode.http.address: ${DATA_TS_IP}:9884
+    expose: !reset []
+
+  hdfs-bootstrap:
+    environment:
+      CORE-SITE.XML_fs.defaultFS: hdfs://${DATA_TS_IP}:8020
+
+  spark-master:
+    network_mode: host
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    # MasterArguments evaluates Utils.localHostName() before --host is applied,
+    # so the container hostname must resolve or the daemon dies with
+    # UnknownHostException. On the bridge, Docker's DNS answered `spark-master`.
+    # Host networking removes that, and unlike the Hadoop image the Spark base
+    # image does not resolve its own hostname through nss-myhostname. Map it
+    # explicitly; the advertised address still comes from --host below.
+    extra_hosts:
+      - "spark-master:${DATA_TS_IP}"
+    environment:
+      # WebUI.bind() falls back to 0.0.0.0 unless SPARK_LOCAL_IP is set, which on
+      # host networking would put the management UI on the public interface.
+      SPARK_LOCAL_IP: ${DATA_TS_IP}
+      SPARK_MASTER_HOST: ${DATA_TS_IP}
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8083"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - ${DATA_TS_IP}
+      - --port
+      - "7077"
+      - --webui-port
+      - "8083"
+    expose: !reset []
+    # SPARK_LOCAL_IP binds the UI to the Tailscale address only, so 127.0.0.1
+    # no longer answers. These daemons are on host networking, so this is a
+    # local connection and not the docker-proxy hairpin the NameNode hit.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/${DATA_TS_IP}/8083'"]
+
+  spark-worker:
+    network_mode: host
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    # WorkerArguments resolves the local hostname for the same reason the master
+    # does. The base compose file leaves this service without a `hostname:` so
+    # it can be scaled, which on host networking means it inherits the EC2
+    # hostname; pin a stable name here and map it to the Tailscale address.
+    hostname: spark-worker
+    extra_hosts:
+      - "spark-worker:${DATA_TS_IP}"
+    environment:
+      SPARK_LOCAL_IP: ${DATA_TS_IP}
+      SPARK_MASTER_URL: spark://${DATA_TS_IP}:7077
+      SPARK_WORKER_HOST: ${DATA_TS_IP}
+      SPARK_WORKER_PORT: "7078"
+      SPARK_WORKER_WEBUI_PORT: "8084"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://${DATA_TS_IP}:7077
+      - --host
+      - ${DATA_TS_IP}
+      - --port
+      - "7078"
+      - --cores
+      - ${SPARK_WORKER_CORES:-2}
+      - --memory
+      - ${SPARK_WORKER_MEMORY:-2G}
+      - --webui-port
+      - "8084"
+    expose: !reset []
+    # SPARK_LOCAL_IP binds the UI to the Tailscale address only, so 127.0.0.1
+    # no longer answers. These daemons are on host networking, so this is a
+    # local connection and not the docker-proxy hairpin the NameNode hit.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/${DATA_TS_IP}/8084'"]
