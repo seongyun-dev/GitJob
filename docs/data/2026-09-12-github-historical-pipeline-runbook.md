@@ -697,6 +697,74 @@ Live DataNode 1, Spark worker 1, `fs.defaultFS = hdfs://hdfs-namenode:8020`.
 
 ---
 
+## 7.3 GH Archive 신규 hourly 주기 실행 (S15P21E102-229)
+
+`watch` 는 `watcher.poll()` 을 **한 번** 호출하고 종료한다. 장기 실행이 아니므로
+cron 이 맞는 형태다 — C1 archiver(`-228`)는 반대로 장기 실행이라 compose service 다.
+
+### 두 줄
+
+```cron
+# GH Archive 신규 hourly 감시 — 매시 :35 (발행 lag 30분 + 여유)
+35 * * * * cd /opt/gitjob && ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml PROFILES=data ./Infra/scripts/gharchive-watch.sh
+# 다운로드된 시간을 github.events 로 발행 — 매시 :50
+50 * * * * cd /opt/gitjob && ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml PROFILES=data ./Infra/scripts/gharchive-publish.sh
+```
+
+`:35` 는 `DEFAULT_PUBLICATION_LAG` 30분에서 나온 값이다. 2026-09-09 실측에서 GH
+Archive 가 끝난 시간을 17분 뒤에 서빙했고, 30분은 그 두 배다.
+
+⚠️ **채용공고 스케줄과 섞지 않는다.** `AI/schedule.toml` 은 `site`/`module`/`at` 과
+`source_admission` 기준 A 기록을 담는 채용공고 전용 스키마이고, GH Archive 는 셋 다
+해당 없다. `python -m job.collector --render cron` 이 내는 것도 채용공고 줄뿐이다.
+
+### 왜 두 줄인가
+
+`-144` 가 checkpoint 를 둘로 나눠 둔 이유 그대로다.
+
+| 스크립트 | checkpoint | 무엇을 기록하나 |
+|---|---|---|
+| `gharchive-watch.sh` | `.local/gharchive-watch/watch-checkpoint.json` | **디스크에 있는 것** |
+| `gharchive-publish.sh` | `.local/gharchive-watch/publish-checkpoint.json` | **브로커에 도달한 것** |
+
+합치면 브로커 장애가 전량 재다운로드가 되거나, 다운로드 실패가 조용한 발행 누락이
+된다. `S15P21E102-174` 가 수집기 cursor 에서 이미 치른 값이다.
+
+### 중복 실행 방지
+
+두 스크립트 모두 `flock -n` 으로 자기 lock 을 잡고, 이미 돌고 있으면 **대기하지 않고
+거부한다.** `CheckpointStore` 는 `os.replace` 로 원자적 쓰기를 하지만 **배타 잠금이
+없어서**, 두 인스턴스가 겹치면 read-modify-write 에서 나중 writer 가 이기고 상대가
+기록한 시간이 사라진다. 그렇게 사라진 시간은 GH Archive 가 애초에 발행하지 않은
+시간과 구분되지 않는다. `repo-snapshot-monthly-top10k-chain.sh` 가 같은 이유로 같은
+장치를 쓴다.
+
+| lock | 경로 |
+|---|---|
+| watch | `.local/gharchive-watch/.watch.lock` |
+| publish | `.local/gharchive-watch/.publish.lock` |
+
+### 로그와 종료 코드
+
+```text
+.local/gharchive-watch/logs/watch-YYYYMMDD.log
+.local/gharchive-watch/logs/publish-YYYYMMDD.log
+```
+
+각 줄에 시작·종료 시각과 `exit=` 가 찍히고, 그 사이에 CLI 의 요약 JSON 이 들어간다.
+
+| exit | 뜻 |
+|---|---|
+| `0` | 정상. `not_yet_published` 는 실패가 아니며 여기 오지 않는다 |
+| `1` | gap / 다운로드 실패 / 발행 실패 |
+| `2` | 범위·checkpoint·설정 오류 |
+| `1` (die) | 이미 실행 중이거나 `KAFKA_BOOTSTRAP_SERVERS` 미설정 |
+
+### 아직 하지 않은 것
+
+**crontab 에 등록하지 않았다.** 위 두 줄은 붙여넣을 수 있게 준비만 한 것이고,
+등록·watcher 실행·Kafka 발행은 HDFS RF2 정상화와 운영 토픽 생성 뒤의 일이다.
+
 ## 8. 이 문서의 한계
 
 - 명령은 현재 `develop`의 스크립트 인자에서 그대로 옮긴 것이고, 이 문서를 쓰면서
