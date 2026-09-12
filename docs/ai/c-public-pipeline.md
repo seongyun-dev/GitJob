@@ -1,7 +1,7 @@
 # 공개 Snapshot 분할·재개·최종 합산 계약
 
-상태: 분할/loader/CLI 및 최종 DB 게시 구현·로컬 통합 검증 완료. 실제 Top20k 입력 전체 소비 완료, 원천 품질 한계는 유지.
-기준일: 2026-09-08. Jira: S15P21E102-160.
+상태: 분할/loader/CLI 및 최종 DB 게시 구현·로컬 통합 검증 완료. 기존 Top20k와 월별 SHA Top1k 실제 HDFS 소비 완료, 원천 품질 한계는 유지.
+기준일: 2026-09-12. Jira: S15P21E102-160, S15P21E102-214.
 
 ## 호출 경계
 
@@ -65,16 +65,20 @@ Artifact의 ARTIFACT_UNAVAILABLE/HASH_MISMATCH/SIZE_MISMATCH 또는 실행 예�
 PARTIAL·Tree 경고·정적 미지원·파싱 실패 등의 품질 상태는 기존 분석 의미를 유지한다.
 품질 INSUFFICIENT_DATA와 실행 IN_PROGRESS는 서로 다른 상태다.
 
-현재 분석 버전은 `c-public-static-observations/v4`다. v1은 reader의 namespace/config
+현재 분석 버전은 `c-public-static-observations/v6`, 출력은
+`c-public-repo-analysis/v2`다. v1은 reader의 namespace/config
 ValueError를 검증된 파싱 실패와 같은 READ_OR_PARSE_FAILED로 기록할 수 있었다.
 v2는 reader 단계 예외를 ARTIFACT_UNAVAILABLE로 분리하고, hash/size 검증 뒤의 파싱 실패만
 기존 READ_OR_PARSE_FAILED로 유지한다. v3는 requirements.txt의 미지원 VCS/URL 항목을
 부분 분석으로 남겨 다른 정상 의존성의 관측을 보존한다. 파티션 계획의 parser version도
 바뀌므로 과거 checkpoint는 자동 재사용/변환하지 않는다. v4는 npm 별칭의 실제 대상,
-여러 줄 JS/TS 정적 import와 Java 텍스트 블록 경계를 보완한다. v1/v2/v3 checkpoint는
-원래 버전으로 보존하고 v4는 새 checkpoint 디렉터리에서 실행한다. 기존 단일 분석 schema는
-v1을 유지하며 내부 API의 compute version은 공개 parser version 상수를 따라 v4로 바인딩된다.
-아래 실제 Top20k 수치는 v2의 기존 실행 결과이며 v4의 전체 분석 결과로 인용하지 않는다.
+여러 줄 JS/TS 정적 import와 Java 텍스트 블록 경계를 보완한다. v5는 requirements 연속행·hash,
+UTF-16, Poetry와 유효 선언 부분 복구를 추가한다. v6는 공통 Manifest parser v2와 A의
+`language_metadata`를 source-specific Registry 매핑으로 소비하고, 월별 SHA lineage를 출력에
+보존한다. 언어와 지원 Artifact 중 하나라도 검증된 기술 입력을 제공하면 분모에 포함한다.
+과거 checkpoint는 원래 버전으로 보존하고 v6는 새 checkpoint 디렉터리에서 실행한다.
+v1 출력은 읽기 호환만 유지하며 새 결과는 parser·Manifest parser·Registry version을 함께
+기록한다. 아래 실제 Top20k 수치는 v2의 기존 실행 결과이며 v6의 전체 분석 결과로 인용하지 않는다.
 
 ## 최종 발행
 
@@ -110,6 +114,23 @@ Snapshot record는 13,410개이고, COMPLETE 중 12,235개에는 Artifact가 없
 기술 미사용으로 바꾸지 않는다. 전체 원천 Artifact는 MANIFEST뿐이며 SOURCE는 없다.
 수집 결과의 tree SHA와 commit SHA 동일 경고도 보존하므로 개인 구현/기여 수준이나
 A의 pinned tree lineage 검증 완료를 이 실행만으로 주장하지 않는다.
+
+2026-09-12에는 A의 corrected Top1k
+`s15p21e102-198-202607-top1000-canary-20260911-fix-004e`를 진단 shim 없이 제품 HDFS CLI로
+소비했다. 입력 hash와 publish manifest hash는 각각
+`1d7aa53f8901468d54cf1f9ed5a9d7885e0cd1795fc7cef277c38b7cc80a7a04`,
+`c4b43abbebac9706874f670ca3ea20c7243c4f07532a1919bb9b98cb42e7af07`이다. 발행 687건은
+모두 `MONTH_EVENT_SHA` lineage이고 COMPLETE 629건, PARTIAL 58건이다. NOT_FOUND 291건,
+HISTORICAL_HEAD_UNAVAILABLE 17건, FAILED 5건은 기술 미사용으로 바꾸지 않았다.
+
+parser v6와 `registry-20260911.4` 기본 정책 실행은 2개 파티션을 완료했고 분석 분모 309개,
+관측 기술 24개, 고유 repo-tech pair 676개를 만들었다. 첫 호출에서 1개 파티션만 실행한 뒤
+재개 호출이 이를 검증·재사용하고 나머지를 완료했으며, 완료 재호출은 2개를 모두 재사용했다.
+총 WebHDFS retry는 0회이고 Artifact 실행 실패는 0건이다. PARTIAL 포함 별도 실행은 분모
+346개·기술 30개·repo-tech pair 936개였지만 미해결 행이 1,691개에서 6,378개로 증가했다.
+따라서 기본 공개 Trend는 COMPLETE를 유지하고 PARTIAL은 품질 플래그가 있는 보조 집계로 둔다.
+두 실행의 품질은 미지원 Artifact와 미해결 매핑 때문에 `INSUFFICIENT_DATA`이며 실행 실패를
+뜻하지 않는다. Worker PostgreSQL 게시, 운영 image, B/FE 연결, 3~8월 Top10k는 별도 인수다.
 
 ## 완료 입력 loader와 CLI
 

@@ -5,15 +5,16 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 from github.contracts import RepoCollectionStatus
 from github.public_analysis import (
     ArtifactAnalysis,
+    LanguageAnalysis,
     PublicBatchResult,
     PublicRepoResult,
     TechnologyObservation,
 )
 from registry.contracts import TechnologyRegistry
+from registry.mapper import MatchStatus
 from trend.archive import (
     ArchiveActivityMetadata,
     ArchivePeriodInput,
@@ -64,6 +65,7 @@ def _record(
     partial: bool = False,
     exclusion_reasons: tuple[str, ...] = (),
     unresolved: bool = False,
+    language_tech_ids: tuple[str, ...] = (),
 ) -> PublicRepoResult:
     eligible = included
     artifact = _artifact()
@@ -91,6 +93,25 @@ def _record(
         observed_tree_entries=10,
         checkpoint_uri=None,
         reused_from_snapshot_id=None,
+        language_metadata=tuple(
+            {
+                "language": tech_id.title(),
+                "file_count": 2,
+                "representative_paths": (f"src/{tech_id}.one", f"src/{tech_id}.two"),
+            }
+            for tech_id in language_tech_ids
+        ),
+        language_observations=tuple(
+            LanguageAnalysis(
+                language=tech_id.title(),
+                file_count=2,
+                representative_paths=(f"src/{tech_id}.one", f"src/{tech_id}.two"),
+                status=MatchStatus.MATCHED,
+                tech_id=tech_id,
+                candidates=(tech_id,),
+            )
+            for tech_id in language_tech_ids
+        ),
         eligible=eligible,
         included_in_denominator=included,
         partial_included=partial,
@@ -130,6 +151,11 @@ def _public(
             continue
         for observation in record.observations:
             observed.setdefault(observation.tech_id, set()).add(record.github_repo_id)
+        for observation in record.language_observations:
+            if observation.status is MatchStatus.MATCHED:
+                observed.setdefault(observation.tech_id, set()).add(
+                    record.github_repo_id
+                )
     sample_count = sum(row.included_in_denominator for row in records)
     technologies = [
         {
@@ -208,6 +234,7 @@ def _input(
         registry_version=registry_version,
         snapshot_id=f"public-{period}",
     )
+    public_payload = public.model_dump(mode="json")
     return ArchivePeriodInput(
         metadata=metadata
         or _metadata(
@@ -218,17 +245,18 @@ def _input(
         ),
         activity_rows=iter(rows),
         public_analysis=public,
+        public_snapshot_payload=public_payload,
         public_snapshot_uri=(
             "c-compute://snapshot/c-"
             + digest(
                 {
                     "kind": "PUBLIC_GITHUB",
                     "owner": None,
-                    "payload": public.model_dump(mode="json"),
+                    "payload": public_payload,
                 }
             )
         ),
-        public_snapshot_hash=digest(public.model_dump(mode="json")),
+        public_snapshot_hash=digest(public_payload),
     )
 
 
@@ -269,6 +297,35 @@ def test_month_join_sums_activity_for_current_positive_observations(registry):
     assert point.evidence_examples[0].path == "package.json"
     assert point.evidence_examples[0].uri == "hdfs://trusted/public/package.json"
     assert result.observation_semantics == "CURRENT_PINNED_POSITIVE_OBSERVATIONS_ONLY"
+
+
+def test_current_trend_counts_matched_language_observations(registry):
+    period_input = _input(
+        registry,
+        "2026-03",
+        [
+            {
+                "period": "2026-03",
+                "repo_id": 1,
+                "repo_name": "owner/repo-1",
+                "event_count": 7,
+            }
+        ],
+        (_record(1, language_tech_ids=("javascript",)),),
+    )
+
+    point = archive_trend(
+        "javascript",
+        (period_input,),
+        registry,
+        periods=("2026-03",),
+        granularity=PeriodGranularity.MONTH,
+    ).points[0]
+
+    assert (point.event_count, point.active_repo_count) == (7, 1)
+    assert point.evidence_lookup.matching_repo_count == 1
+    assert point.evidence_examples[0].evidence_basis == "GITHUB_LANGUAGE"
+    assert point.evidence_examples[0].language == "Javascript"
 
 
 def test_complete_sample_actual_zero_is_not_a_nonuse_claim(registry):

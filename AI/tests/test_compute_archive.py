@@ -68,6 +68,75 @@ def archive_request(tmp_path, monkeypatch):
     )
 
 
+def historical_archive_request(tmp_path, monkeypatch, *, sha_source="MONTH_EVENT_SHA"):
+    request = archive_request(tmp_path, monkeypatch)
+    commit_sha = "1".rjust(40, "0")
+    a_snapshot = {
+        "schema_version": "github-repo-snapshot/v1",
+        "dataset_snapshot_id": "public-snapshot",
+        "pipeline_run_id": "public-run",
+        "collector_version": "collector-v1",
+        "generated_at": "2026-09-11T00:00:00Z",
+        "collection_policy": {
+            "policy_version": "policy-v1",
+            "top_n_limit": 10_000,
+            "max_api_calls": 30_000,
+            "max_runtime_seconds": 3_600,
+            "max_tree_entries": 100_000,
+            "max_artifact_files": 100,
+            "max_artifact_bytes": 10_485_760,
+        },
+        "records": [
+            {
+                "repo_snapshot_id": "repo-snapshot-1",
+                "github_repo_id": 1,
+                "repo_full_name": "owner/repo-1",
+                "activity_metric": "gh_archive_event_count",
+                "activity_period_start": "2026-08-01",
+                "activity_period_end": "2026-08-31",
+                "activity_count": 1,
+                "activity_rank": 1,
+                "pinned_commit_sha": commit_sha,
+                "tree_sha": None,
+                "collection_status": "COMPLETE",
+                "collection_issues": [],
+                "checkpoint_uri": None,
+                "reused_from_snapshot_id": None,
+                "tree_truncated": False,
+                "observed_tree_entries": 1,
+                "artifacts": [],
+                "selected_commit_sha": commit_sha,
+                "sha_source": sha_source,
+                "monthly_event_sha": (
+                    commit_sha if sha_source == "MONTH_EVENT_SHA" else None
+                ),
+                "current_default_head": (
+                    commit_sha if sha_source == "CURRENT_DEFAULT_HEAD" else None
+                ),
+                "sha_fallback_reason": (
+                    "MONTH_EVENT_SHA_NOT_AVAILABLE"
+                    if sha_source == "CURRENT_DEFAULT_HEAD"
+                    else None
+                ),
+                "target_period": "2026-08-01/2026-08-31",
+            }
+        ],
+    }
+    a_snapshot_bytes = json.dumps(
+        a_snapshot, sort_keys=True, separators=(",", ":")
+    ).encode()
+    (tmp_path / "a-snapshot.json").write_bytes(a_snapshot_bytes)
+    request["archive_version"] = "v2"
+    request["inputs"][0].update(
+        {
+            "a_snapshot_path": "a-snapshot.json",
+            "a_snapshot_uri": "hdfs:///gitjob/repo_snapshot/2026-08/snapshot.json",
+            "a_snapshot_sha256": hashlib.sha256(a_snapshot_bytes).hexdigest(),
+        }
+    )
+    return request
+
+
 def test_archive_completed_stores_trend_with_original_public_reference(
     client, tmp_path, monkeypatch
 ):
@@ -84,6 +153,36 @@ def test_archive_completed_stores_trend_with_original_public_reference(
         client.post(PREFIX + "/archive-trends/completed", json=request).json()
         == response.json()
     )
+
+
+def test_historical_archive_v2_api_stores_monthly_head_payload(
+    client, tmp_path, monkeypatch
+):
+    request = historical_archive_request(tmp_path, monkeypatch)
+
+    response = client.post(PREFIX + "/archive-trends/completed", json=request)
+    sid = snapshot_ref(response, "TREND")
+    payload = client.get(PREFIX + f"/snapshots/{sid}").json()["data"]["payload"]
+
+    assert payload["schema_version"] == "c-gharchive-historical-trend/v2"
+    assert payload["points"][0]["event_count"] == 12
+    assert payload["points"][0]["historical_head_repo_coverage"] == 1
+    assert (
+        client.post(PREFIX + "/archive-trends/completed", json=request).json()
+        == response.json()
+    )
+
+
+def test_historical_archive_v2_api_rejects_a_snapshot_tampering(
+    client, tmp_path, monkeypatch
+):
+    request = historical_archive_request(tmp_path, monkeypatch)
+    (tmp_path / "a-snapshot.json").write_text("{}", encoding="utf-8")
+
+    response = client.post(PREFIX + "/archive-trends/completed", json=request)
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_INPUT"
 
 
 def test_archive_rejects_tampering_and_unknown_public_snapshot(

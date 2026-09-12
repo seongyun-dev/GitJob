@@ -246,6 +246,23 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
     return versions
 
 
+def archive_compute_versions(
+    archive_version: Literal["v1", "v2"], registry: TechnologyRegistry
+) -> dict[str, str]:
+    """Pin the current or historical Archive algorithm in event identity."""
+
+    versions = compute_versions("TREND", registry)
+    if archive_version == "v2":
+        from trend.archive_v2 import HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION
+
+        versions["archive_trend"] = HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION
+    else:
+        from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION
+
+        versions["archive_trend"] = ARCHIVE_TREND_ALGORITHM_VERSION
+    return versions
+
+
 def startup_registry(*, dsn: str | None = None) -> TechnologyRegistry | None:
     """Retry only startup DB interruptions; a loaded snapshot stays process-pinned."""
     from registry.db import RegistryStoreError
@@ -368,13 +385,15 @@ def create_compute_app(
         request_payload = event.model_dump(mode="json")
         # trace_id is delivery diagnostics, not computation input or idempotency identity.
         request_payload.pop("trace_id")
-        request_payload["compute_versions"] = compute_versions(kind, registry)
         if isinstance(event, ArchiveTrendCompleted):
-            from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION
-
-            request_payload["compute_versions"]["archive_trend"] = (
-                ARCHIVE_TREND_ALGORITHM_VERSION
+            if event.archive_version == "v1":
+                # Preserve the pre-v2 request hash for legacy retries.
+                request_payload.pop("archive_version", None)
+            request_payload["compute_versions"] = archive_compute_versions(
+                event.archive_version, registry
             )
+        else:
+            request_payload["compute_versions"] = compute_versions(kind, registry)
         ticket = db.claim(
             event_id=event.event_id,
             kind=kind,

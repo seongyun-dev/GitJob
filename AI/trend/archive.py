@@ -19,6 +19,8 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, TextIO
 from urllib.parse import urlsplit
 
+from github.contracts import RepoCollectionStatus
+from github.public_analysis import PublicBatchResult, PublicRepoResult
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -30,10 +32,9 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
-from github.contracts import RepoCollectionStatus
-from github.public_analysis import PublicBatchResult, PublicRepoResult
 from registry.contracts import RegistryStatus, TechnologyRegistry
+from registry.mapper import MatchStatus
+
 from trend.contracts import TrendStatus
 
 ARCHIVE_TREND_SCHEMA_VERSION = "c-gharchive-trend/v1"
@@ -148,6 +149,7 @@ class ArchivePeriodInput:
     metadata: ArchiveActivityMetadata
     activity_rows: Iterable[Mapping[str, object]]
     public_analysis: PublicBatchResult
+    public_snapshot_payload: Mapping[str, object]
     public_snapshot_uri: str
     public_snapshot_hash: str
 
@@ -177,6 +179,16 @@ class ArchiveEvidenceExample(ArchiveModel):
     @classmethod
     def absolute_evidence_uri(cls, value: str) -> str:
         return _absolute_uri(value, "evidence uri")
+
+
+class ArchiveLanguageEvidenceExample(ArchiveModel):
+    github_repo_id: Annotated[StrictInt, Field(gt=0)]
+    repo_snapshot_id: StrictStr
+    pinned_commit_sha: _COMMIT_SHA
+    evidence_basis: Literal["GITHUB_LANGUAGE"] = "GITHUB_LANGUAGE"
+    language: StrictStr
+    file_count: Annotated[StrictInt, Field(gt=0)]
+    representative_paths: tuple[StrictStr, ...]
 
 
 class ArchiveEvidenceLookup(ArchiveModel):
@@ -243,7 +255,9 @@ class ArchiveTrendPoint(ArchiveModel):
     public_snapshot_uri: str | None = None
     public_snapshot_hash: _HASH | None = None
     evidence_lookup: ArchiveEvidenceLookup | None = None
-    evidence_examples: tuple[ArchiveEvidenceExample, ...] = ()
+    evidence_examples: tuple[
+        ArchiveEvidenceExample | ArchiveLanguageEvidenceExample, ...
+    ] = ()
 
     @model_validator(mode="after")
     def reconcile_point(self) -> ArchiveTrendPoint:
@@ -374,8 +388,7 @@ def _payload_digest(value: object) -> str:
 
 
 def _validate_public_lineage(period_input: ArchivePeriodInput) -> None:
-    public = period_input.public_analysis
-    payload = public.model_dump(mode="json")
+    payload = period_input.public_snapshot_payload
     stored_snapshot_id = "c-" + _payload_digest(
         {"kind": "PUBLIC_GITHUB", "owner": None, "payload": payload}
     )
@@ -389,11 +402,31 @@ def _validate_public_lineage(period_input: ArchivePeriodInput) -> None:
         raise ValueError("public_snapshot_hash does not match the stored payload")
 
 
-def _evidence_example(record: PublicRepoResult, tech_id: str) -> ArchiveEvidenceExample:
+def _evidence_example(
+    record: PublicRepoResult, tech_id: str
+) -> ArchiveEvidenceExample | ArchiveLanguageEvidenceExample:
     observations = sorted(
         (row for row in record.observations if row.tech_id == tech_id),
         key=lambda row: (row.path, row.uri, row.content_hash, row.line or 0),
     )
+    if not observations:
+        languages = sorted(
+            (
+                row
+                for row in record.language_observations
+                if row.status is MatchStatus.MATCHED and row.tech_id == tech_id
+            ),
+            key=lambda row: (row.language, row.representative_paths),
+        )
+        language = languages[0]
+        return ArchiveLanguageEvidenceExample(
+            github_repo_id=record.github_repo_id,
+            repo_snapshot_id=record.repo_snapshot_id,
+            pinned_commit_sha=record.pinned_commit_sha,
+            language=language.language,
+            file_count=language.file_count,
+            representative_paths=language.representative_paths,
+        )
     observation = observations[0]
     return ArchiveEvidenceExample(
         github_repo_id=record.github_repo_id,
@@ -470,6 +503,10 @@ def _point_for_input(
         record
         for record in sample_records
         if any(observation.tech_id == tech_id for observation in record.observations)
+        or any(
+            observation.status is MatchStatus.MATCHED and observation.tech_id == tech_id
+            for observation in record.language_observations
+        )
     )
     positive_records = tuple(
         sorted(positive_records, key=lambda row: row.github_repo_id)

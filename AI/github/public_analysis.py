@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import codecs
 import hashlib
 import json
 import re
@@ -20,21 +21,55 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    StrictStr,
     model_validator,
 )
 
+from analysis import manifests as shared_manifests
+
+SHARED_MANIFEST_PARSER_VERSION = getattr(
+    shared_manifests, "MANIFEST_PARSER_VERSION", None
+)
+parse_manifest_bytes = getattr(shared_manifests, "parse_manifest_bytes", None)
+supports_manifest_path = getattr(shared_manifests, "supports_manifest_path", None)
+if all(
+    item is None
+    for item in (
+        SHARED_MANIFEST_PARSER_VERSION,
+        parse_manifest_bytes,
+        supports_manifest_path,
+    )
+):
+    SHARED_MANIFEST_PARSER_VERSION = None
+    parse_manifest_bytes = None
+    supports_manifest_path = None
+elif any(
+    item is None
+    for item in (
+        SHARED_MANIFEST_PARSER_VERSION,
+        parse_manifest_bytes,
+        supports_manifest_path,
+    )
+):
+    raise RuntimeError("shared manifest parser exports are incomplete")
+
 from github.contracts import (
     GitHubRepoSnapshotBatch,
+    GitObjectSha,
     RepoArtifact,
     RepoArtifactType,
     RepoCollectionStatus,
+    RepoLanguageMetadata,
 )
 from registry.contracts import ImportEcosystem, PackageEcosystem
 from registry.mapper import MapperInput, MapperSource, MatchStatus, RegistryMapper
 from trend.contracts import TrendStatus
 
-PUBLIC_PARSER_VERSION = "c-public-static-observations/v4"
-PUBLIC_SCHEMA_VERSION = "c-public-repo-analysis/v1"
+PUBLIC_PARSER_VERSION = "c-public-static-observations/v6"
+PUBLIC_SCHEMA_VERSION = "c-public-repo-analysis/v2"
+PUBLIC_MANIFEST_PARSER_VERSION = (
+    SHARED_MANIFEST_PARSER_VERSION or "c-public-embedded-manifest-parser/v5"
+)
 MAX_CONSUMER_ARTIFACT_BYTES = 2_000_000
 MAX_CONSUMER_BATCH_BYTES = 100_000_000
 
@@ -111,11 +146,43 @@ class ArtifactAnalysis(OutputModel):
     reason: str | None = None
 
 
+class LanguageAnalysis(OutputModel):
+    language: StrictStr
+    file_count: StrictInt = Field(gt=0)
+    representative_paths: tuple[StrictStr, ...]
+    basis: Literal["GITHUB_LANGUAGE"] = "GITHUB_LANGUAGE"
+    status: MatchStatus
+    tech_id: str | None
+    candidates: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_mapping_result(self) -> LanguageAnalysis:
+        if self.status is MatchStatus.MATCHED:
+            if self.tech_id is None or self.candidates != (self.tech_id,):
+                raise ValueError("matched language requires one technology identity")
+        elif self.tech_id is not None:
+            raise ValueError("unresolved language cannot claim a technology identity")
+        return self
+
+
 class PublicRepoResult(OutputModel):
     repo_snapshot_id: str
     github_repo_id: int
     repo_full_name: str
     pinned_commit_sha: str
+    selected_commit_sha: GitObjectSha | None = None
+    sha_source: (
+        Literal[
+            "MONTH_EVENT_SHA",
+            "CURRENT_DEFAULT_HEAD",
+            "HISTORICAL_HEAD_UNAVAILABLE",
+        ]
+        | None
+    ) = None
+    monthly_event_sha: GitObjectSha | None = None
+    current_default_head: GitObjectSha | None = None
+    sha_fallback_reason: str | None = None
+    target_period: str | None = None
     tree_sha: str | None
     activity_metric: str
     activity_period_start: str
@@ -128,6 +195,8 @@ class PublicRepoResult(OutputModel):
     observed_tree_entries: int
     checkpoint_uri: str | None
     reused_from_snapshot_id: str | None
+    language_metadata: tuple[RepoLanguageMetadata, ...] = ()
+    language_observations: tuple[LanguageAnalysis, ...] = ()
     eligible: StrictBool
     included_in_denominator: StrictBool
     partial_included: StrictBool
@@ -140,16 +209,76 @@ class PublicRepoResult(OutputModel):
 
     @model_validator(mode="after")
     def validate_eligibility(self) -> PublicRepoResult:
+        if (
+            self.selected_commit_sha is not None
+            and self.selected_commit_sha != self.pinned_commit_sha
+        ):
+            raise ValueError("selected_commit_sha must equal pinned_commit_sha")
+        if self.sha_source == "MONTH_EVENT_SHA":
+            if (
+                self.selected_commit_sha is None
+                or self.selected_commit_sha != self.monthly_event_sha
+                or self.sha_fallback_reason is not None
+            ):
+                raise ValueError("MONTH_EVENT_SHA lineage is inconsistent")
+        elif self.sha_source == "CURRENT_DEFAULT_HEAD":
+            if (
+                self.selected_commit_sha is None
+                or self.selected_commit_sha != self.current_default_head
+                or self.sha_fallback_reason is None
+            ):
+                raise ValueError("CURRENT_DEFAULT_HEAD lineage is inconsistent")
+        elif self.sha_source == "HISTORICAL_HEAD_UNAVAILABLE":
+            if (
+                self.selected_commit_sha is not None
+                or self.current_default_head is not None
+                or self.sha_fallback_reason is None
+            ):
+                raise ValueError("HISTORICAL_HEAD_UNAVAILABLE lineage is inconsistent")
+        elif any(
+            value is not None
+            for value in (
+                self.selected_commit_sha,
+                self.monthly_event_sha,
+                self.current_default_head,
+                self.sha_fallback_reason,
+            )
+        ):
+            raise ValueError("commit lineage fields require sha_source")
+        language_sources = {
+            (item.language, item.file_count, item.representative_paths)
+            for item in self.language_metadata
+        }
+        language_results = {
+            (item.language, item.file_count, item.representative_paths)
+            for item in self.language_observations
+        }
+        if self.eligible and (
+            language_sources != language_results
+            or len(self.language_metadata) != len(self.language_observations)
+        ):
+            raise ValueError(
+                "eligible language analysis must preserve every source entry"
+            )
         parsed = any(
             artifact.status in {TrendStatus.READY, TrendStatus.INSUFFICIENT_DATA}
             and artifact.reason != "COLLECTION_POLICY_EXCLUDED"
             for artifact in self.artifacts
         )
-        if self.included_in_denominator != (self.eligible and parsed):
-            raise ValueError("denominator inclusion requires eligible parsed artifacts")
+        mapped_language = any(
+            item.status is MatchStatus.MATCHED for item in self.language_observations
+        )
+        if self.included_in_denominator != (
+            self.eligible and (parsed or mapped_language)
+        ):
+            raise ValueError(
+                "denominator inclusion requires an eligible supported artifact or language"
+            )
         if self.collection_status is RepoCollectionStatus.FAILED and self.eligible:
             raise ValueError("FAILED collections cannot be eligible")
-        if not self.eligible and (self.observations or self.unresolved):
+        if not self.eligible and (
+            self.observations or self.unresolved or self.language_observations
+        ):
             raise ValueError("excluded collections cannot contribute observations")
         if self.partial_included != (
             self.eligible and self.collection_status is RepoCollectionStatus.PARTIAL
@@ -190,7 +319,9 @@ class PublicTechnologyCount(OutputModel):
 
 
 class PublicBatchResult(OutputModel):
-    schema_version: Literal["c-public-repo-analysis/v1"] = PUBLIC_SCHEMA_VERSION
+    schema_version: Literal[
+        "c-public-repo-analysis/v1", "c-public-repo-analysis/v2"
+    ] = PUBLIC_SCHEMA_VERSION
     dataset_snapshot_id: str
     pipeline_run_id: str
     collector_version: str
@@ -198,11 +329,13 @@ class PublicBatchResult(OutputModel):
     generated_at: str
     registry_version: str
     parser_version: str = PUBLIC_PARSER_VERSION
+    manifest_parser_version: str | None = None
     status: TrendStatus
     include_partial: StrictBool
-    denominator_basis: Literal["ELIGIBLE_REPOSITORIES_WITH_PARSED_ARTIFACT"] = (
-        "ELIGIBLE_REPOSITORIES_WITH_PARSED_ARTIFACT"
-    )
+    denominator_basis: Literal[
+        "ELIGIBLE_REPOSITORIES_WITH_PARSED_ARTIFACT",
+        "ELIGIBLE_REPOSITORIES_WITH_SUPPORTED_ARTIFACT_OR_LANGUAGE",
+    ] = "ELIGIBLE_REPOSITORIES_WITH_SUPPORTED_ARTIFACT_OR_LANGUAGE"
     total_repo_count: StrictInt = Field(ge=0)
     eligible_repo_count: StrictInt = Field(ge=0)
     sample_repo_count: StrictInt = Field(ge=0)
@@ -210,6 +343,18 @@ class PublicBatchResult(OutputModel):
     excluded_repo_count: StrictInt = Field(ge=0)
     records: tuple[PublicRepoResult, ...]
     technologies: tuple[PublicTechnologyCount, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def restore_schema_specific_denominator_basis(cls, value):
+        if isinstance(value, dict) and "denominator_basis" not in value:
+            value = dict(value)
+            value["denominator_basis"] = (
+                "ELIGIBLE_REPOSITORIES_WITH_PARSED_ARTIFACT"
+                if value.get("schema_version") == "c-public-repo-analysis/v1"
+                else "ELIGIBLE_REPOSITORIES_WITH_SUPPORTED_ARTIFACT_OR_LANGUAGE"
+            )
+        return value
 
     @model_validator(mode="after")
     def reconcile_population(self) -> PublicBatchResult:
@@ -238,6 +383,10 @@ class PublicBatchResult(OutputModel):
             if record.included_in_denominator:
                 for observation in record.observations:
                     observed[observation.tech_id].add(record.github_repo_id)
+                for observation in record.language_observations:
+                    if observation.status is MatchStatus.MATCHED:
+                        assert observation.tech_id is not None
+                        observed[observation.tech_id].add(record.github_repo_id)
         if len({row.tech_id for row in self.technologies}) != len(
             self.technologies
         ) or set(observed) != {row.tech_id for row in self.technologies}:
@@ -321,6 +470,91 @@ def _is_pip_url_requirement(value: str) -> bool:
     )
     url = rf"(?:{vcs_url}|(?:https?|file)://\S+)"
     return re.fullmatch(url, value, flags=re.IGNORECASE) is not None
+
+
+_PIP_HASH_OPTION = re.compile(r"(?:^|\s)--hash(?:=|\s+)\S+")
+
+
+def _requirements_candidates(text: str) -> tuple[list[Candidate], bool]:
+    """Recover independent pip declarations without losing valid neighbors."""
+
+    logical_lines: list[str] = []
+    continuation: list[str] = []
+    complete = True
+    for raw_line in text.splitlines():
+        declaration = raw_line.strip()
+        if not continuation and declaration.startswith("#"):
+            continue
+        declaration = re.split(r"\s+#", declaration, maxsplit=1)[0].strip()
+        if not declaration:
+            continue
+        if declaration.endswith("\\"):
+            continuation.append(declaration[:-1].rstrip())
+            continue
+        if continuation:
+            declaration = " ".join((*continuation, declaration))
+            continuation.clear()
+        logical_lines.append(declaration)
+    if continuation:
+        logical_lines.append(" ".join(continuation))
+        complete = False
+
+    candidates: list[Candidate] = []
+    invalid_declarations = 0
+    for declaration in logical_lines:
+        without_hashes = _PIP_HASH_OPTION.sub(" ", declaration).strip()
+        if not without_hashes:
+            complete = False
+            continue
+        if without_hashes.startswith("-") or _is_pip_url_requirement(without_hashes):
+            complete = False
+            continue
+        try:
+            candidates.append(_pypi_requirement(without_hashes, "requirements"))
+        except ValueError:
+            invalid_declarations += 1
+            complete = False
+
+    if invalid_declarations and not candidates:
+        raise ValueError("requirements contain no parseable dependency declaration")
+    return candidates, complete
+
+
+def _poetry_candidates(poetry: object) -> tuple[list[Candidate], bool]:
+    if not isinstance(poetry, dict):
+        raise TypeError("invalid Poetry table")
+
+    candidates: list[Candidate] = []
+    complete = True
+
+    def collect(table: object, scope: str) -> None:
+        nonlocal complete
+        if table is None:
+            return
+        if not isinstance(table, dict):
+            raise TypeError("invalid Poetry dependency table")
+        for package, specifier in table.items():
+            if not isinstance(package, str) or not isinstance(specifier, (str, dict)):
+                complete = False
+                continue
+            if package.casefold() == "python":
+                continue
+            try:
+                candidates.append(_pypi_requirement(package, scope))
+            except ValueError:
+                complete = False
+
+    collect(poetry.get("dependencies"), "poetry.dependencies")
+    collect(poetry.get("dev-dependencies"), "poetry.dev-dependencies")
+    groups = poetry.get("group", {})
+    if not isinstance(groups, dict):
+        raise TypeError("invalid Poetry group table")
+    for group_name, group in groups.items():
+        if not isinstance(group_name, str) or not isinstance(group, dict):
+            complete = False
+            continue
+        collect(group.get("dependencies"), f"poetry.group:{group_name}")
+    return candidates, complete
 
 
 def _without_comments(text: str) -> str:
@@ -551,20 +785,7 @@ def _manifest_candidates(path: str, text: str) -> tuple[list[Candidate], bool]:
                     continue
                 candidates.append(candidate)
     elif name == "requirements.txt":
-        for line in text.splitlines():
-            declaration = line.strip()
-            if declaration.startswith("#"):
-                continue
-            declaration = re.split(r"\s+#", declaration, maxsplit=1)[0].strip()
-            if not declaration:
-                continue
-            if declaration.startswith("-") or declaration.endswith("\\"):
-                complete = False
-                continue
-            if _is_pip_url_requirement(declaration):
-                complete = False
-                continue
-            candidates.append(_pypi_requirement(declaration, "requirements"))
+        candidates, complete = _requirements_candidates(text)
     elif name == "pyproject.toml":
         value = tomllib.loads(text)
         project = value.get("project", {})
@@ -583,9 +804,14 @@ def _manifest_candidates(path: str, text: str) -> tuple[list[Candidate], bool]:
             ):
                 raise ValueError("invalid pyproject dependency list")
             candidates.extend(_pypi_requirement(item, scope) for item in declarations)
-        complete = "dependencies" not in project.get(
-            "dynamic", []
-        ) and "poetry" not in value.get("tool", {})
+        complete = "dependencies" not in project.get("dynamic", [])
+        tool = value.get("tool", {})
+        if not isinstance(tool, dict):
+            raise ValueError("invalid pyproject tool table")
+        if "poetry" in tool:
+            poetry_candidates, poetry_complete = _poetry_candidates(tool["poetry"])
+            candidates.extend(poetry_candidates)
+            complete = complete and poetry_complete
     elif name == "pom.xml":
         if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
             raise ValueError("XML entity declarations are not supported")
@@ -702,48 +928,159 @@ def _source_candidates(path: str, text: str) -> tuple[list[Candidate], bool]:
     return candidates, True
 
 
-def _read_candidates(
-    artifact: RepoArtifact, reader: ArtifactReader
-) -> tuple[list[Candidate], ArtifactAnalysis]:
-    metadata = {
+_NOT_PRELOADED = object()
+
+
+def _artifact_metadata(artifact: RepoArtifact) -> dict[str, object]:
+    return {
         "path": artifact.path,
         "uri": artifact.uri,
         "content_hash": artifact.content_hash,
         "size_bytes": artifact.size_bytes,
     }
+
+
+def _verified_artifact_content(
+    artifact: RepoArtifact, reader: ArtifactReader
+) -> bytes | ArtifactAnalysis:
+    metadata = _artifact_metadata(artifact)
     if artifact.size_bytes > MAX_CONSUMER_ARTIFACT_BYTES:
-        return [], ArtifactAnalysis(
+        return ArtifactAnalysis(
             **metadata, status=TrendStatus.FAILED, reason="CONSUMER_BYTE_LIMIT"
         )
     try:
         content = reader.read(artifact.uri, max_bytes=artifact.size_bytes)
     except Exception:  # noqa: BLE001 - no reader failure proves verified parser input.
-        return [], ArtifactAnalysis(
+        return ArtifactAnalysis(
             **metadata, status=TrendStatus.FAILED, reason="ARTIFACT_UNAVAILABLE"
         )
     if not isinstance(content, bytes) or len(content) != artifact.size_bytes:
-        return [], ArtifactAnalysis(
+        return ArtifactAnalysis(
             **metadata, status=TrendStatus.FAILED, reason="SIZE_MISMATCH"
         )
     if hashlib.sha256(content).hexdigest() != artifact.content_hash:
-        return [], ArtifactAnalysis(
+        return ArtifactAnalysis(
             **metadata, status=TrendStatus.FAILED, reason="HASH_MISMATCH"
         )
+    return content
+
+
+def _shared_manifest_candidates(
+    artifact: RepoArtifact,
+    content: bytes,
+    companion_files: dict[str, bytes],
+) -> tuple[list[Candidate], list[UnresolvedObservation], bool]:
+    if (
+        parse_manifest_bytes is None
+        or supports_manifest_path is None
+        or not supports_manifest_path(artifact.path)
+    ):
+        raise NotImplementedError("shared manifest parser does not support path")
+    candidates = []
+    unresolved = []
+    for occurrence in parse_manifest_bytes(
+        artifact.path, content, companion_files=companion_files
+    ):
+        scope = occurrence.scope or "dependency"
+        try:
+            ecosystem = PackageEcosystem(occurrence.ecosystem)
+        except ValueError:
+            unresolved.append(
+                UnresolvedObservation(
+                    raw_value=occurrence.coordinate,
+                    basis=f"PACKAGE:{occurrence.ecosystem}",
+                    status="UNSUPPORTED_ECOSYSTEM",
+                    candidates=(),
+                    path=artifact.path,
+                    scope=scope,
+                )
+            )
+            continue
+        candidates.append(
+            Candidate(
+                request=MapperInput(
+                    source=MapperSource.PACKAGE,
+                    raw_value=occurrence.coordinate,
+                    ecosystem=ecosystem,
+                ),
+                scope=scope,
+                line=occurrence.line,
+            )
+        )
+    return candidates, unresolved, not unresolved
+
+
+def _read_candidates(
+    artifact: RepoArtifact,
+    reader: ArtifactReader,
+    *,
+    companion_files: dict[str, bytes] | None = None,
+    preloaded: bytes | ArtifactAnalysis | object = _NOT_PRELOADED,
+) -> tuple[list[Candidate], list[UnresolvedObservation], ArtifactAnalysis]:
+    metadata = _artifact_metadata(artifact)
+    verified = (
+        _verified_artifact_content(artifact, reader)
+        if preloaded is _NOT_PRELOADED
+        else preloaded
+    )
+    if isinstance(verified, ArtifactAnalysis):
+        return [], [], verified
+    assert isinstance(verified, bytes)
     try:
-        text = content.decode("utf-8-sig")
-        candidates, complete = (
-            _manifest_candidates
-            if artifact.artifact_type is RepoArtifactType.MANIFEST
-            else _source_candidates
-        )(artifact.path, text)
-        return candidates, ArtifactAnalysis(
-            **metadata,
-            status=TrendStatus.READY if complete else TrendStatus.INSUFFICIENT_DATA,
-            reason=None if complete else "STATIC_PARSER_PARTIAL",
+        text = verified.decode(
+            "utf-16"
+            if verified.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE))
+            else "utf-8-sig"
+        )
+        unresolved: list[UnresolvedObservation] = []
+        if artifact.artifact_type is RepoArtifactType.MANIFEST:
+            try:
+                candidates, complete = _manifest_candidates(artifact.path, text)
+            except NotImplementedError:
+                candidates, unresolved, complete = _shared_manifest_candidates(
+                    artifact, verified, companion_files or {}
+                )
+            else:
+                if (
+                    PurePosixPath(artifact.path).name
+                    in {"build.gradle", "build.gradle.kts"}
+                    and parse_manifest_bytes is not None
+                    and supports_manifest_path is not None
+                    and supports_manifest_path(artifact.path)
+                ):
+                    shared, shared_unresolved, _ = _shared_manifest_candidates(
+                        artifact, verified, companion_files or {}
+                    )
+                    candidates.extend(shared)
+                    unresolved.extend(shared_unresolved)
+                    complete = False
+        else:
+            candidates, complete = _source_candidates(artifact.path, text)
+        reason = (
+            "UNSUPPORTED_PACKAGE_ECOSYSTEM"
+            if unresolved
+            else None
+            if complete
+            else "STATIC_PARSER_PARTIAL"
+        )
+        return (
+            candidates,
+            unresolved,
+            ArtifactAnalysis(
+                **metadata,
+                status=TrendStatus.READY if complete else TrendStatus.INSUFFICIENT_DATA,
+                reason=reason,
+            ),
         )
     except NotImplementedError:
-        return [], ArtifactAnalysis(
-            **metadata, status=TrendStatus.NOT_SUPPORTED, reason="UNSUPPORTED_ARTIFACT"
+        return (
+            [],
+            [],
+            ArtifactAnalysis(
+                **metadata,
+                status=TrendStatus.NOT_SUPPORTED,
+                reason="UNSUPPORTED_ARTIFACT",
+            ),
         )
     except (
         UnicodeError,
@@ -753,31 +1090,43 @@ def _read_candidates(
         TypeError,
         RecursionError,
     ):
-        return [], ArtifactAnalysis(
-            **metadata, status=TrendStatus.FAILED, reason="READ_OR_PARSE_FAILED"
+        return (
+            [],
+            [],
+            ArtifactAnalysis(
+                **metadata, status=TrendStatus.FAILED, reason="READ_OR_PARSE_FAILED"
+            ),
         )
 
 
 def _combined_status(
-    artifacts: list[ArtifactAnalysis], collection_status: RepoCollectionStatus
+    artifacts: list[ArtifactAnalysis],
+    languages: list[LanguageAnalysis],
+    collection_status: RepoCollectionStatus,
 ) -> TrendStatus:
     statuses = {artifact.status for artifact in artifacts}
+    mapped_language = any(item.status is MatchStatus.MATCHED for item in languages)
     if collection_status is RepoCollectionStatus.FAILED:
         return TrendStatus.FAILED
     if TrendStatus.FAILED in statuses:
         return (
             TrendStatus.INSUFFICIENT_DATA
-            if statuses & {TrendStatus.READY, TrendStatus.INSUFFICIENT_DATA}
+            if mapped_language
+            or statuses & {TrendStatus.READY, TrendStatus.INSUFFICIENT_DATA}
             else TrendStatus.FAILED
         )
     if (
         collection_status is RepoCollectionStatus.PARTIAL
         or TrendStatus.INSUFFICIENT_DATA in statuses
-        or not artifacts
+        or (not artifacts and not mapped_language)
     ):
         return TrendStatus.INSUFFICIENT_DATA
     if statuses == {TrendStatus.NOT_SUPPORTED}:
-        return TrendStatus.NOT_SUPPORTED
+        return (
+            TrendStatus.INSUFFICIENT_DATA
+            if mapped_language
+            else TrendStatus.NOT_SUPPORTED
+        )
     if TrendStatus.NOT_SUPPORTED in statuses:
         return TrendStatus.INSUFFICIENT_DATA
     return TrendStatus.READY
@@ -812,7 +1161,7 @@ def analyze_public_batch(
     repos_by_tech = defaultdict(set)
     analyzed = 0
     for record in sorted(batch.records, key=lambda item: item.activity_rank):
-        observations, unresolved, artifacts = [], [], []
+        observations, unresolved, artifacts, languages = [], [], [], []
         quality_reasons = (
             ("TREE_SHA_EQUALS_COMMIT_SHA",)
             if record.tree_sha == record.pinned_commit_sha
@@ -827,6 +1176,37 @@ def analyze_public_batch(
             else ("PARTIAL_NOT_SELECTED",)
         )
         seen = set()
+        preloaded_artifacts: dict[str, bytes | ArtifactAnalysis] = {}
+        companion_files: dict[str, bytes] = {}
+        if eligible and parse_manifest_bytes is not None:
+            for artifact in record.artifacts:
+                if PurePosixPath(artifact.path).name != "libs.versions.toml":
+                    continue
+                verified = _verified_artifact_content(artifact, reader)
+                preloaded_artifacts[artifact.path] = verified
+                if isinstance(verified, bytes):
+                    companion_files[artifact.path] = verified
+        if eligible:
+            for metadata in record.language_metadata:
+                result = mapper.map(
+                    MapperInput(
+                        source=MapperSource.GITHUB_LANGUAGE,
+                        raw_value=metadata.language,
+                    )
+                )
+                languages.append(
+                    LanguageAnalysis(
+                        language=metadata.language,
+                        file_count=metadata.file_count,
+                        representative_paths=metadata.representative_paths,
+                        status=result.status,
+                        tech_id=result.tech_id,
+                        candidates=result.candidates,
+                    )
+                )
+                if result.status is MatchStatus.MATCHED:
+                    assert result.tech_id is not None
+                    repos_by_tech[result.tech_id].add(record.github_repo_id)
         for artifact in record.artifacts:
             if not eligible:
                 artifacts.append(
@@ -840,8 +1220,14 @@ def analyze_public_batch(
                     )
                 )
                 continue
-            candidates, analysis = _read_candidates(artifact, reader)
+            candidates, parser_unresolved, analysis = _read_candidates(
+                artifact,
+                reader,
+                companion_files=companion_files,
+                preloaded=preloaded_artifacts.get(artifact.path, _NOT_PRELOADED),
+            )
             artifacts.append(analysis)
+            unresolved.extend(parser_unresolved)
             for candidate in candidates:
                 result = mapper.map(candidate.request)
                 if result.status is not MatchStatus.MATCHED:
@@ -879,15 +1265,22 @@ def analyze_public_batch(
                     )
                 )
                 repos_by_tech[result.tech_id].add(record.github_repo_id)
-        included = eligible and any(
-            a.status in {TrendStatus.READY, TrendStatus.INSUFFICIENT_DATA}
-            for a in artifacts
+        included = eligible and (
+            any(
+                a.status in {TrendStatus.READY, TrendStatus.INSUFFICIENT_DATA}
+                for a in artifacts
+            )
+            or any(item.status is MatchStatus.MATCHED for item in languages)
         )
         analyzed += included
         if eligible and not included:
             exclusion_reasons = ("NO_SUPPORTED_ARTIFACT_PARSED",)
-        status = _combined_status(artifacts, record.collection_status)
-        if (unresolved or quality_reasons) and status is TrendStatus.READY:
+        status = _combined_status(artifacts, languages, record.collection_status)
+        if (
+            unresolved
+            or quality_reasons
+            or any(item.status is not MatchStatus.MATCHED for item in languages)
+        ) and status is TrendStatus.READY:
             status = TrendStatus.INSUFFICIENT_DATA
         records.append(
             PublicRepoResult(
@@ -895,6 +1288,12 @@ def analyze_public_batch(
                 github_repo_id=record.github_repo_id,
                 repo_full_name=record.repo_full_name,
                 pinned_commit_sha=record.pinned_commit_sha,
+                selected_commit_sha=record.selected_commit_sha,
+                sha_source=record.sha_source,
+                monthly_event_sha=record.monthly_event_sha,
+                current_default_head=record.current_default_head,
+                sha_fallback_reason=record.sha_fallback_reason,
+                target_period=record.target_period,
                 tree_sha=record.tree_sha,
                 activity_metric=record.activity_metric,
                 activity_period_start=record.activity_period_start.isoformat(),
@@ -909,6 +1308,8 @@ def analyze_public_batch(
                 observed_tree_entries=record.observed_tree_entries,
                 checkpoint_uri=record.checkpoint_uri,
                 reused_from_snapshot_id=record.reused_from_snapshot_id,
+                language_metadata=record.language_metadata,
+                language_observations=tuple(languages),
                 eligible=eligible,
                 included_in_denominator=included,
                 partial_included=eligible
@@ -939,6 +1340,7 @@ def analyze_public_batch(
         collection_policy_version=batch.collection_policy.policy_version,
         generated_at=batch.generated_at.isoformat(),
         registry_version=mapper.registry_version,
+        manifest_parser_version=PUBLIC_MANIFEST_PARSER_VERSION,
         status=status,
         include_partial=include_partial,
         total_repo_count=count,

@@ -96,6 +96,17 @@ UTF-8, row 계약 위반은 422 입력 오류이고, 신뢰 mount의 누락·권
 `PARTIAL`은 public 분석과 archive 요청 양쪽에서 `include_partial=true`를 명시한
 경우에만 포함하고 `PARTIAL_COLLECTION_INCLUDED` quality를 남긴다.
 
+public parser v6의 분모 기준은
+`ELIGIBLE_REPOSITORIES_WITH_SUPPORTED_ARTIFACT_OR_LANGUAGE`다. hash 검증 뒤 지원 parser가
+읽은 artifact 또는 Registry의 `GITHUB_LANGUAGE` mapping과 일치한 A
+`language_metadata`가 하나 이상 있어야 한다. 언어 원문·파일 수·대표 경로와
+MATCHED/AMBIGUOUS/UNKNOWN 결과를 public record에 함께 보존한다. language metadata만
+있는 repository도 매핑이 성공하면 분모와 양성 관측에 포함하고, unknown만 있으면
+분모 밖 `INSUFFICIENT_DATA`로 유지한다. 일부 언어가 unresolved이거나 다른 artifact가
+미확인이어도 확인된 양성은 보존하되 repository 상태를 `READY`로 높이지 않는다.
+이 의미 변경은 `c-public-repo-analysis/v2`와 `c-public-static-observations/v6`로
+구분한다. 저장된 v1 결과는 읽을 수 있지만 v5 checkpoint는 v6 실행에 재사용하지 않는다.
+
 `event_count`는 해당 표본 중 **현재 pinned commit에서 기술의 양성 관측이 있는
 repository**의 그 기간 GH Archive event 합, `active_repo_count`는 그 중 event가 1개
 이상인 repository 수다. 따라서 후보 선정 기간은 과거여도 artifact를 지금 수집한
@@ -179,6 +190,70 @@ API adapter는 다음 순서로 연결한다.
 전체 evidence 조회가 필요하면 별도 public snapshot 조회에서
 `dataset_snapshot_id`, `tech_id`, 선택적으로 `repo_id`로 필터링한다. archive trend
 응답에 모든 artifact path를 다시 포함하지 않는다.
+
+## 월별 historical v2 Worker 연결
+
+기존 요청은 `archive_version`을 생략하며 v1 current-HEAD 계산과 기존 request/stream
+identity를 그대로 사용한다. 월별 historical 계산만 `archive_version=v2`를 명시하고
+각 input에 A의 additive `github-repo-snapshot/v1` 원본 reference를 추가한다.
+
+아래는 기존 필수 metadata를 생략하고 v2 추가 필드만 강조한 요청 발췌다.
+
+```json
+{
+  "archive_version": "v2",
+  "tech_id": "react",
+  "periods": ["2026-08"],
+  "granularity": "MONTH",
+  "inputs": [
+    {
+      "metadata": {"...": "기존 v1의 전체 ArchiveActivityMetadata"},
+      "public_snapshot_id": "c-<PUBLIC_GITHUB snapshot digest>",
+      "activity_path": "2026-08/activity.ndjson",
+      "a_snapshot_path": "2026-08/github-repo-snapshot.json",
+      "a_snapshot_uri": "hdfs:///gitjob/repo_snapshot/2026-08/snapshot.json",
+      "a_snapshot_sha256": "<exact A snapshot bytes SHA-256>"
+    }
+  ]
+}
+```
+
+두 path는 모두 `C_ARCHIVE_ACTIVITY_ROOT` 아래의 안전한 POSIX 상대 경로여야 한다.
+Worker는 symlink escape, drive/colon, 역슬래시와 `..`를 거절하고 exact bytes를 한 번
+읽는다. activity는 파일당 32 MiB, A snapshot은 파일당 128 MiB, v2 요청 전체는
+256 MiB와 activity 100,000 rows로 제한한다. 각 파일을 열기 전에 남은 전체 byte
+budget과 파일 크기를 확인하고, 실제 read도 `min(파일별 한도, 남은 budget)+1`로
+제한한다. activity metadata hash, A snapshot
+SHA-256, DB의 PUBLIC_GITHUB payload hash를 각각 검증한다.
+
+`C_ARCHIVE_A_SNAPSHOT_URI_ROOT`에는 staging 디렉터리가 mirror하는 불변 HDFS root를
+지정한다. Worker는 `a_snapshot_path`를 이 URI root 아래에 붙인 값이 요청의
+`a_snapshot_uri`와 정확히 같은지 검증한다. 따라서 올바른 local bytes에 무관한 HDFS URI를
+붙여 provenance를 위조할 수 없다. v2에서 이 환경 변수가 없으면 503으로 준비되지 않은
+운영 설정을 알리고 계산하지 않는다.
+
+v2는 A snapshot에서 6개 additive SHA lineage 필드만 제거한 copy를 현재
+`GitHubRepoSnapshotBatch` 전체 계약으로 먼저 검증한다. 축약 record나 잘못된 collection
+state·tree·artifact는 수용하지 않는다. 원본의 additive lineage는 별도로 검증한 뒤 base
+record와 다시 결합한다. dataset/pipeline/collector/collection-policy version과 C public
+snapshot의 lineage도 같은지 확인한다. repository는
+`sha_source=MONTH_EVENT_SHA`,
+`pinned_commit_sha == selected_commit_sha == monthly_event_sha`, `target_period`와 public
+activity period가 요청 월에 일치하고, A base/public의 repo id·snapshot id·pinned SHA·
+activity period가 모두 같을 때만 역사 표본에 포함한다.
+
+- `CURRENT_DEFAULT_HEAD`와 optional lineage가 없는 legacy v1은 현재 관측으로는
+  유지하지만 historical v2에서는 `HISTORICAL_HEAD_UNAVAILABLE`로 제외한다.
+- commit, snapshot 또는 기간 결합이 다르면 `HISTORICAL_HEAD_MISMATCH`로 제외한다.
+- 결과 schema는 `c-gharchive-historical-trend/v2`, algorithm은
+  `c-gharchive-monthly-push-head-join/v2`, semantics는
+  `HISTORICAL_MONTHLY_PUSH_HEAD_POSITIVE_OBSERVATIONS_ONLY`다.
+- matched/unavailable/mismatch repository와 event coverage, 기존 failed/partial/
+  unresolved 및 activity/A/public snapshot lineage를 함께 저장한다.
+
+TREND payload는 기존 JSONB snapshot에 저장되므로 DB migration은 필요하지 않다.
+request idempotency에는 v2 algorithm version과 A reference가 포함되며, v1은 새 default
+field를 request hash에서 제외해 배포 전 retry identity를 유지한다.
 
 ## 검증 범위
 

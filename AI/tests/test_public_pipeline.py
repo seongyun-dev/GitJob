@@ -334,6 +334,60 @@ def test_checkpoint_digest_does_not_replace_input_provenance_validation(
     assert len(reader.calls) == 1
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("selected_commit_sha", "f" * 40),
+        (
+            "language_metadata",
+            [
+                {
+                    "language": "Python",
+                    "file_count": 99,
+                    "representative_paths": ["tampered.py"],
+                }
+            ],
+        ),
+    ],
+)
+def test_additive_provenance_tamper_is_rejected_on_resume(
+    tmp_path, mapper, field, value
+):
+    batch, reader = fixture_batch(2)
+    payload = batch.model_dump(mode="json")
+    commit = payload["records"][0]["pinned_commit_sha"]
+    payload["records"][0].update(
+        selected_commit_sha=commit,
+        sha_source="MONTH_EVENT_SHA",
+        monthly_event_sha=commit,
+        target_period="2026-08-01/2026-08-31",
+        language_metadata=[
+            {
+                "language": "Python",
+                "file_count": 1,
+                "representative_paths": ["app.py"],
+            }
+        ],
+    )
+    batch = GitHubRepoSnapshotBatch.model_validate(payload)
+    run_public_pipeline(
+        batch, reader, mapper, tmp_path, max_records=1, max_new_partitions=1
+    )
+    path = tmp_path / "partition-000000.json"
+    output = json.loads(path.read_bytes())
+    output["records"][0][field] = value
+    body = json.dumps(output).encode()
+    path.write_bytes(body)
+    checkpoint = json.loads((tmp_path / "checkpoint.json").read_bytes())
+    checkpoint["completed"]["0"] = hashlib.sha256(body).hexdigest()
+    (tmp_path / "checkpoint.json").write_text(json.dumps(checkpoint))
+
+    with pytest.raises(PipelineCheckpointError):
+        run_public_pipeline(batch, reader, mapper, tmp_path, max_records=1)
+
+    assert len(reader.calls) == 1
+
+
 @pytest.mark.parametrize("include_partial", [False, True])
 def test_collection_states_empty_artifacts_and_tree_flags_match_base(
     tmp_path, mapper, include_partial
@@ -426,19 +480,37 @@ def test_hash_verified_malformed_json_remains_nonretryable_quality_failure(
     assert replay.reused_partitions == 1 and len(reader.calls) == 1
 
 
-@pytest.mark.parametrize("old_version", ["v1", "v2", "v3"])
-def test_old_parser_checkpoint_is_not_silently_reused_by_v4(
+@pytest.mark.parametrize("old_version", ["v1", "v2", "v3", "v4", "v5"])
+def test_old_parser_checkpoint_is_not_silently_reused_by_v6(
     tmp_path, mapper, old_version
 ):
     batch, reader = fixture_batch(1)
     run_public_pipeline(batch, reader, mapper, tmp_path, max_new_partitions=0)
     path = tmp_path / "checkpoint.json"
     state = json.loads(path.read_bytes())
-    assert state["plan"]["parser_version"] == "c-public-static-observations/v4"
+    assert state["plan"]["parser_version"] == "c-public-static-observations/v6"
     state["plan"]["parser_version"] = "c-public-static-observations/" + old_version
     path.write_text(json.dumps(state))
     with pytest.raises(PipelineCheckpointError):
         run_public_pipeline(batch, reader, mapper, tmp_path)
+    assert reader.calls == []
+
+
+def test_manifest_parser_identity_is_bound_to_checkpoint(tmp_path, mapper):
+    batch, reader = fixture_batch(1)
+    run_public_pipeline(batch, reader, mapper, tmp_path, max_new_partitions=0)
+    path = tmp_path / "checkpoint.json"
+    state = json.loads(path.read_bytes())
+    assert (
+        state["plan"]["manifest_parser_version"]
+        == public_pipeline.PUBLIC_MANIFEST_PARSER_VERSION
+    )
+    state["plan"]["manifest_parser_version"] = "tampered-manifest-parser/v1"
+    path.write_text(json.dumps(state))
+
+    with pytest.raises(PipelineCheckpointError):
+        run_public_pipeline(batch, reader, mapper, tmp_path)
+
     assert reader.calls == []
 
 

@@ -21,7 +21,14 @@ _FILES = {
     "summary": "run-summary.json",
     "failures": "failures.json",
 }
-SourceStatus = Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_FOUND", "REUSED"]
+SourceStatus = Literal[
+    "COMPLETE",
+    "PARTIAL",
+    "FAILED",
+    "NOT_FOUND",
+    "REUSED",
+    "HISTORICAL_HEAD_UNAVAILABLE",
+]
 
 
 class SnapshotInputError(ValueError):
@@ -209,7 +216,7 @@ def _reconcile(batch: GitHubRepoSnapshotBatch, summary: _Summary, failures: _Fai
         != {
             row.repo_id
             for row in summary.repos
-            if row.status in {"FAILED", "NOT_FOUND"}
+            if row.status in {"FAILED", "NOT_FOUND", "HISTORICAL_HEAD_UNAVAILABLE"}
         }
         or any(row != by_id.get(repo_id) for repo_id, row in failed.items())
     ):
@@ -226,7 +233,10 @@ def _reconcile(batch: GitHubRepoSnapshotBatch, summary: _Summary, failures: _Fai
             raise SnapshotInputError("Snapshot and summary status/rank mismatch")
         snapshot_ids.add(row.github_repo_id)
     absent = [row for row in summary.repos if row.repo_id not in snapshot_ids]
-    if any(row.status not in {"FAILED", "NOT_FOUND"} for row in absent):
+    if any(
+        row.status not in {"FAILED", "NOT_FOUND", "HISTORICAL_HEAD_UNAVAILABLE"}
+        for row in absent
+    ):
         raise SnapshotInputError("successful source row is missing from Snapshot")
     complete = [
         row for row in batch.records if row.collection_status.value == "COMPLETE"

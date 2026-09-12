@@ -115,6 +115,32 @@ def test_loads_verified_complete_input_and_reconciles_external_failures(publishe
     assert len([item for item in published.calls if item[0] == "read"]) == 5
 
 
+def test_fix_004e_shape_reconciles_historical_head_unavailable_as_absent(published):
+    summary = published.documents["summary"]
+    failures = published.documents["failures"]
+    unavailable = {
+        "repo_id": 9997,
+        "rank": published.documents["snapshot"]["collection_policy"]["top_n_limit"] + 1,
+        "status": "HISTORICAL_HEAD_UNAVAILABLE",
+    }
+    summary["repos"].append(unavailable)
+    summary["status_counts"]["HISTORICAL_HEAD_UNAVAILABLE"] = 1
+    failures["repos"].append(unavailable)
+    failures["failure_count"] += 1
+    published.documents["snapshot"]["collection_policy"]["top_n_limit"] += 1
+    published.publish()
+
+    loaded = load_published_snapshot(ROOT, published)
+
+    assert loaded.quality.absent_from_snapshot_counts == {
+        "NOT_FOUND": 1,
+        "FAILED": 1,
+        "HISTORICAL_HEAD_UNAVAILABLE": 1,
+    }
+    assert loaded.quality.failure_count == 4
+    assert 9997 not in {row.github_repo_id for row in loaded.batch.records}
+
+
 @pytest.mark.parametrize(
     "filename", ["_SUCCESS.json", "snapshot.json", "run-summary.json", "failures.json"]
 )

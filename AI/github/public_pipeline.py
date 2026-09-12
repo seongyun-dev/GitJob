@@ -23,6 +23,7 @@ from github.contracts import (
 )
 from github.public_analysis import (
     MAX_CONSUMER_BATCH_BYTES,
+    PUBLIC_MANIFEST_PARSER_VERSION,
     PUBLIC_PARSER_VERSION,
     ArtifactReader,
     OutputModel,
@@ -31,7 +32,7 @@ from github.public_analysis import (
     PublicTechnologyCount,
     analyze_public_batch,
 )
-from registry.mapper import RegistryMapper
+from registry.mapper import MapperInput, MapperSource, MatchStatus, RegistryMapper
 from trend.contracts import TrendStatus
 
 PIPELINE_VERSION = "c-public-partition-pipeline/v1"
@@ -74,6 +75,7 @@ class PublicPipelinePlan(OutputModel):
     collection_policy: RepoCollectionPolicy
     collection_policy_sha256: ContentHash
     parser_version: str = PUBLIC_PARSER_VERSION
+    manifest_parser_version: str = PUBLIC_MANIFEST_PARSER_VERSION
     registry_version: str
     include_partial: StrictBool
     max_records: StrictInt = Field(gt=0)
@@ -225,6 +227,7 @@ def _metadata(batch: GitHubRepoSnapshotBatch, registry_version: str) -> dict:
         "generated_at": batch.generated_at.isoformat(),
         "registry_version": registry_version,
         "parser_version": PUBLIC_PARSER_VERSION,
+        "manifest_parser_version": PUBLIC_MANIFEST_PARSER_VERSION,
     }
 
 
@@ -278,6 +281,30 @@ def _validate_result(
                 raise ValueError(
                     "observation lacks verified artifact/Registry provenance"
                 )
+        for language in row.language_observations:
+            source = next(
+                (
+                    item
+                    for item in original.language_metadata
+                    if item.language == language.language
+                ),
+                None,
+            )
+            mapped = mapper.map(
+                MapperInput(
+                    source=MapperSource.GITHUB_LANGUAGE,
+                    raw_value=language.language,
+                )
+            )
+            if (
+                source is None
+                or source.file_count != language.file_count
+                or source.representative_paths != language.representative_paths
+                or mapped.status != language.status
+                or mapped.tech_id != language.tech_id
+                or mapped.candidates != language.candidates
+            ):
+                raise ValueError("language observation lacks input/Registry provenance")
         if any(item.path not in artifact_by_path for item in row.unresolved):
             raise ValueError("unresolved observation lacks artifact provenance")
     return result
@@ -309,6 +336,10 @@ def merge_public_partitions(
         if row.included_in_denominator:
             for observation in row.observations:
                 observed[observation.tech_id].add(row.github_repo_id)
+            for observation in row.language_observations:
+                if observation.status is MatchStatus.MATCHED:
+                    assert observation.tech_id is not None
+                    observed[observation.tech_id].add(row.github_repo_id)
     statuses = {row.status for row in records}
     status = TrendStatus.INSUFFICIENT_DATA
     for uniform in (TrendStatus.READY, TrendStatus.FAILED, TrendStatus.NOT_SUPPORTED):

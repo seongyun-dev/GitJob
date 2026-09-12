@@ -42,7 +42,7 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | `POST /internal/v1/c/analyses/completed` | `user_id`, `analysis_id`, `cohort_snapshot_id`, `evidence`: 자동 Gap·추천·What-if·설명 |
 | `POST /internal/v1/c/public-repositories/completed` | -157 `batch`, `include_partial=false`: COMPLETE/REUSED 우선 공개 기술 관측 |
 | `POST /internal/v1/c/trends/completed` | `tech_id`, `source`, `periods`: JOB `demand_snapshot_ids` 또는 GITHUB 공식 형식 `csv_text`·`source_uri`·`source_version` |
-| `POST /internal/v1/c/archive-trends/completed` | -201: `tech_id`, `periods`, `granularity`, `inputs`의 검증된 export 상대 경로·metadata와 저장된 PUBLIC_GITHUB ID. [Archive 계약](c-archive-trend.md) |
+| `POST /internal/v1/c/archive-trends/completed` | v1은 검증된 activity export와 저장된 PUBLIC_GITHUB ID로 current 관측을 유지한다. `archive_version=v2`는 같은 trusted root의 A 원본 snapshot path/URI/SHA-256을 추가로 받고 `C_ARCHIVE_A_SNAPSHOT_URI_ROOT`와 URI를 결속해 월별 commit lineage가 일치한 역사 관측만 저장한다. [Archive 계약](c-archive-trend.md) |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록. `user_id`, page/size, `include_conditional=false` |
@@ -141,6 +141,12 @@ lifespan이 입력 감시를 시작하고 종료 시 중단한다. 별도 수동
 접근 가능한 이름의 예시이며 실제 허용 NameNode/DataNode route를 확인해야 한다.
 기본 Compose는 Worker 8080을 내부 expose만 하므로 호스트에서 직접 호출할 URL이나
 개발용 loopback port도 별도 실행 설정으로 준비한다. 이 문서 갱신은 해당 배포를 수행하지 않는다.
+
+corrected Top1,000 canary에서 NameNode redirect는 DataNode의 9864, 9874, 9884와
+service-node DN4의 9864 origin을 사용했다. 운영 적용 전 각 advertised origin을 worker가
+접근 가능한 내부 origin으로 명시적으로 매핑하고, allowlist에 없는 redirect는 계속
+거절해야 한다. 아래 JSON은 형식 예시이며 실제 host 이름과 route는 배포 환경에서
+확인한 뒤 operator가 채운다.
 
 ### 입력 설정 예
 
