@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from test_compute_api import REGISTRY, TOKEN
 from test_job_cohort import batch, criteria, posting
 
+from job import requirements
 from registry.mapper import RegistryMapper
 from Saramin_Collector_V1.crawler import CrawlResult, write_outputs
 from worker.api import create_compute_app
@@ -150,6 +151,57 @@ def test_review_preparation_failure_after_claim_is_heartbeated_and_failed(
         ("heartbeat", "exit"),
         ("fail", "INPUT_UNION_COMPUTE_FAILED"),
     ]
+
+
+def test_required_level_policy_change_rekeys_durable_union_intake(monkeypatch):
+    value = batch(posting("policy-input", required=("React",)))
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    claims = []
+
+    class CompletedStore:
+        def claim(self, **kwargs):
+            claims.append(kwargs)
+            return Ticket(
+                event_id=kwargs["event_id"],
+                kind=kwargs["kind"],
+                owner=kwargs["owner"],
+                occurred_at=kwargs["occurred_at"],
+                status="COMPLETED",
+                token=None,
+                attempt=1,
+                results=[{"kind": "COHORT", "snapshot_id": "existing"}],
+            )
+
+    store = CompletedStore()
+    mapper = RegistryMapper(REGISTRY)
+    with monkeypatch.context() as previous:
+        previous.setattr(
+            requirements,
+            "JOB_REQUIRED_LEVEL_POLICY_VERSION",
+            "job-required-level-policy/v1",
+        )
+        publish_job_input_set(
+            (output,), criteria(), store=store, mapper=mapper, registry=REGISTRY
+        )
+    publish_job_input_set(
+        (output,), criteria(), store=store, mapper=mapper, registry=REGISTRY
+    )
+
+    assert claims[0]["event_id"] != claims[1]["event_id"]
+    assert claims[0]["request"]["compute_versions"]["required_level_policy"] == (
+        "job-required-level-policy/v1"
+    )
+    assert claims[1]["request"]["compute_versions"]["required_level_policy"] == (
+        requirements.JOB_REQUIRED_LEVEL_POLICY_VERSION
+    )
 
 
 def test_configured_union_combines_sources_and_source_filter_cannot_be_masked(runtime):

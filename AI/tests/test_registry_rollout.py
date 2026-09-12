@@ -9,7 +9,9 @@ from test_compute_api import PREFIX, REGISTRY, TOKEN, event, job_request, snapsh
 from test_job_cohort import criteria
 from test_recommendation_engine import make_analysis
 
+from job import requirements
 from worker import api
+from worker.jobs import job_stream
 from worker.store import ComputeStore, apply_migration
 
 
@@ -22,8 +24,32 @@ def rollout_store():
     return ComputeStore(dsn)
 
 
+def test_job_batch_versions_bind_the_required_level_policy(monkeypatch):
+    current = api.compute_versions("JOB_BATCH", REGISTRY)
+    assert current["required_level_policy"] == (
+        requirements.JOB_REQUIRED_LEVEL_POLICY_VERSION
+    )
+
+    with monkeypatch.context() as previous:
+        previous.setattr(
+            requirements,
+            "JOB_REQUIRED_LEVEL_POLICY_VERSION",
+            "job-required-level-policy/v1",
+        )
+        legacy = api.compute_versions("JOB_BATCH", REGISTRY)
+
+    assert legacy["required_level_policy"] == "job-required-level-policy/v1"
+    assert job_stream(criteria(), legacy) != job_stream(criteria(), current)
+    pre_policy_versions = dict(current)
+    pre_policy_versions.pop("required_level_policy")
+    assert job_stream(criteria(), pre_policy_versions) != job_stream(
+        criteria(), current
+    )
+
+
+@pytest.mark.parametrize("previous_field", ["review_queue", "required_level_policy"])
 def test_new_calculation_version_requires_precompute_but_keeps_old_results(
-    monkeypatch, rollout_store
+    monkeypatch, rollout_store, previous_field
 ):
     current_versions = api.compute_versions
     # Isolate the stream from other tests without changing its product meaning.
@@ -38,7 +64,11 @@ def test_new_calculation_version_requires_precompute_but_keeps_old_results(
     def previous_versions(kind, registry):
         versions = current_versions(kind, registry)
         if kind == "JOB_BATCH":
-            versions["review_queue"] = "pre-rollout-review/" + previous_tag
+            if previous_field == "required_level_policy":
+                # Actual pre-fix calculation identity omitted this key entirely.
+                versions.pop("required_level_policy")
+            else:
+                versions["review_queue"] = "pre-rollout-review/" + previous_tag
         return versions
 
     previous_tag = uuid4().hex

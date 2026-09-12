@@ -35,9 +35,11 @@ payload = requirements.model_dump(mode="json")
 계산하지 않는다.
 
 기존 저장 `job-requirements/v1` payload는 수준 필드 없이 같은 `JobRequirements`로
-읽을 수 있다. v2는 `level_policy_version=job-required-level-policy/v1`과 모든 필수
+읽을 수 있다. 신규 v2 결과는 `level_policy_version=job-required-level-policy/v2`와 모든 필수
 clause의 `required_level`, 비어 있지 않은 `level_evidence_refs`를 강제한다. 우대와
 unresolved에는 요구 수준을 만들지 않으며 `UNKNOWN`은 수준 enum이 아니다.
+과거 `job-required-level-policy/v1` 결과는 당시 수준과 근거를 그대로 읽는다.
+알 수 없는 policy version은 거절하며, 과거 결과를 조회하면서 자동 재산정하지 않는다.
 
 ## 필수 기술 요구 수준 정책
 
@@ -52,17 +54,30 @@ unresolved에는 요구 수준을 만들지 않으며 `UNKNOWN`은 수준 enum�
 |---|---|
 | L1 | 기술명·단순 목록, 지식·기초 이해, 사용/활용/개발 가능, 교육·자격 |
 | L2 | 해당 기술의 경험·실무·개발·운영·배포·구축·설계, 직접 결속된 최소 1~4년 |
-| L3 | 해당 기술에 직접 결속된 최소 5년·고직급 또는 아키텍처·리딩·최적화·운영 책임 |
+| L3 | 명시적 능숙·능통·숙련·전문 지식·깊은 이해, 해당 기술에 직접 결속된 최소 5년·고직급 또는 아키텍처·리딩·최적화·운영 책임 |
 
 직접 결속된 연차 범위는 최소 요구치를 쓴다. 예를 들어 `Java 경력 3~7년`은 L2다.
 직급 범위는 논리 미확정으로 보존한다. 같은 clause에 `기초 이해`가 명시되면 공고 전체
 경력이 5년 이상이어도 L1이며, `경험`이 명시되면 L2다. 일반 `설계`는 L2이고,
-아키텍처·리딩·최적화·운영 책임처럼 기술에 직접 붙은 고책임 표현만 L3다.
+아키텍처·리딩·최적화·운영 책임 또는 명시적 숙련도 표현은 L3다.
+`React를 능숙하게 사용 가능`은 일반적인 사용 가능 표현보다 숙련도 수식어를 우선하여
+L3로 판정한다. 다만 `기초 사용에 능숙`처럼 기본 사용 범위가 명시되면 L1을 유지한다.
+`Java 전문가와 협업 경험`처럼 전문가 동료를 언급하는 것만으로 L3를 만들지 않는다.
+부정된 숙련도는 `NEGATION_UNSUPPORTED`로 보존한다.
+`React 능숙, Java`처럼 앞 기술에 붙은 수준은 뒤의 단순 기술명에 전파하지 않는다.
+`Java, Python 개발 경험`처럼 목록 뒤의 공통 조건은 두 기술에 함께 적용한다.
+`React 능숙, Java와 Python 개발 경험`은 React L3와 Java·Python L2로 분리한다.
+같은 줄에서도 `총/전체 경력`으로 별도 표시한 쉼표 뒤의 연차는 기술 연차에서 제외한다.
+괄호 속 `Python 등)`도 예시 목록이므로 확정 요구절을 만들지 않는다.
 `지원자격\n경력 5년 이상\nJava 필수`와 `자격요건: 경력 5년 이상\nJava 필수`처럼
 기술 없는 독립 section 경력은 표기 방식과 무관하게 Java에 전파하지 않는다.
 
 담당업무의 개발·설계·운영 문구, 회사소개, 제목, 구조화 스킬만으로는 REQUIRED
 clause나 L3를 만들지 않는다. 복리후생·일반 기술 소개도 요구절 산정에서 제외한다.
+
+이 수준은 코드 Evidence와 요구 강도를 대략 비교하는 순서 척도다. 같은 수준의 서로
+다른 구현 패턴도 비교할 수 있으며 세부 역량의 동일성이나 경력 연수의 실제 충족을
+증명하지 않는다. 최종 지원 적격성과 개인 파일·commit 귀속 확인은 별도다.
 
 `level_evidence_refs.source`는 `DIRECT_CLAUSE`, `CONSERVATIVE_DEFAULT` 중 하나다.
 직접 clause 출처는 원문 surface와 `[char_start, char_end)`를 필수로 가지며,
@@ -71,6 +86,11 @@ classifier `mention_indices`를 보존한다. 직렬화 전 evidence는 출처·
 순으로 정규화된다.
 
 ## 제한 문법과 근거 보존
+
+`JOB_BATCH` 계산 버전에는 `required_level_policy`를 포함한다. 정책 전환은 동일 입력의
+자동 intake event와 현재 cohort stream을 분리하며, 새 stream을 계산하기 전 조회는
+`COHORT_NOT_PREPARED`다. 과거 snapshot ID 직접 읽기는 유지하고 기존 결과를 덮어쓰지
+않는다. 정책 배포만으로 입력을 재실행하지는 않으므로 운영에서는 정상 intake 재실행이 필요하다.
 
 - 서로 다른 독립 문장·행과 명시적 AND는 각각의 clause로 보존한다.
 - `Java 또는 Python`은 `ANY_OF(java, python)` 한 clause다. 우대 OR도 같은 방식이다.

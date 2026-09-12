@@ -1,0 +1,89 @@
+{
+  "base_commit": "3a4c57c4949feabf35cda544fae9dbfb34214e1c",
+  "requirements": [
+    {
+      "schema_version": "job-requirements/v2",
+      "source_record_id": "requirements-job-1",
+      "content_hash": "d95f2dfd7f771b07287a34b7a5a8a9d31b6f8c1f1af4296af1eb69c782818673",
+      "parser_version": "job-requirement-rules/v6",
+      "level_policy_version": "job-required-level-policy/v1",
+      "required": [
+        {
+          "operator": "ANY_OF",
+          "tech_ids": [
+            "react"
+          ],
+          "evidence_refs": [
+            {
+              "source_surface": "BODY",
+              "char_start": 5,
+              "char_end": 21,
+              "text": "React 능숙하게 사용 가능",
+              "mention_indices": [
+                0
+              ]
+            }
+          ],
+          "required_level": "L1",
+          "level_evidence_refs": [
+            {
+              "source": "DIRECT_CLAUSE",
+              "level": "L1",
+              "text": "React 능숙하게 사용 가능",
+              "source_surface": "BODY",
+              "char_start": 5,
+              "char_end": 21,
+              "mention_indices": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "preferred": [],
+      "unresolved": []
+    },
+    {
+      "schema_version": "job-requirements/v2",
+      "source_record_id": "requirements-job-1",
+      "content_hash": "448d36295e183c402a5ceecc8e8ab621ca44b5b3f0d0db839bc50b5eacf82d66",
+      "parser_version": "job-requirement-rules/v6",
+      "level_policy_version": "job-required-level-policy/v1",
+      "required": [
+        {
+          "operator": "ANY_OF",
+          "tech_ids": [
+            "java"
+          ],
+          "evidence_refs": [
+            {
+              "source_surface": "BODY",
+              "char_start": 5,
+              "char_end": 15,
+              "text": "Java 개발 경험",
+              "mention_indices": [
+                0
+              ]
+            }
+          ],
+          "required_level": "L2",
+          "level_evidence_refs": [
+            {
+              "source": "DIRECT_CLAUSE",
+              "level": "L2",
+              "text": "Java 개발 경험",
+              "source_surface": "BODY",
+              "char_start": 5,
+              "char_end": 15,
+              "mention_indices": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "preferred": [],
+      "unresolved": []
+    }
+  ]
+}

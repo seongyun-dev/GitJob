@@ -200,7 +200,10 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
     }
     if kind == "JOB_BATCH":
         from job.input_union import INPUT_UNION_VERSION
-        from job.requirements import JOB_REQUIREMENTS_SCHEMA_VERSION
+        from job.requirements import (
+            JOB_REQUIRED_LEVEL_POLICY_VERSION,
+            JOB_REQUIREMENTS_SCHEMA_VERSION,
+        )
         from registry.review import REVIEW_QUEUE_VERSION
 
         versions.update(
@@ -209,6 +212,7 @@ def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
             aggregation=JOB_DEMAND_AGGREGATION_VERSION,
             input_union=INPUT_UNION_VERSION,
             requirements=JOB_REQUIREMENTS_SCHEMA_VERSION,
+            required_level_policy=JOB_REQUIRED_LEVEL_POLICY_VERSION,
             review_queue=REVIEW_QUEUE_VERSION,
         )
     elif kind == "ANALYSIS":

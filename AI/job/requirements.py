@@ -15,8 +15,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from registry.contracts import TechId
-from registry.mapper import MatchStatus
 
 from job.classifier import (
     JOB_REQUIREMENT_PARSER_VERSION,
@@ -30,10 +28,12 @@ from job.contracts import (
     RequirementType,
     SourceSurface,
 )
+from registry.contracts import TechId
+from registry.mapper import MatchStatus
 
 JOB_REQUIREMENTS_SCHEMA_VERSION = "job-requirements/v2"
 JOB_REQUIREMENTS_LEGACY_SCHEMA_VERSION = "job-requirements/v1"
-JOB_REQUIRED_LEVEL_POLICY_VERSION = "job-required-level-policy/v1"
+JOB_REQUIRED_LEVEL_POLICY_VERSION = "job-required-level-policy/v2"
 
 
 class RequirementKind(StrEnum):
@@ -212,9 +212,9 @@ class JobRequirements(RequirementModel):
     source_record_id: StrictStr
     content_hash: ContentHash
     parser_version: StrictStr
-    level_policy_version: Literal["job-required-level-policy/v1"] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    level_policy_version: (
+        Literal["job-required-level-policy/v1", "job-required-level-policy/v2"] | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
     required: tuple[RequirementClause, ...] = ()
     preferred: tuple[RequirementClause, ...] = ()
     unresolved: tuple[UnresolvedRequirement, ...] = ()
@@ -230,8 +230,8 @@ class JobRequirements(RequirementModel):
             if self.level_policy_version is not None or levelled:
                 raise ValueError("v1 requirements must not contain level fields")
             return self
-        if self.level_policy_version != JOB_REQUIRED_LEVEL_POLICY_VERSION:
-            raise ValueError("v2 requirements require the current level policy version")
+        if self.level_policy_version is None:
+            raise ValueError("v2 requirements require a known level policy version")
         if any(
             clause.required_level is None or not clause.level_evidence_refs
             for clause in self.required
@@ -270,8 +270,17 @@ _ACTIVITY_CONJUNCTION = re.compile(
 )
 _NEGATION = re.compile(
     r"없어도|무관|불필요|경험(?:이)?\s*없는|"
+    r"미숙련(?:(?:인\s*)?지원자|자)(?:도)?[^,;.\n]{0,20}"
+    r"(?:지원|응시|입사)[^,;.\n]{0,15}(?:가능|허용|할\s*수)|"
     r"필수(?:\s*(?:가|는|은))?\s*아(?:니|닌|닙|님|닐)\w*|"
-    r"\boptional\b|\bnot\s+(?:required|necessary|needed|(?:a\s+)?requirement)\b",
+    r"\boptional\b|\bnot\s+(?:required|necessary|needed|(?:a\s+)?requirement)\b|"
+    r"(?:능숙|능통|숙련)(?:하|되)?지\s*않|"
+    r"(?:능숙|능통|숙련)자(?:가|는)?\s*아니|"
+    r"(?:필요|필수)(?:가|는)?\s*없|요구하지\s*않|"
+    r"\b(?:not|without|no)\s+(?:proficien(?:t|cy)|expertise)\b|"
+    r"\b(?:(?:do(?:es)?\s+not|don['’]t|doesn['’]t)\s+need\s+to|"
+    r"need\s+not)\s+be\s+proficient\b|"
+    r"\bno\s+[^,;\n]{1,80}\b(?:proficiency|expertise)\s+(?:is\s+)?required\b",
     re.IGNORECASE,
 )
 _CARDINALITY = re.compile(
@@ -279,7 +288,9 @@ _CARDINALITY = re.compile(
     r"(?:두|둘|세|셋|네|넷)\s*(?:개|가지))\s*이상"
 )
 _UNCERTAIN_EXAMPLE = re.compile(
-    r"예시|예를|\betc\b|등(?=\s|[,.]|$|[을의])|외(?=\s|[,.]|$)", re.IGNORECASE
+    r"예시|예를|\betc\b|등(?=\s|[,.]|$|[을의])|"
+    r"(?<![가-힣])등(?=[)\]}])|외(?=\s|[,.]|$)",
+    re.IGNORECASE,
 )
 _GRADE_RANGE = re.compile(
     r"(?:사원|주임|대리|과장|차장|부장|임원)\s*(?:~|[-–—∼])\s*"
@@ -305,6 +316,40 @@ _L3_ACTIVITY = re.compile(
     r"아키텍처|대규모\s*(?:서비스\s*)?운영|최적화|리딩|"
     r"운영\s*(?:총괄|책임)|(?:총괄|책임)\s*운영|"
     r"\barchitect(?:ure|ing)?\b|\boptimi[sz](?:e|ation|ing)\b|\blead(?:ing)?\b",
+    re.IGNORECASE,
+)
+_OVERALL_CAREER_SUFFIX = re.compile(
+    r"[,，]\s*(?:총|전체)\s*경력\s*\d{1,2}\s*년(?:\s*이상)?(?=\s*(?:[,，]|$))"
+)
+_L3_PROFICIENCY = re.compile(
+    r"능숙|능통|(?<!미)숙련|"
+    r"(?:깊은|깊이\s*있는|심도\s*있는|심층적인|고급|전문(?:적인)?)\s*"
+    r"(?:이해(?:도)?|지식)|"
+    r"\bproficien(?:t(?:ly)?|cy)\b|"
+    r"\b(?:deep|in-depth|advanced)\s+(?:understanding|knowledge)\b|"
+    r"\bexpertise\s+(?:in|with)\b",
+    re.IGNORECASE,
+)
+_KOREAN_COLLABORATOR_PROFICIENCY = re.compile(
+    r"(?:미)?(?:능숙|능통|숙련)(?:하|되)?(?:ㄴ|은|한|된)?\s*"
+    r"(?:(?:동료|팀원)|(?:개발자|엔지니어|전문가)(?=\s*(?:와|과)\s*협업))",
+    re.IGNORECASE,
+)
+_ENGLISH_COLLABORATOR_PROFICIENCY = re.compile(
+    r"(?P<context>\b(?:experience\s+)?(?:collaborating|working)\s+with\s+"
+    r"(?:colleagues?|teammates?|engineers?|developers?|experts?)\s+"
+    r"(?:who\s+(?:are|were)\s+)?(?:highly\s+)?)proficient\b",
+    re.IGNORECASE,
+)
+_ENGLISH_PREFIXED_COLLABORATOR_PROFICIENCY = re.compile(
+    r"(?P<context>\b(?:experience\s+)?(?:collaborating|working)\s+with\s+)"
+    r"proficient\b(?P<tail>\s+(?:in\s+)?(?:[A-Za-z0-9.+#/-]+\s+){1,4}"
+    r"(?:colleagues?|teammates?|engineers?|developers?|experts?)\b)",
+    re.IGNORECASE,
+)
+_BASIC_INTENSITY = re.compile(
+    r"(?:기초|기본)(?:적인)?\s*(?:이해|지식|사용|활용)|"
+    r"\bbasic\s+(?:understanding|knowledge|use)\b",
     re.IGNORECASE,
 )
 _L2_ACTIVITY = re.compile(
@@ -433,6 +478,8 @@ def _section_kind(
 
 
 def _minimum_years(text: str) -> int | None:
+    # A separately labelled overall-career suffix is not technology experience.
+    text = _OVERALL_CAREER_SUFFIX.sub("", text)
     range_match = _YEAR_RANGE.search(text)
     if range_match is not None:
         return int(range_match.group(1))
@@ -441,6 +488,19 @@ def _minimum_years(text: str) -> int | None:
 
 
 def _signal_level(text: str) -> RequirementLevel | None:
+    if _BASIC_INTENSITY.search(text):
+        return RequirementLevel.L1
+    # Explicit proficiency qualifies otherwise generic "able to use"/knowledge.
+    # Negated requirements are rejected before this intensity is emitted.
+    applicant_text = _KOREAN_COLLABORATOR_PROFICIENCY.sub("", text)
+    applicant_text = _ENGLISH_COLLABORATOR_PROFICIENCY.sub(
+        lambda match: match.group("context"), applicant_text
+    )
+    applicant_text = _ENGLISH_PREFIXED_COLLABORATOR_PROFICIENCY.sub(
+        lambda match: match.group("context") + match.group("tail"), applicant_text
+    )
+    if _L3_PROFICIENCY.search(applicant_text):
+        return RequirementLevel.L3
     if _L1_CAPABILITY.search(text) or _EXPLICIT_L1_INTENSITY.search(text):
         return RequirementLevel.L1
     years = _minimum_years(text)
@@ -646,7 +706,9 @@ def _independent_comma_evidence(
 
     ``Java 개발 경력 5년 이상, Python 개발 경험`` contains two complete
     technology conditions. Keeping the whole line as evidence for both would
-    leak Java's five-year signal into Python. A bare list such as
+    leak Java's five-year signal into Python. A later fragment may itself be a
+    list: ``React 능숙, Java와 Python 개발 경험`` binds the shared experience
+    only to Java and Python. A bare list such as
     ``Java, Python 개발 경력 5년 이상`` is deliberately left intact because
     the trailing condition can apply to the whole list.
     """
@@ -671,33 +733,49 @@ def _independent_comma_evidence(
         return None
 
     by_tech: dict[str, RequirementEvidence] = {}
+    signals = []
     for start, end in fragments:
         fragment_spans = [span for span in spans if start <= span[0] and span[1] <= end]
         tech_ids = {span[3] for span in fragment_spans if span[3] is not None}
-        if len(tech_ids) != 1 or _signal_level(text[start:end]) is None:
+        if not tech_ids or any(span[3] is None for span in fragment_spans):
             return None
-        tech_id = tech_ids.pop()
-        if tech_id in by_tech:
-            return None
-        mention_indices = tuple(
-            sorted(
-                {
-                    item.mention_index
-                    for item in items
-                    if item.tech_id == tech_id
-                    and item.mention_index in evidence.mention_indices
-                }
+        if any(
+            re.fullmatch(
+                r"\s*(?:,|and|및|그리고|&|\+|와|과)\s*",
+                text[left[1] : right[0]],
+                re.IGNORECASE,
             )
-        )
-        if not mention_indices:
+            is None
+            for left, right in pairwise(fragment_spans)
+        ):
             return None
-        by_tech[tech_id] = RequirementEvidence(
-            source_surface=evidence.source_surface,
-            char_start=evidence.char_start + start,
-            char_end=evidence.char_start + end,
-            text=text[start:end],
-            mention_indices=mention_indices,
-        )
+        signals.append(_signal_level(text[start:end]))
+        for tech_id in sorted(tech_ids):
+            if tech_id in by_tech:
+                return None
+            mention_indices = tuple(
+                sorted(
+                    {
+                        item.mention_index
+                        for item in items
+                        if item.tech_id == tech_id
+                        and item.mention_index in evidence.mention_indices
+                    }
+                )
+            )
+            if not mention_indices:
+                return None
+            by_tech[tech_id] = RequirementEvidence(
+                source_surface=evidence.source_surface,
+                char_start=evidence.char_start + start,
+                char_end=evidence.char_start + end,
+                text=text[start:end],
+                mention_indices=mention_indices,
+            )
+    # A trailing condition can qualify a preceding bare list (Java, Python 경험).
+    # A leading condition cannot qualify later bare operands (Java 능숙, Python).
+    if not any(signal is not None for signal in signals[:-1]):
+        return None
     return by_tech
 
 
