@@ -1092,6 +1092,15 @@ C조 범위다.
 - 처리: Spark Repo Activity / Top-N / Coverage (5,711,133 unique repos; Top-20,000 valid coverage 24.5638%)
 - 상세: [S15P21E102-109 Repo Activity Top-N 검증 보고서](2026-09-02-repo-activity-topn-validation.md)
 
+## 주간 Repo Activity 집계 (S15P21E102-166)
+
+- Jira: S15P21E102-166
+- 구현: `Infra/spark/jobs/repo_activity_weekly.py` — 월요일 시작, UTC 기준 `week_start`
+- 출력: `repo_activity_weekly/week={YYYY-MM-DD}/` 주차당 디렉터리, `week_start`는 데이터 컬럼 (C exporter가 한 read에 주차 하나만 허용)
+- 소비: `Infra/spark/jobs/export_c_archive_activity.py`(-203) → `AI/trend/archive.py`(-201), JOIN key는 `repo_id`
+- 해석 한계: `week_start`는 기술 사용 시작일이 아니라 event 발생 주차
+- 상세: [주간 Repo Activity 집계](2026-09-12-repo-activity-weekly.md)
+
 ## Repo Fetch Cost Benchmark
 
 - Jira: S15P21E102-104
