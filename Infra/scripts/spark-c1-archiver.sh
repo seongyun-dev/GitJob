@@ -26,7 +26,13 @@ worker_count="$(compose ps -q spark-worker | sed '/^[[:space:]]*$/d' | wc -l | t
 [[ "$worker_count" =~ ^[1-9][0-9]*$ ]] || die "no running Spark worker was found"
 
 bootstrap="${KAFKA_BOOTSTRAP_SERVERS:-$(env_value KAFKA_BOOTSTRAP_SERVERS)}"
-bootstrap="${bootstrap:-kafka:9092}"
+# No fallback. This script runs where the `data` profile is enabled, and the
+# data host does not run a broker at all (see compose.ec2-data.yaml) — there is
+# no `kafka` to resolve there, so a default of `kafka:9092` did not stand in for
+# a working endpoint, it only postponed the report. `c1_archiver_stream.py`
+# already makes `--bootstrap-servers` required; filling it in unconditionally
+# was what kept that check from ever running.
+[[ -n "$bootstrap" ]] || die "KAFKA_BOOTSTRAP_SERVERS is not set in the environment or in $ENV_FILE"
 hdfs_uri="${HDFS_URI:-$(env_value HDFS_URI)}"
 hdfs_uri="${hdfs_uri:-hdfs://hdfs-namenode:8020}"
 parquet_root="${PARQUET_ROOT:-$(env_value PARQUET_ROOT)}"

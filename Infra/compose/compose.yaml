@@ -760,7 +760,11 @@ services:
     environment:
       DYNAMIC_CONFIG_ENABLED: "false"
       KAFKA_CLUSTERS_0_NAME: gitjob
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      # Follows the same env contract as every other Kafka client here
+      # (kafka-connect, backend, collector). Pinning the literal meant the one
+      # container whose job is to observe the broker was the one container that
+      # could not be pointed at a different one.
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_CLUSTERS_0_READONLY: ${KAFKA_UI_READONLY:-false}
     depends_on:
       kafka:
