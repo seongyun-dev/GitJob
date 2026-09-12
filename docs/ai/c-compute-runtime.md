@@ -135,6 +135,7 @@ lifespan이 입력 감시를 시작하고 종료 시 중단한다. 별도 수동
 | `c-intake.json` 파일 | `/config/c-intake.json` | read-only, `C_INTAKE_CONFIG`도 이 컨테이너 경로 |
 | 보존된 완료 공고 root | `/input/jobs/saramin`, `/input/jobs/worknet` | read-only, JSON `job_roots`와 일치 |
 | 공개 분석 checkpoint 전용 디렉터리 | `/state/c-public` | read-write, 공개 입력을 사용할 때만 필요 |
+| 공고 HDFS staging 디렉터리 | `/state/c-jobs` | read-write, `job_hdfs_sources[].staging_dir`와 일치. 기본 Compose의 `c-job-staging` 볼륨이 이 경로다 |
 
 컨테이너 JSON에 Windows 호스트 경로를 쓰지 않는다. 아래 HDFS 주소는 컨테이너에서
 접근 가능한 이름의 예시이며 실제 허용 NameNode/DataNode route를 확인해야 한다.
@@ -149,6 +150,14 @@ lifespan이 입력 감시를 시작하고 종료 시 중단한다. 별도 수동
   "poll_seconds": 30,
   "max_manifests": 1000,
   "job_roots": ["/input/jobs/saramin", "/input/jobs/worknet"],
+  "job_hdfs_sources": [{
+    "root_uri": "hdfs:///gitjob/analysis_input/jobs",
+    "namenode_base_url": "http://hdfs-namenode:9870/webhdfs/v1",
+    "datanode_routes": {"http://hdfs-datanode:9864": "http://hdfs-datanode:9864"},
+    "staging_dir": "/state/c-jobs",
+    "sources": ["worknet", "saramin", "career", "gamejob"],
+    "max_runs_per_source": 200
+  }],
   "criteria": [{
     "target_role": "BACKEND",
     "as_of": "2026-09-08T02:00:00Z",
@@ -166,6 +175,14 @@ lifespan이 입력 감시를 시작하고 종료 시 중단한다. 별도 수동
   }]
 }
 ```
+
+`job_hdfs_sources`는 A조가 게시한 공고 회차(S15P21E102-220)를 읽는 방법이다. `job_roots`와
+같은 입력이며 판정도 같다 — 차이는 파일이 어디서 오는지뿐이다. 각 poll 시작 시 아직 받지 않은
+회차만 `staging_dir/<source>/<RUN_ID>/`로 내려받고, 그 디렉터리들이 `job_roots`에 더해져 기존
+`load_job_output`·`build_input_union`이 그대로 처리한다. manifest가 있는 회차만 소비하며,
+manifest가 batch 바이트를 묶지 못하면 받지 않는다. 이미 받은 회차는 다시 읽지 않으므로 반복
+poll이 비용을 만들지 않는다. WebHDFS 장애는 이미 staging된 회차에 영향을 주지 않는다.
+읽기 전용이며 C는 HDFS에 쓰지 않는다. 둘 중 하나만 써도 되고 둘 다 비우면 공고 입력이 없다.
 
 공고만 사용할 때는 `public_sources`를 생략한다. 공개 입력만 사용할 때는 `job_roots`와
 `criteria`를 함께 생략한다. 공개 입력은 명시한 불변 Snapshot만 읽으며 다른 root나

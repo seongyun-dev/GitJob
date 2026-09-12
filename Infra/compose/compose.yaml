@@ -366,6 +366,13 @@ services:
       HDFS_URI: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
       PARQUET_ROOT: ${PARQUET_ROOT:-hdfs:///gitjob/parquet}
       SPARK_MASTER_URL: ${SPARK_MASTER_URL:-spark://spark-master:7077}
+    volumes:
+      # S15P21E102-220. Published job runs are staged here before the existing
+      # local intake reads them; `job_hdfs_sources[].staging_dir` in
+      # `c-intake.json` must point at this path. Named rather than bind so the
+      # staged runs survive a restart — refetching them would spend the WebHDFS
+      # budget to produce bytes C already computed on.
+      - c-job-staging:/state/c-jobs
     expose:
       - "8080"
     healthcheck:
@@ -797,6 +804,9 @@ volumes:
   # /data/<site>/. Losing this re-collects postings already held in HDFS Raw;
   # it does not lose the postings themselves.
   collector-state:
+  # Published job runs staged for the C worker's local intake (S15P21E102-220).
+  # Losing this refetches them from HDFS; the published runs are not affected.
+  c-job-staging:
   hdfs-namenode-data:
   hdfs-datanode-data:
   hdfs-datanode2-data:

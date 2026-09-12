@@ -218,3 +218,43 @@ class ReadOnlyWebHdfsReader:
             return value
         except (KeyError, TypeError, ValueError):
             raise WebHdfsError("invalid WebHDFS file status") from None
+
+    def list_directory(self, uri: str, *, max_entries: int = 4096) -> tuple[dict, ...]:
+        """Child entries of one directory, as `{"pathSuffix", "type", "length"}`.
+
+        Added for S15P21E102-220's job intake, which must discover run
+        directories it was not told about in advance. The public GitHub source
+        never needed this — its configuration names one published snapshot
+        root — so listing was not part of this reader until now.
+
+        Still GET-only and still inside the pinned namespace: `LISTSTATUS`
+        goes through the same `_request`, so the byte bound, request budget,
+        retry policy and redirect refusal all apply unchanged. A caller cannot
+        reach outside `uri_prefix` any more than `read` can.
+
+        Entries are returned in the order the NameNode gave them and are not
+        interpreted here; deciding which child is a usable run belongs to the
+        caller, not to the transport.
+        """
+
+        if type(max_entries) is not int or not 1 <= max_entries <= 100_000:
+            raise ValueError("invalid directory entry bound")
+        try:
+            listing = json.loads(self._request(uri, "LISTSTATUS", self._max_bytes))
+            entries = listing["FileStatuses"]["FileStatus"]
+            if type(entries) is not list:
+                raise ValueError("invalid directory listing")
+            if len(entries) > max_entries:
+                raise ValueError("directory listing exceeds the configured bound")
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get("type") not in {
+                    "FILE",
+                    "DIRECTORY",
+                }:
+                    raise ValueError("invalid directory entry")
+                suffix = entry.get("pathSuffix")
+                if type(suffix) is not str or not suffix or "/" in suffix:
+                    raise ValueError("invalid directory entry name")
+            return tuple(entries)
+        except (KeyError, TypeError, ValueError):
+            raise WebHdfsError("invalid WebHDFS directory listing") from None

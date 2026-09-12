@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from job.cohort import CohortCriteria
 from job.contracts import JobAnalysisInputBatch
+from worker.job_hdfs_source import JobHdfsSourceConfig
 from worker.lease import LeaseHeartbeat
 from worker.store import ComputeStore, digest
 
@@ -65,16 +66,21 @@ class IntakeConfig(BaseModel):
     job_roots: tuple[Path, ...] = Field(default=(), max_length=32)
     criteria: tuple[CohortCriteria, ...] = Field(default=(), max_length=32)
     public_sources: tuple[PublicInputConfig, ...] = Field(default=(), max_length=4)
+    # Published job runs on HDFS (S15P21E102-220). Staged to local directories
+    # before each poll and then read by the same loader as `job_roots`; see
+    # `worker.job_hdfs_source`. Configuring these is an alternative to naming
+    # local roots by hand, not a different way of judging the inputs.
+    job_hdfs_sources: tuple[JobHdfsSourceConfig, ...] = Field(default=(), max_length=4)
     poll_seconds: int = Field(default=30, ge=1, le=3600, strict=True)
     max_manifests: int = Field(default=1000, ge=1, le=10000, strict=True)
 
     @model_validator(mode="after")
     def configured_sources(self):
-        if not self.job_roots and not self.public_sources:
+        if not self.job_roots and not self.public_sources and not self.job_hdfs_sources:
             raise ValueError("at least one completed input source is required")
-        if bool(self.job_roots) != bool(self.criteria):
+        if bool(self.job_roots or self.job_hdfs_sources) != bool(self.criteria):
             raise ValueError(
-                "job roots and cohort criteria must be configured together"
+                "job inputs and cohort criteria must be configured together"
             )
         for root in self.job_roots:
             if (
@@ -90,6 +96,10 @@ class IntakeConfig(BaseModel):
             self.public_sources
         ):
             raise ValueError("each public source requires its own checkpoint directory")
+        if len({s.staging_dir.resolve() for s in self.job_hdfs_sources}) != len(
+            self.job_hdfs_sources
+        ):
+            raise ValueError("each job HDFS source requires its own staging directory")
         return self
 
 
@@ -382,11 +392,17 @@ class IntakeRunner:
         public_sinks: tuple[Callable, ...] = (),
         job_set_sink: Callable | None = None,
         job_input_guard: Callable | None = None,
+        job_source_refresh: Callable | None = None,
     ):
         self.config, self.job_sink = config, job_sink
         self.public_sinks = public_sinks
         self.job_set_sink = job_set_sink
         self.job_input_guard = job_input_guard
+        # Staged HDFS runs join the configured local roots. Held on the
+        # instance rather than the frozen config because `poll_once` refreshes
+        # them; the configured roots themselves never change.
+        self.job_source_refresh = job_source_refresh
+        self._job_roots = tuple(config.job_roots)
         self._current_jobs = {}
         self._job_set_cache = {}
         self._known_manifests = {}
@@ -450,10 +466,30 @@ class IntakeRunner:
                 LOGGER.warning("C input union failed error_type=%s", type(exc).__name__)
         self._current_jobs = current
 
+    def _refresh_job_sources(self, report):
+        """Stage published HDFS runs before discovery, if any are configured.
+
+        A failure here leaves `self._job_roots` as it was. The runs already
+        staged stay readable, so a NameNode outage costs new inputs, not the
+        ones C has been computing on.
+        """
+
+        if self.job_source_refresh is None:
+            return
+        try:
+            self._job_roots = tuple(self.config.job_roots) + tuple(
+                self.job_source_refresh()
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
+            report["failed"] += 1
+            LOGGER.warning(
+                "C job source refresh failed error_type=%s", type(exc).__name__
+            )
+
     def _manifests(self):
         found = []
         visited = 0
-        for root in self.config.job_roots:
+        for root in self._job_roots:
             if (root / "manifest.json").is_file():
                 found.append((root / "manifest.json", root))
             with os.scandir(root) as entries:
@@ -471,6 +507,7 @@ class IntakeRunner:
 
     def poll_once(self):
         report = {"completed": 0, "failed": 0, "blocked": 0, "pending": 0}
+        self._refresh_job_sources(report)
         outputs = []
         input_bindings = {}
         input_bytes = input_records = 0
@@ -639,7 +676,12 @@ class IntakeRunner:
 def configured_runner(path: Path, store: ComputeStore, mapper, registry):
     from functools import partial
 
+    from worker.job_hdfs_source import refresher
+
     config = IntakeConfig.model_validate_json(_read(path, 1024 * 1024))
+    # Either kind of job input feeds the same union, so the union sink and the
+    # durable binding follow whichever is configured.
+    has_job_inputs = bool(config.job_roots or config.job_hdfs_sources)
     return IntakeRunner(
         config,
         job_sink=partial(
@@ -648,9 +690,12 @@ def configured_runner(path: Path, store: ComputeStore, mapper, registry):
         job_set_sink=partial(
             publish_job_input_set, store=store, mapper=mapper, registry=registry
         )
-        if config.job_roots
+        if has_job_inputs
         else None,
-        job_input_guard=store.bind_job_inputs if config.job_roots else None,
+        job_input_guard=store.bind_job_inputs if has_job_inputs else None,
+        job_source_refresh=refresher(config.job_hdfs_sources)
+        if config.job_hdfs_sources
+        else None,
         public_sinks=tuple(
             _PublicSource(source, store, registry) for source in config.public_sources
         ),
