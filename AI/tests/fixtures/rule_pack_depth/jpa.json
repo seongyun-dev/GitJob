@@ -1,0 +1,62 @@
+{
+  "tech_id": "jpa",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/AccountRepository.java": "import jakarta.persistence.EntityManager;\nimport jakarta.persistence.Lock;\nimport jakarta.persistence.LockModeType;\nimport org.springframework.data.jpa.repository.EntityGraph;\nimport org.springframework.transaction.annotation.Transactional;\nclass AccountRepository { EntityManager em; @EntityGraph(attributePaths={\"owner\"}) @Transactional @Lock(LockModeType.PESSIMISTIC_WRITE) void load() { em.createQuery(\"select a from Account a\"); } }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "jpa.l2.query",
+        "jpa.l3.transactional-locking"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 calls require conservative imported-type attribution; repository helpers and query wrappers are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/AccountRepository.java": "import jakarta.persistence.EntityManager;\nimport org.springframework.data.jpa.repository.EntityGraph;\nimport org.springframework.transaction.annotation.Transactional;\nclass AccountRepository { EntityManager em; @EntityGraph(attributePaths={\"owner\"}) @Transactional void load() {} }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "jpa.l2.query",
+        "jpa.l3.transactional-locking"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "signals-split-across-classes",
+      "kind": "near_miss",
+      "files": {
+        "src/Mixed.java": "import jakarta.persistence.EntityManager;\nimport jakarta.persistence.Lock;\nimport org.springframework.data.jpa.repository.EntityGraph;\nimport org.springframework.transaction.annotation.Transactional;\nclass GraphRepository { @EntityGraph @Transactional void load() {} }\nclass LockedRepository { EntityManager em; @Lock void lock() { em.createQuery(\"select a from Account a\"); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "jpa.l2.query"
+      ],
+      "absent_rule_ids": [
+        "jpa.l3.transactional-locking"
+      ],
+      "tradeoff": "Transaction/entity-graph annotations in one class cannot borrow lock/query evidence from another repository class."
+    },
+    {
+      "name": "comments-and-strings",
+      "kind": "negative",
+      "files": {
+        "src/Notes.java": "import jakarta.persistence.Entity;\n// @EntityGraph @Transactional @Lock createQuery\nclass Notes { String text = \"@EntityGraph @Transactional @Lock createQuery\"; }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "jpa.l2.query",
+        "jpa.l3.transactional-locking"
+      ],
+      "tradeoff": "Comments and string literals are not executable query or annotation facts."
+    }
+  ]
+}

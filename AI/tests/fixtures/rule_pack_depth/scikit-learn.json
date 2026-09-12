@@ -1,0 +1,31 @@
+{
+  "tech_id": "scikit-learn",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/train.py": "from sklearn.pipeline import Pipeline\nfrom sklearn.model_selection import GridSearchCV, cross_validate\ndef train(X, y):\n    pipe = Pipeline([])\n    search = GridSearchCV(pipe, {})\n    return cross_validate(search, X, y)\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "scikit-learn.l3.tuned-pipeline"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires an attributed Pipeline, hyperparameter search, and cross-validation call in the same Python function component; helper-built and split training graphs are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/train.py": "from sklearn.pipeline import Pipeline\nfrom sklearn.model_selection import GridSearchCV\ndef train(X, y):\n    pipe = Pipeline([])\n    return GridSearchCV(pipe, {})\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "scikit-learn.l3.tuned-pipeline"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "tech_id": "nextjs",
+  "positive": {
+    "files": {
+      "package.json": "{\"dependencies\":{\"next\":\"15.0.0\"}}",
+      "src/page.tsx": "import { useRouter } from 'next/router';\nexport function Page() { useRouter(); return null; }\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning nextjs only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/page.tsx": "import Link from 'next/link';\nexport const Page = () => null;\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "package.json": "{\"dependencies\":{\"next\":\"15.0.0\"}}",
+        "src/page.tsx": "import { useRouter } from 'next/router';\nexport function Page() { useRouter(); return null; }\n"
+      },
+      "expected_rule_ids": [
+        "nextjs.l0.dependency",
+        "nextjs.l1.import",
+        "nextjs.l2.api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/page.tsx": "import Link from 'next/link';\nexport const Page = () => null;\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nextjs.l0.dependency",
+        "nextjs.l1.import",
+        "nextjs.l2.api"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "tech_id": "go",
+  "positive": {
+    "files": {
+      "src/main.go": "package main\nfunc main() {}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning go only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/main.go": "package main\nfunc main() {}\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "src/main.go": "package main\nfunc main() {}\n"
+      },
+      "expected_rule_ids": [
+        "go.l1.source"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/main.go": "package main\nfunc main() {}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "go.l1.source"
+      ]
+    }
+  ]
+}

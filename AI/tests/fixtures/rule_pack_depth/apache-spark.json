@@ -1,0 +1,49 @@
+{
+  "tech_id": "apache-spark",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/job.py": "from pyspark.sql import SparkSession, DataFrame\nfrom pyspark.sql.streaming import DataStreamWriter\ndef run(writer):\n    spark = SparkSession.builder.getOrCreate()\n    df = spark.read.csv('input')\n    DataFrame.select(df, 'id')\n    DataFrame.cache(df)\n    DataFrame.repartition(df, 8)\n    DataStreamWriter.start(writer)\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "apache-spark.l2.dataframe",
+        "apache-spark.l3.partitioned-caching"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 requires Spark imports and attributed session/DataFrame calls in one authored file; helper-returned DataFrames cannot always retain type attribution."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/job.py": "from pyspark.sql import SparkSession, DataFrame\nfrom pyspark.sql.streaming import DataStreamWriter\ndef run(writer):\n    spark = SparkSession.builder.getOrCreate()\n    df = spark.read.csv('input')\n    DataFrame.select(df, 'id')\n    DataFrame.cache(df)\n    DataStreamWriter.start(writer)\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "apache-spark.l2.dataframe"
+      ],
+      "absent_rule_ids": [
+        "apache-spark.l3.partitioned-caching"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "lower-rule-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/job.py": "from pyspark.sql import DataFrame\nfrom pyspark.sql.streaming import DataStreamWriter\ndef run(df, writer):\n    DataFrame.cache(df)\n    DataFrame.repartition(df, 8)\n    DataStreamWriter.start(writer)\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "apache-spark.l3.partitioned-caching"
+      ],
+      "absent_rule_ids": [
+        "apache-spark.l2.dataframe"
+      ],
+      "tradeoff": "The independent lower-depth rule remains gated even when the higher structural pattern is present."
+    }
+  ]
+}

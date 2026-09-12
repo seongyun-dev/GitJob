@@ -1,0 +1,79 @@
+{
+  "tech_id": "gcp",
+  "cases": [
+    {
+      "name": "network-managed-least-privilege",
+      "kind": "positive",
+      "files": {
+        "infra/main.tf": "provider \"google\" {}\nresource \"google_project\" \"main\" {}\nresource \"google_compute_network\" \"main\" {}\nresource \"google_sql_database_instance\" \"data\" { private_network = google_compute_network.main.id\nproject = google_project.main.project_id }\nresource \"google_project_iam_custom_role\" \"reader\" { project = google_sql_database_instance.data.project\npermissions = [\"cloudsql.instances.get\"] }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "gcp.l2.managed-resource",
+        "gcp.l3.network-managed-iam"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires explicit same-file reference paths connecting managed service, network and narrow IAM structure; applied/effective behavior is not claimed."
+    },
+    {
+      "name": "provider-only",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"google\" {}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [
+        "gcp.l1.terraform"
+      ],
+      "absent_rule_ids": [
+        "gcp.l2.managed-resource",
+        "gcp.l3.network-managed-iam"
+      ],
+      "tradeoff": "A provider declaration establishes configured identity only and cannot prove provisioned resources."
+    },
+    {
+      "name": "wildcard-policy",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"google\" {}\nresource \"google_project\" \"main\" {}\nresource \"google_compute_network\" \"main\" {}\nresource \"google_sql_database_instance\" \"data\" { private_network = google_compute_network.main.id\nproject = google_project.main.project_id }\nresource \"google_project_iam_custom_role\" \"reader\" { project = google_project.main.project_id\npermissions = [\"*\"] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "gcp.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "gcp.l3.network-managed-iam"
+      ],
+      "tradeoff": "Wildcard action/resource literals fail the conservative least-privilege predicate."
+    },
+    {
+      "name": "unrelated-resource-sum",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"google\" {}\nresource \"google_project\" \"main\" {}\nresource \"google_compute_network\" \"main\" {}\nresource \"google_sql_database_instance\" \"data\" { private_network = \"detached\"\nproject = \"detached\" }\nresource \"google_project_iam_custom_role\" \"reader\" { project = \"detached\"\npermissions = [\"storage.objects.get\"] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "gcp.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "gcp.l3.network-managed-iam"
+      ],
+      "tradeoff": "Network, managed and narrow IAM resources without explicit reference paths must not combine into an L3 architecture claim."
+    },
+    {
+      "name": "comment-and-heredoc-lookalike",
+      "kind": "negative",
+      "files": {
+        "infra/main.tf": "# resource \"google_compute_network\" \"fake\" {}\nlocals {\n sample = <<EOF\nresource \"google_sql_database_instance\" \"fake\" {}\nEOF\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "gcp.l2.managed-resource",
+        "gcp.l3.network-managed-iam"
+      ],
+      "tradeoff": "Commented and heredoc resource text is not executable Terraform structure."
+    }
+  ]
+}

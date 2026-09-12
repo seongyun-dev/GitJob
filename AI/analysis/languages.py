@@ -47,6 +47,9 @@ class LanguageSpec:
     #: Captures `@method` (the name being called) and optionally `@recv` (what it
     #: is called on). Empty for a language whose calls are not extracted yet.
     call_query: str = ""
+    #: Captures the semantic name of an annotation/decorator. The parse tree,
+    #: rather than a regex, keeps comment and string contents out.
+    annotation_query: str = ""
 
 
 #: Why calls are captured as written rather than resolved.
@@ -80,6 +83,10 @@ _PYTHON = LanguageSpec(
     (call function: (identifier) @method)
     (call function: (attribute object: (_) @recv attribute: (identifier) @method))
     """,
+    annotation_query="""
+    (decorator (identifier) @ann)
+    (decorator (call function: (identifier) @ann))
+    """,
 )
 
 _JAVA = LanguageSpec(
@@ -97,6 +104,10 @@ _JAVA = LanguageSpec(
     call_query="""
     (method_invocation object: (_) @recv name: (identifier) @method)
     (method_invocation !object name: (identifier) @method)
+    """,
+    annotation_query="""
+    (marker_annotation name: (identifier) @ann)
+    (annotation name: (identifier) @ann)
     """,
 )
 
@@ -128,6 +139,10 @@ _JAVASCRIPT = LanguageSpec(
     call_query=_JAVASCRIPT_CALLS,
     guard_capture="fn",
     guard_values=("require",),
+    annotation_query="""
+    (decorator (identifier) @ann)
+    (decorator (call_expression function: (identifier) @ann))
+    """,
 )
 
 # TypeScript is a separate grammar but the same package ecosystem: `import
@@ -141,6 +156,10 @@ _TYPESCRIPT = LanguageSpec(
     call_query=_JAVASCRIPT_CALLS,
     guard_capture="fn",
     guard_values=("require",),
+    annotation_query="""
+    (decorator (identifier) @ann)
+    (decorator (call_expression function: (identifier) @ann))
+    """,
 )
 
 _TSX = LanguageSpec(
@@ -151,6 +170,10 @@ _TSX = LanguageSpec(
     call_query=_JAVASCRIPT_CALLS,
     guard_capture="fn",
     guard_values=("require",),
+    annotation_query="""
+    (decorator (identifier) @ann)
+    (decorator (call_expression function: (identifier) @ann))
+    """,
 )
 
 _CSHARP = LanguageSpec(
@@ -173,6 +196,9 @@ _CSHARP = LanguageSpec(
     (invocation_expression function: (identifier) @method)
     (invocation_expression function: (member_access_expression
         expression: (_) @recv name: (identifier) @method))
+    """,
+    annotation_query="""
+    (attribute name: (identifier) @ann)
     """,
 )
 

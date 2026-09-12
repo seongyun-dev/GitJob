@@ -1,0 +1,44 @@
+{
+  "tech_id": "nodejs",
+  "positive": {
+    "files": {
+      "src/server.js": "const fs = require('fs');\nconst http = require('http');\nfs.readFile('input.txt', () => {});\nhttp.createServer(() => {});\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning nodejs only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/server.js": "const fs = require('fs');\nfs.readFile('input.txt', () => {});\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "src/server.js": "const fs = require('fs');\nconst http = require('http');\nfs.readFile('input.txt', () => {});\nhttp.createServer(() => {});\n"
+      },
+      "expected_rule_ids": [
+        "nodejs.l1.core-import",
+        "nodejs.l2.core-api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/server.js": "const fs = require('fs');\nfs.readFile('input.txt', () => {});\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nodejs.l1.core-import",
+        "nodejs.l2.core-api"
+      ]
+    }
+  ]
+}

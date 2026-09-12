@@ -1,0 +1,46 @@
+{
+  "tech_id": "dotnet",
+  "positive": {
+    "files": {
+      "App.csproj": "<Project><ItemGroup><PackageReference Include=\"Microsoft.Maui.Controls\" Version=\"9.0.0\" /></ItemGroup></Project>",
+      "src/App.cs": "using Microsoft.Extensions.Hosting;\nclass App {}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning dotnet only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/App.cs": "using Microsoft.Extensions.Hosting;\nclass App {}\n",
+      "src/Unrelated.cs": "using System;\nclass Unrelated {}\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "App.csproj": "<Project><ItemGroup><PackageReference Include=\"Microsoft.Maui.Controls\" Version=\"9.0.0\" /></ItemGroup></Project>",
+        "src/App.cs": "using Microsoft.Extensions.Hosting;\nclass App {}\n"
+      },
+      "expected_rule_ids": [
+        "dotnet.l0.dependency",
+        "dotnet.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/App.cs": "using Microsoft.Extensions.Hosting;\nclass App {}\n",
+        "src/Unrelated.cs": "using System;\nclass Unrelated {}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "dotnet.l0.dependency",
+        "dotnet.l1.import"
+      ]
+    }
+  ]
+}

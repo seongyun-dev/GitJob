@@ -1,0 +1,44 @@
+{
+  "tech_id": "redis",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/cache.py": "from redis import Redis\ndef connect():\n    return Redis.from_url('redis://cache')\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "redis.l2.api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 recognizes an attributed Redis client factory; current facts cannot bind pipeline creation, execution, and expiry to the same client, so L3 is withheld."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/cache.py": "from redis import Redis\ndef connect():\n    return Redis()\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "redis.l2.api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "unrelated-object-methods",
+      "kind": "negative",
+      "files": {
+        "src/cache.py": "from redis import Redis\nclass FakeCache:\n    def from_url(self, value): return self\nclient = FakeCache()\nclient.from_url('redis://cache')\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "redis.l2.api"
+      ],
+      "tradeoff": "A same-named method on an unrelated local object must not count as the Redis client factory."
+    }
+  ]
+}

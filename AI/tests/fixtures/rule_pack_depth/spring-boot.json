@@ -1,0 +1,44 @@
+{
+  "tech_id": "spring-boot",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/ServiceHealth.java": "import org.springframework.boot.actuate.health.Health;\nimport org.springframework.boot.actuate.health.HealthIndicator;\nclass ServiceHealth implements HealthIndicator { Object health() { return Health.up(); } }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "spring-boot.l3.observability"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires a HealthIndicator implementation, health method, and attributed Health status builder call in the same Java class; normal multi-class observability modules are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/ServiceHealth.java": "import org.springframework.boot.actuate.health.Health;\nimport org.springframework.boot.actuate.health.HealthIndicator;\nclass ServiceHealth implements HealthIndicator { ServiceHealth() { Health.up(); } }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "spring-boot.l3.observability"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "signals-split-across-classes",
+      "kind": "near_miss",
+      "files": {
+        "src/Mixed.java": "import org.springframework.boot.actuate.health.Health;\nimport org.springframework.boot.actuate.health.HealthIndicator;\nclass ServiceHealth implements HealthIndicator { Object health() { return null; } }\nclass Unrelated { Object status() { return Health.up(); } }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "spring-boot.l3.observability"
+      ],
+      "tradeoff": "A Health builder call in another class cannot complete the HealthIndicator implementation."
+    }
+  ]
+}

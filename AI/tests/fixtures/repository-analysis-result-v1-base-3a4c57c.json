@@ -1,0 +1,56 @@
+{
+  "event_id": "ev_result_1",
+  "schema_version": "repository-analysis-result/v1",
+  "event_type": "repository.analysis.completed",
+  "occurred_at": "2026-09-10T01:02:03Z",
+  "trace_id": "tr_1",
+  "payload": {
+    "analysis_id": "an_1",
+    "request_event_id": "ev_1",
+    "registry_version": "registry-20260908.1",
+    "commit_sha": "818c4136ea971c21674525f9053de0d9c7ad8cfe",
+    "status": "COMPLETED",
+    "error_code": null,
+    "error_detail": null,
+    "technologies": [
+      {
+        "tech_id": "spring-boot",
+        "level": "L3",
+        "matched_rule_ids": [
+          "spring-boot.l1.java-import",
+          "spring-boot.l3.actuator"
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "rule_id": "spring-boot.l1.java-import",
+        "fact_type": "IMPORT",
+        "file_path": "src/main/java/App.java",
+        "start_line": 3,
+        "end_line": 3,
+        "fact_payload": {
+          "MODULE": "org.springframework.boot.SpringApplication",
+          "LANGUAGE": "java"
+        },
+        "code_snippet": null
+      }
+    ],
+    "candidates": [
+      {
+        "ecosystem": "MAVEN",
+        "coordinate": "org.postgresql:postgresql",
+        "scope": "runtimeOnly",
+        "occurrence_count": 1
+      }
+    ],
+    "stats": {
+      "files_parsed": 50,
+      "files_skipped": 0,
+      "import_count": 471,
+      "dependency_count": 0,
+      "bytes_on_disk": 0,
+      "duration_ms": 0
+    }
+  }
+}

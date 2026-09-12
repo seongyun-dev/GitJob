@@ -51,7 +51,11 @@ def freshly_migrated_registry_dsn() -> Iterator[str]:
 
     migrated_dsn = make_conninfo(configured, dbname=database)
     try:
-        migrations = sorted(MIGRATION_ROOT.glob("V*__*.sql"), key=_migration_number)
+        # This proof intentionally reproduces the unchanged V1-V11 baseline.
+        # New common Rule Pack migration/read-back is exercised separately.
+        migrations = [
+            next(MIGRATION_ROOT.glob(f"V{version}__*.sql")) for version in range(1, 12)
+        ]
         assert [_migration_number(path) for path in migrations] == list(range(1, 12))
         for migration in migrations:
             with psycopg.connect(migrated_dsn) as conn:

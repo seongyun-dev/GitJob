@@ -1,0 +1,48 @@
+{
+  "tech_id": "spring-framework",
+  "positive": {
+    "files": {
+      "pom.xml": "<project><dependencies><dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId></dependency></dependencies></project>",
+      "src/App.java": "import org.springframework.context.ApplicationContext;\nimport org.springframework.stereotype.Component;\n@Component class App {}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning spring-framework only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/App.java": "import org.springframework.context.ApplicationContext;\nclass App {}\n",
+      "src/Unrelated.java": "import java.util.List;\nclass Unrelated {}\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "pom.xml": "<project><dependencies><dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId></dependency></dependencies></project>",
+        "src/App.java": "import org.springframework.context.ApplicationContext;\nimport org.springframework.stereotype.Component;\n@Component class App {}\n"
+      },
+      "expected_rule_ids": [
+        "spring-framework.l0.dependency",
+        "spring-framework.l1.import",
+        "spring-framework.l1.annotation"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/App.java": "import org.springframework.context.ApplicationContext;\nclass App {}\n",
+        "src/Unrelated.java": "import java.util.List;\nclass Unrelated {}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "spring-framework.l0.dependency",
+        "spring-framework.l1.import",
+        "spring-framework.l1.annotation"
+      ]
+    }
+  ]
+}

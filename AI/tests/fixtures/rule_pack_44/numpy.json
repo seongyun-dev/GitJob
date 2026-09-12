@@ -1,0 +1,48 @@
+{
+  "tech_id": "numpy",
+  "positive": {
+    "files": {
+      "requirements.txt": "numpy==2.1\n",
+      "src/app.py": "import numpy as np\nnp.array([1])\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning numpy only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/app.py": "import numpy as np\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "requirements.txt": "numpy==2.1\n",
+        "src/app.py": "import numpy as np\nnp.array([1])\n"
+      },
+      "expected_rule_ids": [
+        "numpy.l0.dependency",
+        "numpy.l1.import",
+        "numpy.l2.api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/app.py": "import numpy as np\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "numpy.l0.dependency",
+        "numpy.l1.import",
+        "numpy.l2.api"
+      ]
+    }
+  ]
+}

@@ -297,3 +297,22 @@ def test_read_rejects_rows_that_no_longer_match_the_recorded_hash(
         )
     with pytest.raises(RegistryVersionUnavailable):
         store.resolve_version("technology-registry/v1")
+
+
+def test_read_rejects_tampered_normalized_mapping_value(
+    registry_dsn: str,
+    clean_registry_versions: tuple[str, str],
+) -> None:
+    version, _ = clean_registry_versions
+    store = PostgresRegistryStore(registry_dsn)
+    store.import_registry(_snapshot(version), source_ref="seed:normalized-integrity")
+    with psycopg.connect(registry_dsn) as conn:
+        conn.execute(
+            "UPDATE public.technology_mapping "
+            "SET normalized_value = 'tampered-normalized-value' "
+            "WHERE registry_version = %s AND registry_order = 0",
+            (version,),
+        )
+
+    with pytest.raises(RegistryIntegrityError, match="normalized value"):
+        store.load_registry(version)

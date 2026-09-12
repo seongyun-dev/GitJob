@@ -34,17 +34,33 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
+from analysis.configs import ConfigReport
 from analysis.contracts import RepositoryAnalysisRequest
 from analysis.judge import Judgement
 from analysis.manifests import DependencyReport
 from analysis.parse import ParseReport
 from analysis.results import (
+    SCHEMA_VERSION,
+    SCHEMA_VERSION_V2,
+    SCHEMA_VERSION_V3,
     AnalysisStats,
+    AnalysisStatsV2,
+    AnalysisStatsV3,
     EvidenceItem,
+    EvidenceItemV2,
+    EvidenceItemV3,
     RepositoryAnalysisResult,
     RepositoryAnalysisResultPayload,
+    RepositoryAnalysisResultPayloadV2,
+    RepositoryAnalysisResultPayloadV3,
+    RepositoryAnalysisResultV2,
+    RepositoryAnalysisResultV3,
     TechnologyCandidate,
+    TechnologyCandidateV2,
+    TechnologySupportItem,
+    TechnologySupportItemV3,
     TechnologyVerdict,
+    schema_for_rule_pack,
 )
 
 __all__ = ["ResultPublisher", "completed_result", "failed_result", "result_event_id"]
@@ -70,17 +86,102 @@ def completed_result(
     report: ParseReport,
     dependencies: DependencyReport,
     *,
+    configs: ConfigReport | None = None,
+    schema_version: str | None = None,
     checkout: Path | None = None,
     bytes_on_disk: int = 0,
     duration_ms: int = 0,
-) -> RepositoryAnalysisResult:
+) -> RepositoryAnalysisResult | RepositoryAnalysisResultV2 | RepositoryAnalysisResultV3:
     payload = request.payload
     snippets = _snippets(judgement, checkout)
-    return RepositoryAnalysisResult(
+    common44 = bool(
+        judgement.rule_pack_version
+        and judgement.rule_pack_content_sha256
+        and judgement.technology_support
+    )
+    inferred_schema = schema_for_rule_pack(judgement.rule_pack_version)
+    depth = inferred_schema == SCHEMA_VERSION_V3
+    if depth and schema_version not in {None, SCHEMA_VERSION_V3}:
+        raise ValueError(
+            "depth Rule Pack results require repository-analysis-result/v3"
+        )
+    if schema_version not in {
+        None,
+        SCHEMA_VERSION,
+        SCHEMA_VERSION_V2,
+        SCHEMA_VERSION_V3,
+    }:
+        raise ValueError(f"unsupported result schema_version {schema_version!r}")
+    if schema_version == SCHEMA_VERSION and common44:
+        raise ValueError(
+            "common44 Rule Pack results require repository-analysis-result/v2"
+        )
+    if schema_version == SCHEMA_VERSION_V2 and not common44:
+        raise ValueError(
+            "repository-analysis-result/v2 requires common44 Rule Pack lineage"
+        )
+    if schema_version == SCHEMA_VERSION_V3 and not depth:
+        raise ValueError(
+            "repository-analysis-result/v3 requires depth Rule Pack lineage"
+        )
+    result_class = RepositoryAnalysisResultV2 if common44 else RepositoryAnalysisResult
+    payload_class = (
+        RepositoryAnalysisResultPayloadV2
+        if common44
+        else RepositoryAnalysisResultPayload
+    )
+    evidence_class = EvidenceItemV2 if common44 else EvidenceItem
+    if depth:
+        result_class = RepositoryAnalysisResultV3
+        payload_class = RepositoryAnalysisResultPayloadV3
+        evidence_class = EvidenceItemV3
+    support = (
+        tuple(
+            (TechnologySupportItemV3 if depth else TechnologySupportItem)(
+                tech_id=tech_id,
+                evaluation_scope=(
+                    item.get("evaluation_scope")
+                    if isinstance(item, dict)
+                    else item.evaluation_scope
+                ),
+                required_fact_types=tuple(
+                    item.get("required_fact_types")
+                    if isinstance(item, dict)
+                    else item.required_fact_types
+                ),
+                max_supported_level=(
+                    item.get("max_supported_level")
+                    if isinstance(item, dict)
+                    else item.max_supported_level
+                ),
+                coverage=(
+                    item.get("coverage") if isinstance(item, dict) else item.coverage
+                ),
+                limitations=tuple(
+                    item.get("limitations", ())
+                    if isinstance(item, dict)
+                    else item.limitations
+                ),
+            )
+            for tech_id, item in sorted(judgement.technology_support.items())
+        )
+        if common44
+        else ()
+    )
+    extra = (
+        {
+            "rule_pack_version": judgement.rule_pack_version,
+            "rule_pack_content_sha256": judgement.rule_pack_content_sha256,
+            "technology_support": support,
+        }
+        if common44
+        else {}
+    )
+    return result_class(
         event_id=result_event_id(request.event_id),
         occurred_at=datetime.now(UTC),
         trace_id=request.trace_id,
-        payload=RepositoryAnalysisResultPayload(
+        payload=payload_class(
             analysis_id=payload.analysis_id,
             request_event_id=request.event_id,
             registry_version=payload.registry_version,
@@ -95,7 +196,7 @@ def completed_result(
                 for verdict in judgement.verdicts
             ),
             evidence=tuple(
-                EvidenceItem(
+                evidence_class(
                     rule_id=item.rule_id,
                     fact_type=item.fact.fact_type,
                     file_path=item.fact.file,
@@ -107,22 +208,48 @@ def completed_result(
                 for item in judgement.evidence
             ),
             candidates=tuple(
-                TechnologyCandidate(
+                (TechnologyCandidateV2 if common44 else TechnologyCandidate)(
                     ecosystem=candidate.ecosystem,
                     coordinate=candidate.coordinate,
                     scope=candidate.scope,
                     occurrence_count=candidate.occurrence_count,
                 )
                 for candidate in judgement.candidates
+                if common44 or candidate.ecosystem in {"MAVEN", "NPM", "PYPI", "NUGET"}
             ),
-            stats=AnalysisStats(
+            stats=(
+                AnalysisStatsV3
+                if depth
+                else AnalysisStatsV2
+                if common44
+                else AnalysisStats
+            )(
                 files_parsed=report.files_parsed,
                 files_skipped=report.files_skipped,
                 import_count=len(report.occurrences),
                 dependency_count=len(dependencies.occurrences),
                 bytes_on_disk=bytes_on_disk,
                 duration_ms=duration_ms,
+                **(
+                    {
+                        "source_file_count": len(report.sources),
+                        "annotation_count": len(report.annotations),
+                        "config_count": len(configs.occurrences) if configs else 0,
+                        "api_call_count": len(report.calls),
+                        "skipped_reasons": _combined_skips(
+                            report, dependencies, configs
+                        ),
+                    }
+                    if common44
+                    else {}
+                ),
+                **(
+                    {"syntax_node_count": len(getattr(report, "syntax", ()))}
+                    if depth
+                    else {}
+                ),
             ),
+            **extra,
         ),
     )
 
@@ -131,7 +258,9 @@ def failed_result(
     request: RepositoryAnalysisRequest,
     error_code: str,
     error_detail: str | None = None,
-) -> RepositoryAnalysisResult:
+    *,
+    schema_version: str = SCHEMA_VERSION,
+) -> RepositoryAnalysisResult | RepositoryAnalysisResultV2 | RepositoryAnalysisResultV3:
     """A failure the user has to see.
 
     The DLQ already holds the request, but the DLQ is for operators. Without
@@ -139,11 +268,22 @@ def failed_result(
     for the analysis waits forever.
     """
     payload = request.payload
-    return RepositoryAnalysisResult(
+    if schema_version == SCHEMA_VERSION:
+        result_class = RepositoryAnalysisResult
+        payload_class = RepositoryAnalysisResultPayload
+    elif schema_version == SCHEMA_VERSION_V2:
+        result_class = RepositoryAnalysisResultV2
+        payload_class = RepositoryAnalysisResultPayloadV2
+    elif schema_version == SCHEMA_VERSION_V3:
+        result_class = RepositoryAnalysisResultV3
+        payload_class = RepositoryAnalysisResultPayloadV3
+    else:
+        raise ValueError(f"unsupported result schema_version {schema_version!r}")
+    return result_class(
         event_id=result_event_id(request.event_id),
         occurred_at=datetime.now(UTC),
         trace_id=request.trace_id,
-        payload=RepositoryAnalysisResultPayload(
+        payload=payload_class(
             analysis_id=payload.analysis_id,
             request_event_id=request.event_id,
             registry_version=payload.registry_version,
@@ -153,6 +293,22 @@ def failed_result(
             error_detail=(error_detail or None) and error_detail[:500],
         ),
     )
+
+
+def _combined_skips(
+    report: ParseReport,
+    dependencies: DependencyReport,
+    configs: ConfigReport | None,
+) -> dict[str, int]:
+    combined: dict[str, int] = {}
+    for prefix, reasons in (
+        ("source", report.skipped_reasons),
+        ("manifest", dependencies.skipped_reasons),
+        ("config", configs.skipped_reasons if configs else {}),
+    ):
+        for reason, count in reasons.items():
+            combined[f"{prefix}:{reason}"] = count
+    return combined
 
 
 def _snippets(
@@ -168,9 +324,11 @@ def _snippets(
     found: dict[tuple[str, int], str] = {}
     for relative, numbers in wanted.items():
         try:
-            lines = (checkout / relative).read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
+            lines = (
+                (checkout / relative)
+                .read_text(encoding="utf-8", errors="replace")
+                .splitlines()
+            )
         except OSError as unreadable:
             # The evidence still stands: a permalink needs only the path and
             # the line, and the snippet is declared optional for this reason.
@@ -190,11 +348,37 @@ class ResultPublisher:
     ever finishes, so losing a message here strands the job at `QUEUED`.
     """
 
-    def __init__(self, transport, topic: str) -> None:
+    def __init__(
+        self,
+        transport,
+        topic: str,
+        schema_version: str | None = None,
+    ) -> None:
+        if schema_version not in {
+            None,
+            SCHEMA_VERSION,
+            SCHEMA_VERSION_V2,
+            SCHEMA_VERSION_V3,
+        }:
+            raise ValueError(f"unsupported result schema_version {schema_version!r}")
         self.transport = transport
         self.topic = topic
+        self.schema_version = schema_version
 
-    def publish(self, result: RepositoryAnalysisResult) -> None:
+    def publish(
+        self,
+        result: RepositoryAnalysisResult
+        | RepositoryAnalysisResultV2
+        | RepositoryAnalysisResultV3,
+    ) -> None:
+        if (
+            self.schema_version is not None
+            and result.schema_version != self.schema_version
+        ):
+            raise ValueError(
+                f"result schema {result.schema_version!r} cannot be published to "
+                f"{self.schema_version!r} topic {self.topic!r}"
+            )
         self.transport.send(
             self.topic,
             # Keyed by analysis so every event for one analysis keeps its order

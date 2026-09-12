@@ -30,13 +30,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from analysis.languages import LANGUAGES, LanguageSpec, spec_for_path
+from analysis.structure import (
+    SyntaxOccurrence,
+    build_binding_context,
+    component_for_node,
+    extract_syntax,
+    function_for_node,
+    resolve_call_binding,
+    resolve_imported_symbol,
+)
 
 __all__ = [
     "EXCLUDED_DIRECTORIES",
+    "AnnotationOccurrence",
     "CallOccurrence",
     "ImportOccurrence",
     "ParseReport",
     "RepositoryParser",
+    "SourceFileOccurrence",
+    "SyntaxOccurrence",
     "verify_grammars",
     "walk_files",
 ]
@@ -61,10 +73,13 @@ EXCLUDED_DIRECTORIES = frozenset(
         "bower_components",
         "build",
         "dist",
+        "generated",
+        "library",
         "node_modules",
         "obj",
         "out",
         "target",
+        "third_party",
         "vendor",
         "venv",
     }
@@ -72,7 +87,51 @@ EXCLUDED_DIRECTORIES = frozenset(
 
 #: Bundled or minified output. One line, machine written, and its imports are
 #: whatever the bundler inlined rather than what anyone wrote.
-EXCLUDED_SUFFIXES = (".min.js", ".min.ts", ".bundle.js", ".d.ts")
+EXCLUDED_SUFFIXES = (
+    ".min.css",
+    ".min.js",
+    ".min.ts",
+    ".bundle.js",
+    ".d.ts",
+)
+
+_SOURCE_LANGUAGES = {
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".hh": "cpp",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".go": "go",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".php": "php",
+    ".sql": "sql",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "css",
+}
+
+_TEST_PARTS = frozenset({"test", "tests", "testing", "spec", "specs", "__tests__"})
+
+
+def _analysis_language(language: str) -> str:
+    """Canonical language exposed to rules while parser grammars stay distinct."""
+
+    return "typescript" if language == "tsx" else language
 
 
 @dataclass(frozen=True)
@@ -88,13 +147,16 @@ class ImportOccurrence:
     ecosystem: str
     file: str
     line: int
+    bindings: tuple[str, ...] = ()
 
 
 #: A receiver longer than this is an expression, not a name. `a.b().c[0].d`
 #: says nothing about which library `d` belongs to, and keeping it would make
 #: every call site its own value.
 _MAX_RECEIVER = 60
-_SIMPLE_RECEIVER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$")
+_SIMPLE_RECEIVER = re.compile(
+    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$"
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +176,42 @@ class CallOccurrence:
     ecosystem: str
     file: str
     line: int
+    #: Imported local names that were rebound before this call, or shadowed by
+    #: an enclosing parameter. The Judge uses this to avoid lending the
+    #: original import's identity to a local object with the same name.
+    shadowed_bindings: tuple[str, ...] = ()
+    #: Imported local symbol that created or typed this receiver. Empty when
+    #: control flow, reassignment or shadowing makes the identity ambiguous.
+    resolved_binding: str | None = None
+    #: Stable containing declaration used to prevent cross-class/function sums.
+    component: str | None = None
+    #: Nearest lexical callable. Unlike COMPONENT, methods of one class differ.
+    function: str | None = None
+
+
+@dataclass(frozen=True)
+class SourceFileOccurrence:
+    """One authored source file, including languages without a parser grammar."""
+
+    language: str
+    extension: str
+    sloc: int
+    is_test: bool
+    file: str
+    line: int = 1
+
+
+@dataclass(frozen=True)
+class AnnotationOccurrence:
+    """A Java/C#/TypeScript annotation or Python decorator as written."""
+
+    name: str
+    language: str
+    file: str
+    line: int
+    resolved_module: str | None = None
+    component: str | None = None
+    function: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +225,9 @@ class ParseReport:
     #: Calls, for the rules that ask what the code does rather than what it
     #: imports. Defaulted so every existing construction stays valid.
     calls: tuple[CallOccurrence, ...] = ()
+    sources: tuple[SourceFileOccurrence, ...] = ()
+    annotations: tuple[AnnotationOccurrence, ...] = ()
+    syntax: tuple[SyntaxOccurrence, ...] = ()
     #: Reason -> count. Kept as a summary because per-file reasons on a large
     #: repository are noise, and the counts are what tell an operator whether a
     #: limit is set wrong.
@@ -155,15 +256,22 @@ class RepositoryParser:
     #: times as many. The rules that read them match distinctive names, so a
     #: truncated tail costs little compared with an unbounded message.
     max_calls: int = 200_000
+    max_syntax: int = 200_000
     _parsers: dict[str, object] = field(default_factory=dict, init=False, repr=False)
     _queries: dict[str, object] = field(default_factory=dict, init=False, repr=False)
     _call_queries: dict[str, object] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _annotation_queries: dict[str, object] = field(
         default_factory=dict, init=False, repr=False
     )
 
     def parse_repository(self, root: Path) -> ParseReport:
         occurrences: list[ImportOccurrence] = []
         calls: list[CallOccurrence] = []
+        sources: list[SourceFileOccurrence] = []
+        annotations: list[AnnotationOccurrence] = []
+        syntax: list[SyntaxOccurrence] = []
         skipped: Counter[str] = Counter()
         files_parsed = 0
         bytes_parsed = 0
@@ -176,13 +284,12 @@ class RepositoryParser:
                 continue
 
             relative = path.relative_to(root).as_posix()
-            spec = spec_for_path(relative)
-            if spec is None:
-                skipped["unsupported_language"] += 1
-                continue
-            if relative.lower().endswith(EXCLUDED_SUFFIXES):
+            lowered = relative.lower()
+            if lowered.endswith(EXCLUDED_SUFFIXES):
                 skipped["generated_or_minified"] += 1
                 continue
+            spec = spec_for_path(relative)
+            source_language, source_extension = _source_language(path)
 
             try:
                 size = path.stat().st_size
@@ -204,9 +311,30 @@ class RepositoryParser:
                 skipped["binary"] += 1
                 continue
 
+            if source_language is not None:
+                text = source.decode("utf-8", "replace")
+                sloc = _sloc(text, source_language)
+                if sloc:
+                    sources.append(
+                        SourceFileOccurrence(
+                            language=source_language,
+                            extension=source_extension,
+                            sloc=sloc,
+                            is_test=_is_test_path(relative),
+                            file=relative,
+                        )
+                    )
+
+            if spec is None:
+                skipped["unsupported_language"] += 1
+                continue
+
             try:
-                found = self._parse_file(spec, source, relative)
-                called = self._parse_calls(spec, source, relative)
+                tree = self._parser_for(spec).parse(source)
+                found = self._parse_file(spec, relative, tree)
+                called = self._parse_calls(spec, relative, found, tree)
+                annotated = self._parse_annotations(spec, relative, found, tree)
+                structured = self._parse_syntax(spec, relative, found, tree)
             except Exception as error:  # noqa: BLE001 - one bad file is not a failed repository
                 log.debug("could not parse %s: %s", relative, error)
                 skipped["parse_error"] += 1
@@ -214,6 +342,12 @@ class RepositoryParser:
 
             files_parsed += 1
             bytes_parsed += size
+            annotations.extend(annotated)
+            for item in structured:
+                if len(syntax) >= self.max_syntax:
+                    skipped["syntax_limit"] += 1
+                    break
+                syntax.append(item)
             for occurrence in found:
                 if len(occurrences) >= self.max_occurrences:
                     skipped["occurrence_limit"] += 1
@@ -236,28 +370,32 @@ class RepositoryParser:
             files_skipped=sum(
                 count
                 for reason, count in skipped.items()
-                if reason not in {"occurrence_limit", "call_limit"}
+                if reason not in {"occurrence_limit", "call_limit", "syntax_limit"}
             ),
             bytes_parsed=bytes_parsed,
             calls=tuple(calls),
+            sources=tuple(sources),
+            annotations=tuple(annotations),
+            syntax=tuple(syntax),
             skipped_reasons=dict(skipped),
         )
 
     def _parse_file(
-        self, spec: LanguageSpec, source: bytes, relative: str
+        self, spec: LanguageSpec, relative: str, tree
     ) -> list[ImportOccurrence]:
         from tree_sitter import QueryCursor
 
-        parser = self._parser_for(spec)
         query = self._query_for(spec)
-        tree = parser.parse(source)
 
         found: list[ImportOccurrence] = []
         # matches(), not captures(): a pattern that captures both the callee and
         # the argument needs them paired, and captures() flattens that away.
         for _pattern, captures in QueryCursor(query).matches(tree.root_node):
             if spec.guard_capture and spec.guard_capture in captures:
-                names = {node.text.decode("utf-8", "replace") for node in captures[spec.guard_capture]}
+                names = {
+                    node.text.decode("utf-8", "replace")
+                    for node in captures[spec.guard_capture]
+                }
                 if not names & set(spec.guard_values):
                     continue
             for node in captures.get("m", ()):
@@ -268,33 +406,34 @@ class RepositoryParser:
                 found.append(
                     ImportOccurrence(
                         module=module,
-                        language=spec.name,
+                        language=_analysis_language(spec.name),
                         ecosystem=spec.ecosystem,
                         file=relative,
                         # tree-sitter rows are 0-based; editors and permalinks
                         # are not.
                         line=node.start_point[0] + 1,
+                        bindings=_import_bindings(spec.name, module, node),
                     )
                 )
         return found
 
     def _parse_calls(
-        self, spec: LanguageSpec, source: bytes, relative: str
+        self,
+        spec: LanguageSpec,
+        relative: str,
+        imports: list[ImportOccurrence],
+        tree,
     ) -> list[CallOccurrence]:
-        """Method and function calls, as written.
-
-        Nothing here is resolved. `kafkaTemplate.send(...)` is recorded as
-        `kafkaTemplate.send`, and whether that means Kafka is a question for the
-        registry -- which answers it by naming methods distinctive enough that
-        the receiver does not matter (`opsForValue`, `useState`, `read_csv`).
-        """
+        """Method calls plus conservative source-bound receiver identity."""
         if not spec.call_query:
             return []
         from tree_sitter import QueryCursor
 
-        parser = self._parser_for(spec)
         query = self._call_query_for(spec)
-        tree = parser.parse(source)
+        binding_context = build_binding_context(tree.root_node, imports)
+        binding_definitions, root_scope = _binding_definitions(
+            spec.name, tree.root_node
+        )
 
         found: list[CallOccurrence] = []
         # matches(), not captures(): the receiver and the method name have to
@@ -307,19 +446,117 @@ class RepositoryParser:
             method = node.text.decode("utf-8", "replace").strip()
             if not method:
                 continue
-            receiver = _receiver_text(captures.get("recv", ()))
+            receiver_nodes = captures.get("recv", ())
+            receiver = _receiver_text(receiver_nodes)
+            shadowed_bindings = _shadowed_import_bindings(
+                spec.name,
+                node,
+                receiver,
+                method,
+                imports,
+                binding_definitions,
+                root_scope,
+            )
+            resolved_binding = resolve_call_binding(
+                tree.root_node,
+                node,
+                receiver,
+                receiver_nodes[0] if receiver_nodes else None,
+                method,
+                imports,
+                shadowed_bindings,
+                binding_context,
+            )
             found.append(
                 CallOccurrence(
                     callee=f"{receiver}.{method}" if receiver else method,
                     method=method,
                     receiver=receiver,
-                    language=spec.name,
+                    language=_analysis_language(spec.name),
                     ecosystem=spec.ecosystem,
                     file=relative,
                     line=node.start_point[0] + 1,
+                    shadowed_bindings=shadowed_bindings,
+                    resolved_binding=resolved_binding,
+                    component=component_for_node(node),
+                    function=function_for_node(node),
                 )
             )
+        if spec.name == "csharp":
+            stack = list(reversed(tree.root_node.named_children))
+            while stack:
+                invocation = stack.pop()
+                stack.extend(reversed(invocation.named_children))
+                if invocation.type != "invocation_expression":
+                    continue
+                function = invocation.child_by_field_name("function")
+                if function is None:
+                    continue
+                receiver_node = None
+                generic = function
+                if function.type == "member_access_expression":
+                    generic = function.child_by_field_name("name")
+                    receiver_node = function.child_by_field_name("expression")
+                if generic is None or generic.type != "generic_name":
+                    continue
+                node = next(
+                    (
+                        child
+                        for child in generic.named_children
+                        if child.type == "identifier"
+                    ),
+                    None,
+                )
+                if node is None:
+                    continue
+                method = _node_text(node)
+                receiver_nodes = (receiver_node,) if receiver_node is not None else ()
+                receiver = _receiver_text(receiver_nodes)
+                shadowed_bindings = _shadowed_import_bindings(
+                    spec.name,
+                    node,
+                    receiver,
+                    method,
+                    imports,
+                    binding_definitions,
+                    root_scope,
+                )
+                found.append(
+                    CallOccurrence(
+                        callee=f"{receiver}.{method}" if receiver else method,
+                        method=method,
+                        receiver=receiver,
+                        language=_analysis_language(spec.name),
+                        ecosystem=spec.ecosystem,
+                        file=relative,
+                        line=node.start_point[0] + 1,
+                        shadowed_bindings=shadowed_bindings,
+                        resolved_binding=resolve_call_binding(
+                            tree.root_node,
+                            node,
+                            receiver,
+                            receiver_node,
+                            method,
+                            imports,
+                            shadowed_bindings,
+                            binding_context,
+                        ),
+                        component=component_for_node(node),
+                        function=function_for_node(node),
+                    )
+                )
         return found
+
+    def _parse_syntax(
+        self,
+        spec: LanguageSpec,
+        relative: str,
+        imports: list[ImportOccurrence],
+        tree,
+    ) -> tuple[SyntaxOccurrence, ...]:
+        return extract_syntax(
+            tree.root_node, _analysis_language(spec.name), relative, imports
+        )
 
     def _call_query_for(self, spec: LanguageSpec):
         cached = self._call_queries.get(spec.name)
@@ -328,6 +565,51 @@ class RepositoryParser:
 
             cached = Query(_grammar(spec.name), spec.call_query)
             self._call_queries[spec.name] = cached
+        return cached
+
+    def _parse_annotations(
+        self,
+        spec: LanguageSpec,
+        relative: str,
+        imports: list[ImportOccurrence],
+        tree,
+    ) -> list[AnnotationOccurrence]:
+        if not spec.annotation_query:
+            return []
+        from tree_sitter import QueryCursor
+
+        query = self._annotation_query_for(spec)
+        found: list[AnnotationOccurrence] = []
+        for node in QueryCursor(query).captures(tree.root_node).get("ann", ()):
+            name = node.text.decode("utf-8", "replace").strip()
+            if name:
+                found.append(
+                    AnnotationOccurrence(
+                        name.rsplit(".", 1)[-1],
+                        _analysis_language(spec.name),
+                        relative,
+                        node.start_point[0] + 1,
+                        resolve_imported_symbol(
+                            tree.root_node,
+                            spec.name,
+                            name,
+                            imports,
+                            before_byte=node.start_byte,
+                            before_line=node.start_point[0] + 1,
+                        ),
+                        component_for_node(node),
+                        function_for_node(node),
+                    )
+                )
+        return found
+
+    def _annotation_query_for(self, spec: LanguageSpec):
+        cached = self._annotation_queries.get(spec.name)
+        if cached is None:
+            from tree_sitter import Query
+
+            cached = Query(_grammar(spec.name), spec.annotation_query)
+            self._annotation_queries[spec.name] = cached
         return cached
 
     def _parser_for(self, spec: LanguageSpec):
@@ -362,6 +644,296 @@ def _receiver_text(nodes) -> str | None:
     if not text or len(text) > _MAX_RECEIVER or not _SIMPLE_RECEIVER.match(text):
         return None
     return text
+
+
+def _import_bindings(language: str, module: str, module_node) -> tuple[str, ...]:
+    if language == "python":
+        statement = _ancestor(
+            module_node, {"import_statement", "import_from_statement"}
+        )
+        if statement is not None and statement.type == "import_statement":
+            item = module_node.parent
+            if item is not None and item.type == "aliased_import":
+                alias = item.child_by_field_name("alias")
+                if alias is not None:
+                    return (_node_text(alias),)
+            return (module.split(".", 1)[0],)
+        if statement is not None:
+            found: list[str] = []
+            for item in statement.children_by_field_name("name"):
+                alias = item.child_by_field_name("alias")
+                name = alias or item.child_by_field_name("name") or item
+                value = _node_text(name)
+                if value and value != "*":
+                    found.append(value.split(".", 1)[0])
+            return tuple(dict.fromkeys(found))
+    if language in {"javascript", "typescript", "tsx"}:
+        statement = _ancestor(module_node, {"import_statement"})
+        if statement is not None:
+            clause = next(
+                (
+                    child
+                    for child in statement.named_children
+                    if child.type in {"import_clause", "import_require_clause"}
+                ),
+                None,
+            )
+            return _javascript_import_bindings(clause)
+        declarator = _ancestor(module_node, {"variable_declarator"})
+        if declarator is not None:
+            return _pattern_names(declarator.child_by_field_name("name"))
+    if language in {"java", "csharp"} and not module.endswith(".*"):
+        if language == "csharp":
+            directive = _ancestor(module_node, {"using_directive"})
+            alias = directive and directive.child_by_field_name("name")
+            if alias is not None:
+                return (_node_text(alias),)
+        return (module.rsplit(".", 1)[-1],)
+    return ()
+
+
+def _ancestor(node, types: set[str]):
+    current = node
+    while current is not None and current.type not in types:
+        current = current.parent
+    return current
+
+
+def _node_text(node) -> str:
+    return node.text.decode("utf-8", "replace").strip()
+
+
+def _javascript_import_bindings(clause) -> tuple[str, ...]:
+    if clause is None:
+        return ()
+    if clause.type == "import_require_clause":
+        identifier = next(
+            (child for child in clause.named_children if child.type == "identifier"),
+            None,
+        )
+        return (_node_text(identifier),) if identifier is not None else ()
+
+    found: list[str] = []
+    for child in clause.named_children:
+        if child.type == "identifier":
+            found.append(_node_text(child))
+        elif child.type == "namespace_import":
+            identifiers = [
+                item for item in child.named_children if item.type == "identifier"
+            ]
+            if identifiers:
+                found.append(_node_text(identifiers[-1]))
+        elif child.type == "named_imports":
+            for item in child.named_children:
+                if item.type != "import_specifier":
+                    continue
+                binding = item.child_by_field_name("alias") or item.child_by_field_name(
+                    "name"
+                )
+                if binding is not None:
+                    found.append(_node_text(binding))
+    return tuple(dict.fromkeys(found))
+
+
+_FUNCTION_NODES = frozenset(
+    {
+        "function_definition",
+        "lambda",
+        "function_declaration",
+        "function_expression",
+        "generator_function_declaration",
+        "generator_function",
+        "arrow_function",
+        "method_definition",
+    }
+)
+_NAMED_DEFINITION_NODES = frozenset(
+    {
+        "function_definition",
+        "class_definition",
+        "function_declaration",
+        "class_declaration",
+    }
+)
+_ASSIGNMENT_NODES = {
+    "assignment": "left",
+    "augmented_assignment": "left",
+    "named_expression": "left",
+    "for_statement": "left",
+    "variable_declarator": "name",
+    "assignment_expression": "left",
+}
+_BINDING_PATTERN_NODES = frozenset(
+    {
+        "parameters",
+        "formal_parameters",
+        "default_parameter",
+        "typed_parameter",
+        "typed_default_parameter",
+        "required_parameter",
+        "optional_parameter",
+        "rest_pattern",
+        "list_splat",
+        "dictionary_splat",
+        "pattern_list",
+        "tuple_pattern",
+        "list_pattern",
+        "array_pattern",
+        "object_pattern",
+        "pair_pattern",
+        "object_assignment_pattern",
+    }
+)
+
+
+def _scope_key(node) -> tuple[str, int, int]:
+    return node.type, node.start_byte, node.end_byte
+
+
+def _pattern_names(node) -> tuple[str, ...]:
+    if node is None:
+        return ()
+    if node.type == "identifier":
+        return (_node_text(node),)
+    selected = (
+        node.child_by_field_name("pattern")
+        or node.child_by_field_name("name")
+        or node.child_by_field_name("left")
+    )
+    if selected is not None and selected is not node:
+        return _pattern_names(selected)
+    if node.type not in _BINDING_PATTERN_NODES:
+        return ()
+    found = [name for child in node.named_children for name in _pattern_names(child)]
+    return tuple(dict.fromkeys(found))
+
+
+def _binding_definitions(language: str, root):
+    root_scope = _scope_key(root)
+    if language not in {"python", "javascript", "typescript", "tsx"}:
+        return {}, root_scope
+    definitions: dict[str, list[tuple[int, tuple[str, int, int]]]] = {}
+
+    def add(names: tuple[str, ...], line: int, scope) -> None:
+        for name in names:
+            definitions.setdefault(name, []).append((line, scope))
+
+    stack = [(root, root_scope)]
+    while stack:
+        node, scope = stack.pop()
+        child_scope = scope
+        if node.type in _NAMED_DEFINITION_NODES:
+            add(
+                _pattern_names(node.child_by_field_name("name")),
+                node.start_point[0] + 1,
+                scope,
+            )
+        if node.type in _FUNCTION_NODES:
+            child_scope = _scope_key(node)
+            add(
+                _pattern_names(node.child_by_field_name("parameters")),
+                node.start_point[0] + 1,
+                child_scope,
+            )
+        target_field = _ASSIGNMENT_NODES.get(node.type)
+        if target_field is not None:
+            add(
+                _pattern_names(node.child_by_field_name(target_field)),
+                node.start_point[0] + 1,
+                scope,
+            )
+        stack.extend((child, child_scope) for child in reversed(node.named_children))
+    return definitions, root_scope
+
+
+def _call_scopes(node, root_scope) -> set[tuple[str, int, int]]:
+    scopes = {root_scope}
+    current = node.parent
+    while current is not None:
+        if current.type in _FUNCTION_NODES:
+            scopes.add(_scope_key(current))
+        current = current.parent
+    return scopes
+
+
+def _shadowed_import_bindings(
+    language: str,
+    call_node,
+    receiver: str | None,
+    method: str,
+    imports: list[ImportOccurrence],
+    definitions: dict[str, list[tuple[int, tuple[str, int, int]]]],
+    root_scope,
+) -> tuple[str, ...]:
+    candidates = {method}
+    if receiver:
+        candidates.add(receiver.split(".", 1)[0])
+    call_line = call_node.start_point[0] + 1
+    scopes = _call_scopes(call_node, root_scope)
+    shadowed: list[str] = []
+    for name in sorted(candidates):
+        import_lines = sorted(
+            occurrence.line
+            for occurrence in imports
+            if name in occurrence.bindings and occurrence.line <= call_line
+        )
+        if not import_lines:
+            continue
+        latest_import = import_lines[-1]
+        definition_lines = [
+            line
+            for line, scope in definitions.get(name, ())
+            if scope in scopes
+            and line not in import_lines
+            and (line <= call_line or (language == "python" and scope != root_scope))
+        ]
+        if definition_lines and max(definition_lines) > latest_import:
+            shadowed.append(name)
+    return tuple(shadowed)
+
+
+def _source_language(path: Path) -> tuple[str | None, str]:
+    lowered = path.name.lower()
+    for extension, language in _SOURCE_LANGUAGES.items():
+        if lowered.endswith(extension):
+            return language, extension
+    return None, path.suffix.lower()
+
+
+def _sloc(text: str, language: str) -> int:
+    count = 0
+    in_block = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if in_block:
+            if "*/" in stripped or "-->" in stripped:
+                in_block = False
+            continue
+        if stripped.startswith(("/*", "<!--")):
+            if not ("*/" in stripped[2:] or "-->" in stripped[4:]):
+                in_block = True
+            continue
+        markers = (
+            ("#",)
+            if language == "python"
+            else (("--",) if language == "sql" else ("//", "*"))
+        )
+        if stripped.startswith(markers):
+            continue
+        count += 1
+    return count
+
+
+def _is_test_path(relative: str) -> bool:
+    parts = {part.lower() for part in Path(relative).parts[:-1]}
+    stem = Path(relative).stem.lower()
+    return (
+        bool(parts & _TEST_PARTS)
+        or stem.startswith("test_")
+        or stem.endswith(("test", "spec"))
+    )
 
 
 def verify_grammars() -> None:
@@ -420,7 +992,7 @@ def walk_files(root: Path):
                 # A symlink can point outside the clone, or into it in a cycle.
                 continue
             if entry.is_dir():
-                if entry.name not in EXCLUDED_DIRECTORIES:
+                if entry.name.lower() not in EXCLUDED_DIRECTORIES:
                     stack.append(entry)
             elif entry.is_file():
                 yield entry

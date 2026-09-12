@@ -1,0 +1,44 @@
+{
+  "tech_id": "react",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/Dashboard.tsx": "import { useDeferredValue, useMemo, useTransition } from 'react';\nexport function Dashboard({ rows, query }) {\n  const deferred = useDeferredValue(query);\n  const [pending, startTransition] = useTransition();\n  const visible = useMemo(() => filterRows(rows, deferred), [rows, deferred]);\n  return renderRows(visible, pending, startTransition);\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "react.l3.concurrent-rendering"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires attributed deferred rendering, transition, and memoization hooks in the same authored component function; wrappers and cross-component composition are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/Dashboard.tsx": "import { useDeferredValue, useMemo } from 'react';\nexport function Dashboard({ rows, query }) {\n  const deferred = useDeferredValue(query);\n  const visible = useMemo(() => filterRows(rows, deferred), [rows, deferred]);\n  return renderRows(visible);\n}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "react.l3.concurrent-rendering"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "shadowed-import-bindings",
+      "kind": "negative",
+      "files": {
+        "src/App.tsx": "import React, { lazy, memo, Suspense } from 'react';\nfunction build(lazy, memo) { lazy(); memo(); return <Suspense fallback={null} />; }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "react.l3.concurrent-rendering"
+      ],
+      "tradeoff": "Parameters shadowing imported React functions invalidate module attribution."
+    }
+  ]
+}

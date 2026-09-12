@@ -34,7 +34,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from analysis.manifests import DependencyOccurrence
-from analysis.parse import CallOccurrence, ImportOccurrence
+from analysis.parse import (
+    AnnotationOccurrence,
+    CallOccurrence,
+    ImportOccurrence,
+    SourceFileOccurrence,
+    SyntaxOccurrence,
+)
 from analysis.rules import Clause, Predicate, Rule, RuleSet
 from registry.normalization import (
     import_path_has_prefix,
@@ -49,9 +55,12 @@ __all__ = [
     "Judge",
     "Judgement",
     "Verdict",
+    "facts_from_annotations",
     "facts_from_calls",
     "facts_from_dependencies",
     "facts_from_imports",
+    "facts_from_sources",
+    "facts_from_syntax",
 ]
 
 log = logging.getLogger("analysis.judge")
@@ -122,6 +131,9 @@ class Judgement:
     #: Rules skipped because this worker cannot evaluate them yet. Reported so
     #: a missing level is visibly unimplemented rather than apparently absent.
     skipped_rule_ids: tuple[str, ...] = ()
+    rule_pack_version: str | None = None
+    rule_pack_content_sha256: str | None = None
+    technology_support: dict[str, object] = field(default_factory=dict)
 
 
 def facts_from_imports(occurrences: Iterable[ImportOccurrence]) -> tuple[Fact, ...]:
@@ -133,6 +145,8 @@ def facts_from_imports(occurrences: Iterable[ImportOccurrence]) -> tuple[Fact, .
                 "LANGUAGE": item.language,
                 "ECOSYSTEM": item.ecosystem,
                 "FILE_PATH": item.file,
+                "IS_TEST": str(_is_test_path(item.file)).lower(),
+                "LOCAL_NAMES": "|".join(item.bindings),
             },
             file=item.file,
             line=item.line,
@@ -152,6 +166,7 @@ def facts_from_dependencies(
                 "ECOSYSTEM": item.ecosystem,
                 "SCOPE": item.scope or "",
                 "FILE_PATH": item.file,
+                "IS_TEST": str(_dependency_is_test(item.scope, item.file)).lower(),
             },
             file=item.file,
             line=item.line,
@@ -167,21 +182,124 @@ def facts_from_calls(occurrences: Iterable[CallOccurrence]) -> tuple[Fact, ...]:
     segment, so a rule picks whichever is distinctive enough: `useState` needs
     no receiver, `SpringApplication.run` does.
     """
+    facts: list[Fact] = []
+    for item in occurrences:
+        fields = {
+            "CALL": item.callee,
+            "METHOD": item.method,
+            "RECEIVER": item.receiver or "",
+            "LANGUAGE": item.language,
+            "ECOSYSTEM": item.ecosystem,
+            "FILE_PATH": item.file,
+            "IS_TEST": str(_is_test_path(item.file)).lower(),
+        }
+        if item.shadowed_bindings:
+            fields["SHADOWED_NAMES"] = "|".join(item.shadowed_bindings)
+        if item.resolved_binding:
+            fields["RESOLVED_LOCAL_NAME"] = item.resolved_binding
+        if item.component:
+            fields["COMPONENT"] = item.component
+        if item.function:
+            fields["FUNCTION"] = item.function
+        facts.append(
+            Fact(
+                fact_type="API_CALL",
+                fields=fields,
+                file=item.file,
+                line=item.line,
+            )
+        )
+    return tuple(facts)
+
+
+def facts_from_sources(occurrences: Iterable[SourceFileOccurrence]) -> tuple[Fact, ...]:
     return tuple(
         Fact(
-            fact_type="API_CALL",
+            fact_type="SOURCE_FILE",
             fields={
-                "CALL": item.callee,
-                "METHOD": item.method,
-                "RECEIVER": item.receiver or "",
-                "LANGUAGE": item.language,
-                "ECOSYSTEM": item.ecosystem,
                 "FILE_PATH": item.file,
+                "LANGUAGE": item.language,
+                "EXTENSION": item.extension,
+                "SLOC": str(item.sloc),
+                "IS_TEST": str(item.is_test).lower(),
             },
             file=item.file,
             line=item.line,
         )
         for item in occurrences
+    )
+
+
+def facts_from_annotations(
+    occurrences: Iterable[AnnotationOccurrence],
+) -> tuple[Fact, ...]:
+    facts = []
+    for item in occurrences:
+        fields = {
+            "NAME": item.name,
+            "LANGUAGE": item.language,
+            "FILE_PATH": item.file,
+            "IS_TEST": str(_is_test_path(item.file)).lower(),
+        }
+        if item.resolved_module:
+            fields["RESOLVED_MODULE"] = item.resolved_module
+        if item.component:
+            fields["COMPONENT"] = item.component
+        if item.function:
+            fields["FUNCTION"] = item.function
+        facts.append(Fact("ANNOTATION", fields, item.file, item.line))
+    return tuple(facts)
+
+
+def facts_from_syntax(
+    occurrences: Iterable[SyntaxOccurrence],
+) -> tuple[Fact, ...]:
+    facts = []
+    for item in occurrences:
+        fields = {
+            "KIND": item.kind,
+            "NAME": item.name,
+            "LANGUAGE": item.language,
+            "FILE_PATH": item.file,
+            "IS_TEST": str(_is_test_path(item.file)).lower(),
+        }
+        if item.resolved_module:
+            fields["RESOLVED_MODULE"] = item.resolved_module
+        if item.component:
+            fields["COMPONENT"] = item.component
+        if item.function:
+            fields["FUNCTION"] = item.function
+        facts.append(Fact("SYNTAX_NODE", fields, item.file, item.line))
+    return tuple(facts)
+
+
+def _is_test_path(path: str) -> bool:
+    lowered = path.lower().replace("\\", "/")
+    parts = set(lowered.split("/")[:-1])
+    stem = lowered.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return (
+        bool(
+            parts
+            & {"test", "tests", "testing", "spec", "specs", "__tests__", "fixtures"}
+        )
+        or stem.startswith("test_")
+        or stem.endswith(("test", "spec"))
+    )
+
+
+def _dependency_is_test(scope: str | None, path: str) -> bool:
+    lowered = (scope or "").lower()
+    manifest_name = path.lower().replace("\\", "/").rsplit("/", 1)[-1]
+    requirements_dev = (
+        manifest_name.startswith("requirements-")
+        and manifest_name.endswith(".txt")
+        and any(token in manifest_name for token in ("-dev", "-test"))
+    )
+    return (
+        _is_test_path(path)
+        or requirements_dev
+        or "test" in lowered
+        or lowered in {"devdependencies", "require-dev", "dev-dependencies"}
     )
 
 
@@ -258,7 +376,62 @@ class Judge:
     # -- evaluation ---------------------------------------------------------
 
     def judge(self, facts: Iterable[Fact]) -> Judgement:
-        resolved = tuple(fact.resolved(self.resolve(fact)) for fact in facts)
+        initially_resolved = tuple(fact.resolved(self.resolve(fact)) for fact in facts)
+        local_technologies: dict[tuple[str, str], set[str]] = defaultdict(set)
+        local_modules: dict[tuple[str, str], set[str]] = defaultdict(set)
+        module_technologies: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for fact in initially_resolved:
+            if fact.fact_type != "IMPORT":
+                continue
+            module = fact.fields.get("MODULE", "")
+            if module and fact.tech_ids:
+                module_technologies[(fact.file, module)].update(fact.tech_ids)
+            for name in fact.fields.get("LOCAL_NAMES", "").split("|"):
+                if name:
+                    if module:
+                        local_modules[(fact.file, name)].add(module)
+                    if fact.tech_ids:
+                        local_technologies[(fact.file, name)].update(fact.tech_ids)
+        resolved_list: list[Fact] = []
+        for fact in initially_resolved:
+            if fact.fact_type not in {"ANNOTATION", "API_CALL", "SYNTAX_NODE"}:
+                resolved_list.append(fact)
+                continue
+            fields = fact.fields
+            resolved_name = fields.get("RESOLVED_LOCAL_NAME", "")
+            modules = local_modules.get((fact.file, resolved_name), set())
+            if resolved_name and len(modules) == 1:
+                fields = {**fields, "RESOLVED_MODULE": next(iter(modules))}
+            resolved_module = fields.get("RESOLVED_MODULE", "")
+            tech_ids = set(fact.tech_ids)
+            if resolved_name:
+                tech_ids.update(local_technologies.get((fact.file, resolved_name), ()))
+            if resolved_module:
+                tech_ids.update(
+                    module_technologies.get((fact.file, resolved_module), ())
+                )
+            if fact.fact_type != "API_CALL":
+                resolved_list.append(
+                    Fact(
+                        fact.fact_type,
+                        fields,
+                        fact.file,
+                        fact.line,
+                        frozenset(tech_ids),
+                    )
+                )
+                continue
+            receiver = fact.fields.get("RECEIVER", "").split(".", 1)[0]
+            method = fact.fields.get("METHOD", "")
+            shadowed = set(fact.fields.get("SHADOWED_NAMES", "").split("|"))
+            if receiver and receiver not in shadowed:
+                tech_ids.update(local_technologies.get((fact.file, receiver), ()))
+            if method not in shadowed:
+                tech_ids.update(local_technologies.get((fact.file, method), ()))
+            resolved_list.append(
+                Fact(fact.fact_type, fields, fact.file, fact.line, frozenset(tech_ids))
+            )
+        resolved = tuple(resolved_list)
 
         matched: dict[str, list[Rule]] = defaultdict(list)
         evidence: list[EvidenceFact] = []
@@ -293,6 +466,9 @@ class Judge:
             evidence=tuple(evidence),
             candidates=self._candidates(resolved),
             skipped_rule_ids=tuple(skipped),
+            rule_pack_version=self.rule_set.rule_pack_version,
+            rule_pack_content_sha256=self.rule_set.rule_pack_content_sha256,
+            technology_support=dict(self.rule_set.technology_support),
         )
 
     def _match(self, rule: Rule, facts: tuple[Fact, ...]) -> list[Fact] | None:
@@ -300,32 +476,123 @@ class Judge:
         applicable = [
             fact
             for fact in facts
-            if rule.language is None
-            or _IMPORT_ECOSYSTEMS.get(fact.fields.get("LANGUAGE", ""))
-            == rule.language
-            or fact.fields.get("ECOSYSTEM") == rule.language
+            if (
+                self.rule_set.rule_pack_version is None
+                or fact.fields.get("IS_TEST") != "true"
+            )
+            and (
+                rule.language is None
+                or _IMPORT_ECOSYSTEMS.get(fact.fields.get("LANGUAGE", ""))
+                == rule.language
+                or fact.fields.get("ECOSYSTEM") == rule.language
+            )
         ]
         for clauses in rule.groups().values():
-            supporting: list[Fact] = []
-            satisfied = True
+            hits_by_clause: list[tuple[Clause, list[Fact]]] = []
             for clause in clauses:
                 hits = self._clause_hits(clause, applicable)
                 if len(hits) < clause.min_match_count:
                     if clause.role == "REQUIRED":
-                        satisfied = False
                         break
                     continue
-                supporting.extend(hits)
-            if satisfied:
+                hits_by_clause.append((clause, hits))
+            else:
+                supporting = self._bound_support(rule, hits_by_clause)
+                if supporting is not None:
+                    return supporting
+        return None
+
+    @staticmethod
+    def _bound_support(
+        rule: Rule, hits_by_clause: list[tuple[Clause, list[Fact]]]
+    ) -> list[Fact] | None:
+        if not rule.binding_fields:
+            return [fact for _clause, hits in hits_by_clause for fact in hits]
+
+        required = [
+            (clause, hits)
+            for clause, hits in hits_by_clause
+            if clause.role == "REQUIRED"
+        ]
+        if not required:
+            return [fact for _clause, hits in hits_by_clause for fact in hits]
+        # Index each clause once: a rejected candidate must not hide later
+        # matches, nor make every candidate rescan every repository fact.
+        indexed = []
+        keys_by_clause: list[set[tuple[str, ...]]] = []
+        for clause, hits in hits_by_clause:
+            by_key: dict[tuple[str, ...], list[Fact]] = defaultdict(list)
+            for fact in hits:
+                key = tuple(fact.fields.get(field, "") for field in rule.binding_fields)
+                if all(key):
+                    by_key[key].append(fact)
+            indexed.append((clause, by_key))
+            if clause.role == "REQUIRED":
+                keys_by_clause.append(set(by_key))
+        common = set.intersection(*keys_by_clause) if keys_by_clause else set()
+        for selected in sorted(common):
+            selected_hits = [
+                (clause, by_key.get(selected, [])) for clause, by_key in indexed
+            ]
+            supporting = Judge._candidate_support(rule, selected_hits)
+            if supporting is not None:
                 return supporting
         return None
+
+    @staticmethod
+    def _candidate_support(
+        rule: Rule, selected_hits: list[tuple[Clause, list[Fact]]]
+    ) -> list[Fact] | None:
+        """Validate counts and call attribution within one binding candidate."""
+        imported_names = {
+            name
+            for clause, hits in selected_hits
+            if clause.fact_type == "IMPORT"
+            for fact in hits
+            for name in fact.fields.get("LOCAL_NAMES", "").split("|")
+            if name
+        }
+        supporting: list[Fact] = []
+        for clause, hits in selected_hits:
+            if clause.fact_type == "API_CALL":
+                hits = [
+                    fact
+                    for fact in hits
+                    for shadowed in (
+                        set(fact.fields.get("SHADOWED_NAMES", "").split("|")),
+                    )
+                    if rule.tech_id in fact.tech_ids
+                    or (
+                        fact.fields.get("RESOLVED_MODULE", "")
+                        and any(
+                            predicate.fact_field == "RESOLVED_MODULE"
+                            for predicate in clause.predicates
+                        )
+                    )
+                    or (
+                        fact.fields.get("RECEIVER", "").split(".", 1)[0]
+                        in imported_names
+                        and fact.fields.get("RECEIVER", "").split(".", 1)[0]
+                        not in shadowed
+                    )
+                    or (
+                        fact.fields.get("METHOD", "") in imported_names
+                        and fact.fields.get("METHOD", "") not in shadowed
+                    )
+                ]
+            if clause.role == "REQUIRED" and len(hits) < clause.min_match_count:
+                return None
+            supporting.extend(hits)
+        return supporting
 
     def _clause_hits(self, clause: Clause, facts: list[Fact]) -> list[Fact]:
         return [
             fact
             for fact in facts
             if fact.fact_type == clause.fact_type
-            and all(_predicate_holds(predicate, fact) for predicate in clause.predicates)
+            and all(
+                _predicate_holds(predicate, fact) for predicate in clause.predicates
+            )
         ]
 
     def _candidates(self, facts: tuple[Fact, ...]) -> tuple[Candidate, ...]:

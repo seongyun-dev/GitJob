@@ -16,7 +16,13 @@ from analysis.clone import CloneResult, PermanentCloneError, TransientCloneError
 from analysis.consumer import AnalysisConsumer, ClaimBusyError, ClaimLostError
 from analysis.parse import ImportOccurrence, ParseReport
 from analysis.publish import ResultPublisher
-from analysis.rules import UnknownRegistryVersion
+from analysis.results import SCHEMA_VERSION, SCHEMA_VERSION_V2
+from analysis.rulepack import (
+    RULE_PACK_PATH,
+    load_rule_pack,
+    mappings_from_registry_artifact,
+)
+from analysis.rules import RegistryStore, UnknownRegistryVersion
 from common.kafka import ConsumedMessage
 
 TOPIC = "gitjob.repository-analysis.requests.v1"
@@ -145,8 +151,12 @@ class FakeResults:
             raise RuntimeError("results broker is down")
         self.published.append((topic, key, value))
 
-    def publisher(self) -> ResultPublisher:
-        return ResultPublisher(self, "gitjob.repository-analysis.results.v1")
+    def publisher(
+        self,
+        topic: str = "gitjob.repository-analysis.results.v1",
+        schema_version: str | None = None,
+    ) -> ResultPublisher:
+        return ResultPublisher(self, topic, schema_version=schema_version)
 
 
 class EmptyRegistry:
@@ -317,9 +327,7 @@ def test_transient_failure_releases_the_claim_and_refuses_to_commit(tmp_path):
 def test_a_transient_failure_inside_the_budget_still_retries(tmp_path):
     # The token is the attempt count, so attempt 4 of 5 has one left to spend.
     claims = FakeClaims(token=4)
-    cloner = FakeCloner(
-        tmp_path, error=TransientCloneError("CLONE_TIMEOUT", "slow")
-    )
+    cloner = FakeCloner(tmp_path, error=TransientCloneError("CLONE_TIMEOUT", "slow"))
 
     with pytest.raises(TransientCloneError):
         build(tmp_path, claims=claims, cloner=cloner, max_attempts=5).handle(
@@ -335,9 +343,7 @@ def test_the_last_transient_failure_becomes_permanent(tmp_path):
     # Retried without a limit it holds its partition forever, so the budget
     # running out has to end the message rather than replay it again.
     claims, dlq = FakeClaims(token=5), FakeDlq()
-    cloner = FakeCloner(
-        tmp_path, error=TransientCloneError("CLONE_TIMEOUT", "slow")
-    )
+    cloner = FakeCloner(tmp_path, error=TransientCloneError("CLONE_TIMEOUT", "slow"))
 
     outcome = build(
         tmp_path, claims=claims, cloner=cloner, dlq=dlq, max_attempts=5
@@ -354,9 +360,7 @@ def test_giving_up_on_a_lost_lease_does_not_record_someone_elses_outcome(tmp_pat
     # The budget ran out, but a takeover already happened. Writing FAILED here
     # would overwrite the new owner's work with a stale verdict.
     claims = FakeClaims(token=5, finish_ok=False)
-    cloner = FakeCloner(
-        tmp_path, error=TransientCloneError("CLONE_TIMEOUT", "slow")
-    )
+    cloner = FakeCloner(tmp_path, error=TransientCloneError("CLONE_TIMEOUT", "slow"))
 
     with pytest.raises(ClaimLostError):
         build(
@@ -523,6 +527,155 @@ def test_manifests_are_scanned_inside_the_same_claim(tmp_path):
     assert outcome.action == "parsed"
     assert outcome.dependencies is not None
     assert outcome.dependencies.coordinates == ("MAVEN:org.postgresql:postgresql",)
+
+
+def test_default_v1_consumer_handles_new_manifest_ecosystems_without_contract_drift(
+    tmp_path,
+):
+    checkout = tmp_path / "go-repository"
+    checkout.mkdir()
+    (checkout / "go.mod").write_text(
+        "module example.com/app\nrequire github.com/redis/go-redis/v9 v9.0.0\n",
+        encoding="utf-8",
+    )
+    (checkout / "main.go").write_text(
+        "package main\nfunc main() {}\n", encoding="utf-8"
+    )
+    results = FakeResults()
+    cloner = FakeCloner(tmp_path, result=CloneResult(path=checkout, bytes_on_disk=40))
+
+    outcome = build(
+        tmp_path,
+        cloner=cloner,
+        registry=EmptyRegistry(),
+        results=results.publisher(),
+    ).handle(message(event()))
+
+    assert outcome.action == "parsed"
+    body = json.loads(results.published[0][2])
+    assert body["schema_version"] == "repository-analysis-result/v1"
+    assert body["payload"]["candidates"] == []
+    assert all(
+        item["fact_type"] != "SOURCE_FILE" for item in body["payload"]["evidence"]
+    )
+
+
+def test_dual_publishers_route_legacy_v1_and_common44_v2_by_rule_lineage(tmp_path):
+    checkout = tmp_path / "react-repository"
+    (checkout / "src").mkdir(parents=True)
+    (checkout / "package.json").write_text(
+        '{"dependencies":{"react":"18.3.1"}}\n', encoding="utf-8"
+    )
+    (checkout / "src/App.tsx").write_text(
+        "import React from 'react';\nReact.useState(0);\n", encoding="utf-8"
+    )
+    registry_path = (
+        RULE_PACK_PATH.parents[2]
+        / "registry"
+        / "data"
+        / "technology_registry_20260911_2.json"
+    )
+    rule_set = load_rule_pack(RULE_PACK_PATH).as_rule_set(
+        mappings=mappings_from_registry_artifact(registry_path)
+    )
+    registry = RegistryStore(connect=lambda: None)
+    registry._cache["registry-20260911.2"] = rule_set
+    legacy_results, common_results = FakeResults(), FakeResults()
+    cloner = FakeCloner(tmp_path, result=CloneResult(path=checkout, bytes_on_disk=80))
+
+    outcome = build(
+        tmp_path,
+        cloner=cloner,
+        registry=registry,
+        results=legacy_results.publisher(schema_version=SCHEMA_VERSION),
+        results_v2=common_results.publisher(
+            "gitjob.repository-analysis.results.v2",
+            schema_version=SCHEMA_VERSION_V2,
+        ),
+    ).handle(message(event(registry_version="registry-20260911.2")))
+
+    assert outcome.action == "parsed"
+    assert legacy_results.published == []
+    body = json.loads(common_results.published[0][2])
+    assert body["schema_version"] == SCHEMA_VERSION_V2
+    assert {item["tech_id"]: item["level"] for item in body["payload"]["technologies"]}[
+        "react"
+    ] == "L2"
+    assert len(body["payload"]["technology_support"]) == 44
+    assert body["payload"]["stats"]["source_file_count"] == 1
+
+
+def test_common44_without_v2_destination_finishes_as_explicit_capability_failure(
+    tmp_path,
+):
+    checkout = tmp_path / "common-repository"
+    checkout.mkdir()
+    (checkout / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    registry_path = (
+        RULE_PACK_PATH.parents[2]
+        / "registry"
+        / "data"
+        / "technology_registry_20260911_2.json"
+    )
+    registry = RegistryStore(connect=lambda: None)
+    registry._cache["registry-20260911.2"] = load_rule_pack(RULE_PACK_PATH).as_rule_set(
+        mappings=mappings_from_registry_artifact(registry_path)
+    )
+    claims, results = FakeClaims(), FakeResults()
+
+    outcome = build(
+        tmp_path,
+        claims=claims,
+        cloner=FakeCloner(
+            tmp_path, result=CloneResult(path=checkout, bytes_on_disk=20)
+        ),
+        registry=registry,
+        results=results.publisher(schema_version=SCHEMA_VERSION),
+    ).handle(message(event(registry_version="registry-20260911.2")))
+
+    assert outcome.error_code == "UNSUPPORTED_RESULT_SCHEMA"
+    assert claims.finished == [("ev_1", 1, "FAILED", "UNSUPPORTED_RESULT_SCHEMA")]
+    body = json.loads(results.published[0][2])
+    assert body["schema_version"] == SCHEMA_VERSION
+    assert body["payload"]["error_code"] == "UNSUPPORTED_RESULT_SCHEMA"
+
+
+def test_schema_capability_failure_is_published_before_terminal_claim(tmp_path):
+    registry_path = (
+        RULE_PACK_PATH.parents[2]
+        / "registry"
+        / "data"
+        / "technology_registry_20260911_2.json"
+    )
+    registry = RegistryStore(connect=lambda: None)
+    registry._cache["registry-20260911.2"] = load_rule_pack(RULE_PACK_PATH).as_rule_set(
+        mappings=mappings_from_registry_artifact(registry_path)
+    )
+    claims = FakeClaims()
+    failing_results = FakeResults(fail=True)
+    request_message = message(event(registry_version="registry-20260911.2"))
+
+    with pytest.raises(RuntimeError, match="results broker is down"):
+        build(
+            tmp_path,
+            claims=claims,
+            registry=registry,
+            results=failing_results.publisher(schema_version=SCHEMA_VERSION),
+        ).handle(request_message)
+    assert claims.finished == []
+
+    recovered_results = FakeResults()
+    outcome = build(
+        tmp_path,
+        claims=claims,
+        registry=registry,
+        results=recovered_results.publisher(schema_version=SCHEMA_VERSION),
+    ).handle(request_message)
+
+    assert outcome.error_code == "UNSUPPORTED_RESULT_SCHEMA"
+    assert claims.finished == [("ev_1", 1, "FAILED", "UNSUPPORTED_RESULT_SCHEMA")]
+    assert len(recovered_results.published) == 1
+    assert json.loads(recovered_results.published[0][2])["event_id"] == "res_ev_1"
 
 
 def test_permanent_failure_is_recorded_and_committed(tmp_path):

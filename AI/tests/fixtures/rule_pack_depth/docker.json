@@ -1,0 +1,79 @@
+{
+  "tech_id": "docker",
+  "cases": [
+    {
+      "name": "final-stage-hardening",
+      "kind": "positive",
+      "files": {
+        "Dockerfile": "FROM python:3.12 AS build\nRUN python -m compileall /app\nFROM python:3.12-slim AS runtime\nCOPY --from=build /app /app\nUSER app:app\nHEALTHCHECK --interval=30s CMD python -m app.health\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "docker.l3.hardened"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires explicit effective final-stage non-root USER and active HEALTHCHECK plus multiple authored stages; inherited image defaults are missed."
+    },
+    {
+      "name": "final-stage-reset",
+      "kind": "near_miss",
+      "files": {
+        "Dockerfile": "FROM python:3.12 AS build\nRUN python -m compileall /app\nFROM python:3.12-slim AS runtime\nCOPY --from=build /app /app\nUSER app:app\nHEALTHCHECK --interval=30s CMD python -m app.health\nUSER root\nHEALTHCHECK NONE\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "docker.l2.multistage"
+      ],
+      "absent_rule_ids": [
+        "docker.l3.hardened"
+      ],
+      "tradeoff": "Later final-stage USER/HEALTHCHECK instructions reset earlier hardening and must fail closed."
+    },
+    {
+      "name": "heredoc-keywords",
+      "kind": "near_miss",
+      "files": {
+        "Dockerfile": "FROM alpine\nRUN <<EOF\nUSER app\nHEALTHCHECK CMD true\nEOF\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [
+        "docker.l1.build"
+      ],
+      "absent_rule_ids": [
+        "docker.l2.multistage",
+        "docker.l3.hardened"
+      ],
+      "tradeoff": "Heredoc body keywords are data, not Docker instructions; one real stage remains below L2/L3."
+    },
+    {
+      "name": "unresolved-user-arg",
+      "kind": "near_miss",
+      "files": {
+        "Dockerfile": "FROM alpine AS build\nRUN true\nFROM alpine AS runtime\nARG APP_USER\nUSER $APP_USER\nHEALTHCHECK CMD true\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "docker.l2.multistage"
+      ],
+      "absent_rule_ids": [
+        "docker.l3.hardened"
+      ],
+      "tradeoff": "An ARG without a static default cannot prove a non-root effective USER."
+    },
+    {
+      "name": "pre-from-arg-not-redeclared",
+      "kind": "near_miss",
+      "files": {
+        "Dockerfile": "ARG APP_USER=app\nFROM alpine AS build\nRUN true\nFROM alpine AS runtime\nUSER $APP_USER\nHEALTHCHECK CMD true\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "docker.l2.multistage"
+      ],
+      "absent_rule_ids": [
+        "docker.l3.hardened"
+      ],
+      "tradeoff": "A pre-FROM ARG can parameterize FROM but is not available to USER unless the final stage redeclares it; unresolved build-time values fail closed."
+    }
+  ]
+}

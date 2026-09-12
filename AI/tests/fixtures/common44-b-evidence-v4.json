@@ -1,0 +1,168 @@
+{
+  "fixture_kind": "SYNTHETIC_B_ACCEPTANCE_ONLY",
+  "ownership_policy": "Only accepted_self_paths belong to fixture-user. Other files belong to another contributor. This is a provided answer, not a blame implementation.",
+  "repositories": [
+    {
+      "repository_id": "fixture-repo-1",
+      "files": {
+        "package.json": "{\"dependencies\":{\"react\":\"18.3.1\"}}\n",
+        "src/team.tsx": "import React from \"react\";\nexport function Counter() { const [count] = React.useState(0); return count; }\n",
+        "src/owned.tsx": "import React from \"react\";\nexport const Fragment = React.Fragment;\n"
+      },
+      "accepted_self_paths": [
+        "src/owned.tsx"
+      ]
+    },
+    {
+      "repository_id": "fixture-repo-2",
+      "files": {
+        "package.json": "{\"dependencies\":{\"react\":\"18.3.1\"}}\n",
+        "src/team.tsx": "import React from \"react\";\nexport function Counter() { const [count] = React.useState(0); return count; }\n"
+      },
+      "accepted_self_paths": []
+    }
+  ],
+  "evidence_consumption_input": {
+    "schema_version": "evidence-consumption-input/v4",
+    "user_id": "fixture-user",
+    "analysis_id": "fixture-aggregate",
+    "registry_version": "registry-20260911.2",
+    "level_policy_version": "level-policy/v2",
+    "evidence_rule_version": "rule-pack-20260911.2",
+    "status": "PARTIAL",
+    "repositories": [
+      {
+        "user_id": "fixture-user",
+        "repository_id": "fixture-repo-1",
+        "repository_analysis_id": "fixture-repo-1-analysis",
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "PARTIAL",
+        "coverage_complete": false,
+        "evaluated_tech_ids": [
+          "react"
+        ],
+        "technologies": [
+          {
+            "tech_id": "react",
+            "fact_ids": [
+              "fixture-repo-1-import"
+            ],
+            "evidence_level": "L2",
+            "direct_dependency": true,
+            "implementation_present": true,
+            "user_participation": true,
+            "implemented_by": "SELF",
+            "attribution_status": "COMPLETE",
+            "source_refs": [
+              "synthetic://fixture-repo-1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/owned.tsx#L1"
+            ],
+            "proofs": [
+              {
+                "evidence_id": "fixture-repo-1-accepted-import",
+                "fact_id": "fixture-repo-1-import",
+                "rule_id": "react.l1.import",
+                "rule_version": "rule-pack-20260911.2",
+                "tech_id": "react",
+                "user_id": "fixture-user",
+                "analysis_id": "fixture-aggregate",
+                "repository_id": "fixture-repo-1",
+                "repository_analysis_id": "fixture-repo-1-analysis",
+                "source_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "kind": "IMPLEMENTATION",
+                "source_kind": "SOURCE",
+                "path": "src/owned.tsx",
+                "line_start": 1,
+                "line_end": 1,
+                "source_ref": "synthetic://fixture-repo-1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/owned.tsx#L1",
+                "acceptance": "ACCEPTED",
+                "exclusion_reason": null,
+                "origin": "PROJECT",
+                "inherited": false,
+                "attribution": "SELF",
+                "attribution_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "direct_dependency": null
+              }
+            ]
+          }
+        ],
+        "data_gaps": [
+          "RULE_PACK_PARTIAL"
+        ]
+      },
+      {
+        "user_id": "fixture-user",
+        "repository_id": "fixture-repo-2",
+        "repository_analysis_id": "fixture-repo-2-analysis",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "PARTIAL",
+        "coverage_complete": false,
+        "evaluated_tech_ids": [
+          "react"
+        ],
+        "technologies": [
+          {
+            "tech_id": "react",
+            "fact_ids": [
+              "fixture-repo-2-import"
+            ],
+            "evidence_level": "L2",
+            "direct_dependency": true,
+            "implementation_present": true,
+            "user_participation": false,
+            "implemented_by": "OTHER",
+            "attribution_status": "COMPLETE",
+            "source_refs": [
+              "synthetic://fixture-repo-2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/src/team.tsx#L1"
+            ],
+            "proofs": [
+              {
+                "evidence_id": "fixture-repo-2-accepted-import",
+                "fact_id": "fixture-repo-2-import",
+                "rule_id": "react.l1.import",
+                "rule_version": "rule-pack-20260911.2",
+                "tech_id": "react",
+                "user_id": "fixture-user",
+                "analysis_id": "fixture-aggregate",
+                "repository_id": "fixture-repo-2",
+                "repository_analysis_id": "fixture-repo-2-analysis",
+                "source_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "kind": "IMPLEMENTATION",
+                "source_kind": "SOURCE",
+                "path": "src/team.tsx",
+                "line_start": 1,
+                "line_end": 1,
+                "source_ref": "synthetic://fixture-repo-2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/src/team.tsx#L1",
+                "acceptance": "ACCEPTED",
+                "exclusion_reason": null,
+                "origin": "PROJECT",
+                "inherited": false,
+                "attribution": "OTHER",
+                "attribution_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "direct_dependency": null
+              }
+            ]
+          }
+        ],
+        "data_gaps": [
+          "RULE_PACK_PARTIAL"
+        ]
+      }
+    ],
+    "personal_assessments": [
+      {
+        "tech_id": "react",
+        "personal_level": "L1",
+        "assessment_ceiling": "L2",
+        "attribution_status": "COMPLETE",
+        "missing_scope": [
+          "L3_RULE_NOT_SUPPORTED",
+          "RULE_PACK_PARTIAL"
+        ]
+      }
+    ],
+    "data_gaps": [
+      "SYNTHETIC_ACCEPTANCE_ONLY",
+      "RULE_PACK_PARTIAL"
+    ]
+  }
+}

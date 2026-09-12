@@ -1,0 +1,84 @@
+{
+  "event_id": "res_ev_common44",
+  "schema_version": "repository-analysis-result/v3",
+  "event_type": "repository.analysis.completed",
+  "occurred_at": "2026-09-12T09:51:48.669386Z",
+  "trace_id": "tr_common44",
+  "payload": {
+    "analysis_id": "an_common44",
+    "request_event_id": "ev_common44",
+    "registry_version": "registry-20260911.3",
+    "commit_sha": "818c4136ea971c21674525f9053de0d9c7ad8cfe",
+    "status": "COMPLETED",
+    "error_code": null,
+    "error_detail": null,
+    "technologies": [
+      {
+        "tech_id": "python",
+        "level": "L1",
+        "matched_rule_ids": [
+          "python.l1.source"
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "rule_id": "python.l1.source",
+        "fact_type": "SYNTAX_NODE",
+        "file_path": "main.py",
+        "start_line": 1,
+        "end_line": 1,
+        "fact_payload": {
+          "KIND": "ASYNC_FUNCTION_DECLARATION",
+          "NAME": "main",
+          "LANGUAGE": "python",
+          "FILE_PATH": "main.py",
+          "IS_TEST": "false"
+        },
+        "code_snippet": null
+      }
+    ],
+    "candidates": [
+      {
+        "ecosystem": "GO",
+        "coordinate": "example.invalid/module",
+        "scope": "require",
+        "occurrence_count": 1
+      }
+    ],
+    "stats": {
+      "files_parsed": 1,
+      "files_skipped": 1,
+      "import_count": 0,
+      "dependency_count": 0,
+      "bytes_on_disk": 0,
+      "duration_ms": 0,
+      "source_file_count": 1,
+      "annotation_count": 0,
+      "config_count": 1,
+      "api_call_count": 0,
+      "skipped_reasons": {
+        "source:too_large": 1,
+        "manifest:manifest_error": 1,
+        "config:config_error": 1
+      },
+      "syntax_node_count": 0
+    },
+    "rule_pack_version": "rule-pack-20260911.3",
+    "rule_pack_content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "technology_support": [
+      {
+        "tech_id": "python",
+        "evaluation_scope": "REPOSITORY",
+        "required_fact_types": [
+          "SYNTAX_NODE"
+        ],
+        "max_supported_level": "L1",
+        "coverage": "PARTIAL",
+        "limitations": [
+          "Parser coverage is partial."
+        ]
+      }
+    ]
+  }
+}

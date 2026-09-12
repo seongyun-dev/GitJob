@@ -1,0 +1,31 @@
+{
+  "tech_id": "tensorflow",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/train.py": "import tensorflow as tf\ndef train():\n    strategy = tf.distribute.MirroredStrategy()\n    result = strategy.run(train_step)\n    return strategy.reduce(tf.distribute.ReduceOp.SUM, result, axis=None)\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "tensorflow.l3.strategy-training"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires an attributed distribution strategy plus run and reduce in the same Python function component; custom loops and split callback orchestration are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/train.py": "import tensorflow as tf\ndef train():\n    strategy = tf.distribute.MirroredStrategy()\n    return strategy.run(train_step)\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "tensorflow.l3.strategy-training"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

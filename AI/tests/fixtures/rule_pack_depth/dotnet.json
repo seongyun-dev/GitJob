@@ -1,0 +1,62 @@
+{
+  "tech_id": "dotnet",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/Worker.cs": "using WebApplication = Microsoft.AspNetCore.Builder.WebApplication;\nusing Services = Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions;\nusing WorkerBase = Microsoft.Extensions.Hosting.BackgroundService;\nusing System.Threading;\nusing System.Threading.Tasks;\nvar builder = WebApplication.CreateBuilder(args);\nServices.AddScoped(builder.Services, typeof(IStore), typeof(Store));\nclass Worker : WorkerBase { protected override async Task ExecuteAsync(CancellationToken stoppingToken) { try { await RunAsync(stoppingToken); } finally { await CleanupAsync(); } } }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "dotnet.l2.host-di",
+        "dotnet.l3.background-worker-lifecycle"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 host/service-registration calls require Microsoft import attribution; custom extension wrappers are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/Worker.cs": "using WebApplication = Microsoft.AspNetCore.Builder.WebApplication;\nusing Services = Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions;\nusing WorkerBase = Microsoft.Extensions.Hosting.BackgroundService;\nusing System.Threading;\nusing System.Threading.Tasks;\nvar builder = WebApplication.CreateBuilder(args);\nServices.AddScoped(builder.Services, typeof(IStore), typeof(Store));\nclass Worker : WorkerBase { protected override async Task ExecuteAsync(CancellationToken stoppingToken) { await RunAsync(stoppingToken); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "dotnet.l2.host-di"
+      ],
+      "absent_rule_ids": [
+        "dotnet.l3.background-worker-lifecycle"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "lower-rule-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/Worker.cs": "using WorkerBase = Microsoft.Extensions.Hosting.BackgroundService;\nusing System.Threading;\nusing System.Threading.Tasks;\nclass Worker : WorkerBase { protected override async Task ExecuteAsync(CancellationToken stoppingToken) { try { await RunAsync(stoppingToken); } finally { await CleanupAsync(); } } }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "dotnet.l3.background-worker-lifecycle"
+      ],
+      "absent_rule_ids": [
+        "dotnet.l2.host-di"
+      ],
+      "tradeoff": "The independent lower-depth rule remains gated even when the higher structural pattern is present."
+    },
+    {
+      "name": "signals-split-across-classes",
+      "kind": "near_miss",
+      "files": {
+        "src/Mixed.cs": "using WorkerBase = Microsoft.Extensions.Hosting.BackgroundService;\nusing System.Threading;\nusing System.Threading.Tasks;\nclass Worker : WorkerBase { protected override Task ExecuteAsync(CancellationToken token) => Task.CompletedTask; }\nclass Cleanup { async Task Run() { try { await WorkAsync(); } finally { await CleanupAsync(); } } }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "dotnet.l3.background-worker-lifecycle"
+      ],
+      "tradeoff": "Await/finally lifecycle in another class cannot complete a BackgroundService implementation."
+    }
+  ]
+}

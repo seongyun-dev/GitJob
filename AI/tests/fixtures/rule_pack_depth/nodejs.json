@@ -1,0 +1,44 @@
+{
+  "tech_id": "nodejs",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/worker.js": "import { Worker } from 'node:worker_threads';\nimport { pipeline } from 'node:stream/promises';\nexport async function transfer(source, sink) {\n  const worker = new Worker('./consumer.js');\n  worker.once('error', reportFailure);\n  try {\n    await pipeline(source, sink);\n  } finally {\n    await worker.terminate();\n  }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "nodejs.l3.worker-stream-pipeline"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires Worker construction, lifecycle listener, stream/promises pipeline, termination, and try/finally cleanup in the same function component; wrapper and split orchestration is missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/worker.js": "import { Worker } from 'node:worker_threads';\nimport { pipeline } from 'node:stream/promises';\nexport async function transfer(source, sink) {\n  const worker = new Worker('./consumer.js');\n  worker.once('error', reportFailure);\n  await pipeline(source, sink);\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nodejs.l3.worker-stream-pipeline"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "vendored-composition",
+      "kind": "negative",
+      "files": {
+        "vendor/worker.js": "import { Worker } from 'node:worker_threads';\nimport { pipeline } from 'node:stream/promises';\nexport async function transfer(source, sink) {\n  const worker = new Worker('./consumer.js');\n  worker.once('error', reportFailure);\n  try { await pipeline(source, sink); } finally { await worker.terminate(); }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nodejs.l3.worker-stream-pipeline"
+      ],
+      "tradeoff": "Vendored source belongs to a dependency and is excluded before parsing."
+    }
+  ]
+}

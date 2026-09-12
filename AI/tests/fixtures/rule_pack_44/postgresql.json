@@ -1,0 +1,46 @@
+{
+  "tech_id": "postgresql",
+  "positive": {
+    "files": {
+      "requirements.txt": "psycopg==3.2\n",
+      "src/app.py": "import psycopg\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning postgresql only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/app.py": "import psycopg\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "requirements.txt": "psycopg==3.2\n",
+        "src/app.py": "import psycopg\n"
+      },
+      "expected_rule_ids": [
+        "postgresql.l0.dependency",
+        "postgresql.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/app.py": "import psycopg\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "postgresql.l0.dependency",
+        "postgresql.l1.import"
+      ]
+    }
+  ]
+}

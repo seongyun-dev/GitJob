@@ -1,0 +1,31 @@
+{
+  "tech_id": "mongodb",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/events.py": "from pymongo import MongoClient\nfrom pymongo.client_session import ClientSession\nfrom pymongo.collection import Collection\ndef consume(collection):\n    client = MongoClient()\n    session = client.start_session()\n    ClientSession.start_transaction(session)\n    return Collection.watch(collection)\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "mongodb.l3.transaction-stream"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires attributed session, transaction, and change-stream calls in the same function component; service wrappers and split consumers are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/events.py": "from pymongo import MongoClient\nfrom pymongo.client_session import ClientSession\ndef consume(collection):\n    client = MongoClient()\n    session = client.start_session()\n    return ClientSession.start_transaction(session)\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "mongodb.l3.transaction-stream"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

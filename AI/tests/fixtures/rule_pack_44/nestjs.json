@@ -1,0 +1,50 @@
+{
+  "tech_id": "nestjs",
+  "positive": {
+    "files": {
+      "package.json": "{\"dependencies\":{\"@nestjs/core\":\"^11\",\"@nestjs/common\":\"^11\"}}",
+      "src/main.ts": "import { NestFactory } from '@nestjs/core';\nimport { Module } from '@nestjs/common';\n@Module({}) class AppModule {}\nNestFactory.create(AppModule);\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning nestjs only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "package.json": "{\"devDependencies\":{\"@nestjs/core\":\"^11\"}}\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "package.json": "{\"dependencies\":{\"@nestjs/core\":\"^11\",\"@nestjs/common\":\"^11\"}}",
+        "src/main.ts": "import { NestFactory } from '@nestjs/core';\nimport { Module } from '@nestjs/common';\n@Module({}) class AppModule {}\nNestFactory.create(AppModule);\n"
+      },
+      "expected_rule_ids": [
+        "nestjs.l0.dependency",
+        "nestjs.l1.import",
+        "nestjs.l1.annotation",
+        "nestjs.l2.api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "package.json": "{\"devDependencies\":{\"@nestjs/core\":\"^11\"}}\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nestjs.l0.dependency",
+        "nestjs.l1.import",
+        "nestjs.l1.annotation",
+        "nestjs.l2.api"
+      ]
+    }
+  ]
+}

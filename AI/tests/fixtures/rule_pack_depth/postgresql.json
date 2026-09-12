@@ -1,0 +1,31 @@
+{
+  "tech_id": "postgresql",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/load.py": "import psycopg\nfrom psycopg import sql\nconnection = psycopg.connect('postgresql://db/app')\nquery = sql.SQL('select {}').format(sql.Identifier('id'))\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "postgresql.l2.driver-api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 requires an attributed PostgreSQL connection plus COPY/batch helper use in one authored file; ORM and raw SQL paths are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/load.py": "import psycopg\nconnection = psycopg.connect('postgresql://db/app')\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "postgresql.l2.driver-api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

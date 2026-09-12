@@ -1,0 +1,48 @@
+{
+  "tech_id": "tensorflow",
+  "positive": {
+    "files": {
+      "requirements.txt": "tensorflow==2.17\n",
+      "src/app.py": "import tensorflow as tf\ntf.constant([1])\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning tensorflow only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/app.py": "import tensorflow as tf\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "requirements.txt": "tensorflow==2.17\n",
+        "src/app.py": "import tensorflow as tf\ntf.constant([1])\n"
+      },
+      "expected_rule_ids": [
+        "tensorflow.l0.dependency",
+        "tensorflow.l1.import",
+        "tensorflow.l2.api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/app.py": "import tensorflow as tf\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "tensorflow.l0.dependency",
+        "tensorflow.l1.import",
+        "tensorflow.l2.api"
+      ]
+    }
+  ]
+}

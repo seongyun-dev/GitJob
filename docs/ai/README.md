@@ -1,5 +1,9 @@
 # C조 구현 안내 — 여기서 시작
 
+> 2026-09-12 후속 -221: [공통 44개 Registry·Rule Pack](common-rule-pack.md)은 새 immutable
+> 버전, 필요한 Fact와 repository 판정, B v2/v4 인수 fixture를 제공한다. B의 개인 귀속·API/FE와
+> 운영 activation은 별도 인수 대상이다. 아래의 과거 완료 기록과 구분한다.
+
 > 상태: C 기능 로컬 구현·검증 완료, 실제 B/FE·운영 서비스 인수는 남음
 >
 > 기준일: 2026-09-08 · 구현 기준: `ce4c24f` · 관련 Jira: S15P21E102-29/31/33/36/88/160
@@ -35,6 +39,7 @@ C는 **사용자가 사용한 것으로 확인된 기술과 공고의 기술 조
 
 | 기능 / Jira | 제공하는 결과·핵심 동작 | 상세 계약 / 주요 코드 |
 |---|---|---|
+| 공통 44개 Rule Pack / -221 | source별 기술 매핑, 실제 Fact 기반 Rule, 판정 상한과 PARTIAL, 버전별 DB 발행 및 B 인수 계약 | [공통 Rule Pack](common-rule-pack.md) · [Rule 데이터](../../AI/analysis/data/rule_pack_20260911_2.json), [DB 발행](../../AI/registry/rulepack_db.py) |
 | 정규화·요구유형·검수 / -81·-82·-88 | 기술 alias를 Registry ID로 통일, 필수/우대/일반과 미확정 분리, 근거·검토 이력 보존 | [Registry](../data/2026-09-08-technology-registry-mvp.md), [분류·품질](c-job-demand.md) · [classifier.py](../../AI/job/classifier.py), [review.py](../../AI/registry/review.py) |
 | DB Registry·검토 실행 / -199·-88 | B의 기본 선택값을 불변 DB 버전으로 해석, UNKNOWN/AMBIGUOUS 원문·결정 이력의 원자적 저장과 API | [DB 운영 계약](../data/technology-registry-db.md), [검토 큐](c-registry-review.md) |
 | 공고별 부분 부합 / -183·-184·-185 | 필수/우대별 충족·부족·미확정과 원문 근거, 고정 목록/상세. 기존 What-if와 별도 | [부분 부합](c-job-matching.md), [요구절](c-job-requirements.md) · [matching.py](../../AI/job/matching.py) |
@@ -62,7 +67,7 @@ A 수집기가 완료 배치와 manifest를 발행한다. C Worker는 설정한 
 B가 사용자 저장소 Facts/Rule/참여·귀속을 분석한다. B는 준비된 공고 코호트를 조회하고, 해당 ID와 실제 Evidence를 C 분석 완료 API에 전달한다. C는 즉시 보유·Gap·추천·What-if·설명을 계산해 DB에 저장한다. B의 인증 API가 저장 결과를 조회해 FE에 전달한다.
 
 - A: 원재료 수집·발행. C: 의미 판정·집계·추천 계산. B: 개인 분석 엔진·사용자 인증·서비스 조회.
-- C는 B의 AST/Rule/blame 분석을 중복 구현하지 않는다. 공개 저장소 관측으로 사용자의 L3를 만들지 않는다.
+- C는 공통 Rule Pack과 필요한 Fact 추출기를 소유하고 B가 이를 저장소 분석에 실행한다. B는 개인 귀속·여러 저장소 종합을 담당한다. 공개 저장소 관측으로 사용자의 L3를 만들지 않는다.
 - C 내부 API의 `user_id`는 B가 인증한 값이다. 브라우저가 C 서비스 토큰을 가지고 직접 호출하는 구조가 아니다.
 - Registry 실행 기본은 DB이며 기존 파일 `ReviewStore`는 로컬 도구로 남긴다. 운영 실행 코드는
   공고 완료 시 DB 검토 큐를 함께 저장한다. B 관리자 인증·Registry 신규 기술/alias 승인 UI는 별도 경계다.

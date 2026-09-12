@@ -1,0 +1,44 @@
+{
+  "tech_id": "pytorch",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/train.py": "import torch\nfrom torch.nn.parallel import DistributedDataParallel\ndef train_and_restore(model):\n    torch.distributed.init_process_group('gloo')\n    distributed = DistributedDataParallel(model)\n    torch.save(distributed.state_dict(), 'model.pt')\n    return torch.load('model.pt')\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "pytorch.l3.distributed-checkpoint"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires attributed process-group initialization, DistributedDataParallel construction, and both checkpoint save and load in the same function component; split launch/recovery modules are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/train.py": "import torch\nfrom torch.nn.parallel import DistributedDataParallel\ndef train_and_restore(model):\n    torch.distributed.init_process_group('gloo')\n    distributed = DistributedDataParallel(model)\n    torch.save(distributed.state_dict(), 'model.pt')\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "pytorch.l3.distributed-checkpoint"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "signals-split-across-functions",
+      "kind": "near_miss",
+      "files": {
+        "src/train.py": "import torch\nfrom torch.nn.parallel import DistributedDataParallel\ndef initialize(model):\n    torch.distributed.init_process_group('gloo')\n    return DistributedDataParallel(model)\ndef checkpoint(model):\n    torch.save(model.state_dict(), 'model.pt')\n    return torch.load('model.pt')\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "pytorch.l3.distributed-checkpoint"
+      ],
+      "tradeoff": "Distributed setup and checkpoint calls in unrelated functions are not combined into one L3 workflow."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "tech_id": "kubernetes",
+  "cases": [
+    {
+      "name": "one-container-operations-hardening",
+      "kind": "positive",
+      "files": {
+        "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: app:1\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 1\n              memory: 256Mi\n          readinessProbe:\n            httpGet:\n              path: /ready\n          livenessProbe:\n            httpGet:\n              path: /live\n          securityContext:\n            runAsNonRoot: true\n            allowPrivilegeEscalation: false\n            readOnlyRootFilesystem: true\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "kubernetes.l1.workload",
+        "kubernetes.l2.operations",
+        "kubernetes.l3.hardened"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "All L3 signals must belong to one workload container; this is authored-manifest depth, not rollout/runtime proof."
+    },
+    {
+      "name": "signals-split-across-containers",
+      "kind": "near_miss",
+      "files": {
+        "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: sized\n          image: app:1\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n        - name: probed\n          image: app:1\n          readinessProbe:\n            httpGet:\n              path: /ready\n          livenessProbe:\n            httpGet:\n              path: /live\n          securityContext:\n            runAsNonRoot: true\n            allowPrivilegeEscalation: false\n            readOnlyRootFilesystem: true\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [
+        "kubernetes.l1.workload"
+      ],
+      "absent_rule_ids": [
+        "kubernetes.l2.operations",
+        "kubernetes.l3.hardened"
+      ],
+      "tradeoff": "Resources in one container cannot lend evidence to probes/security in another."
+    },
+    {
+      "name": "non-workload-object",
+      "kind": "near_miss",
+      "files": {
+        "k8s/configmap.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\ndata:\n  mode: prod\n"
+      },
+      "expected_level": "L0",
+      "expected_rule_ids": [
+        "kubernetes.l0.manifest"
+      ],
+      "absent_rule_ids": [
+        "kubernetes.l1.workload",
+        "kubernetes.l2.operations",
+        "kubernetes.l3.hardened"
+      ],
+      "tradeoff": "A valid non-workload Kubernetes object proves manifest identity only; it does not provide workload or container-depth evidence."
+    },
+    {
+      "name": "block-scalar-lookalike",
+      "kind": "negative",
+      "files": {
+        "k8s/config.yaml": "kind: ConfigMap\ndata:\n  sample: |\n    kind: Deployment\n    containers:\n      readinessProbe: {}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "kubernetes.l1.workload",
+        "kubernetes.l2.operations",
+        "kubernetes.l3.hardened"
+      ],
+      "tradeoff": "Keys inside a YAML block scalar are content rather than Kubernetes workload structure."
+    }
+  ]
+}

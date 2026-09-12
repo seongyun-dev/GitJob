@@ -1,0 +1,62 @@
+{
+  "tech_id": "unity",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "Assets/Movement.cs": "using Burst = Unity.Burst.BurstCompileAttribute;\nusing Component = UnityEngine.Component;\nusing ParallelJob = Unity.Jobs.IJobParallelFor;\nusing UnityEngine;\nclass Player : MonoBehaviour { Component component; void Start() { component.GetComponent(typeof(Rigidbody)); } }\n[Burst] class MoveJob : ParallelJob { public void Execute(int index) {} }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "unity.l2.lifecycle-component",
+        "unity.l3.parallel-job"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 lifecycle/component calls and the L3 resolved Burst attribute, IJobParallelFor base, and Execute method must occur in the same authored Assets C# class; generated Library and package sources are excluded."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "Assets/Movement.cs": "using Burst = Unity.Burst.BurstCompileAttribute;\nusing Component = UnityEngine.Component;\nusing ParallelJob = Unity.Jobs.IJobParallelFor;\nusing UnityEngine;\nclass Player : MonoBehaviour { Component component; void Start() { component.GetComponent(typeof(Rigidbody)); } }\n[Burst] class MoveJob { public void Execute(int index) {} }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "unity.l2.lifecycle-component"
+      ],
+      "absent_rule_ids": [
+        "unity.l3.parallel-job"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "lower-rule-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "Assets/Movement.cs": "using Burst = Unity.Burst.BurstCompileAttribute;\nusing ParallelJob = Unity.Jobs.IJobParallelFor;\n[Burst] class MoveJob : ParallelJob { public void Execute(int index) {} }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "unity.l3.parallel-job"
+      ],
+      "absent_rule_ids": [
+        "unity.l2.lifecycle-component"
+      ],
+      "tradeoff": "The independent lower-depth rule remains gated even when the higher structural pattern is present."
+    },
+    {
+      "name": "generated-library-source",
+      "kind": "negative",
+      "files": {
+        "Library/Movement.cs": "using UnityEngine;\nusing Unity.Jobs;\nclass MoveJob : IJobParallelFor { public void Execute(int index) {} }\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "unity.l3.parallel-job"
+      ],
+      "tradeoff": "Unity Library cache source is generated and excluded before parsing."
+    }
+  ]
+}

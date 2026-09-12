@@ -33,17 +33,26 @@ from pydantic import ValidationError
 
 from analysis.claim import ClaimStatus, ClaimStore
 from analysis.clone import CloneError, RepositoryCloner, TransientCloneError
+from analysis.configs import ConfigReport, ConfigScanner, facts_from_configs
 from analysis.contracts import RepositoryAnalysisRequest
 from analysis.judge import (
     Judge,
     Judgement,
+    facts_from_annotations,
     facts_from_calls,
     facts_from_dependencies,
     facts_from_imports,
+    facts_from_sources,
 )
 from analysis.manifests import DependencyReport, ManifestScanner
 from analysis.parse import ParseReport, RepositoryParser
 from analysis.publish import ResultPublisher, completed_result, failed_result
+from analysis.results import (
+    SCHEMA_VERSION,
+    SCHEMA_VERSION_V2,
+    SCHEMA_VERSION_V3,
+    schema_for_rule_pack,
+)
 from analysis.rules import RegistryStore, UnknownRegistryVersion
 from common.kafka import ConsumedMessage, ConsumerTransport, KafkaTransport
 
@@ -69,6 +78,7 @@ class Outcome:
     error_code: str | None = None
     report: ParseReport | None = None
     dependencies: DependencyReport | None = None
+    configs: ConfigReport | None = None
     judgement: Judgement | None = None
 
 
@@ -81,8 +91,11 @@ class AnalysisConsumer:
     cloner: RepositoryCloner
     parser: RepositoryParser | None = None
     scanner: ManifestScanner | None = None
+    config_scanner: ConfigScanner | None = None
     registry: RegistryStore | None = None
     results: ResultPublisher | None = None
+    results_v2: ResultPublisher | None = None
+    results_v3: ResultPublisher | None = None
     dlq_topic: str | None = None
     dlq_transport: KafkaTransport | None = None
     poll_timeout_ms: int = 1_000
@@ -204,20 +217,51 @@ class AnalysisConsumer:
                 request.trace_id,
             )
 
-            judgement = self._judge(request, payload, dependencies, report)
+            configs = (self.config_scanner or ConfigScanner()).scan(result.path)
+            judgement = self._judge(request, payload, dependencies, configs, report)
 
-            if self.results is not None and judgement is not None:
+            common44 = bool(judgement and judgement.rule_pack_version)
+            result_schema = schema_for_rule_pack(
+                judgement.rule_pack_version if judgement else None
+            )
+            result_publisher = {
+                SCHEMA_VERSION: self.results,
+                SCHEMA_VERSION_V2: self.results_v2,
+                SCHEMA_VERSION_V3: self.results_v3,
+            }[result_schema]
+            if common44 and result_publisher is None:
+                error_code = "UNSUPPORTED_RESULT_SCHEMA"
+                self._report_failure(
+                    request,
+                    error_code,
+                    f"{result_schema} publisher is not configured",
+                    force_v1=True,
+                )
+                self._to_dlq(message, error_code)
+                if not self.claims.finish(
+                    request.event_id, token, "FAILED", error_code
+                ):
+                    raise ClaimLostError(
+                        f"event {request.event_id} lease was taken over before "
+                        "result schema failure recording"
+                    )
+                return Outcome(
+                    "failed", event_id=request.event_id, error_code=error_code
+                )
+
+            if result_publisher is not None and judgement is not None:
                 # Before finish, and therefore before the offset is committed.
                 # Publishing afterwards loses results: a crash in that gap
                 # leaves a terminal claim with nothing sent, and the redelivery
                 # skips it. This way the bad case is a duplicate, which the
                 # consumer already tolerates.
-                self.results.publish(
+                result_publisher.publish(
                     completed_result(
                         request,
                         judgement,
                         report,
                         dependencies,
+                        configs=configs,
                         checkout=result.path,
                         bytes_on_disk=result.bytes_on_disk,
                         duration_ms=int((monotonic() - started) * 1000),
@@ -233,6 +277,7 @@ class AnalysisConsumer:
                 event_id=request.event_id,
                 report=report,
                 dependencies=dependencies,
+                configs=configs,
                 judgement=judgement,
             )
         except TransientCloneError as transient:
@@ -241,6 +286,7 @@ class AnalysisConsumer:
                 # that fails this way on every delivery is permanently unfetchable
                 # from here, and leaving it uncommitted only means nothing behind it
                 # in the partition is ever analyzed.
+                self._report_failure(request, transient.code, str(transient))
                 if not self.claims.finish(
                     request.event_id, token, "FAILED", transient.code
                 ):
@@ -255,7 +301,6 @@ class AnalysisConsumer:
                     payload.repository_full_name,
                     transient.code,
                 )
-                self._report_failure(request, transient.code, str(transient))
                 self._to_dlq(message, transient.code)
                 return Outcome(
                     "failed", event_id=request.event_id, error_code=transient.code
@@ -284,13 +329,13 @@ class AnalysisConsumer:
                 payload.analysis_id,
                 unknown,
             )
+            self._report_failure(request, "REGISTRY_VERSION_UNKNOWN", str(unknown))
             if not self.claims.finish(
                 request.event_id, token, "FAILED", "REGISTRY_VERSION_UNKNOWN"
             ):
                 raise ClaimLostError(
                     f"event {request.event_id} lease was taken over before failure recording"
                 ) from unknown
-            self._report_failure(request, "REGISTRY_VERSION_UNKNOWN", str(unknown))
             self._to_dlq(message, "REGISTRY_VERSION_UNKNOWN")
             return Outcome(
                 "failed",
@@ -298,6 +343,7 @@ class AnalysisConsumer:
                 error_code="REGISTRY_VERSION_UNKNOWN",
             )
         except CloneError as permanent:
+            self._report_failure(request, permanent.code, str(permanent))
             if not self.claims.finish(
                 request.event_id, token, "FAILED", permanent.code
             ):
@@ -310,7 +356,6 @@ class AnalysisConsumer:
                 payload.repository_full_name,
                 permanent.code,
             )
-            self._report_failure(request, permanent.code, str(permanent))
             self._to_dlq(message, permanent.code)
             return Outcome(
                 "failed", event_id=request.event_id, error_code=permanent.code
@@ -319,18 +364,46 @@ class AnalysisConsumer:
             self.cloner.cleanup(target)
 
     def _report_failure(
-        self, request, error_code: str, detail: str | None = None
+        self,
+        request,
+        error_code: str,
+        detail: str | None = None,
+        *,
+        force_v1: bool = False,
     ) -> None:
         """Tell the backend the analysis failed, so the job can leave QUEUED.
 
         The DLQ already holds the request, but that is for operators. Without
         this the person who asked sees "대기 중" forever.
         """
-        if self.results is None:
+        schema = SCHEMA_VERSION
+        publisher = self.results
+        if not force_v1:
+            if (
+                request.payload.registry_version == "registry-20260911.2"
+                and self.results_v2 is not None
+            ):
+                schema, publisher = SCHEMA_VERSION_V2, self.results_v2
+            elif (
+                request.payload.registry_version
+                in {"registry-20260911.3", "registry-20260911.4"}
+                and self.results_v3 is not None
+            ):
+                schema, publisher = SCHEMA_VERSION_V3, self.results_v3
+        if publisher is None:
             return
-        self.results.publish(failed_result(request, error_code, detail))
+        publisher.publish(
+            failed_result(
+                request,
+                error_code,
+                detail,
+                schema_version=schema,
+            )
+        )
 
-    def _judge(self, request, payload, dependencies, report) -> Judgement | None:
+    def _judge(
+        self, request, payload, dependencies, configs, report
+    ) -> Judgement | None:
         """Resolve facts against the registry and evaluate the rules.
 
         Returns `None` only when no registry is configured, which is how the
@@ -342,10 +415,22 @@ class AnalysisConsumer:
 
         rule_set = self.registry.load(payload.registry_version)
         judge = Judge(rule_set)
+        structural_facts = ()
+        if rule_set.rule_pack_version in {
+            "rule-pack-20260911.3",
+            "rule-pack-20260911.4",
+        }:
+            from analysis.judge import facts_from_syntax
+
+            structural_facts = facts_from_syntax(report.syntax)
         judgement = judge.judge(
             facts_from_imports(report.occurrences)
             + facts_from_calls(report.calls)
+            + facts_from_sources(report.sources)
+            + facts_from_annotations(report.annotations)
             + facts_from_dependencies(dependencies.occurrences)
+            + facts_from_configs(configs.occurrences)
+            + structural_facts
         )
         log.info(
             "judged: analysisId=%s registry=%s technologies=%s evidence=%s "

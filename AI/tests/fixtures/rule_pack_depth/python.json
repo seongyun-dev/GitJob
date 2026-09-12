@@ -1,0 +1,109 @@
+{
+  "tech_id": "python",
+  "cases": [
+    {
+      "name": "advanced-pattern",
+      "kind": "positive",
+      "files": {
+        "src/main.py": "import asyncio\nasync def operation():\n    await asyncio.sleep(0)\n    return 1\nasync def run():\n    task = asyncio.create_task(operation())\n    try:\n        return await asyncio.wait_for(task, timeout=2)\n    finally:\n        task.cancel()\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "python.l3.task-timeout-cleanup"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Named language-specific advanced pattern; no runtime claim."
+    },
+    {
+      "name": "basic-structured-use",
+      "kind": "positive",
+      "files": {
+        "src/main.py": "def squares(values):\n    return [value * value for value in values]\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "python.l2.structured-function"
+      ],
+      "absent_rule_ids": [
+        "python.l3.task-timeout-cleanup"
+      ]
+    },
+    {
+      "name": "missing-advanced-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/main.py": "import asyncio\nasync def operation():\n    await asyncio.sleep(0)\n    return 1\nasync def run():\n    task = asyncio.create_task(operation())\n    try:\n        return await asyncio.wait_for(task, timeout=2)\n    finally:\n        pass\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l3.task-timeout-cleanup"
+      ]
+    },
+    {
+      "name": "missing-structured-use-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/main.py": "def identity(value):\n    return value\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l2.structured-function",
+        "python.l3.task-timeout-cleanup"
+      ]
+    },
+    {
+      "name": "disconnected-declarations",
+      "kind": "near_miss",
+      "files": {
+        "src/main.py": "import asyncio\nasync def spawn(coro):\n    task = asyncio.create_task(coro)\n    task.cancel()\nasync def unrelated(coro):\n    try:\n        return await asyncio.wait_for(coro, timeout=2)\n    finally:\n        print(\"finished\")\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l3.task-timeout-cleanup"
+      ],
+      "tradeoff": "Unrelated classes, functions or type aliases in one file cannot pool their advanced signals."
+    },
+    {
+      "name": "documentation-only",
+      "kind": "negative",
+      "files": {
+        "README.md": "import asyncio\nasync def operation():\n    await asyncio.sleep(0)\n    return 1\nasync def run():\n    task = asyncio.create_task(operation())\n    try:\n        return await asyncio.wait_for(task, timeout=2)\n    finally:\n        task.cancel()\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l2.structured-function",
+        "python.l3.task-timeout-cleanup"
+      ]
+    },
+    {
+      "name": "vendor-code",
+      "kind": "negative",
+      "files": {
+        "vendor/src/main.py": "import asyncio\nasync def operation():\n    await asyncio.sleep(0)\n    return 1\nasync def run():\n    task = asyncio.create_task(operation())\n    try:\n        return await asyncio.wait_for(task, timeout=2)\n    finally:\n        task.cancel()\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l2.structured-function",
+        "python.l3.task-timeout-cleanup"
+      ]
+    },
+    {
+      "name": "test-only",
+      "kind": "negative",
+      "files": {
+        "tests/src/main.py": "import asyncio\nasync def operation():\n    await asyncio.sleep(0)\n    return 1\nasync def run():\n    task = asyncio.create_task(operation())\n    try:\n        return await asyncio.wait_for(task, timeout=2)\n    finally:\n        task.cancel()\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l2.structured-function",
+        "python.l3.task-timeout-cleanup"
+      ]
+    }
+  ]
+}

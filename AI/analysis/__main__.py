@@ -21,6 +21,7 @@ from analysis.consumer import AnalysisConsumer, work_root_from_env
 from analysis.manifests import ManifestScanner
 from analysis.parse import RepositoryParser, verify_grammars
 from analysis.publish import ResultPublisher
+from analysis.results import SCHEMA_VERSION, SCHEMA_VERSION_V2, SCHEMA_VERSION_V3
 from analysis.rules import RegistryStore
 from common.kafka import consumer_from_env, transport_from_env
 
@@ -32,6 +33,8 @@ DEFAULT_DLQ_TOPIC = "gitjob.repository-analysis.dlq.v1"
 # The only path by which an analysis finishes. Without it analysis_job stays
 # at QUEUED however well the worker did its job.
 DEFAULT_RESULTS_TOPIC = "gitjob.repository-analysis.results.v1"
+V2_RESULTS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V2"
+V3_RESULTS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3"
 
 
 def build() -> AnalysisConsumer:
@@ -61,7 +64,9 @@ def build() -> AnalysisConsumer:
     try:
         verify_grammars()
     except Exception as missing:
-        raise SystemExit(f"tree-sitter grammars are not loadable: {missing}") from missing
+        raise SystemExit(
+            f"tree-sitter grammars are not loadable: {missing}"
+        ) from missing
 
     work_root = work_root_from_env()
     work_root.mkdir(parents=True, exist_ok=True)
@@ -87,13 +92,54 @@ def build() -> AnalysisConsumer:
     # each event, so a deployment that overlaps two versions serves both.
     registry = RegistryStore(connect=lambda: connect(dsn))
 
+    result_schema_version, configured_results_topic = result_destination_from_env()
     results_topic = (
         os.getenv("KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS") or DEFAULT_RESULTS_TOPIC
     ).strip()
+
     results_transport = transport_from_env(default_client_id="gitjob-analysis-results")
     if results_transport is None:
-        raise SystemExit("KAFKA_BOOTSTRAP_SERVERS is not set; results cannot be published")
-    results = ResultPublisher(results_transport, results_topic)
+        raise SystemExit(
+            "KAFKA_BOOTSTRAP_SERVERS is not set; results cannot be published"
+        )
+    results = ResultPublisher(
+        results_transport,
+        results_topic,
+        schema_version=SCHEMA_VERSION,
+    )
+    results_v2 = None
+    v2_topic = (
+        configured_results_topic
+        if result_schema_version == SCHEMA_VERSION_V2
+        else (os.getenv(V2_RESULTS_TOPIC_ENV) or "").strip()
+    )
+    if result_schema_version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3} and v2_topic:
+        results_v2_transport = transport_from_env(
+            default_client_id="gitjob-analysis-results-v2"
+        )
+        if results_v2_transport is None:
+            raise SystemExit(
+                "KAFKA_BOOTSTRAP_SERVERS is not set; v2 results cannot be published"
+            )
+        results_v2 = ResultPublisher(
+            results_v2_transport,
+            v2_topic,
+            schema_version=SCHEMA_VERSION_V2,
+        )
+    results_v3 = None
+    if result_schema_version == SCHEMA_VERSION_V3:
+        results_v3_transport = transport_from_env(
+            default_client_id="gitjob-analysis-results-v3"
+        )
+        if results_v3_transport is None:
+            raise SystemExit(
+                "KAFKA_BOOTSTRAP_SERVERS is not set; v3 results cannot be published"
+            )
+        results_v3 = ResultPublisher(
+            results_v3_transport,
+            configured_results_topic,
+            schema_version=SCHEMA_VERSION_V3,
+        )
 
     return AnalysisConsumer(
         transport=transport,
@@ -103,6 +149,8 @@ def build() -> AnalysisConsumer:
         scanner=scanner,
         registry=registry,
         results=results,
+        results_v2=results_v2,
+        results_v3=results_v3,
         dlq_topic=dlq_topic,
         max_attempts=_int("ANALYSIS_MAX_ATTEMPTS", 5),
         dlq_transport=(
@@ -111,6 +159,49 @@ def build() -> AnalysisConsumer:
             else None
         ),
     )
+
+
+def result_destination_from_env(
+    env: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    values = os.environ if env is None else env
+    result_schema_version = (
+        values.get("ANALYSIS_RESULT_SCHEMA_VERSION") or SCHEMA_VERSION
+    ).strip()
+    if result_schema_version == SCHEMA_VERSION:
+        results_topic = (
+            values.get("KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS")
+            or DEFAULT_RESULTS_TOPIC
+        ).strip()
+    elif result_schema_version == SCHEMA_VERSION_V2:
+        results_topic = (values.get(V2_RESULTS_TOPIC_ENV) or "").strip()
+        if not results_topic:
+            raise SystemExit(
+                f"{V2_RESULTS_TOPIC_ENV} is required for {SCHEMA_VERSION_V2}"
+            )
+    elif result_schema_version == SCHEMA_VERSION_V3:
+        results_topic = (values.get(V3_RESULTS_TOPIC_ENV) or "").strip()
+        if not results_topic:
+            raise SystemExit(
+                f"{V3_RESULTS_TOPIC_ENV} is required for {SCHEMA_VERSION_V3}"
+            )
+    else:
+        raise SystemExit(
+            f"unsupported ANALYSIS_RESULT_SCHEMA_VERSION {result_schema_version!r}"
+        )
+    if result_schema_version != SCHEMA_VERSION:
+        legacy_topic = (
+            values.get("KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS")
+            or DEFAULT_RESULTS_TOPIC
+        ).strip()
+        topics = [legacy_topic, results_topic]
+        if result_schema_version == SCHEMA_VERSION_V3 and values.get(
+            V2_RESULTS_TOPIC_ENV
+        ):
+            topics.append(values[V2_RESULTS_TOPIC_ENV].strip())
+        if len(set(topics)) != len(topics):
+            raise SystemExit("versioned result topics must be distinct")
+    return result_schema_version, results_topic
 
 
 def _int(name: str, default: int) -> int:

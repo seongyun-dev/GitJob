@@ -40,15 +40,31 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 __all__ = [
     "EVENT_TYPE",
     "SCHEMA_VERSION",
+    "SCHEMA_VERSION_V2",
+    "SCHEMA_VERSION_V3",
     "AnalysisStats",
+    "AnalysisStatsV2",
+    "AnalysisStatsV3",
     "EvidenceItem",
+    "EvidenceItemV2",
+    "EvidenceItemV3",
     "RepositoryAnalysisResult",
     "RepositoryAnalysisResultPayload",
+    "RepositoryAnalysisResultPayloadV2",
+    "RepositoryAnalysisResultPayloadV3",
+    "RepositoryAnalysisResultV2",
+    "RepositoryAnalysisResultV3",
     "TechnologyCandidate",
+    "TechnologyCandidateV2",
+    "TechnologySupportItem",
+    "TechnologySupportItemV3",
     "TechnologyVerdict",
+    "schema_for_rule_pack",
 ]
 
 SCHEMA_VERSION = "repository-analysis-result/v1"
+SCHEMA_VERSION_V2 = "repository-analysis-result/v2"
+SCHEMA_VERSION_V3 = "repository-analysis-result/v3"
 EVENT_TYPE = "repository.analysis.completed"
 
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -56,12 +72,26 @@ _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 # Same charset as the request contract. These identifiers are echoed back from a
 # request that already enforced it, so anything else means something upstream changed.
 Identifier = Annotated[
-    str, StringConstraints(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    str,
+    StringConstraints(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]{1,80}$"),
 ]
 
 Level = Literal["L0", "L1", "L2", "L3"]
 FactType = Literal["IMPORT", "DEPENDENCY", "ANNOTATION", "CONFIG_KEY", "API_CALL"]
+FactTypeV2 = Literal[
+    "IMPORT", "DEPENDENCY", "ANNOTATION", "CONFIG_KEY", "API_CALL", "SOURCE_FILE"
+]
+FactTypeV3 = Literal[
+    "IMPORT",
+    "DEPENDENCY",
+    "ANNOTATION",
+    "CONFIG_KEY",
+    "API_CALL",
+    "SOURCE_FILE",
+    "SYNTAX_NODE",
+]
 Ecosystem = Literal["MAVEN", "NPM", "PYPI", "NUGET"]
+EcosystemV2 = Literal["MAVEN", "NPM", "PYPI", "NUGET", "GO", "CARGO", "COMPOSER"]
 
 
 class TechnologyVerdict(BaseModel):
@@ -116,6 +146,10 @@ class TechnologyCandidate(BaseModel):
     occurrence_count: int = Field(ge=1)
 
 
+class TechnologyCandidateV2(TechnologyCandidate):
+    ecosystem: EcosystemV2
+
+
 class AnalysisStats(BaseModel):
     """What the run saw. Operational rather than user facing."""
 
@@ -127,6 +161,14 @@ class AnalysisStats(BaseModel):
     dependency_count: int = Field(default=0, ge=0)
     bytes_on_disk: int = Field(default=0, ge=0)
     duration_ms: int = Field(default=0, ge=0)
+
+
+class AnalysisStatsV2(AnalysisStats):
+    source_file_count: int = Field(default=0, ge=0)
+    annotation_count: int = Field(default=0, ge=0)
+    config_count: int = Field(default=0, ge=0)
+    api_call_count: int = Field(default=0, ge=0)
+    skipped_reasons: dict[str, int] = Field(default_factory=dict)
 
 
 class RepositoryAnalysisResultPayload(BaseModel):
@@ -164,6 +206,49 @@ class RepositoryAnalysisResultPayload(BaseModel):
         return self
 
 
+class EvidenceItemV2(EvidenceItem):
+    """V2 adds SOURCE_FILE explicitly; v1 remains byte-for-byte strict."""
+
+    fact_type: FactTypeV2
+
+
+class TechnologySupportItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tech_id: str = Field(min_length=1, max_length=80)
+    evaluation_scope: Literal["REPOSITORY"]
+    required_fact_types: tuple[FactTypeV2, ...] = Field(min_length=1)
+    max_supported_level: Level
+    coverage: Literal["SUPPORTED", "PARTIAL", "UNSUPPORTED"]
+    limitations: tuple[str, ...] = ()
+
+
+class RepositoryAnalysisResultPayloadV2(RepositoryAnalysisResultPayload):
+    """Common44 result with the immutable Rule Pack and assessment ceilings."""
+
+    rule_pack_version: str | None = Field(default=None, min_length=1)
+    rule_pack_content_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    technology_support: tuple[TechnologySupportItem, ...] = ()
+    evidence: tuple[EvidenceItemV2, ...] = ()
+    candidates: tuple[TechnologyCandidateV2, ...] = ()
+    stats: AnalysisStatsV2 | None = None
+
+    @model_validator(mode="after")
+    def _completed_common44_has_lineage(self):
+        if self.status == "COMPLETED":
+            if not self.rule_pack_version or not self.rule_pack_content_sha256:
+                raise ValueError(
+                    "a COMPLETED v2 result requires Rule Pack version and hash"
+                )
+            if not self.technology_support:
+                raise ValueError(
+                    "a COMPLETED v2 result requires technology support metadata"
+                )
+        return self
+
+
 class RepositoryAnalysisResult(BaseModel):
     """The envelope. `event_id` is the deduplication key on B's side."""
 
@@ -186,3 +271,70 @@ class RepositoryAnalysisResult(BaseModel):
         if self.event_type != EVENT_TYPE:
             raise ValueError(f"unsupported event_type {self.event_type!r}")
         return self
+
+
+class RepositoryAnalysisResultV2(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: Identifier
+    schema_version: Literal["repository-analysis-result/v2"] = SCHEMA_VERSION_V2
+    event_type: Literal["repository.analysis.completed"] = EVENT_TYPE
+    occurred_at: datetime
+    trace_id: Identifier
+    payload: RepositoryAnalysisResultPayloadV2
+
+
+class EvidenceItemV3(EvidenceItemV2):
+    fact_type: FactTypeV3
+
+
+class AnalysisStatsV3(AnalysisStatsV2):
+    syntax_node_count: int = Field(default=0, ge=0)
+
+
+class TechnologySupportItemV3(TechnologySupportItem):
+    required_fact_types: tuple[FactTypeV3, ...] = Field(min_length=1)
+
+
+class RepositoryAnalysisResultPayloadV3(RepositoryAnalysisResultPayloadV2):
+    evidence: tuple[EvidenceItemV3, ...] = ()
+    technology_support: tuple[TechnologySupportItemV3, ...] = ()
+    stats: AnalysisStatsV3 | None = None
+
+    @model_validator(mode="after")
+    def _depth_version_pair(self):
+        pair = (self.registry_version, self.rule_pack_version)
+        if self.status == "COMPLETED" and pair not in {
+            ("registry-20260911.3", "rule-pack-20260911.3"),
+            ("registry-20260911.4", "rule-pack-20260911.4"),
+        }:
+            raise ValueError(
+                "v3 structural evidence requires the depth Registry/Rule Pack version pair"
+            )
+        return self
+
+
+class RepositoryAnalysisResultV3(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    event_id: Identifier
+    schema_version: Literal["repository-analysis-result/v3"] = SCHEMA_VERSION_V3
+    event_type: Literal["repository.analysis.completed"] = EVENT_TYPE
+    occurred_at: datetime
+    trace_id: Identifier
+    payload: RepositoryAnalysisResultPayloadV3
+
+
+def schema_for_rule_pack(rule_pack_version: str | None) -> str:
+    if not rule_pack_version:
+        return SCHEMA_VERSION
+    versions = {
+        "rule-pack-20260911.2": SCHEMA_VERSION_V2,
+        "rule-pack-20260911.3": SCHEMA_VERSION_V3,
+        "rule-pack-20260911.4": SCHEMA_VERSION_V3,
+    }
+    try:
+        return versions[rule_pack_version]
+    except KeyError as invalid:
+        raise ValueError(
+            f"unsupported Rule Pack result version {rule_pack_version!r}"
+        ) from invalid

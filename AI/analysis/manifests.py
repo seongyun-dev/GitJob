@@ -48,13 +48,17 @@ import tomllib
 from analysis.parse import walk_files
 
 __all__ = [
+    "MANIFEST_PARSER_VERSION",
     "DependencyOccurrence",
     "DependencyReport",
     "ManifestScanner",
     "normalize_coordinate",
+    "parse_manifest_bytes",
+    "supports_manifest_path",
 ]
 
 log = logging.getLogger("analysis.manifests")
+MANIFEST_PARSER_VERSION = "repository-manifest-parser/v2"
 
 #: Specifier prefixes that name code inside this repository rather than a
 #: published package. Unlike the import side, these are explicit markers, so no
@@ -141,6 +145,8 @@ def normalize_coordinate(ecosystem: str, raw: str) -> str | None:
         return re.sub(r"[-_.]+", "-", value).lower()
     if ecosystem == "NUGET":
         return value.lower()
+    if ecosystem in {"GO", "CARGO", "COMPOSER"}:
+        return value.lower() if ecosystem in {"CARGO", "COMPOSER"} else value
     raise ValueError(f"unknown ecosystem {ecosystem!r}")
 
 
@@ -199,6 +205,12 @@ class ManifestScanner:
             return self._read_requirements
         if name.endswith(".csproj") or name == "directory.packages.props":
             return self._read_csproj
+        if name == "go.mod":
+            return self._read_go_mod
+        if name == "cargo.toml":
+            return self._read_cargo
+        if name == "composer.json":
+            return self._read_composer
         return None
 
     def _read(self, path: Path, skipped: Counter[str]) -> str | None:
@@ -213,7 +225,9 @@ class ManifestScanner:
 
     # -- version catalog ----------------------------------------------------
 
-    def _load_version_catalogs(self, root: Path, skipped: Counter[str]) -> dict[str, str]:
+    def _load_version_catalogs(
+        self, root: Path, skipped: Counter[str]
+    ) -> dict[str, str]:
         """alias -> `group:artifact` from every `gradle/libs.versions.toml`.
 
         Gradle turns the TOML key `spring-boot` into the accessor
@@ -356,7 +370,9 @@ class ManifestScanner:
                     coordinate=coordinate,
                     scope=_child_text(dependency, "scope") or "compile",
                     file=relative,
-                    line=_line_of(text, rf"<artifactId>\s*{re.escape(artifact)}\s*</artifactId>"),
+                    line=_line_of(
+                        text, rf"<artifactId>\s*{re.escape(artifact)}\s*</artifactId>"
+                    ),
                 )
             )
         return found
@@ -373,7 +389,11 @@ class ManifestScanner:
                 # -r/-c pull in another file this walk already visits; -e and
                 # --editable point at this repository's own source.
                 continue
-            if "://" in entry or entry.startswith("."):
+            if entry.startswith(("./", "../", "/")):
+                raise ValueError(
+                    "requirements contain no parseable dependency declaration"
+                )
+            if "://" in entry:
                 continue
             match = _PYPI_REQUIREMENT.match(entry)
             if not match:
@@ -433,9 +453,9 @@ class ManifestScanner:
                 if isinstance(requirement, str):
                     add(requirement, f"optional:{extra}")
 
-        poetry = ((document.get("tool") or {}).get("poetry") or {})
+        poetry = (document.get("tool") or {}).get("poetry") or {}
         for section in ("dependencies", "dev-dependencies"):
-            for name in (poetry.get(section) or {}):
+            for name in poetry.get(section) or {}:
                 if name.lower() != "python":
                     add(name, f"poetry:{section}", table_key=True)
         return found
@@ -446,9 +466,13 @@ class ManifestScanner:
         root = ElementTree.fromstring(text)
         found: list[DependencyOccurrence] = []
         for element in root.iter():
-            if _tag(element) not in {"PackageReference", "PackageVersion"}:
+            tag = _tag(element)
+            if tag not in {"PackageReference", "GlobalPackageReference"}:
                 continue
-            name = element.get("Include") or element.get("Update")
+            # PackageVersion only supplies central version metadata; it has no
+            # dependency effect until a project declares PackageReference.
+            # Update changes an existing item and cannot establish one alone.
+            name = element.get("Include")
             if not name:
                 continue
             coordinate = normalize_coordinate("NUGET", name)
@@ -458,19 +482,154 @@ class ManifestScanner:
                 DependencyOccurrence(
                     ecosystem="NUGET",
                     coordinate=coordinate,
-                    scope=_tag(element),
+                    scope=tag,
                     file=relative,
                     line=_line_of(text, re.escape(name)),
                 )
             )
         return found
 
+    def _read_go_mod(
+        self, text: str, relative: str, _catalog: dict[str, str]
+    ) -> list[DependencyOccurrence]:
+        found: list[DependencyOccurrence] = []
+        in_require = False
+        for number, line in enumerate(text.splitlines(), start=1):
+            stripped = line.split("//", 1)[0].strip()
+            if not stripped:
+                continue
+            if stripped == "require (":
+                in_require = True
+                continue
+            if in_require and stripped == ")":
+                in_require = False
+                continue
+            entry = stripped
+            if stripped.startswith("require "):
+                entry = stripped[len("require ") :].strip()
+            elif not in_require:
+                continue
+            coordinate = entry.split()[0] if entry.split() else ""
+            if coordinate and "." in coordinate and not coordinate.startswith("./"):
+                found.append(
+                    DependencyOccurrence("GO", coordinate, "require", relative, number)
+                )
+        return found
+
+    def _read_cargo(
+        self, text: str, relative: str, _catalog: dict[str, str]
+    ) -> list[DependencyOccurrence]:
+        document = tomllib.loads(text)
+        found: list[DependencyOccurrence] = []
+        for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+            entries = document.get(section) or {}
+            if not isinstance(entries, dict):
+                continue
+            for name, specifier in entries.items():
+                if isinstance(specifier, dict) and (
+                    specifier.get("path") or specifier.get("workspace")
+                ):
+                    continue
+                coordinate = normalize_coordinate("CARGO", str(name))
+                if coordinate:
+                    found.append(
+                        DependencyOccurrence(
+                            "CARGO",
+                            coordinate,
+                            section,
+                            relative,
+                            _line_of(text, rf"^\s*{re.escape(str(name))}\s*=", 0),
+                        )
+                    )
+        return found
+
+    def _read_composer(
+        self, text: str, relative: str, _catalog: dict[str, str]
+    ) -> list[DependencyOccurrence]:
+        document = json.loads(text)
+        if not isinstance(document, dict):
+            return []
+        found: list[DependencyOccurrence] = []
+        for section in ("require", "require-dev"):
+            entries = document.get(section) or {}
+            if not isinstance(entries, dict):
+                continue
+            for name, specifier in entries.items():
+                if str(name).lower() == "php" or str(specifier).startswith(
+                    ("path:", "./", "../")
+                ):
+                    continue
+                coordinate = normalize_coordinate("COMPOSER", str(name))
+                if coordinate:
+                    found.append(
+                        DependencyOccurrence(
+                            "COMPOSER",
+                            coordinate,
+                            section,
+                            relative,
+                            _line_of(text, rf'"{re.escape(str(name))}"\s*:'),
+                        )
+                    )
+        return found
+
+
+def parse_manifest_bytes(
+    path: str,
+    content: bytes,
+    *,
+    companion_files: dict[str, bytes] | None = None,
+) -> tuple[DependencyOccurrence, ...]:
+    """Parse a single in-memory manifest using the checkout scanner's readers.
+
+    Unsupported names return an empty tuple. Oversized content and malformed
+    supported manifests raise ``ValueError`` so callers can distinguish absent
+    support from a corrupt artifact.
+    """
+    scanner = ManifestScanner()
+    if len(content) > scanner.max_file_bytes:
+        raise ValueError("manifest exceeds 512 KiB")
+    relative = Path(path.replace("\\", "/")).as_posix()
+    reader = scanner._reader_for(Path(relative).name.lower())
+    if reader is None:
+        return ()
+    catalog: dict[str, str] = {}
+    for companion_path, companion_content in (companion_files or {}).items():
+        if Path(companion_path).name.lower() != "libs.versions.toml":
+            continue
+        if len(companion_content) > scanner.max_file_bytes:
+            raise ValueError("companion manifest exceeds 512 KiB")
+        document = tomllib.loads(companion_content.decode("utf-8", "replace"))
+        for alias, entry in (document.get("libraries") or {}).items():
+            coordinate = _catalog_coordinate(entry)
+            if coordinate:
+                catalog[alias.replace("-", ".").replace("_", ".")] = coordinate
+    try:
+        return tuple(reader(content.decode("utf-8", "replace"), relative, catalog))
+    except (
+        json.JSONDecodeError,
+        tomllib.TOMLDecodeError,
+        ElementTree.ParseError,
+    ) as invalid:
+        raise ValueError(f"malformed manifest {relative}") from invalid
+
+
+def supports_manifest_path(path: str) -> bool:
+    """Whether an empty parse means a supported manifest with no dependencies."""
+    return (
+        ManifestScanner()._reader_for(Path(path.replace("\\", "/")).name.lower())
+        is not None
+    )
+
 
 def _catalog_coordinate(entry: object) -> str | None:
     """A catalog entry is either `"group:artifact:version"` or a table."""
     if isinstance(entry, str):
         parts = entry.split(":")
-        return normalize_coordinate("MAVEN", ":".join(parts[:2])) if len(parts) >= 2 else None
+        return (
+            normalize_coordinate("MAVEN", ":".join(parts[:2]))
+            if len(parts) >= 2
+            else None
+        )
     if not isinstance(entry, dict):
         return None
     module = entry.get("module")
@@ -518,7 +677,7 @@ def _line_of(text: str, pattern: str, start: int = 0) -> int:
     a typical package.json -- so a search from the top of the file points the
     permalink at a line that merely mentions the name.
     """
-    match = re.search(pattern, text[start:])
+    match = re.search(pattern, text[start:], flags=re.MULTILINE)
     if match is None:
         return 1
     return text.count("\n", 0, start + match.start()) + 1

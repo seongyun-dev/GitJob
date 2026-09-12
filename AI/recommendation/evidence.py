@@ -1,7 +1,8 @@
 """Versioned B-result adapter and C's repository-scoped held-technology policy.
 
-B owns extraction, rules, attribution and Evidence levels. This module consumes
-those results; it never calculates an Evidence level from source code or blame.
+C owns the shared Rule Pack and its required extractors. B runs repository
+analysis, owns personal attribution and aggregation, then supplies Evidence.
+This consumer never infers a personal level from source code or blame.
 """
 
 from collections.abc import Iterable
@@ -18,6 +19,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
 from registry.contracts import TechId
 
 LEVEL_POLICY_VERSION = "level-policy/v2"

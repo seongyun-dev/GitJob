@@ -1,0 +1,44 @@
+{
+  "tech_id": "nestjs",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/audit.interceptor.ts": "import { NestInterceptor } from '@nestjs/common';\nimport { catchError, finalize } from 'rxjs/operators';\nclass AuditInterceptor implements NestInterceptor {\n  intercept(context, next) {\n    return next.handle().pipe(catchError(recordFailure), finalize(recordCompletion));\n  }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "nestjs.l3.interceptor-error-lifecycle"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires a resolved NestInterceptor implementation with intercept plus attributed RxJS catchError and finalize calls in the same class; controllers and providers split across classes are not combined."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/audit.interceptor.ts": "import { NestInterceptor } from '@nestjs/common';\nimport { catchError } from 'rxjs/operators';\nclass AuditInterceptor implements NestInterceptor {\n  intercept(context, next) {\n    return next.handle().pipe(catchError(recordFailure));\n  }\n}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nestjs.l3.interceptor-error-lifecycle"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "signals-split-across-classes",
+      "kind": "near_miss",
+      "files": {
+        "src/mixed.ts": "import { NestInterceptor } from '@nestjs/common';\nimport { catchError, finalize } from 'rxjs/operators';\nclass AuditInterceptor implements NestInterceptor { intercept(context, next) { return next.handle(); } }\nclass Unrelated { run(stream) { return stream.pipe(catchError(recordFailure), finalize(recordCompletion)); } }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nestjs.l3.interceptor-error-lifecycle"
+      ],
+      "tradeoff": "RxJS error and cleanup operators in another class cannot complete a Nest interceptor implementation."
+    }
+  ]
+}

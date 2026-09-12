@@ -1,0 +1,31 @@
+{
+  "tech_id": "mysql",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/Load.java": "import com.mysql.cj.jdbc.MysqlDataSource;\nclass Load { void run() throws Exception { MysqlDataSource source = new MysqlDataSource(); source.setRewriteBatchedStatements(true); source.getConnection(); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "mysql.l2.driver-api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 requires an attributed MySQL connection plus a driver batch API in one authored file; ORM and raw SQL paths are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/Load.java": "import com.mysql.cj.jdbc.MysqlDataSource;\nclass Load { void run() throws Exception { MysqlDataSource source = new MysqlDataSource(); source.getConnection(); } }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "mysql.l2.driver-api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

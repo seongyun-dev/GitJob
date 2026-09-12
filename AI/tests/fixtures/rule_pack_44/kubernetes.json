@@ -1,0 +1,69 @@
+{
+  "tech_id": "kubernetes",
+  "positive": {
+    "files": {
+      "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: app:1\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning kubernetes only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "README.md": "```yaml\napiVersion: apps/v1\nkind: Deployment\n```\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "workload-with-operational-config",
+      "files": {
+        "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx:alpine\n          readinessProbe:\n            httpGet:\n              path: /ready\n              port: 80\n          resources:\n            limits:\n              cpu: \"1\"\n              memory: 128Mi\n"
+      },
+      "expected_rule_ids": [
+        "kubernetes.l0.manifest",
+        "kubernetes.l1.workload",
+        "kubernetes.l2.operations"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "workload-without-operations",
+      "files": {
+        "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx:alpine\n"
+      },
+      "expected_rule_ids": [
+        "kubernetes.l1.workload"
+      ],
+      "absent_rule_ids": [
+        "kubernetes.l2.operations"
+      ]
+    },
+    {
+      "name": "service-only",
+      "files": {
+        "k8s/service.yaml": "apiVersion: v1\nkind: Service\nspec:\n  ports:\n    - port: 80\n"
+      },
+      "expected_rule_ids": [
+        "kubernetes.l0.manifest"
+      ],
+      "absent_rule_ids": [
+        "kubernetes.l1.workload",
+        "kubernetes.l2.operations"
+      ]
+    },
+    {
+      "name": "lookalike-config-lacks-k8s-identity",
+      "files": {
+        "settings.yaml": "readinessProbe: enabled\nresources:\n  limits:\n    cpu: 1\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "kubernetes.l0.manifest",
+        "kubernetes.l1.workload",
+        "kubernetes.l2.operations"
+      ]
+    }
+  ]
+}

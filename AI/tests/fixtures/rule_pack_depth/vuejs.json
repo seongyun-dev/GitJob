@@ -1,0 +1,31 @@
+{
+  "tech_id": "vuejs",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/useCounter.ts": "import { ref } from 'vue';\nexport const count = ref(0);\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "vuejs.l2.api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 recognizes Vue-attributed Composition API calls; static call combinations are not promoted to L3 because they do not establish application complexity or runtime behavior."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/useCounter.ts": "import { ref } from 'vue';\nexport const count = 0;\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "vuejs.l2.api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

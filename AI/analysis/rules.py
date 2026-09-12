@@ -96,6 +96,10 @@ class Rule:
     evaluation_scope: str  # REPOSITORY | PERSONAL
     priority: int
     clauses: tuple[Clause, ...]
+    #: Required clauses must agree on these fact fields. FILE_PATH prevents a
+    #: library import in one file from lending identity to an unrelated common
+    #: method call in another file.
+    binding_fields: tuple[str, ...] = ()
 
     def groups(self) -> dict[int, tuple[Clause, ...]]:
         """Clauses by `group_no`. Groups are alternatives; within one, AND."""
@@ -113,6 +117,9 @@ class RuleSet:
     mappings: tuple[Mapping, ...]
     rules: tuple[Rule, ...]
     display_names: dict[str, str] = field(default_factory=dict)
+    rule_pack_version: str | None = None
+    rule_pack_content_sha256: str | None = None
+    technology_support: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.mappings and not self.rules:
@@ -174,6 +181,15 @@ def load_rule_set(connection, registry_version: str) -> RuleSet:
     Takes a connection rather than a DSN so the caller owns pooling, and so a
     test can hand in anything with `execute`.
     """
+    if registry_version in {
+        "registry-20260911.2",
+        "registry-20260911.3",
+        "registry-20260911.4",
+    }:
+        from registry.rulepack_db import load_published_rule_set
+
+        return load_published_rule_set(connection, registry_version)
+
     mappings = tuple(
         Mapping(*row)
         for row in connection.execute(_MAPPINGS_SQL, (registry_version,)).fetchall()
@@ -205,7 +221,9 @@ def load_rule_set(connection, registry_version: str) -> RuleSet:
             # A clause with no predicate places no condition, so every fact of
             # its type satisfies it. That is never what someone meant to write.
             log.warning(
-                "clause %s of rule %s has no predicate and is ignored", clause_id, rule_id
+                "clause %s of rule %s has no predicate and is ignored",
+                clause_id,
+                rule_id,
             )
             continue
         clauses_by_rule[rule_id].append(

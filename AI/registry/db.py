@@ -204,58 +204,71 @@ class PostgresRegistryStore:
     ) -> RegistrySnapshotRef:
         """Insert a new immutable snapshot and optionally move its family alias."""
 
+        with self._connect() as conn:
+            return self._import_registry_in(
+                conn, registry, source_ref=source_ref, activate_alias=activate_alias
+            )
+
+    def _import_registry_in(
+        self,
+        conn,
+        registry: TechnologyRegistry,
+        *,
+        source_ref: str,
+        activate_alias: bool = False,
+    ) -> RegistrySnapshotRef:
+        """Same import within an existing transaction for an atomic Rule Pack."""
         if not source_ref.strip():
             raise ValueError("Registry source_ref must not be blank")
         content_sha256 = registry_content_sha256(registry)
-        with self._connect() as conn:
-            self._lock_content_tables(conn, for_import=True)
-            inserted = conn.execute(
-                """INSERT INTO public.technology_registry
-                       (registry_version, schema_version, status, published_at,
-                        content_sha256, source_ref, imported_at)
-                   VALUES (%s, %s, 'RETIRED', clock_timestamp(), %s, %s,
-                           clock_timestamp())
-                   ON CONFLICT (registry_version) DO NOTHING
-                   RETURNING schema_version, registry_version, content_sha256,
-                             source_ref, imported_at""",
-                (
-                    registry.registry_version,
-                    registry.schema_version,
-                    content_sha256,
-                    source_ref,
-                ),
+        self._lock_content_tables(conn, for_import=True)
+        inserted = conn.execute(
+            """INSERT INTO public.technology_registry
+                   (registry_version, schema_version, status, published_at,
+                    content_sha256, source_ref, imported_at)
+               VALUES (%s, %s, 'RETIRED', clock_timestamp(), %s, %s,
+                       clock_timestamp())
+               ON CONFLICT (registry_version) DO NOTHING
+               RETURNING schema_version, registry_version, content_sha256,
+                         source_ref, imported_at""",
+            (
+                registry.registry_version,
+                registry.schema_version,
+                content_sha256,
+                source_ref,
+            ),
+        ).fetchone()
+        if inserted is None:
+            existing = conn.execute(
+                """SELECT schema_version, registry_version, content_sha256,
+                          source_ref, imported_at
+                   FROM public.technology_registry
+                   WHERE registry_version = %s FOR UPDATE""",
+                (registry.registry_version,),
             ).fetchone()
-            if inserted is None:
-                existing = conn.execute(
-                    """SELECT schema_version, registry_version, content_sha256,
-                              source_ref, imported_at
-                       FROM public.technology_registry
-                       WHERE registry_version = %s FOR UPDATE""",
-                    (registry.registry_version,),
-                ).fetchone()
-                if (
-                    existing is None
-                    or existing["schema_version"] != registry.schema_version
-                    or not existing["content_sha256"]
-                    or existing["content_sha256"].strip() != content_sha256
-                    or existing["source_ref"] != source_ref
-                ):
-                    raise ImmutableRegistryConflict(
-                        "Registry content version already exists with different "
-                        "content or provenance"
-                    )
-                result = self._snapshot_ref(existing)
-            else:
-                self._insert_snapshot_rows(conn, registry)
-                result = self._snapshot_ref(inserted)
-
-            loaded = self._load_registry_from_connection(conn, result)
-            if loaded != registry:
-                raise RegistryIntegrityError(
-                    "persisted Registry rows differ from the imported snapshot"
+            if (
+                existing is None
+                or existing["schema_version"] != registry.schema_version
+                or not existing["content_sha256"]
+                or existing["content_sha256"].strip() != content_sha256
+                or existing["source_ref"] != source_ref
+            ):
+                raise ImmutableRegistryConflict(
+                    "Registry content version already exists with different "
+                    "content or provenance"
                 )
-            if activate_alias:
-                self._activate_alias(conn, result)
+            result = self._snapshot_ref(existing)
+        else:
+            self._insert_snapshot_rows(conn, registry)
+            result = self._snapshot_ref(inserted)
+
+        loaded = self._load_registry_from_connection(conn, result)
+        if loaded != registry:
+            raise RegistryIntegrityError(
+                "persisted Registry rows differ from the imported snapshot"
+            )
+        if activate_alias:
+            self._activate_alias(conn, result)
 
         return result
 
@@ -384,7 +397,7 @@ class PostgresRegistryStore:
         ).fetchall()
         mappings = conn.execute(
             """SELECT tech_id, mapping_type, ecosystem, value, match_mode,
-                      status, provenance_refs
+                      status, normalized_value, provenance_refs
                FROM public.technology_mapping
                WHERE registry_version = %s
                ORDER BY registry_order""",
@@ -428,6 +441,17 @@ class PostgresRegistryStore:
             raise RegistryIntegrityError(
                 "persisted Registry rows violate the Registry contract"
             ) from exc
+        for row, mapping in zip(mappings, registry.mappings, strict=True):
+            normalized_value = normalize_mapping_value(
+                mapping.mapping_type.value,
+                mapping.ecosystem.value if mapping.ecosystem else None,
+                mapping.value,
+            )
+            if row["normalized_value"] != normalized_value:
+                raise RegistryIntegrityError(
+                    "persisted Registry mapping normalized value does not match "
+                    "its source-qualified mapping"
+                )
         if registry_content_sha256(registry) != expected.content_sha256:
             raise RegistryIntegrityError(
                 "persisted Registry content does not match its recorded hash"
