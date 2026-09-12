@@ -1093,6 +1093,15 @@ C조 범위다.
 - 멱등/late: 같은 id + 같은 bytes 는 멱등 성공, 같은 id + 다른 데이터는 `FileExistsError`. late event 는 새 `dataset_snapshot_id`
 - 상세: [주간 Repo Activity 집계](2026-09-12-repo-activity-weekly.md) §8.1
 
+## MVP E2E Runbook 및 부하 테스트 계획 (S15P21E102-226)
+
+- Jira: S15P21E102-226
+- 목적: MVP 정상화 판정 → 데이터량 단계 증가 → 병목 측정 → 발표 자료까지의 문서 기반
+- [MVP 데이터 파이프라인 E2E Runbook](2026-09-12-mvp-e2e-runbook.md) — HDFS / 채용공고 / Historical / Realtime / C handoff / API / FE 단계별 실행·PASS·gate. "코드 있음" / "운영 검증됨" / "실행 경로 있음·미등록" / "배선 없음"을 구분한다. 채용공고는 **4 source / 8 run**(`-230` 이후)
+- [부하 테스트 계획](2026-09-12-load-test-plan.md) — Baseline(2026-08, 744h) → 123% → 152% → 187% → 232%. 기간만 넓히므로 신규 수집 0건. 측정 지표와 기록 표
+- [병목 판정 기준 · 튜닝 후보 · 발표 템플릿](2026-09-12-bottleneck-analysis-template.md) — 증가배수 R 기준, 원인별 조절 지점, "문제 발견 → 원인 → 개선 → 결과" 한 장 템플릿
+- 측정 제약: HDFS·Spark 지표는 Prometheus exporter가 없어 CLI·Spark UI 수동 수집이다(`docs/be/admin-monitoring-api.md` §7). Spark job이 stdout에 내는 summary JSON이 1차 데이터다
+
 ## GH Archive 6개월 Historical Bootstrap
 
 - Jira: S15P21E102-179
