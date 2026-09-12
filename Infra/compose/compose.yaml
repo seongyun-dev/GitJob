@@ -707,6 +707,100 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  # C1 Archiver as a managed process rather than a manual submit
+  # (S15P21E102-228).
+  #
+  # `Infra/scripts/spark-c1-archiver.sh` could already run the stream with
+  # ONCE=0, but nothing owned its lifecycle: a killed process or a rebooted
+  # host left C1 down and `github.events` piling up with no signal. The other
+  # long-running pieces here — collector, worker, analysis-worker, spark-worker
+  # — are all `profiles: [data]` + `restart: unless-stopped` + `command:`, so
+  # this follows that and needs no systemd unit.
+  #
+  # **One replica is the duplicate guard.** C1 deliberately has no
+  # `kafka.group.id` (`-102` §5): the checkpoint is the only record of
+  # progress, so two processes on the same checkpoint directory would both
+  # believe they own it. A single service definition is what keeps that from
+  # happening; do not `--scale` this service.
+  #
+  # The image must be the project Spark build, not the upstream base: the
+  # Kafka connector jars and `/opt/gitjob/spark` are added by
+  # `Infra/docker/spark/Dockerfile`. `.env.example` already pins
+  # `SPARK_IMAGE=gitjob/spark:3.5.3` and `deploy.sh` builds it.
+  #
+  #   start   compose --profile data up -d spark-c1-archiver
+  #   stop    compose --profile data stop spark-c1-archiver
+  #   restart compose --profile data restart spark-c1-archiver
+  #   status  compose --profile data ps spark-c1-archiver
+  #   logs    compose --profile data logs -f spark-c1-archiver
+  spark-c1-archiver:
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      # Same expression the other five Kafka clients here use. The data host
+      # runs no broker, so `.env.data` must carry the real endpoint — exactly
+      # as `collector` and `worker` already require. Making this mandatory with
+      # `:?` would change the deployment contract for every profile, since
+      # Compose interpolates the whole file before filtering by profile.
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - ${SPARK_MASTER_URL:-spark://spark-master:7077}
+      - --deploy-mode
+      - client
+      - --name
+      - gitjob-c1-archiver
+      # Mirrors `_lib.sh`'s spark_submit_network_args. In the two-host layout
+      # the driver has to advertise an address the other host can reach.
+      - --conf
+      - spark.driver.bindAddress=${SPARK_DRIVER_BIND_ADDRESS:-0.0.0.0}
+      - --conf
+      - spark.driver.host=${SPARK_DRIVER_HOST:-spark-c1-archiver}
+      - --conf
+      - spark.hadoop.dfs.client.use.datanode.hostname=true
+      # Mirrors spark_submit_storage_args. RF2 is the two-DataNode target.
+      - --conf
+      - spark.hadoop.dfs.replication=${SPARK_HDFS_REPLICATION:-2}
+      - --conf
+      - spark.hadoop.fs.defaultFS=${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      # The driver UI, which the healthcheck below probes.
+      - --conf
+      - spark.ui.port=4040
+      - /opt/gitjob/spark/c1_archiver_stream.py
+      - --bootstrap-servers
+      - ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      - --topics
+      - ${C1_TOPICS:-github.events,so.raw}
+      - --parquet-root
+      - ${PARQUET_ROOT:-hdfs:///gitjob/parquet}
+      # Unchanged from the manual path, so a restart resumes where the last
+      # run stopped: hdfs:///gitjob/checkpoints/c1/{topic}.
+      - --checkpoint-root
+      - ${CHECKPOINT_ROOT:-hdfs:///gitjob/checkpoints}
+      - --max-offsets-per-trigger
+      - ${MAX_OFFSETS_PER_TRIGGER:-10000}
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+    expose:
+      - "4040"
+    # A Structured Streaming query exposes no endpoint of its own; the driver
+    # UI is the thing that disappears when the driver dies, which is exactly
+    # what `restart: unless-stopped` needs to see. Same probe shape as
+    # spark-worker's.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/localhost/4040'"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      # A cold start reads the checkpoint and negotiates with the master.
+      start_period: 120s
+    logging: *default-logging
+
   jenkins:
     image: ${JENKINS_IMAGE:-gitjob/jenkins:local}
     profiles: [ci]

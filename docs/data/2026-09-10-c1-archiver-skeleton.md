@@ -262,3 +262,89 @@ payload          {"id": "14172383030", "type": "PullRequestEvent", ...}
 | 운영 전환 | ①에 종속 — 운영 브로커 토픽 3종 생성 |
 | `so.raw` | 발행자 없음 (`-145`). C1 이 구독은 하지만 검증할 데이터가 없다 |
 | 출력 경로 확정 | §3.2 는 골격 결정. `-110` Sink 소유자 확인 필요 |
+
+---
+
+## 운영 실행 — `spark-c1-archiver` 서비스 (S15P21E102-228)
+
+스크립트는 `ONCE=0` 장기 실행을 지원했지만 **lifecycle 을 소유한 것이 없었다.**
+프로세스가 죽거나 호스트가 재부팅되면 C1 이 내려간 채로 `github.events` 만 쌓였고
+그 사실을 알려주는 것도 없었다. compose service 로 옮긴다.
+
+### start / stop / restart / status / logs
+
+```bash
+export ENV_FILE=.env.data
+export COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml
+export PROFILES=data
+compose() { docker compose --project-directory . --env-file "$ENV_FILE"   -f Infra/compose/compose.yaml -f "$COMPOSE_OVERRIDE_FILE" --profile data "$@"; }
+
+compose up -d spark-c1-archiver     # start
+compose stop spark-c1-archiver      # stop
+compose restart spark-c1-archiver   # restart
+compose ps spark-c1-archiver        # status (healthy/unhealthy 포함)
+compose logs -f spark-c1-archiver   # logs
+```
+
+### 왜 systemd 가 아닌가
+
+저장소의 장기 실행 서비스는 `collector`, `worker`, `analysis-worker`,
+`spark-worker` 전부 `profiles: [data]` + `restart: unless-stopped` + `command:` +
+healthcheck 형태다. C1 만 다른 방식을 쓸 이유가 없고, `restart: unless-stopped` 가
+프로세스 종료와 호스트 재부팅 양쪽의 자동 복구를 이미 담당한다. tmux 는 운영 방식이
+아니다.
+
+### 중복 consumer 방지
+
+C1 은 의도적으로 `kafka.group.id` 를 쓰지 않는다(`-102` §5). checkpoint 가 진척의
+유일한 기록이므로 **같은 checkpoint 디렉터리를 두 프로세스가 쓰면 둘 다 자기가
+소유자라고 믿는다.** 단일 서비스 정의가 그것을 막는 장치다.
+
+> ⚠️ **이 서비스를 `--scale` 하지 않는다.** 복제본 하나가 늘어나는 순간 checkpoint
+> 소유권이 깨진다.
+
+### checkpoint 와 출력
+
+스크립트 경로와 **동일하다.** 서비스로 바꾼 것이 위치를 옮기지 않으므로, 수동 실행
+이력이 있어도 재시작이 중단 지점을 그대로 이어받는다.
+
+| 항목 | 값 |
+|---|---|
+| checkpoint | `hdfs:///gitjob/checkpoints/c1/{topic}` (`CHECKPOINT_ROOT`) |
+| 출력 | `hdfs:///gitjob/parquet/stream/{topic}` (`PARQUET_ROOT`) |
+| 거부분 | `hdfs:///gitjob/parquet/stream/_rejected/{topic}` |
+| topics | `C1_TOPICS` (기본 `github.events,so.raw`) |
+
+### 이미지
+
+**upstream base 가 아니라 프로젝트 Spark 빌드여야 한다.** Kafka connector jar 와
+`/opt/gitjob/spark` 는 `Infra/docker/spark/Dockerfile` 이 넣는다. `.env.example` 이
+`SPARK_IMAGE=gitjob/spark:3.5.3` 을 고정하고 `deploy.sh` 가 빌드한다.
+
+### health 판정
+
+Structured Streaming 쿼리는 자기 endpoint 가 없다. driver UI(4040)가 **driver 가
+죽으면 사라지는 것**이고, 그것이 `restart: unless-stopped` 가 봐야 하는 신호다.
+`spark-worker` 의 probe 와 같은 모양이다. cold start 는 checkpoint 를 읽고 master 와
+협상하므로 `start_period: 120s` 를 둔다.
+
+### Kafka endpoint
+
+다른 다섯 Kafka client 와 같은 `${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}` 를 쓴다.
+**data 호스트에는 broker 가 없으므로 `.env.data` 가 실제 endpoint 를 담아야 한다** —
+`collector` 와 `worker` 가 이미 같은 것을 요구한다. `:?` 로 필수화하면 Compose 가
+profile 필터링 전에 파일 전체를 보간하므로 모든 profile 의 배포 계약이 바뀐다.
+
+### 아직 검증되지 않은 것
+
+**이 서비스 정의는 실행된 적이 없다.** 작성 시점에 Docker 가 없는 호스트에서
+정적 검증만 했다 — YAML 파싱, profile/restart/healthcheck/`--once` 부재/checkpoint
+경로 일치, `${VAR}` 전부 기본값 또는 `.env.example` 선언.
+
+HDFS RF2 정상화 뒤 아래를 gate 로 남긴다.
+
+1. `docker compose config` 가 서비스를 렌더한다
+2. `compose up -d spark-c1-archiver` 후 `ps` 가 healthy
+3. `docker kill` 후 자동 재기동
+4. 호스트 재부팅 후 자동 복구
+5. checkpoint offset 이 재시작 뒤 전진
