@@ -15,6 +15,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from registry.contracts import TechId
+from registry.mapper import MatchStatus
 
 from job.classifier import (
     JOB_REQUIREMENT_PARSER_VERSION,
@@ -28,8 +30,6 @@ from job.contracts import (
     RequirementType,
     SourceSurface,
 )
-from registry.contracts import TechId
-from registry.mapper import MatchStatus
 
 JOB_REQUIREMENTS_SCHEMA_VERSION = "job-requirements/v2"
 JOB_REQUIREMENTS_LEGACY_SCHEMA_VERSION = "job-requirements/v1"
@@ -266,7 +266,8 @@ _OR = re.compile(r"\bor\b|또는|혹은|아니면", re.IGNORECASE)
 _AND = re.compile(r"\band\b|및|그리고|&|\+", re.IGNORECASE)
 _ACTIVITY_CONJUNCTION = re.compile(
     r"(?<!\w)(?:개발\s+및\s+운영|구축\s+및\s+(?:운영|운용)|"
-    r"설계\s+및\s+구현|배포\s+및\s+운영)(?!\w)"
+    r"설계\s+및\s+구현|배포\s+및\s+운영|"
+    r"(?:RDB|데이터베이스)\s+설계\s+및\s+쿼리\s+최적화\s+경험)(?!\w)"
 )
 _NEGATION = re.compile(
     r"없어도|무관|불필요|경험(?:이)?\s*없는|"
@@ -392,6 +393,7 @@ _REQUIRED_HEADINGS = frozenset(
         "자격요건",
         "지원자격",
         "필수",
+        "필수자격",
         "필수사항",
         "필수역량",
         "요구사항",
@@ -404,6 +406,11 @@ _DUTY_HEADINGS = frozenset(
 )
 _PREFERRED_HEADINGS = frozenset(
     {"우대", "우대사항", "우대조건", "우대자격요건", "preferred", "nicetohave"}
+)
+_TRAILING_PREFERRED = re.compile(r"우대(?:\s*(?:합니다|임|자))?\s*[.!]?$")
+_DUTY_EXPLICIT_L3_REQUIREMENT = re.compile(
+    r"(?=.*(?:RDB|데이터베이스))(?=.*(?:쿼리|SQL))(?=.*최적화)(?=.*경험)",
+    re.IGNORECASE,
 )
 _GENERAL_HEADINGS = frozenset(
     {
@@ -425,7 +432,11 @@ def _heading_key(value: str | None) -> str:
     if value is None:
         return ""
     label = value.casefold().strip().strip("[]()#*•-:：")
-    label = re.sub(r"^(?:(?:[0-9]{1,2}[.)]|[📋🏠🎁🚀])\s*)+", "", label)
+    label = re.sub(
+        r"^(?:(?:[0-9]{1,2}[.)]|[0-9]\ufe0f?\u20e3|[📋🏠🎁🚀])\s*)+",
+        "",
+        label,
+    )
     return "".join(label.split()).strip("[]()#*•-:：")
 
 
@@ -788,7 +799,15 @@ def _unresolved_reason(
         return UnresolvedReason.CARDINALITY_UNSUPPORTED
     if _GRADE_RANGE.search(text):
         return UnresolvedReason.LOGIC_UNSUPPORTED
-    if _UNCERTAIN_EXAMPLE.search(text):
+    uncertainty_text = text
+    for item in items:
+        uncertainty_text = re.sub(
+            rf"{re.escape(item.raw_technology)}\s+등\s+클라우드\s+환경",
+            item.raw_technology,
+            uncertainty_text,
+            flags=re.IGNORECASE,
+        )
+    if _UNCERTAIN_EXAMPLE.search(uncertainty_text):
         return UnresolvedReason.LOGIC_UNSUPPORTED
     if any(item.match_status is not MatchStatus.MATCHED for item in items):
         return UnresolvedReason.TECHNOLOGY_MAPPING_UNRESOLVED
@@ -1045,11 +1064,12 @@ def extract_job_requirements(
     # Registry mapping or treating arbitrary prose as a requirement.
     if record.description_text is not None:
         by_raw: defaultdict[str, list[TechnologyClassification]] = defaultdict(list)
+        recovered_unlocated_indices: set[int] = set()
+        preferred_span_overrides: set[tuple[SourceSurface, int, int]] = set()
         for item in classification.technologies:
-            if (
-                item.location.source_surface is SourceSurface.BODY
-                and item.location.char_start is not None
-                and item.location.char_end is not None
+            if item.location.source_surface is SourceSurface.BODY and (
+                item.location.char_start is not None
+                or item.source_technology_id is not None
             ):
                 by_raw[item.raw_technology.casefold()].append(item)
         active_section: RequirementKind | Literal["GENERAL", "DUTY"] | None = None
@@ -1062,7 +1082,15 @@ def extract_job_requirements(
                 active_section = section
                 offset += len(line_with_end)
                 continue
-            if active_section not in (
+            line_section = active_section
+            has_trailing_preferred = _TRAILING_PREFERRED.search(line) is not None
+            if active_section is RequirementKind.PREFERRED or has_trailing_preferred:
+                line_section = RequirementKind.PREFERRED
+            elif active_section == "DUTY" and _DUTY_EXPLICIT_L3_REQUIREMENT.search(
+                line
+            ):
+                line_section = RequirementKind.REQUIRED
+            if line_section not in (
                 RequirementKind.REQUIRED,
                 RequirementKind.PREFERRED,
             ):
@@ -1078,7 +1106,7 @@ def extract_job_requirements(
                     (
                         item
                         for item in candidates
-                        if _requirement_kind(item) is active_section
+                        if _requirement_kind(item) is line_section
                     ),
                     candidates[0],
                 )
@@ -1090,20 +1118,35 @@ def extract_job_requirements(
                     )
                     groups[
                         (
-                            active_section,
+                            line_section,
                             SourceSurface.BODY,
                             start,
                             end,
                             record.description_text[start:end],
                         )
                     ].append(candidate)
+                    if has_trailing_preferred:
+                        preferred_span_overrides.add((SourceSurface.BODY, start, end))
+                    if (
+                        candidate.location.char_start is None
+                        or candidate.location.char_end is None
+                    ):
+                        recovered_unlocated_indices.add(candidate.mention_index)
             offset += len(line_with_end)
+    else:
+        recovered_unlocated_indices = set()
+        preferred_span_overrides = set()
 
     clauses: defaultdict[
         RequirementKind, dict[tuple[str, ...], list[RequirementEvidence]]
     ] = defaultdict(lambda: defaultdict(list))
     unresolved = []
     for (kind, source_surface, start, end, text), items in groups.items():
+        if (
+            kind is RequirementKind.REQUIRED
+            and (source_surface, start, end) in preferred_span_overrides
+        ):
+            continue
         surface = _surface(record, source_surface)
         if surface is not None:
             previous_line = next(
@@ -1149,6 +1192,13 @@ def extract_job_requirements(
             unresolved.append(unresolved_item)
 
     for (kind, source_surface, evidence_text), items in unlocated.items():
+        items = [
+            item
+            for item in items
+            if item.mention_index not in recovered_unlocated_indices
+        ]
+        if not items:
+            continue
         unresolved.append(
             UnresolvedRequirement(
                 requirement_kind=kind,

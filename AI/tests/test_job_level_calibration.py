@@ -5,10 +5,14 @@ from pathlib import Path
 
 import pytest
 import test_job_requirements
+from job.requirements import (
+    JobRequirements,
+    RequirementKind,
+    RequirementLevel,
+    UnresolvedReason,
+)
 from pydantic import ValidationError
 from test_job_requirements import _analyze
-
-from job.requirements import JobRequirements, RequirementLevel, UnresolvedReason
 
 
 @pytest.mark.parametrize(
@@ -50,6 +54,123 @@ def test_real_worknet_proficient_list_has_shared_intensity(monkeypatch):
     }
     assert all(
         clause.required_level is RequirementLevel.L3 for clause in result.required
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "body",
+        "technology_mentions",
+        "expected_kind",
+        "expected_tech_ids",
+        "expected_level",
+    ),
+    [
+        (
+            "직무내용\n3️⃣ 필수 자격\n- AWS 등 클라우드 환경 개발·운영 경험",
+            [
+                {
+                    "raw_technology": "AWS",
+                    "technology_id": "aws",
+                    "requirement_type": "REQUIRED",
+                    "source_surface": "BODY",
+                    "evidence_section": "본문",
+                    "evidence_text": "- AWS 등 클라우드 환경 개발·운영 경험",
+                    "extraction_method": "RULE_BASED_V1",
+                }
+            ],
+            "required",
+            ("aws",),
+            "L2",
+        ),
+        (
+            "직무내용\n- JAVA 3년 이상 우대",
+            [
+                {
+                    "raw_technology": "JAVA",
+                    "technology_id": "java",
+                    "requirement_type": "PREFERRED",
+                    "source_surface": "BODY",
+                    "evidence_section": "본문",
+                    "evidence_text": "JAVA(Windows)프로그래머",
+                    "extraction_method": "RULE_BASED_V1",
+                }
+            ],
+            "preferred",
+            ("java",),
+            None,
+        ),
+        (
+            ("직무내용\nRDB 설계 및 쿼리 최적화 경험 (PostgreSQL 또는 MySQL)"),
+            [
+                {
+                    "raw_technology": technology,
+                    "technology_id": technology.casefold(),
+                    "requirement_type": "MENTIONED",
+                    "source_surface": "BODY",
+                    "evidence_section": "본문",
+                    "evidence_text": "RDB 설계 및 쿼리 최적화 경험 (PostgreSQL 또는 MySQL)",
+                    "extraction_method": "RULE_BASED_V1",
+                }
+                for technology in ("PostgreSQL", "MySQL")
+            ],
+            "required",
+            ("mysql", "postgresql"),
+            "L3",
+        ),
+    ],
+)
+def test_real_worknet_requirement_regressions_keep_the_labelled_clause(
+    monkeypatch,
+    body,
+    technology_mentions,
+    expected_kind,
+    expected_tech_ids,
+    expected_level,
+):
+    """Keep the three fixed WorkNet source labels from regressing.
+
+    K163012608130016: AWS REQUIRED L2 (1006-1028);
+    K120422608120012: Java PREFERRED L2 (353-366);
+    2608200000917: PostgreSQL/MySQL REQUIRED L3 (118-158).
+    """
+    monkeypatch.setattr(
+        test_job_requirements,
+        "REGISTRY_PATH",
+        Path(__file__).parents[1] / "registry/data/technology_registry_20260911_4.json",
+    )
+    result = _analyze(body, technology_mentions=technology_mentions)
+    clauses = getattr(result, expected_kind)
+
+    assert {clause.tech_ids for clause in clauses} == {expected_tech_ids}
+    if expected_level is not None:
+        assert clauses[0].required_level.value == expected_level
+
+
+def test_trailing_preferred_does_not_leave_a_required_review_duplicate():
+    line = "CI/CD, Docker 경험 있으신 분 우대"
+    result = _analyze(
+        f"자격요건\n{line}",
+        technology_mentions=[
+            {
+                "raw_technology": technology,
+                "technology_id": technology_id,
+                "requirement_type": "PREFERRED",
+                "source_surface": "BODY",
+                "evidence_section": "본문",
+                "evidence_text": line,
+                "extraction_method": "RULE_BASED_V1",
+            }
+            for technology, technology_id in (("CI/CD", "ci-cd"), ("Docker", "docker"))
+        ],
+    )
+
+    assert not result.required
+    assert not any(
+        item.requirement_kind is RequirementKind.REQUIRED for item in result.unresolved
+    )
+    assert all(
+        item.requirement_kind is RequirementKind.PREFERRED for item in result.unresolved
     )
 
 

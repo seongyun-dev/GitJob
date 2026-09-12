@@ -55,8 +55,9 @@ def _analyze(
     title: str = "백엔드 개발자",
     career_level: str | None = "신입",
     shared_evidence: bool = False,
+    technology_mentions: list[dict] | None = None,
 ) -> JobRequirements:
-    mentions = [
+    mentions = technology_mentions or [
         mention.model_dump(mode="json", by_alias=True)
         for mention in extract_technology_mentions(title, body)
     ]
@@ -394,11 +395,14 @@ def test_level_signal_stays_bound_to_each_comma_separated_technology() -> None:
 def test_calibrated_open_list_and_duty_examples_do_not_become_levelled_requirements():
     open_list = _analyze("지원자격\nJava, React, JPA 등의 개발 경험")
     duty = _analyze("담당업무\nJava Spring Boot REST API 설계 및 핵심 기능 개발")
+    unrelated_optimization = _analyze("담당업무\nReact 이미지 최적화 경험")
 
     assert open_list.required == ()
     assert open_list.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
     assert duty.required == ()
     assert duty.unresolved == ()
+    assert unrelated_optimization.required == ()
+    assert unrelated_optimization.unresolved == ()
 
 
 def test_calibrated_title_and_structured_skill_signals_do_not_create_requirements():
