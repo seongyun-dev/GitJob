@@ -429,6 +429,13 @@ def test_repo_schedule_covers_the_target_sites():
         "SARAMIN",
         "GAMEJOB",
         "CAREER",
+    }
+    # Declared but off: `-230` excluded it from the MVP without deleting it.
+    assert {run.site for run in config.runs} == {
+        "WORKNET",
+        "SARAMIN",
+        "GAMEJOB",
+        "CAREER",
         "JOBKOREA",
     }
 
@@ -453,6 +460,13 @@ def test_criterion_a_failures_are_admitted_on_the_record():
     ground, so nobody can quietly re-tell the story as "these were fine all
     along". The per-run `source_admission` block in each collector's manifest
     is the other half of that record.
+
+    On 2026-09-13 the owner took JobKorea back out of the MVP (`-230`), which
+    is a partial reversal of `-196` and not a change of grounds. 게임잡 and
+    커리어 stay on. So this now asserts three things at once: all three are
+    still declared, only the two the owner kept are enabled, and the file still
+    states every ground — including JobKorea's, which is the strongest of the
+    three and the reason it is the one that went back off.
     """
 
     config = load_schedule(REPO_SCHEDULE)
@@ -461,7 +475,16 @@ def test_criterion_a_failures_are_admitted_on_the_record():
     for site in ("GAMEJOB", "CAREER", "JOBKOREA"):
         runs = [run for run in config.runs if run.site == site]
         assert runs, f"{site} runs should stay declared"
+
+    for site in ("GAMEJOB", "CAREER"):
+        runs = [run for run in config.runs if run.site == site]
         assert all(run.enabled for run in runs), f"{site} was admitted by -196"
+
+    jobkorea = [run for run in config.runs if run.site == "JOBKOREA"]
+    assert not any(run.enabled for run in jobkorea), "JOBKOREA was excluded by -230"
+    # Excluded, not discarded: `-195` tried deletion and never merged.
+    assert (REPO_SCHEDULE.parent / "JobKorea_Collector_V1").is_dir()
+    assert "`-230`" in text
 
     # The decision, the date and the reversal are all in the file.
     assert text.count("기준 A 미통과") >= 3
