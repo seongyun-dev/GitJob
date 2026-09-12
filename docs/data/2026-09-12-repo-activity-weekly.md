@@ -432,6 +432,38 @@ write 하고 **다시 읽어 확인한 뒤에만** 나간다 — 읽히지 않�
 Registry 44 순회, 기술별 Trend 는 C조가 계산한다 — A조가 숫자를 실어 보내면 같은
 값이 틀릴 자리가 하나 더 생긴다.
 
+### 실행 (S15P21E102-227)
+
+publisher 는 Spark weekly job 이 stdout 에 낸 summary JSON 을 입력으로 받는다. 그
+summary 의 `output.weeks_written` 이 주차별 `uri` / `row_count` / `row_digest` 를
+이미 담고 있으므로, write 시점에 계산한 digest 가 Parquet 재스캔 없이 manifest 에
+도달한다.
+
+```bash
+# 1) Spark weekly 실행 결과를 파일로 남긴다
+spark-submit /opt/gitjob/spark/jobs/repo_activity_weekly.py   --input-format stream-parquet   --output hdfs:///gitjob/parquet/github/repo_activity_weekly/period=2026-09/snapshot=<id>   --period-start 2026-09-01T00:00:00Z --period-end 2026-10-01T00:00:00Z   | tee .local/weekly/<id>-summary.json
+
+# 2) 무엇이 게시될지 먼저 본다 — WebHDFS 와 Kafka 를 건드리지 않는다
+python -m github.weekly_activity_publish_cli   --summary .local/weekly/<id>-summary.json   --dataset-snapshot-id <id> --dry-run
+
+# 3) 실제 게시 (worker 이미지에서 실행한다)
+python -m github.weekly_activity_publish_cli   --summary .local/weekly/<id>-summary.json   --dataset-snapshot-id <id>
+```
+
+`--dataset-snapshot-id` 는 Spark 가 실제로 쓴 경로의 `snapshot=` 세그먼트와 일치해야
+한다. 다르면 CLI 가 거부한다 — 그렇지 않으면 디렉터리가 속하지 않은 snapshot id 를
+가리키는 manifest 가 게시되고, 바이트는 내부적으로 일관되므로 아무 곳에서도 걸리지
+않는다.
+
+**먼저 `--dry-run` 을 돌린다.** 첫 실전 실행은 불변 객체를 쓰므로,
+`--dataset-snapshot-id` 의 오타가 아무도 의도하지 않은 디렉터리가 되고
+`store_immutable` 이 그것을 덮어쓰지 못하게 한다.
+
+종료 코드는 0(게시 완료) 또는 1(실패)이다. manifest 는 올라갔는데 이벤트가 실패한
+경우도 1 이며, 메시지가 그 사실을 말한다 — 재실행하면 동일 바이트를 멱등 재게시하고
+이벤트를 다시 보낸다. 브로커가 설정돼 있지 않으면 manifest 만 게시하고
+`broker_configured: false` 로 알린다.
+
 ### 멱등성과 late event
 
 `store_immutable` 이 목적지가 이미 있으면 bytes 를 비교한다. 같은 내용이면 기존
