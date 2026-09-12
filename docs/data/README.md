@@ -1068,6 +1068,17 @@ C조 범위다.
 | `S15P21E102-144` | P1 신규 Collector가 `historical_cutoff`를 하한으로 사용해 수집 구간 중복 방지 |
 | `S15P21E102-105` | 수집기 완성, 8월 Bootstrap 실행 완료. 운영 HDFS 에서 `S15P21E102-179` 가 기존 744시간을 재확인·재사용. 남은 것은 재수집이 아니라 수집 실행 위치 이전이다 — §14.1 |
 
+## GitHub Historical Pipeline 운영·복구 Runbook (S15P21E102-165)
+
+- Jira: S15P21E102-165
+- 성격: 이 README와 아래 검증 문서들이 "무엇을 관측했나"라면, Runbook은 **"무엇을
+  실행하고 어떻게 재개하나"**다. 실측 수치는 중복해 싣지 않고 링크로 참조한다
+- 범위: 실행 전 확인 → GH Archive 수집 → Repo Activity → Top-N → Artifact
+  Snapshot → C조 handoff, 그리고 중단·재개·실패 판정·검증·금지사항
+- 상태 구분: "현재 운영 상태"는 조회 명령으로만 안내하고, 숫자는 전부 측정일을
+  붙인 "과거 검증 예시"로 분리했다
+- 상세: [GitHub Historical Pipeline 운영·복구 Runbook](2026-09-12-github-historical-pipeline-runbook.md)
+
 ## GH Archive 6개월 Historical Bootstrap
 
 - Jira: S15P21E102-179
