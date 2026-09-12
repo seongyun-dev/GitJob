@@ -29,6 +29,10 @@ webhdfs_url="${WEBHDFS_URL:-$(env_value WEBHDFS_URL)}"
 webhdfs_url="${webhdfs_url:-http://hdfs-namenode:9870/webhdfs/v1}"
 webhdfs_user="${WEBHDFS_USER:-$(env_value WEBHDFS_USER)}"
 webhdfs_user="${webhdfs_user:-hadoop}"
+historical_head_args=()
+if [[ "${REPO_REQUIRE_HISTORICAL_HEAD:-0}" == "1" ]]; then
+  historical_head_args+=(--require-historical-head)
+fi
 
 [[ -n "$snapshot_id" ]] || die "REPO_SNAPSHOT_ID is required and must stay stable across resume"
 [[ "$snapshot_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
@@ -73,4 +77,5 @@ compose run --rm --no-deps -T \
   --period-start "$period_start" \
   --period-end "$period_end" \
   --limit "$phase_top_n" \
+  "${historical_head_args[@]}" \
   --token-env GITHUB_API_TOKEN

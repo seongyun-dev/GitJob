@@ -19,7 +19,12 @@ from github.repo_fetch_orchestrator import (
     build_parser,
     load_candidates,
 )
-from github.repo_fetch_policy import RepoFetchPolicy, select_artifacts
+from github.repo_fetch_policy import (
+    RepoFetchPolicy,
+    devops_artifact_category,
+    select_artifacts,
+    summarize_language_metadata,
+)
 from github.repo_fetch_store import (
     FileArtifactStore,
     RepoFetchCheckpoint,
@@ -113,6 +118,10 @@ def commit_tree(tree_sha: str = TREE_A) -> HttpResponse:
     return response({"sha": COMMIT_A, "tree": {"sha": tree_sha}})
 
 
+def monthly_commit(commit_sha: str = COMMIT_B, tree_sha: str = TREE_B) -> HttpResponse:
+    return response({"sha": commit_sha, "commit": {"tree": {"sha": tree_sha}}})
+
+
 def tree(
     entries: list[dict[str, object]],
     *,
@@ -135,6 +144,7 @@ def candidate(
     name: str = "octo/repo",
     rank: int = 1,
     count: int = 10,
+    monthly_sha: str | None = None,
 ) -> RepoActivityCandidate:
     return RepoActivityCandidate(
         repo_id=repo_id,
@@ -144,6 +154,7 @@ def candidate(
         activity_metric="gh_archive_event_count",
         activity_period_start=date(2026, 8, 1),
         activity_period_end=date(2026, 8, 31),
+        monthly_event_sha=monthly_sha,
     )
 
 
@@ -205,6 +216,7 @@ def orchestrator(
     cache_name: str = "cache.json",
     now: datetime = datetime(2026, 9, 3, tzinfo=timezone.utc),
     max_attempts: int = 1,
+    require_historical_head: bool = False,
 ) -> RepoFetchOrchestrator:
     return RepoFetchOrchestrator(
         client=GitHubClient(
@@ -220,6 +232,7 @@ def orchestrator(
         dataset_snapshot_id=dataset,
         pipeline_run_id=f"run-{dataset}",
         now=lambda: now,
+        require_historical_head=require_historical_head,
     )
 
 
@@ -268,6 +281,153 @@ def test_complete_repo_uses_recursive_tree_and_emits_v1_contract(
     assert urls[4].startswith("https://raw.githubusercontent.com/")
     assert "Authorization" in transport.calls[1][1]
     assert "Authorization" not in transport.calls[4][1]
+
+
+def test_monthly_event_sha_is_selected_and_recorded_with_tree_lineage(
+    tmp_path: Path,
+) -> None:
+    transport = ScriptedTransport(
+        [
+            rate_control(),
+            metadata(),
+            monthly_commit(),
+            tree(
+                [{"path": "package.json", "type": "blob", "size": 2}],
+                tree_sha=TREE_B,
+                response_sha=COMMIT_B,
+            ),
+            response(b"{}"),
+        ]
+    )
+
+    run = orchestrator(tmp_path, transport).run([candidate(monthly_sha=COMMIT_B)])
+
+    record = run.batch.records[0]
+    assert record.pinned_commit_sha == COMMIT_B
+    assert record.selected_commit_sha == COMMIT_B
+    assert record.monthly_event_sha == COMMIT_B
+    assert record.sha_source == "MONTH_EVENT_SHA"
+    assert record.current_default_head is None
+    assert record.sha_fallback_reason is None
+    assert record.target_period == "2026-08-01/2026-08-31"
+    assert f"/commits/{COMMIT_B}" in transport.calls[2][0]
+    assert f"/git/trees/{TREE_B}?recursive=1" in transport.calls[3][0]
+
+
+def test_monthly_event_sha_failure_falls_back_to_default_head(
+    tmp_path: Path,
+) -> None:
+    transport = ScriptedTransport(
+        [
+            rate_control(),
+            metadata(),
+            response(status=404),
+            head(COMMIT_A, TREE_A),
+            tree([]),
+        ]
+    )
+
+    run = orchestrator(tmp_path, transport).run([candidate(monthly_sha=COMMIT_B)])
+
+    record = run.batch.records[0]
+    assert record.pinned_commit_sha == COMMIT_A
+    assert record.selected_commit_sha == COMMIT_A
+    assert record.monthly_event_sha == COMMIT_B
+    assert record.current_default_head == COMMIT_A
+    assert record.sha_source == "CURRENT_DEFAULT_HEAD"
+    assert record.sha_fallback_reason == "HTTP 404"
+    assert len(transport.calls) == 5
+
+
+def test_historical_mode_does_not_fallback_when_monthly_commit_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    transport = ScriptedTransport([rate_control(), metadata(), response(status=404)])
+
+    run = orchestrator(
+        tmp_path,
+        transport,
+        require_historical_head=True,
+    ).run([candidate(monthly_sha=COMMIT_B)])
+
+    assert run.batch.records == ()
+    assert run.checkpoint_rows[0]["status"] == "HISTORICAL_HEAD_UNAVAILABLE"
+    assert run.summary()["historical_head_unavailable_count"] == 1
+    assert run.checkpoint_rows[0]["lineage"]["sha_source"] == (
+        "HISTORICAL_HEAD_UNAVAILABLE"
+    )
+    assert len(transport.calls) == 3
+
+
+def test_historical_mode_requires_monthly_event_sha_without_api_fallback(
+    tmp_path: Path,
+) -> None:
+    transport = ScriptedTransport([rate_control()])
+    run = orchestrator(
+        tmp_path,
+        transport,
+        require_historical_head=True,
+    ).run([candidate()])
+
+    assert run.batch.records == ()
+    assert run.checkpoint_rows[0]["status"] == "HISTORICAL_HEAD_UNAVAILABLE"
+    assert run.checkpoint_rows[0]["lineage"]["sha_fallback_reason"] == (
+        "MONTHLY_EVENT_SHA_MISSING"
+    )
+    assert len(transport.calls) == 1
+
+
+def test_historical_mode_marks_tree_lookup_failure_unavailable(
+    tmp_path: Path,
+) -> None:
+    transport = ScriptedTransport(
+        [rate_control(), metadata(), monthly_commit(), response(status=403)]
+    )
+    run = orchestrator(
+        tmp_path,
+        transport,
+        require_historical_head=True,
+    ).run([candidate(monthly_sha=COMMIT_B)])
+
+    assert run.batch.records == ()
+    assert run.checkpoint_rows[0]["status"] == "HISTORICAL_HEAD_UNAVAILABLE"
+    assert run.checkpoint_rows[0]["lineage"]["selected_commit_sha"] == COMMIT_B
+    assert "HISTORICAL_TREE_UNAVAILABLE" in run.checkpoint_rows[0]["last_error"]
+    assert len(transport.calls) == 4
+
+
+def test_monthly_sha_cache_reuse_preserves_selection_provenance(
+    tmp_path: Path,
+) -> None:
+    first = orchestrator(
+        tmp_path,
+        ScriptedTransport(
+            [
+                rate_control(),
+                metadata(),
+                monthly_commit(),
+                tree(
+                    [{"path": "package.json", "type": "blob", "size": 2}],
+                    tree_sha=TREE_B,
+                ),
+                response(b"{}"),
+            ]
+        ),
+    ).run([candidate(monthly_sha=COMMIT_B)])
+
+    replay = orchestrator(
+        tmp_path,
+        ScriptedTransport([rate_control(), metadata(), monthly_commit()]),
+        dataset="dataset-002",
+        checkpoint_name="checkpoint-002.json",
+    ).run([candidate(monthly_sha=COMMIT_B)])
+
+    reused = replay.batch.records[0]
+    assert reused.collection_status is RepoCollectionStatus.REUSED
+    assert reused.pinned_commit_sha == first.batch.records[0].pinned_commit_sha
+    assert reused.sha_source == "MONTH_EVENT_SHA"
+    assert reused.monthly_event_sha == COMMIT_B
+    assert len(replay.checkpoint_rows) == 1
 
 
 def test_tree_response_commit_sha_cannot_overwrite_commit_tree_sha(
@@ -682,6 +842,156 @@ def test_policy_selection_rejects_large_vendor_and_uses_named_manifest_order() -
         "service/pom.xml",
     )
     assert selection.issues == (RepoCollectionIssue.BYTE_LIMIT_REACHED,)
+
+
+def test_policy_prioritizes_root_module_and_supported_manifest_patterns() -> None:
+    selection = select_artifacts(
+        [
+            {"path": "examples/package.json", "type": "blob", "size": 2},
+            {"path": "service/package.json", "type": "blob", "size": 2},
+            {"path": "package.json", "type": "blob", "size": 2},
+            {"path": "requirements-dev.txt", "type": "blob", "size": 2},
+            {"path": "requirements/worker.txt", "type": "blob", "size": 2},
+            {"path": "gradle/libs.versions.toml", "type": "blob", "size": 2},
+        ],
+        policy(max_manifest_files=6, max_artifact_files=6),
+    )
+
+    assert selection.manifest_paths[:2] == (
+        "package.json",
+        "requirements-dev.txt",
+    )
+    assert "service/package.json" in selection.manifest_paths
+    assert "examples/package.json" in selection.manifest_paths
+    assert selection.manifest_candidate_count == 6
+    assert selection.manifest_excluded_count == 0
+
+
+def test_policy_normalizes_manifest_names_and_keeps_extended_patterns() -> None:
+    selection = select_artifacts(
+        [
+            {"path": "package.json", "type": "blob", "size": 2},
+            {"path": "Cargo.toml", "type": "blob", "size": 2},
+            {"path": "Gemfile", "type": "blob", "size": 2},
+            {"path": "requirements-dev.txt", "type": "blob", "size": 2},
+            {"path": "requirements/worker.txt", "type": "blob", "size": 2},
+            {"path": "gradle/libs.versions.toml", "type": "blob", "size": 2},
+            {"path": "service/demo.csproj", "type": "blob", "size": 2},
+            {"path": "examples/package.json", "type": "blob", "size": 2},
+        ],
+        policy(max_manifest_files=8, max_artifact_files=8),
+    )
+
+    assert {
+        "package.json",
+        "Cargo.toml",
+        "Gemfile",
+        "requirements-dev.txt",
+        "requirements/worker.txt",
+        "gradle/libs.versions.toml",
+        "service/demo.csproj",
+        "examples/package.json",
+    } == set(selection.manifest_paths)
+    assert selection.manifest_candidate_count == 8
+    assert selection.manifest_selected_count == 8
+    assert selection.manifest_excluded_count == 0
+
+
+def test_policy_file_limit_counts_casefolded_manifest_candidates() -> None:
+    selection = select_artifacts(
+        [
+            {"path": "package.json", "type": "blob", "size": 2},
+            {"path": "Cargo.toml", "type": "blob", "size": 2},
+            {"path": "Gemfile", "type": "blob", "size": 2},
+            {"path": "requirements-dev.txt", "type": "blob", "size": 2},
+            {"path": "service/demo.csproj", "type": "blob", "size": 2},
+        ],
+        policy(max_manifest_files=3, max_artifact_files=3),
+    )
+
+    assert selection.manifest_candidate_count == 5
+    assert selection.manifest_selected_count == 3
+    assert selection.manifest_excluded_count == 2
+    assert selection.manifest_excluded_reasons == ("FILE_LIMIT_REACHED",)
+    assert RepoCollectionIssue.FILE_LIMIT_REACHED in selection.issues
+
+
+def test_policy_selects_limited_devops_artifacts_and_language_metadata() -> None:
+    entries = [
+        {"path": "Dockerfile", "type": "blob", "size": 2},
+        {"path": "compose.prod.yml", "type": "blob", "size": 2},
+        {"path": "k8s/deployment.yaml", "type": "blob", "size": 2},
+        {"path": ".github/workflows/ci.yml", "type": "blob", "size": 2},
+        {"path": "Jenkinsfile", "type": "blob", "size": 2},
+        {"path": "src/main.py", "type": "blob", "size": 2},
+        {"path": "src/main.ts", "type": "blob", "size": 2},
+        {"path": "vendor/ignored.go", "type": "blob", "size": 2},
+    ]
+
+    selection = select_artifacts(
+        entries,
+        policy(max_manifest_files=8, max_artifact_files=8),
+    )
+    assert {
+        "Dockerfile",
+        "compose.prod.yml",
+        "k8s/deployment.yaml",
+        ".github/workflows/ci.yml",
+        "Jenkinsfile",
+    } <= set(selection.manifest_paths)
+    assert "import_to_pkg_maps/dockerfile.json" not in selection.manifest_paths
+
+    metadata = summarize_language_metadata(entries)
+    by_language = {item.language: item for item in metadata}
+    assert by_language["Python"].file_count == 1
+    assert by_language["TypeScript"].representative_paths == ("src/main.ts",)
+    assert "Go" not in by_language
+
+
+def test_devops_policy_does_not_treat_general_yaml_as_kubernetes() -> None:
+    assert devops_artifact_category("k8s/deployment.yaml") == "KUBERNETES"
+    assert devops_artifact_category("deploy/service.yml") == "KUBERNETES"
+    assert devops_artifact_category(".github/workflows/ci.yaml") == "GITHUB_ACTIONS"
+    assert devops_artifact_category("config/settings.yaml") is None
+    assert devops_artifact_category("k8s/application.yaml") is None
+    assert devops_artifact_category("deployment.yaml") is None
+
+
+def test_language_metadata_covers_the_twelve_supported_languages() -> None:
+    paths = (
+        "src/main.c",
+        "src/main.cpp",
+        "src/Main.cs",
+        "src/main.go",
+        "src/main.py",
+        "src/Main.java",
+        "src/Main.kt",
+        "src/main.js",
+        "src/main.ts",
+        "web/index.html",
+        "web/style.css",
+        "db/schema.sql",
+    )
+    metadata = summarize_language_metadata(
+        [{"path": path, "type": "blob", "size": 2} for path in paths]
+    )
+
+    assert {item.language for item in metadata} == {
+        "C",
+        "C++",
+        "C#",
+        "Go",
+        "Python",
+        "Java",
+        "Kotlin",
+        "JavaScript",
+        "TypeScript",
+        "HTML",
+        "CSS",
+        "SQL",
+    }
+    assert all(item.file_count == 1 for item in metadata)
+    assert all(len(item.representative_paths) == 1 for item in metadata)
 
 
 def test_candidate_payload_and_checkpoint_identity_are_strict(

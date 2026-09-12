@@ -35,6 +35,9 @@ Registry Mapping, Evidence Level, Required/Preferred, 추천, What-if는 만들�
 - 계약 문서: `docs/data/2026-09-02-a-to-c-github-repo-snapshot-contract.md`
 
 계약 버전은 `github-repo-snapshot/v1`이고 모든 모델은 unknown field를 거부한다.
+월별 실행에는 optional lineage 확장(`selected_commit_sha`, `sha_source`,
+`monthly_event_sha`, `current_default_head`, `sha_fallback_reason`, `target_period`)을
+기록한다. 구형 Snapshot은 이 필드가 없어도 계속 검증된다.
 Repository는 양수 `github_repo_id`와 `owner/repository` 형식의 `repo_full_name`으로
 식별한다. `pinned_commit_sha`는 모든 전달 record에 필수이며 `tree_sha`는 optional이다.
 `pinned_commit_sha`는 고정한 Git commit object의 SHA이고, `tree_sha`는 그
@@ -98,10 +101,11 @@ Cache reuse lineage를 표현할 수 있다.
 ## 5. 수집 흐름과 정책
 
 ```text
-Repo Activity candidate
+Repo Activity candidate (`monthly_event_sha`가 있으면 우선 사용)
   → Core rate-limit safety 확인
   → Repository metadata/canonical name
-  → default branch HEAD / pinned_commit_sha + root tree_sha
+  → monthly event Commit + root tree_sha
+  → (실패/부재 시) default branch HEAD / pinned_commit_sha + root tree_sha
   → (policy fingerprint, repo_id, pinned SHA) Cache
   → recursive Tree
   → named manifest 선택
@@ -126,6 +130,8 @@ manifest를 선택한다. source fallback은 manifest가 없고 명시적으로 
 정책 label만 같은데 실제 limit가 바뀐 경우도 재사용하지 않도록 모든 policy 값을
 SHA-256 fingerprint로 묶는다. Cache key는 이 fingerprint, `github_repo_id`,
 `pinned_commit_sha`의 조합이다.
+Manifest 선택 알고리즘 버전도 fingerprint에 포함하므로 새 root/module 우선순위가
+기존 Cache 결과를 조용히 재사용하지 않는다.
 
 ## 6. Cache, Checkpoint, Replay
 

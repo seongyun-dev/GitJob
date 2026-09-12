@@ -93,6 +93,26 @@ def test_valid_snapshot_preserves_commit_and_artifact_boundary() -> None:
     )
 
 
+def test_optional_monthly_commit_lineage_is_validated() -> None:
+    payload = valid_payload()
+    record = payload["records"][0]  # type: ignore[index]
+    record.update(  # type: ignore[union-attr]
+        {
+            "selected_commit_sha": "a" * 40,
+            "sha_source": "MONTH_EVENT_SHA",
+            "monthly_event_sha": "a" * 40,
+            "target_period": "2026-08-01/2026-08-31",
+        }
+    )
+
+    validated = GitHubRepoSnapshotBatch.model_validate(payload)
+    assert validated.records[0].sha_source == "MONTH_EVENT_SHA"
+
+    record["selected_commit_sha"] = "b" * 40  # type: ignore[index]
+    with pytest.raises(ValidationError, match="selected_commit_sha"):
+        GitHubRepoSnapshotBatch.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     "field_name",
     [

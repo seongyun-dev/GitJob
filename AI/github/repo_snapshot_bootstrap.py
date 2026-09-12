@@ -438,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset_snapshot_id=arguments.dataset_snapshot_id,
         pipeline_run_id=arguments.pipeline_run_id,
         collector_version=arguments.collector_version,
+        require_historical_head=arguments.require_historical_head,
     )
     publisher = None
     if arguments.publish_root is not None:
@@ -483,6 +484,7 @@ def _failure_payload(cycle: RepoFetchRun) -> dict[str, Any]:
         row
         for row in cycle.checkpoint_rows
         if str(row["status"]) in {"FAILED", "NOT_FOUND"}
+        or str(row["status"]) == "HISTORICAL_HEAD_UNAVAILABLE"
     ]
     return {
         "schema_version": "github-repo-fetch-failures/v1",

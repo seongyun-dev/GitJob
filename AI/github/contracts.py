@@ -65,6 +65,25 @@ class StrictContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RepoLanguageMetadata(StrictContractModel):
+    """Structural language metadata derived from a recursive Git tree.
+
+    This intentionally contains paths and counts only; source contents are not
+    part of the metadata contract.
+    """
+
+    language: StrictStr
+    file_count: Annotated[StrictInt, Field(gt=0)]
+    representative_paths: tuple[StrictStr, ...] = ()
+
+    @field_validator("language")
+    @classmethod
+    def require_non_blank_language(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("language must not be blank")
+        return value
+
+
 class RepoCollectionPolicy(StrictContractModel):
     policy_version: StrictStr
     top_n_limit: Annotated[StrictInt, Field(gt=0)]
@@ -120,6 +139,21 @@ class GitHubRepoSnapshot(StrictContractModel):
     activity_count: Annotated[StrictInt, Field(ge=0)]
     activity_rank: Annotated[StrictInt, Field(gt=0)]
     pinned_commit_sha: GitObjectSha
+    # Optional v1 lineage extension.  Older snapshots remain valid while new
+    # monthly runs can explain why a commit was selected.
+    selected_commit_sha: GitObjectSha | None = None
+    sha_source: (
+        Literal[
+            "MONTH_EVENT_SHA",
+            "CURRENT_DEFAULT_HEAD",
+            "HISTORICAL_HEAD_UNAVAILABLE",
+        ]
+        | None
+    ) = None
+    monthly_event_sha: GitObjectSha | None = None
+    current_default_head: GitObjectSha | None = None
+    sha_fallback_reason: StrictStr | None = None
+    target_period: StrictStr | None = None
     tree_sha: GitObjectSha | None = None
     collection_status: RepoCollectionStatus
     collection_issues: tuple[RepoCollectionIssue, ...] = ()
@@ -128,6 +162,7 @@ class GitHubRepoSnapshot(StrictContractModel):
     tree_truncated: StrictBool
     observed_tree_entries: Annotated[StrictInt, Field(ge=0)]
     artifacts: tuple[RepoArtifact, ...] = ()
+    language_metadata: tuple[RepoLanguageMetadata, ...] = ()
 
     @field_validator("repo_snapshot_id", "activity_metric")
     @classmethod
@@ -136,7 +171,12 @@ class GitHubRepoSnapshot(StrictContractModel):
             raise ValueError("must not be blank")
         return value
 
-    @field_validator("checkpoint_uri", "reused_from_snapshot_id")
+    @field_validator(
+        "checkpoint_uri",
+        "reused_from_snapshot_id",
+        "sha_fallback_reason",
+        "target_period",
+    )
     @classmethod
     def reject_blank_optional_identifier(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
@@ -161,6 +201,49 @@ class GitHubRepoSnapshot(StrictContractModel):
             raise ValueError(
                 "activity_period_start must not be after activity_period_end"
             )
+
+        if (
+            self.selected_commit_sha is not None
+            and self.selected_commit_sha != self.pinned_commit_sha
+        ):
+            raise ValueError("selected_commit_sha must equal pinned_commit_sha")
+        if self.sha_source == "MONTH_EVENT_SHA":
+            if self.monthly_event_sha is None:
+                raise ValueError("MONTH_EVENT_SHA requires monthly_event_sha")
+            if self.selected_commit_sha != self.monthly_event_sha:
+                raise ValueError("MONTH_EVENT_SHA must select monthly_event_sha")
+            if self.sha_fallback_reason is not None:
+                raise ValueError("MONTH_EVENT_SHA must not have a fallback reason")
+        elif self.sha_source == "CURRENT_DEFAULT_HEAD":
+            if self.current_default_head is None:
+                raise ValueError("CURRENT_DEFAULT_HEAD requires current_default_head")
+            if self.selected_commit_sha != self.current_default_head:
+                raise ValueError(
+                    "CURRENT_DEFAULT_HEAD must select current_default_head"
+                )
+            if self.sha_fallback_reason is None:
+                raise ValueError("CURRENT_DEFAULT_HEAD requires a selection reason")
+        elif self.sha_source == "HISTORICAL_HEAD_UNAVAILABLE":
+            if self.selected_commit_sha is not None:
+                raise ValueError("HISTORICAL_HEAD_UNAVAILABLE must not select a commit")
+            if self.current_default_head is not None:
+                raise ValueError(
+                    "HISTORICAL_HEAD_UNAVAILABLE must not carry current_default_head"
+                )
+            if self.sha_fallback_reason is None:
+                raise ValueError(
+                    "HISTORICAL_HEAD_UNAVAILABLE requires an unavailable reason"
+                )
+        elif any(
+            value is not None
+            for value in (
+                self.selected_commit_sha,
+                self.monthly_event_sha,
+                self.current_default_head,
+                self.sha_fallback_reason,
+            )
+        ):
+            raise ValueError("commit lineage fields require sha_source")
 
         if self.collection_status is RepoCollectionStatus.COMPLETE:
             if issues:
@@ -197,6 +280,9 @@ class GitHubRepoSnapshot(StrictContractModel):
             raise ValueError(
                 "artifact paths must be unique within a repository snapshot"
             )
+        languages = [item.language for item in self.language_metadata]
+        if len(languages) != len(set(languages)):
+            raise ValueError("language_metadata languages must be unique")
         return self
 
 

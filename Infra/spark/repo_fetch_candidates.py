@@ -129,6 +129,7 @@ def deduplicate_top_n_rows(
                 "repo_name": repo_name,
                 "activity_count": int(row["activity_count"]),
                 "rank": len(selected) + 1,
+                "monthly_event_sha": row.get("monthly_event_sha"),
             }
         )
         seen_repo_ids.add(repo_id)
@@ -147,6 +148,20 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
     try:
         input_root = arguments.input_root.rstrip("/")
         activity = spark.read.parquet(f"{input_root}/repo_activity")
+        activity_columns = set(activity.columns)
+
+        def candidate_columns() -> list[Any]:
+            columns: list[Any] = [
+                "repo_id",
+                "repo_name",
+                "activity_count",
+                "rank",
+            ]
+            if "monthly_event_sha" in activity_columns:
+                columns.append("monthly_event_sha")
+            else:
+                columns.append(F.lit(None).cast("string").alias("monthly_event_sha"))
+            return columns
         quality_rows = spark.read.parquet(f"{input_root}/data_quality").collect()
         if len(quality_rows) != 1:
             raise RuntimeError("data_quality must contain exactly one row")
@@ -186,7 +201,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             }
             initial_rows = (
                 activity.where(F.col("rank") <= F.lit(arguments.phase_top_n))
-                .select("repo_id", "repo_name", "activity_count", "rank")
+                .select(*candidate_columns())
                 .orderBy("rank")
                 .collect()
             )
@@ -204,7 +219,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             while len(selected_rows) < arguments.phase_top_n:
                 backfill_rows = (
                     activity.where(F.col("rank") > F.lit(last_source_rank))
-                    .select("repo_id", "repo_name", "activity_count", "rank")
+                    .select(*candidate_columns())
                     .orderBy("rank")
                     .limit(arguments.phase_top_n)
                     .collect()
@@ -225,7 +240,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             target_ranks = sorted(target_to_stratum)
             rows = (
                 activity.where(F.col("rank").isin(target_ranks))
-                .select("repo_id", "repo_name", "activity_count", "rank")
+                .select(*candidate_columns())
                 .orderBy("rank")
                 .collect()
             )
@@ -249,6 +264,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                     "repo_name": str(row["repo_name"]),
                     "activity_count": int(row["activity_count"]),
                     "rank": int(row["rank"]),
+                    "monthly_event_sha": row.get("monthly_event_sha"),
                     "stratum": target_to_stratum[int(row["rank"])],
                 }
                 for row in rows

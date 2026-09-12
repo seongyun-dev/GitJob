@@ -280,6 +280,7 @@ class RepoFetchCheckpoint:
         activity_metric: str,
         period_start: str,
         period_end: str,
+        monthly_event_sha: str | None = None,
     ) -> None:
         key = str(repo_id)
         existing = self.data["repos"].get(key)
@@ -291,6 +292,7 @@ class RepoFetchCheckpoint:
             "activity_metric": activity_metric,
             "period_start": period_start,
             "period_end": period_end,
+            "monthly_event_sha": monthly_event_sha,
         }
         if existing is None:
             self.data["repos"][key] = {
@@ -388,6 +390,8 @@ class RepoFetchCheckpoint:
         raw_calls: int,
         http_statuses: list[int],
         contract_record: GitHubRepoSnapshot | None,
+        selection_metrics: Mapping[str, Any] | None = None,
+        lineage: Mapping[str, Any] | None = None,
     ) -> None:
         entry = self.data["repos"][str(repo_id)]
         entry.update(
@@ -403,7 +407,10 @@ class RepoFetchCheckpoint:
                 if contract_record is not None
                 else None
             ),
+            selection_metrics=dict(selection_metrics or {}),
         )
+        if lineage:
+            entry["lineage"] = dict(lineage)
         self._mark_dirty()
 
     def _mark_dirty(self) -> None:

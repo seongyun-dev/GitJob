@@ -211,6 +211,11 @@ def build_event_schema() -> Any:
                 ),
                 True,
             ),
+            StructField(
+                "payload",
+                StructType([StructField("head", StringType(), True)]),
+                True,
+            ),
             StructField("type", StringType(), True),
             StructField("created_at", StringType(), True),
             StructField("_corrupt_record", StringType(), True),
@@ -326,7 +331,18 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
         ).select(
             F.col("repo.id").cast("long").alias("repo_id"),
             F.col("repo.name").alias("repo_name"),
+            F.col("type").alias("event_type"),
+            F.lower(F.col("payload.head")).alias("push_head"),
             F.to_timestamp(F.col("created_at")).alias("created_at_ts"),
+        )
+        valid = valid.withColumn(
+            "valid_push_head",
+            F.when(
+                (F.col("event_type") == F.lit("PushEvent"))
+                & F.col("created_at_ts").isNotNull()
+                & F.col("push_head").rlike(r"^[0-9a-f]{40}$"),
+                F.col("push_head"),
+            ),
         )
         grouped = (
             valid.groupBy("repo_id")
@@ -336,6 +352,15 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
                 F.max(F.struct(F.col("created_at_ts"), F.col("repo_name"))).alias(
                     "latest"
                 ),
+                F.max(
+                    F.when(
+                        F.col("valid_push_head").isNotNull(),
+                        F.struct(
+                            F.col("created_at_ts"),
+                            F.col("valid_push_head"),
+                        ),
+                    )
+                ).alias("latest_push"),
             )
             .persist(StorageLevel.DISK_ONLY)
         )
@@ -365,6 +390,7 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             F.col("repo_id"),
             F.col("latest.repo_name").alias("repo_name"),
             F.col("activity_count"),
+            F.col("latest_push.valid_push_head").alias("monthly_event_sha"),
         )
         ranking_window = Window.orderBy(
             F.col("activity_count").desc(),
@@ -381,6 +407,7 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
                 "repo_id",
                 "repo_name",
                 "activity_count",
+                "monthly_event_sha",
                 "rank",
                 "period_start",
                 "period_end",
@@ -509,6 +536,7 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             "repo_id",
             "repo_name",
             "activity_count",
+            "monthly_event_sha",
             "rank",
             "period_start",
             "period_end",

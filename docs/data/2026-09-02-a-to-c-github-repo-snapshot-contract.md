@@ -116,6 +116,12 @@ Batch 안에서 `repo_snapshot_id`, `github_repo_id`, 대소문자를 무시한
 | `activity_count` | integer | 예 | 아니요 | 해당 지표의 관측값, 0 이상 |
 | `activity_rank` | integer | 예 | 아니요 | Top-N 내 순위, 1 이상 |
 | `pinned_commit_sha` | string | 예 | 아니요 | C조 분석 기준인 소문자 40자리 Git Commit SHA |
+| `selected_commit_sha` | string | 아니요 | 예 | 이번 실행에서 선택한 Commit SHA. 새 실행에서는 `pinned_commit_sha`와 같다 |
+| `sha_source` | enum | 아니요 | 예 | `MONTH_EVENT_SHA` 또는 `CURRENT_DEFAULT_HEAD` |
+| `monthly_event_sha` | string | 아니요 | 예 | 대상 기간 마지막 유효 PushEvent의 Commit SHA |
+| `current_default_head` | string | 아니요 | 예 | 월별 SHA를 사용하지 못했을 때 확인한 현재 default branch HEAD |
+| `sha_fallback_reason` | string | 아니요 | 예 | `CURRENT_DEFAULT_HEAD` 선택 근거 또는 월별 SHA 조회 실패 사유 |
+| `target_period` | string | 아니요 | 예 | `YYYY-MM-DD/YYYY-MM-DD` 형태의 선택 대상 기간 |
 | `tree_sha` | string | 예 | 예 | A조 캐시/변경 감지용 Tree SHA, 없어도 외부 계약 유효 |
 | `collection_status` | enum | 예 | 아니요 | `COMPLETE`, `PARTIAL`, `FAILED`, `REUSED` |
 | `collection_issues` | enum array | 아니요 | 아니요 | 부분/실패 원인, 기본값 `[]` |
@@ -128,6 +134,13 @@ Batch 안에서 `repo_snapshot_id`, `github_repo_id`, 대소문자를 무시한
 `activity_metric`은 이 계약이 활동량 산식을 정한다는 뜻이 아니다. A조가 사용한
 event 종류·집계 단위를 안정된 이름으로 전달해야 하며, C조는 서로 다른 metric을
 같은 값으로 합치지 않는다.
+
+새 월별 실행은 대상 기간의 마지막 유효 `PushEvent.payload.head`를 먼저 Commit으로
+조회한다. 조회와 Tree 확인이 성공하면 `sha_source=MONTH_EVENT_SHA`로 기록하고,
+해당 SHA가 없거나 접근할 수 없으면 현재 default branch HEAD로 안전하게 fallback한다.
+이때 `pinned_commit_sha`는 실제 선택된 SHA이고 `tree_sha`는 그 Commit object의
+중첩 Git tree SHA이므로 두 값을 동일한 의미로 해석하지 않는다. 선택 lineage 필드는
+모두 optional이어서 기존 v1 Snapshot도 계속 읽을 수 있다.
 
 ## 7. Artifact 필드
 

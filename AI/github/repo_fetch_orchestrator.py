@@ -31,8 +31,14 @@ from github.contracts import (
     RepoArtifactType,
     RepoCollectionIssue,
     RepoCollectionStatus,
+    RepoLanguageMetadata,
 )
-from github.repo_fetch_policy import RepoFetchPolicy, select_artifacts
+from github.repo_fetch_policy import (
+    RepoFetchPolicy,
+    devops_artifact_category,
+    select_artifacts,
+    summarize_language_metadata,
+)
 from github.repo_fetch_store import (
     ArtifactStore,
     FileArtifactStore,
@@ -41,13 +47,14 @@ from github.repo_fetch_store import (
     WebHdfsArtifactStore,
 )
 
-COLLECTOR_VERSION = "gitjob-repo-fetch-orchestrator/v1"
+COLLECTOR_VERSION = "gitjob-repo-fetch-orchestrator/v2"
 TERMINAL_STATUSES = {
     "COMPLETE",
     "PARTIAL",
     "FAILED",
     "NOT_FOUND",
     "REUSED",
+    "HISTORICAL_HEAD_UNAVAILABLE",
 }
 
 
@@ -58,6 +65,7 @@ class RepoExecutionStatus(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     RATE_LIMITED = "RATE_LIMITED"
     REUSED = "REUSED"
+    HISTORICAL_HEAD_UNAVAILABLE = "HISTORICAL_HEAD_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -69,6 +77,7 @@ class RepoActivityCandidate:
     activity_metric: str
     activity_period_start: date
     activity_period_end: date
+    monthly_event_sha: str | None = None
 
     def __post_init__(self) -> None:
         if self.repo_id < 1:
@@ -83,6 +92,11 @@ class RepoActivityCandidate:
             raise ValueError("activity_metric must not be blank")
         if self.activity_period_start > self.activity_period_end:
             raise ValueError("activity period start must not be after end")
+        if (
+            self.monthly_event_sha is not None
+            and _valid_sha(self.monthly_event_sha) is None
+        ):
+            raise ValueError("monthly_event_sha must be a lowercase 40-character SHA")
 
 
 @dataclass(frozen=True)
@@ -92,6 +106,8 @@ class RepoExecution:
     record: GitHubRepoSnapshot | None
     requests: tuple[RequestRecord, ...]
     last_error: str | None = None
+    selection_metrics: dict[str, Any] | None = None
+    lineage: dict[str, Any] | None = None
 
     @property
     def api_calls(self) -> int:
@@ -122,6 +138,15 @@ class RepoFetchRun:
 
     def summary(self) -> dict[str, Any]:
         statuses = Counter(str(row["status"]) for row in self.checkpoint_rows)
+        artifact_categories = Counter(
+            category
+            for record in self.batch.records
+            for artifact in record.artifacts
+            if (category := devops_artifact_category(artifact.path)) is not None
+        )
+        language_repos = sum(
+            bool(record.language_metadata) for record in self.batch.records
+        )
         return {
             "schema_version": "github-repo-fetch-run-summary/v1",
             "dataset_snapshot_id": self.batch.dataset_snapshot_id,
@@ -154,6 +179,11 @@ class RepoFetchRun:
                 "reset": self.rate_limit_before.reset,
             },
             "repos": self.checkpoint_rows,
+            "historical_head_unavailable_count": statuses.get(
+                "HISTORICAL_HEAD_UNAVAILABLE", 0
+            ),
+            "language_metadata_repo_count": language_repos,
+            "devops_artifact_counts": dict(sorted(artifact_categories.items())),
         }
 
 
@@ -174,6 +204,7 @@ class RepoFetchOrchestrator:
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         monotonic: Callable[[], float] = time.monotonic,
         progress: Callable[[RepoExecution, int, int], None] | None = None,
+        require_historical_head: bool = False,
     ) -> None:
         metadata = {
             "dataset_snapshot_id": dataset_snapshot_id,
@@ -194,6 +225,12 @@ class RepoFetchOrchestrator:
         self.now = now
         self.monotonic = monotonic
         self.progress = progress
+        self.require_historical_head = require_historical_head
+        self.cache_policy_version = (
+            f"{policy.cache_identity}:historical-head-required"
+            if require_historical_head
+            else policy.cache_identity
+        )
 
     def run(
         self,
@@ -210,7 +247,7 @@ class RepoFetchOrchestrator:
             dataset_snapshot_id=self.dataset_snapshot_id,
             pipeline_run_id=self.pipeline_run_id,
             collector_version=self.collector_version,
-            policy_version=self.policy.cache_identity,
+            policy_version=self.cache_policy_version,
             generated_at=generated_at,
         )
         for candidate in ordered:
@@ -222,6 +259,7 @@ class RepoFetchOrchestrator:
                 activity_metric=candidate.activity_metric,
                 period_start=candidate.activity_period_start.isoformat(),
                 period_end=candidate.activity_period_end.isoformat(),
+                monthly_event_sha=candidate.monthly_event_sha,
             )
         self.checkpoint.save()
 
@@ -273,13 +311,15 @@ class RepoFetchOrchestrator:
                 raw_calls=result.raw_calls,
                 http_statuses=result.http_statuses,
                 contract_record=result.record,
+                selection_metrics=result.selection_metrics,
+                lineage=result.lineage or _record_lineage(result.record),
             )
             if (
                 result.record is not None
                 and result.record.collection_status is RepoCollectionStatus.COMPLETE
             ):
                 self.cache.put(
-                    policy_version=self.policy.cache_identity,
+                    policy_version=self.cache_policy_version,
                     record=result.record,
                 )
             if result.status is RepoExecutionStatus.RATE_LIMITED:
@@ -314,6 +354,12 @@ class RepoFetchOrchestrator:
 
     def fetch_repo(self, candidate: RepoActivityCandidate) -> RepoExecution:
         requests: list[RequestRecord] = []
+        if self.require_historical_head and candidate.monthly_event_sha is None:
+            return self._historical_head_unavailable(
+                candidate,
+                reason="MONTHLY_EVENT_SHA_MISSING",
+                requests=requests,
+            )
         encoded_historical = _encode_repo(candidate.repo_name)
         metadata = self.client.get_json(
             f"/repos/{encoded_historical}",
@@ -353,46 +399,109 @@ class RepoFetchOrchestrator:
                 requests,
             )
 
-        head = self.client.get_json(
-            (
-                f"/repos/{_encode_repo(canonical_name)}/branches/"
-                f"{urllib.parse.quote(default_branch, safe='')}"
-            ),
-            stage="B_HEAD",
-            endpoint_category="default_branch_head",
-        )
-        requests.extend(head.records)
-        state, error = _request_state(
-            head,
-            safety_threshold=self.policy.rate_limit_safety_threshold,
-        )
-        if state != "OK":
-            return self._before_pin_failure(candidate, state, error, requests)
-        pinned_commit_sha, head_tree_sha = _commit_shas(head.payload)
+        monthly_event_sha = candidate.monthly_event_sha
+        pinned_commit_sha: str | None = None
+        head_tree_sha: str | None = None
+        current_default_head: str | None = None
+        sha_source: str | None = None
+        sha_fallback_reason: str | None = None
+
+        if monthly_event_sha is not None:
+            monthly = self.client.get_json(
+                f"/repos/{_encode_repo(canonical_name)}/commits/{monthly_event_sha}",
+                stage="B_MONTHLY_COMMIT",
+                endpoint_category="monthly_event_commit",
+            )
+            requests.extend(monthly.records)
+            monthly_state, monthly_error = _request_state(
+                monthly,
+                safety_threshold=self.policy.rate_limit_safety_threshold,
+            )
+            observed_sha, observed_tree_sha = _commit_shas(monthly.payload)
+            if monthly_state == "OK" and observed_sha == monthly_event_sha:
+                pinned_commit_sha = monthly_event_sha
+                head_tree_sha = observed_tree_sha
+                sha_source = "MONTH_EVENT_SHA"
+            else:
+                sha_fallback_reason = (
+                    monthly_error or "MONTH_EVENT_SHA_RESPONSE_MISMATCH"
+                )
+
+        if self.require_historical_head and pinned_commit_sha is None:
+            return self._historical_head_unavailable(
+                candidate,
+                reason=(f"HISTORICAL_MONTHLY_COMMIT_UNAVAILABLE:{sha_fallback_reason}"),
+                requests=requests,
+                selected_commit_sha=None,
+            )
+        if self.require_historical_head and head_tree_sha is None:
+            return self._historical_head_unavailable(
+                candidate,
+                reason="HISTORICAL_COMMIT_TREE_UNAVAILABLE",
+                requests=requests,
+                selected_commit_sha=pinned_commit_sha,
+            )
+
         if pinned_commit_sha is None:
+            head = self.client.get_json(
+                (
+                    f"/repos/{_encode_repo(canonical_name)}/branches/"
+                    f"{urllib.parse.quote(default_branch, safe='')}"
+                ),
+                stage="B_HEAD",
+                endpoint_category="default_branch_head",
+            )
+            requests.extend(head.records)
+            state, error = _request_state(
+                head,
+                safety_threshold=self.policy.rate_limit_safety_threshold,
+            )
+            if state != "OK":
+                return self._before_pin_failure(candidate, state, error, requests)
+            pinned_commit_sha, head_tree_sha = _commit_shas(head.payload)
+            if pinned_commit_sha is None:
+                return self._before_pin_failure(
+                    candidate,
+                    "FAILED",
+                    "HEAD response has no valid pinned commit SHA",
+                    requests,
+                )
+            current_default_head = pinned_commit_sha
+            sha_source = "CURRENT_DEFAULT_HEAD"
+            sha_fallback_reason = sha_fallback_reason or "MONTH_EVENT_SHA_NOT_AVAILABLE"
+
+        if pinned_commit_sha is None or sha_source is None:
             return self._before_pin_failure(
                 candidate,
                 "FAILED",
-                "HEAD response has no valid pinned commit SHA",
+                "commit selection did not produce a valid SHA",
                 requests,
             )
 
         cached = self.cache.get(
-            policy_version=self.policy.cache_identity,
+            policy_version=self.cache_policy_version,
             repo_id=candidate.repo_id,
             pinned_commit_sha=pinned_commit_sha,
         )
         if cached is not None:
             if head_tree_sha is not None and cached.tree_sha != head_tree_sha:
                 repaired = self.cache.repair_tree_sha(
-                    policy_version=self.policy.cache_identity,
+                    policy_version=self.cache_policy_version,
                     repo_id=candidate.repo_id,
                     pinned_commit_sha=pinned_commit_sha,
                     tree_sha=head_tree_sha,
                 )
                 if repaired is not None:
                     cached = repaired
-            record = self._reused_record(candidate, canonical_name, cached)
+            record = self._reused_record(
+                candidate,
+                canonical_name,
+                cached,
+                monthly_event_sha=monthly_event_sha,
+                current_default_head=current_default_head,
+                sha_source=sha_source,
+                sha_fallback_reason=sha_fallback_reason,
+            )
             return RepoExecution(
                 candidate=candidate,
                 status=RepoExecutionStatus.REUSED,
@@ -420,11 +529,22 @@ class RepoFetchOrchestrator:
             safety_threshold=self.policy.rate_limit_safety_threshold,
         )
         if state != "OK":
+            if self.require_historical_head:
+                return self._historical_head_unavailable(
+                    candidate,
+                    reason=f"HISTORICAL_TREE_UNAVAILABLE:{error or state}",
+                    requests=requests,
+                    selected_commit_sha=pinned_commit_sha,
+                )
             return self._after_pin_failure(
                 candidate=candidate,
                 canonical_name=canonical_name,
                 pinned_commit_sha=pinned_commit_sha,
                 tree_sha=head_tree_sha,
+                monthly_event_sha=monthly_event_sha,
+                current_default_head=current_default_head,
+                sha_source=sha_source,
+                sha_fallback_reason=sha_fallback_reason,
                 state=state,
                 error=error,
                 requests=requests,
@@ -432,22 +552,44 @@ class RepoFetchOrchestrator:
         tree_payload = tree.payload
         entries = tree_payload.get("tree") if tree_payload is not None else None
         if not isinstance(entries, list):
+            if self.require_historical_head:
+                return self._historical_head_unavailable(
+                    candidate,
+                    reason="HISTORICAL_TREE_UNAVAILABLE:ENTRY_LIST_MISSING",
+                    requests=requests,
+                    selected_commit_sha=pinned_commit_sha,
+                )
             return self._after_pin_failure(
                 candidate=candidate,
                 canonical_name=canonical_name,
                 pinned_commit_sha=pinned_commit_sha,
                 tree_sha=head_tree_sha,
+                monthly_event_sha=monthly_event_sha,
+                current_default_head=current_default_head,
+                sha_source=sha_source,
+                sha_fallback_reason=sha_fallback_reason,
                 state="FAILED",
                 error="recursive Tree response has no entry list",
                 requests=requests,
             )
         truncated_value = tree_payload.get("truncated")
         if not isinstance(truncated_value, bool):
+            if self.require_historical_head:
+                return self._historical_head_unavailable(
+                    candidate,
+                    reason="HISTORICAL_TREE_UNAVAILABLE:TRUNCATED_FLAG_MISSING",
+                    requests=requests,
+                    selected_commit_sha=pinned_commit_sha,
+                )
             return self._after_pin_failure(
                 candidate=candidate,
                 canonical_name=canonical_name,
                 pinned_commit_sha=pinned_commit_sha,
                 tree_sha=head_tree_sha,
+                monthly_event_sha=monthly_event_sha,
+                current_default_head=current_default_head,
+                sha_source=sha_source,
+                sha_fallback_reason=sha_fallback_reason,
                 state="FAILED",
                 error="recursive Tree response has no boolean truncated flag",
                 requests=requests,
@@ -459,8 +601,16 @@ class RepoFetchOrchestrator:
             head_tree_sha=head_tree_sha,
             tree_payload=tree_payload,
         )
+        if self.require_historical_head and tree_sha is None:
+            return self._historical_head_unavailable(
+                candidate,
+                reason="HISTORICAL_TREE_UNAVAILABLE:TREE_SHA_MISSING",
+                requests=requests,
+                selected_commit_sha=pinned_commit_sha,
+            )
         tree_truncated = truncated_value
         selection = select_artifacts(typed_entries, self.policy)
+        language_metadata = summarize_language_metadata(typed_entries)
         issues = list(selection.issues)
         if len(typed_entries) != len(entries):
             issues.append(RepoCollectionIssue.ARTIFACT_FETCH_FAILED)
@@ -550,6 +700,11 @@ class RepoFetchOrchestrator:
             tree_truncated=tree_truncated,
             observed_tree_entries=observed_entries,
             artifacts=tuple(artifacts),
+            language_metadata=language_metadata,
+            monthly_event_sha=monthly_event_sha,
+            current_default_head=current_default_head,
+            sha_source=sha_source,
+            sha_fallback_reason=sha_fallback_reason,
         )
         status = (
             RepoExecutionStatus.RATE_LIMITED
@@ -565,11 +720,39 @@ class RepoFetchOrchestrator:
             record=record,
             requests=tuple(requests),
             last_error=last_error,
+            selection_metrics=selection.metrics(),
         )
 
-    def _repair_legacy_checkpoint_tree(
-        self, candidate: RepoActivityCandidate
-    ) -> None:
+    def _historical_head_unavailable(
+        self,
+        candidate: RepoActivityCandidate,
+        *,
+        reason: str,
+        requests: Sequence[RequestRecord],
+        selected_commit_sha: str | None = None,
+    ) -> RepoExecution:
+        """Record an excluded monthly candidate without pinning current HEAD."""
+
+        return RepoExecution(
+            candidate=candidate,
+            status=RepoExecutionStatus.HISTORICAL_HEAD_UNAVAILABLE,
+            record=None,
+            requests=tuple(requests),
+            last_error=reason,
+            lineage={
+                "selected_commit_sha": selected_commit_sha,
+                "sha_source": "HISTORICAL_HEAD_UNAVAILABLE",
+                "monthly_event_sha": candidate.monthly_event_sha,
+                "current_default_head": None,
+                "sha_fallback_reason": reason,
+                "target_period": (
+                    f"{candidate.activity_period_start.isoformat()}"
+                    f"/{candidate.activity_period_end.isoformat()}"
+                ),
+            },
+        )
+
+    def _repair_legacy_checkpoint_tree(self, candidate: RepoActivityCandidate) -> None:
         """Repair terminal checkpoint metadata without refetching artifacts."""
 
         existing = self.checkpoint.contract_record(candidate.repo_id)
@@ -634,6 +817,10 @@ class RepoFetchOrchestrator:
         canonical_name: str,
         pinned_commit_sha: str,
         tree_sha: str | None,
+        monthly_event_sha: str | None,
+        current_default_head: str | None,
+        sha_source: str,
+        sha_fallback_reason: str | None,
         state: str,
         error: str | None,
         requests: Sequence[RequestRecord],
@@ -662,6 +849,10 @@ class RepoFetchOrchestrator:
             tree_truncated=False,
             observed_tree_entries=0,
             artifacts=(),
+            monthly_event_sha=monthly_event_sha,
+            current_default_head=current_default_head,
+            sha_source=sha_source,
+            sha_fallback_reason=sha_fallback_reason,
         )
         return RepoExecution(
             candidate=candidate,
@@ -680,7 +871,16 @@ class RepoFetchOrchestrator:
         candidate: RepoActivityCandidate,
         canonical_name: str,
         cached: GitHubRepoSnapshot,
+        *,
+        monthly_event_sha: str | None,
+        current_default_head: str | None,
+        sha_source: str,
+        sha_fallback_reason: str | None,
     ) -> GitHubRepoSnapshot:
+        cached_source = cached.sha_source or sha_source
+        cached_monthly_sha = cached.monthly_event_sha or monthly_event_sha
+        cached_current_head = cached.current_default_head or current_default_head
+        cached_reason = cached.sha_fallback_reason or sha_fallback_reason
         return self._record(
             candidate=candidate,
             canonical_name=canonical_name,
@@ -693,6 +893,11 @@ class RepoFetchOrchestrator:
             tree_truncated=False,
             observed_tree_entries=cached.observed_tree_entries,
             artifacts=cached.artifacts,
+            language_metadata=cached.language_metadata,
+            monthly_event_sha=cached_monthly_sha,
+            current_default_head=cached_current_head,
+            sha_source=cached_source,
+            sha_fallback_reason=cached_reason,
         )
 
     def _record(
@@ -708,7 +913,12 @@ class RepoFetchOrchestrator:
         tree_truncated: bool,
         observed_tree_entries: int,
         artifacts: tuple[RepoArtifact, ...],
+        language_metadata: tuple[RepoLanguageMetadata, ...] = (),
         reused_from_snapshot_id: str | None = None,
+        monthly_event_sha: str | None = None,
+        current_default_head: str | None = None,
+        sha_source: str | None = None,
+        sha_fallback_reason: str | None = None,
     ) -> GitHubRepoSnapshot:
         return GitHubRepoSnapshot(
             repo_snapshot_id=(
@@ -723,6 +933,17 @@ class RepoFetchOrchestrator:
             activity_count=candidate.activity_count,
             activity_rank=candidate.activity_rank,
             pinned_commit_sha=pinned_commit_sha,
+            selected_commit_sha=pinned_commit_sha if sha_source else None,
+            sha_source=sha_source,
+            monthly_event_sha=monthly_event_sha,
+            current_default_head=current_default_head,
+            sha_fallback_reason=sha_fallback_reason,
+            target_period=(
+                f"{candidate.activity_period_start.isoformat()}"
+                f"/{candidate.activity_period_end.isoformat()}"
+            )
+            if sha_source
+            else None,
             tree_sha=tree_sha,
             collection_status=collection_status,
             collection_issues=collection_issues,
@@ -731,6 +952,7 @@ class RepoFetchOrchestrator:
             tree_truncated=tree_truncated,
             observed_tree_entries=observed_tree_entries,
             artifacts=artifacts,
+            language_metadata=language_metadata,
         )
 
 
@@ -766,6 +988,7 @@ def load_candidates(
                 activity_metric=activity_metric,
                 activity_period_start=period_start,
                 activity_period_end=period_end,
+                monthly_event_sha=_optional_sha(row.get("monthly_event_sha")),
             )
         )
     ordered = _validate_candidates(candidates, limit)
@@ -811,6 +1034,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-depth", type=int, default=8)
     parser.add_argument("--source-prefix-bytes", type=int, default=8_192)
     parser.add_argument("--rate-limit-safety-threshold", type=int, default=200)
+    parser.add_argument(
+        "--require-historical-head",
+        action="store_true",
+        help=(
+            "Do not fall back to the current default branch head when the "
+            "monthly historical commit/tree cannot be resolved."
+        ),
+    )
     parser.add_argument("--token-env", default="GITHUB_TOKEN")
     return parser
 
@@ -882,6 +1113,7 @@ def create_orchestrator(
         pipeline_run_id=arguments.pipeline_run_id,
         collector_version=arguments.collector_version,
         progress=progress,
+        require_historical_head=arguments.require_historical_head,
     )
 
 
@@ -972,14 +1204,22 @@ def _request_state(
 def _commit_shas(payload: Mapping[str, Any] | None) -> tuple[str | None, str | None]:
     if payload is None:
         return None, None
+    pinned = _valid_sha(payload.get("sha"))
     commit = payload.get("commit")
-    if not isinstance(commit, Mapping):
-        return None, None
-    pinned = _valid_sha(commit.get("sha"))
-    detail = commit.get("commit")
+    if isinstance(commit, Mapping):
+        pinned = pinned or _valid_sha(commit.get("sha"))
+    else:
+        commit = None
+    detail = commit.get("commit") if isinstance(commit, Mapping) else None
+    if detail is None and isinstance(commit, Mapping):
+        detail = commit
     tree_sha = None
     if isinstance(detail, Mapping):
         tree = detail.get("tree")
+        if isinstance(tree, Mapping):
+            tree_sha = _valid_sha(tree.get("sha"))
+    if tree_sha is None:
+        tree = payload.get("tree")
         if isinstance(tree, Mapping):
             tree_sha = _valid_sha(tree.get("sha"))
     return pinned, tree_sha
@@ -1063,6 +1303,28 @@ def _required_str(payload: Mapping[str, Any], name: str) -> str:
 
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _optional_sha(value: object) -> str | None:
+    if value is None:
+        return None
+    parsed = _valid_sha(value)
+    if parsed is None:
+        raise ValueError("monthly_event_sha must be a lowercase 40-character SHA")
+    return parsed
+
+
+def _record_lineage(record: GitHubRepoSnapshot | None) -> dict[str, Any] | None:
+    if record is None or record.sha_source is None:
+        return None
+    return {
+        "selected_commit_sha": record.selected_commit_sha,
+        "sha_source": record.sha_source,
+        "monthly_event_sha": record.monthly_event_sha,
+        "current_default_head": record.current_default_head,
+        "sha_fallback_reason": record.sha_fallback_reason,
+        "target_period": record.target_period,
+    }
 
 
 def _immutable_payload_write(path: Path, payload: Mapping[str, Any]) -> None:

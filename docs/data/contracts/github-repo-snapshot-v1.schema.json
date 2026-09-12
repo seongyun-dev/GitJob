@@ -46,6 +46,86 @@
           "title": "Pinned Commit Sha",
           "type": "string"
         },
+        "selected_commit_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected Commit Sha"
+        },
+        "sha_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "MONTH_EVENT_SHA",
+                "CURRENT_DEFAULT_HEAD",
+                "HISTORICAL_HEAD_UNAVAILABLE"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha Source"
+        },
+        "monthly_event_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monthly Event Sha"
+        },
+        "current_default_head": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Default Head"
+        },
+        "sha_fallback_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha Fallback Reason"
+        },
+        "target_period": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Period"
+        },
         "tree_sha": {
           "anyOf": [
             {
@@ -109,6 +189,14 @@
             "$ref": "#/$defs/RepoArtifact"
           },
           "title": "Artifacts",
+          "type": "array"
+        },
+        "language_metadata": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RepoLanguageMetadata"
+          },
+          "title": "Language Metadata",
           "type": "array"
         }
       },
@@ -244,6 +332,35 @@
       ],
       "title": "RepoCollectionStatus",
       "type": "string"
+    },
+    "RepoLanguageMetadata": {
+      "additionalProperties": false,
+      "description": "Structural language metadata derived from a recursive Git tree.\n\nThis intentionally contains paths and counts only; source contents are not\npart of the metadata contract.",
+      "properties": {
+        "language": {
+          "title": "Language",
+          "type": "string"
+        },
+        "file_count": {
+          "exclusiveMinimum": 0,
+          "title": "File Count",
+          "type": "integer"
+        },
+        "representative_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Representative Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "language",
+        "file_count"
+      ],
+      "title": "RepoLanguageMetadata",
+      "type": "object"
     }
   },
   "additionalProperties": false,

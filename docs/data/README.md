@@ -8,6 +8,10 @@
 
 ## 1. 데이터 원칙
 
+### 1.1 최근 Artifact Fetch 품질 보강
+
+- [Monthly Artifact Fetch 품질 보강](2026-09-11-repo-fetch-monthly-sha-manifest-quality.md) — S15P21E102-198, historical HEAD fallback 금지·언어/DevOps metadata 및 Top1,000 Canary 검증
+
 GitJob의 데이터는 “화면에 빠르게 보여줄 서비스 데이터”와 “다시 처리할 수 있는 원본·장기 이력”을 분리한다.
 
 | 계층 | 저장 대상 | 기준 저장소 |
