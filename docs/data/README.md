@@ -38,6 +38,10 @@ PostgreSQL은 raw 본문 전체를 대체하지 않는다. HDFS/Parquet dataset�
                  PostgreSQL Service API
 ```
 
+검증을 통과한 채용공고 회차는 Raw와 별개로 `hdfs:///gitjob/analysis_input/jobs/<source>/<RUN_ID>/`에
+불변으로 게시된다 — [채용공고 A→C analysis_input 게시](2026-09-12-job-analysis-input-publish.md).
+C가 그 경로를 읽는 배선은 아직 열려 있으며 같은 문서 7장에 blocker로 적혀 있다.
+
 분석 실행은 별도 `analysis.requested` 계열 event로 시작한다. Worker가 저장소별 Commit을 기준으로 수집·파싱·Registry 판정을 실행하고, 결과 event와 품질 결과를 남긴다.
 
 ## 3. 수집 대상과 주기

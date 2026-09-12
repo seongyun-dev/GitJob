@@ -82,6 +82,7 @@ from job.collector import (
     normalize_posting,
     pipeline_run_id_for,
 )
+from job.collector.analysis_input import publish_from_env
 from job.collector.http import BlockedError, HttpError, PoliteHttpClient
 from job.collector.identity import (
     Decision,
@@ -925,6 +926,35 @@ def main(argv: list[str] | None = None) -> int:
                 # The local snapshot is intact; a Raw failure must be visible
                 # to the scheduler without discarding what was collected.
                 return 1
+
+            # S15P21E102-220. Raw keeps every run; `analysis_input` keeps only
+            # the ones C may compute on, so the publisher re-checks the
+            # manifest and refuses an early stop, detail failures, invalid
+            # records or an empty run. A refusal is a normal outcome and does
+            # not fail the collection.
+            published = publish_from_env(
+                paths["manifest"].parent,
+                source=SOURCE_SITE,
+                pipeline_run_id=result.batch.pipeline_run_id,
+            )
+            if published is None:
+                print("analysis_input=skipped (WEBHDFS_URL 미설정)", file=sys.stderr)
+            elif published.skipped:
+                print(
+                    f"analysis_input=skipped ({', '.join(published.blockers)})",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"analysis_input={published.run_path}")
+                for entry in published.failed:
+                    print(
+                        f"analysis_input failed: {entry['file']} - {entry['error']}",
+                        file=sys.stderr,
+                    )
+                if not published.ok:
+                    # Raw already holds the run, so this is reported rather
+                    # than retried here.
+                    return 1
 
     if result.manifest["stopped_reason"]:
         print(f"stopped: {result.manifest['stopped_reason']}", file=sys.stderr)

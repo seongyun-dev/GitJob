@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -48,7 +48,9 @@ __all__ = [
     "JobPostingRawSink",
     "RawUploadResult",
     "raw_run_path",
+    "require_single_segment",
     "sink_from_env",
+    "upload_run_files",
 ]
 
 # Matches `RAW_ROOT` in `.env.example` and `Infra/compose/compose.yaml`.
@@ -115,14 +117,21 @@ def raw_run_path(
     day = collected_at.astimezone(UTC)
 
     partition_source = source.strip().lower()
-    _require_single_segment(partition_source, "source")
-    _require_single_segment(pipeline_run_id.strip(), "pipeline_run_id")
+    require_single_segment(partition_source, "source")
+    require_single_segment(pipeline_run_id.strip(), "pipeline_run_id")
 
     root = normalize_hdfs_path(raw_root)
     return root / partition_source / f"dt={day:%Y-%m-%d}" / pipeline_run_id.strip()
 
 
-def _require_single_segment(value: str, label: str) -> None:
+def require_single_segment(value: str, label: str) -> None:
+    """Reject anything that is not one safe path component.
+
+    Shared with `analysis_input`: both paths embed `source` and
+    `pipeline_run_id`, and a value containing `/` or `..` would silently move
+    the write somewhere else.
+    """
+
     if not value:
         raise ValueError(f"{label} must not be blank")
     if PurePosixPath(value).name != value or value in {".", ".."}:
@@ -156,40 +165,59 @@ class JobPostingRawSink:
             pipeline_run_id=pipeline_run_id,
             raw_root=self.raw_root,
         )
-        uploaded: list[str] = []
-        unchanged: list[str] = []
-        failed: list[dict[str, str]] = []
+        return upload_run_files(self.client, destination, run_dir, self.filenames)
 
-        for filename in self.filenames:
-            local = run_dir / filename
-            if not local.exists():
-                failed.append({"file": filename, "error": "local file missing"})
-                continue
-            target = destination / filename
-            try:
-                existed = self.client.exists(target)
-                uri = self.client.store_immutable(target, local.read_bytes())
-            except FileExistsError:
-                # Same path, different bytes: a run id was reused for different
-                # data. Overwriting would destroy an earlier snapshot, so this
-                # is reported rather than resolved.
-                failed.append(
-                    {
-                        "file": filename,
-                        "error": "raw object exists with different content",
-                    }
-                )
-            except (WebHdfsError, OSError) as error:
-                failed.append({"file": filename, "error": str(error)[:400]})
-            else:
-                (unchanged if existed else uploaded).append(uri)
 
-        return RawUploadResult(
-            run_path=destination.as_posix(),
-            uploaded=tuple(uploaded),
-            unchanged=tuple(unchanged),
-            failed=tuple(failed),
-        )
+def upload_run_files(
+    client: WebHdfsClient,
+    destination: PurePosixPath,
+    run_dir: Path,
+    filenames: Sequence[str],
+) -> RawUploadResult:
+    """Store one run's files under `destination`, immutably.
+
+    Extracted from `JobPostingRawSink.upload_run` for S15P21E102-220, which
+    publishes the same three files to a second path. The loop is the part that
+    matters — immutable store, existing-and-identical is not an error, and a
+    reused run id with different bytes is refused rather than overwritten — and
+    having it twice would let the two paths drift apart in exactly that
+    behaviour. Only the destination differs between callers.
+    """
+
+    uploaded: list[str] = []
+    unchanged: list[str] = []
+    failed: list[dict[str, str]] = []
+
+    for filename in filenames:
+        local = run_dir / filename
+        if not local.exists():
+            failed.append({"file": filename, "error": "local file missing"})
+            continue
+        target = destination / filename
+        try:
+            existed = client.exists(target)
+            uri = client.store_immutable(target, local.read_bytes())
+        except FileExistsError:
+            # Same path, different bytes: a run id was reused for different
+            # data. Overwriting would destroy an earlier snapshot, so this
+            # is reported rather than resolved.
+            failed.append(
+                {
+                    "file": filename,
+                    "error": "object exists with different content",
+                }
+            )
+        except (WebHdfsError, OSError) as error:
+            failed.append({"file": filename, "error": str(error)[:400]})
+        else:
+            (unchanged if existed else uploaded).append(uri)
+
+    return RawUploadResult(
+        run_path=destination.as_posix(),
+        uploaded=tuple(uploaded),
+        unchanged=tuple(unchanged),
+        failed=tuple(failed),
+    )
 
 
 def sink_from_env(

@@ -307,6 +307,9 @@ services:
       # DataNode this container cannot resolve. See `.env.example`.
       WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
       RAW_ROOT: ${RAW_ROOT:-hdfs:///gitjob/raw}
+      # S15P21E102-220. Verified runs are published here for C after the
+      # Raw upload succeeds; unset falls back to the same default.
+      ANALYSIS_INPUT_JOBS_ROOT: ${ANALYSIS_INPUT_JOBS_ROOT:-hdfs:///gitjob/analysis_input/jobs}
     volumes:
       # Collector resume state. The schedule passes
       # `--cursor ../data/<site>/cursor.json` and WORKDIR is /app, so both the
