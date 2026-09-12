@@ -717,6 +717,49 @@ def build_event_schema() -> Any:
     )
 
 
+# `dataset_digest.DIGEST_FORMAT`.  Repeated rather than imported at module
+# scope because `spark-submit` puts only the submitted script's own directory
+# on `sys.path`; the algorithm itself is imported in `slice_row_digest`, and
+# the test suite asserts this string still matches its source.
+DIGEST_FORMAT = "typed-json-v2"
+
+
+def slice_row_digest(spark: Any, F: Any, frame: Any) -> str:
+    """The deterministic content digest of one week's rows.
+
+    Parquet is not byte-reproducible across runs — part filenames carry a random
+    UUID and the footer records a build string — so `hdfs dfs -checksum` reports
+    a difference for identical data.  `dataset_digest` exists for exactly this
+    and is reused rather than reimplemented: same `typed-json-v2` framing, same
+    JSON options, so a digest taken here and one taken by
+    `Infra/scripts/spark-dataset-digest.sh` over the same directory agree.
+
+    Row order does not matter; `content_digest` sorts the rendered rows.
+    """
+
+    import sys
+    from pathlib import Path as _Path
+
+    # `dataset_digest` sits one directory up, in `Infra/spark`.  The Docker
+    # image copies that whole tree, so the relative layout is fixed.
+    parent = str(_Path(__file__).resolve().parents[1])
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    from dataset_digest import JSON_OPTIONS, content_digest
+
+    columns = sorted(frame.columns)
+    ordered = frame.select(*[F.col(name) for name in columns])
+    rendered = ordered.select(
+        F.to_json(
+            F.struct(*[F.col(name).alias(name) for name in columns]),
+            options=JSON_OPTIONS,
+        ).alias("row")
+    )
+    return content_digest(
+        ordered.schema.json(), [str(item["row"]) for item in rendered.collect()]
+    )
+
+
 def _hadoop_path_exists(spark: Any, uri: str) -> bool:
     path = spark._jvm.org.apache.hadoop.fs.Path(uri)
     filesystem = path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration())
@@ -1269,6 +1312,12 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
                 "fully_within_period": week_is_fully_within_period(
                     week, arguments.period_start, arguments.period_end
                 ),
+                # Taken from the slice already in hand.  `-225` publishes this
+                # in the week's manifest so C can verify the bytes it reads,
+                # and a second pass over the same Parquet would cost a full
+                # scan to learn what this read already knows.
+                "row_digest": slice_row_digest(spark, F, slice_df),
+                "row_digest_format": DIGEST_FORMAT,
             }
         if readback_rows != row_count:
             raise RuntimeError(

@@ -373,6 +373,86 @@ stream 실행에는 `stream` 블록이 추가된다 — `deduplicated_event_coun
 `Infra/docker/spark/Dockerfile`이 `Infra/spark`를 통째로 `/opt/gitjob/spark`에
 복사하므로, 이 파일은 merge 후 image rebuild만으로 운영 실행 경로에 포함된다.
 
+## 8.1 Snapshot 확정과 완료 이벤트 (S15P21E102-225)
+
+집계가 끝났다고 C조가 읽어도 되는 것은 아니다. 파일이 있다는 것은 절반만 쓰인
+회차도 똑같이 만족한다. 그래서 주차마다 확정 신호와 검증 수단을 붙인다.
+
+```text
+DATA WRITE → read-back VERIFY → MANIFEST → COMPLETION EVENT
+```
+
+manifest 게시가 실패하면 완료 이벤트를 발행하지 않는다. 이벤트는 manifest 를
+write 하고 **다시 읽어 확인한 뒤에만** 나간다 — 읽히지 않는 URI 를 가리키는
+이벤트를 C조에 보내지 않기 위해서다.
+
+### 주차당 manifest 1개, 이벤트 1건
+
+`export_c_archive_activity` 가 한 read 에 주차 하나만 허용하므로 C조가 실제로
+소비하는 단위는 주차다. 한 snapshot 이 여러 주차를 담아도 주차마다 따로 만든다.
+
+```text
+{snapshot}/week=2026-08-31/_SUCCESS.json  → completion event 1건
+{snapshot}/week=2026-09-07/_SUCCESS.json  → completion event 1건
+```
+
+### manifest
+
+`_SUCCESS.json` 은 주차 디렉터리 안에 들어간다. 계약은
+`docs/data/contracts/repo-activity-weekly-publish-manifest-v1.schema.json`.
+
+```json
+{
+  "schema_version": "repo-activity-weekly-publish-manifest/v1",
+  "dataset_snapshot_id": "...",
+  "week_start": "2026-08-31",
+  "data_uri": "hdfs:///gitjob/parquet/github/repo_activity_weekly/period=.../snapshot=.../week=2026-08-31",
+  "row_count": 12345,
+  "row_digest": {"format": "typed-json-v2", "value": "<sha256>"}
+}
+```
+
+**digest 는 byte checksum 이 아니다.** Parquet part 파일은 실행마다 다른 UUID 와
+`created_by` 빌드 문자열을 담아서, 같은 데이터도 `hdfs dfs -checksum` 이 다르게
+나온다. `Infra/spark/dataset_digest.py` 가 정렬된 schema 와 canonical JSON 행을
+해싱하는 이유가 그것이고, 이 값은 그 함수를 그대로 재사용한다. 주차별 read-back
+에서 계산하므로 Parquet 을 한 번 더 훑지 않는다.
+
+### 완료 이벤트
+
+| 항목 | 값 |
+|---|---|
+| topic | `gitjob.repo-activity-weekly.completed.v1` |
+| partition | 1 (주차당 1건, 순서가 유일한 의미) |
+| retention | `-1` |
+| key / `source_id` | `{dataset_snapshot_id}/{week_start}` |
+| payload | `dataset_snapshot_id`, `week_start`, `manifest_uri` **3필드뿐** |
+
+`github.events` Raw topic 과 완전히 분리한다. `selected_repo_count`, coverage,
+Registry 44 순회, 기술별 Trend 는 C조가 계산한다 — A조가 숫자를 실어 보내면 같은
+값이 틀릴 자리가 하나 더 생긴다.
+
+### 멱등성과 late event
+
+`store_immutable` 이 목적지가 이미 있으면 bytes 를 비교한다. 같은 내용이면 기존
+URI 를 돌려주고(재실행 멱등), 다른 내용이면 `FileExistsError` 다. manifest 가 row
+digest 를 담으므로 **같은 `dataset_snapshot_id` 로 행이 달라진 주차는 조용히
+게시될 수 없다.**
+
+따라서 §2.6 의 late event 정책이 여기서 강제된다. 이미 게시된 주차에 뒤늦은
+event 를 반영하려면 기존 Snapshot 을 고치는 것이 아니라 **새 `dataset_snapshot_id`
+로 새 경로, 새 manifest, 새 완료 이벤트**를 만든다. `snapshot=` 가 경로에 있으므로
+새 id 는 새 디렉터리이고, C조가 먼저 읽은 것은 그대로 남는다.
+
+### 실행 경계
+
+이미지가 이 분리를 강제한다. `Infra/docker/spark` 는 `Infra/spark` 만 복사하므로
+Spark executor 안에는 `common.webhdfs` 도 `common.kafka` 도 없다. `Infra/docker/worker`
+는 `AI/` 전체를 담지만 Spark 도 Hadoop CLI 도 JRE 도 없다. 그래서 digest 는 행을
+이미 읽고 있는 Spark 쪽에서 계산하고, 게시와 발행은 client 가 있는 worker 쪽
+(`AI/github/weekly_activity_publish.py`)에서 한다. `repo_snapshot_bootstrap.py` 도
+같은 이유로 같은 모양이다.
+
 ## 9. C조 해석 한계
 
 `week_start`는 **기술 사용 시작일이 아니라 해당 Repo에서 GitHub event가 발생한

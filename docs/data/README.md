@@ -1079,6 +1079,18 @@ C조 범위다.
   붙인 "과거 검증 예시"로 분리했다
 - 상세: [GitHub Historical Pipeline 운영·복구 Runbook](2026-09-12-github-historical-pipeline-runbook.md)
 
+## Weekly Repo Activity Snapshot manifest 및 완료 이벤트 (S15P21E102-225)
+
+- Jira: S15P21E102-225
+- 문제: weekly job 은 `errorifexists` 로 덮어쓰기만 막고 확정 신호도 검증 수단도 만들지 않았다. 파일 존재는 절반만 쓰인 회차도 만족한다
+- 순서: `DATA WRITE → read-back VERIFY → MANIFEST → COMPLETION EVENT`. manifest 실패 시 이벤트를 발행하지 않는다
+- 단위: 주차당 manifest 1개 + 완료 이벤트 1건 (exporter 가 한 read 에 주차 하나만 허용한다)
+- manifest: 주차 디렉터리의 `_SUCCESS.json`. `dataset_snapshot_id`, `week_start`, `data_uri`, `row_count`, `row_digest`
+- digest: `Infra/spark/dataset_digest.py` 의 `typed-json-v2` 재사용. Parquet 은 byte-reproducible 하지 않아 `hdfs dfs -checksum` 을 쓰지 않는다
+- topic: `gitjob.repo-activity-weekly.completed.v1` (partition 1, `retention.ms=-1`). payload 3필드뿐이고 통계는 C조 몫
+- 멱등/late: 같은 id + 같은 bytes 는 멱등 성공, 같은 id + 다른 데이터는 `FileExistsError`. late event 는 새 `dataset_snapshot_id`
+- 상세: [주간 Repo Activity 집계](2026-09-12-repo-activity-weekly.md) §8.1
+
 ## GH Archive 6개월 Historical Bootstrap
 
 - Jira: S15P21E102-179

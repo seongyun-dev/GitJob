@@ -19,6 +19,12 @@
 #                                       that is deliberate — partitions grow
 #                                       one way only.
 #   so.raw           3   post id        10,000/day. 6 would be overkill.
+#   gitjob.repo-activity-weekly.completed.v1
+#                    1   snapshot/week  One message per published week (-225).
+#                                       A week is announced once and C reads it
+#                                       in order; a second partition would buy
+#                                       parallelism nobody needs and give up
+#                                       that ordering.
 #   jobs.collected   3   source_site    4 messages a day. The Claim Check
 #                                       envelope carries a run location, not
 #                                       postings, so volume never grows with
@@ -65,6 +71,7 @@ TOPICS=(
   "gitjob.repository-analysis.requests.v1:3"
   "gitjob.repository-analysis.results.v1:3"
   "gitjob.repository-analysis.dlq.v1:3"
+  "gitjob.repo-activity-weekly.completed.v1:1"
 )
 
 RETENTION_MS="-1"
