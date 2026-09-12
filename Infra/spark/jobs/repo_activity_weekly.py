@@ -40,6 +40,43 @@ the Raw layer are unverified here.  Adding a speculative `actor.id` to the read
 schema would silently produce nulls if the guess were wrong, so it is left out
 and recorded as the one open item in `docs/data/2026-09-12-repo-activity-weekly.md`.
 
+### Two inputs, one aggregation (S15P21E102-224)
+
+GH Archive reaches HDFS two ways, and `-102` §2.4 draws the line at
+`HISTORICAL_CUTOFF`: history goes straight to Raw as untouched hourly files,
+and anything at or after the cutoff comes through Kafka and lands as C1's
+columnar archive.  Both are the same events, so both owe the C side the same
+four columns — the responsibility here is "GH Archive event → weekly repo
+activity", and the input format is not a second responsibility.  A separate
+job would mean a second copy of `ACTIVITY_COLUMNS`, the quality block, the
+coverage block and `assert_week_slice_is_consumable`, and the copy that drifts
+is the one the exporter rejects.
+
+So the reader and its completeness gate branch, and everything from `typed`
+onward is shared:
+
+    raw-json        spark.read.schema(...).json()     file count == expected
+    stream-parquet  spark.read.parquet()              every hour present
+
+Three things are true of the stream input and not of Raw, and each is handled
+where it arises rather than by a second job:
+
+* **It can repeat.** The publisher records an hour only after the whole file
+  went out, so a failure part-way re-sends the part that already landed
+  (`collector/gharchive/events.py`).  `-102` §4.1 makes
+  `(source, source_id, schema_version)` the consumer-side dedup key for
+  exactly that trade, so this job de-duplicates on those three before it
+  counts anything.  Raw has no such path and is left untouched.
+* **Its file count means nothing.**  744 hourly `.json.gz` files is a fact
+  about Raw; the number of Parquet part-files C1 writes depends on batch sizes
+  and partition counts.  The gate is hour coverage instead — see
+  `expected_stream_hours`.
+* **It sits on the other side of the cutoff.**  `validate_period` now takes the
+  input format and holds Raw below the cutoff and the stream at or above it,
+  which is what keeps one hour from being counted twice.  A row that disagrees
+  with that boundary is counted and reported rather than silently dropped,
+  following the same rule `c1_archiver_stream.py` applies to its own guard.
+
 ### Partial weeks are reported, not dropped
 
 A calendar month never starts or ends on a Monday, so the first and last week
@@ -77,6 +114,41 @@ DEFAULT_JOIN_MAX_ROWS = 200_000
 
 ACTIVITY_COLUMNS = ("repo_id", "repo_name", "event_count", "week_start")
 
+INPUT_FORMAT_RAW_JSON = "raw-json"
+INPUT_FORMAT_STREAM_PARQUET = "stream-parquet"
+INPUT_FORMATS = (INPUT_FORMAT_RAW_JSON, INPUT_FORMAT_STREAM_PARQUET)
+
+# `c1_archiver_stream.archive_location("github.events")` with the default
+# parquet root.  Named here rather than imported because `Infra/spark` and
+# `Infra/spark/jobs` are separate import roots at submit time.
+DEFAULT_STREAM_INPUT = "hdfs:///gitjob/parquet/stream/github.events"
+
+# `collector/gharchive/historical.SOURCE`.  The stream path is topic-scoped, so
+# this is a guard against being pointed at another topic's archive, not a
+# filter that is expected to remove anything.
+STREAM_SOURCE = "gharchive"
+
+# `-102` §4.1.  Not `event_id` alone: the envelope's identity is the triple, and
+# inventing a narrower key here would disagree with C2, which dedups on the
+# same three.
+DEDUP_KEYS = ("source", "source_id", "schema_version")
+
+# The columns this job reads out of C1's archive.  A subset of
+# `c1_archiver_stream.ARCHIVE_COLUMNS`; absence means the input is not a C1
+# archive and is reported rather than read as nulls.
+STREAM_REQUIRED_COLUMNS = (
+    "source",
+    "source_id",
+    "schema_version",
+    "event_type",
+    "occurred_at",
+    "payload",
+)
+
+# How many missing hours an error message lists before it truncates.  A whole
+# month is 744, and a message that long is unreadable in a Spark log.
+MAX_REPORTED_MISSING_HOURS = 20
+
 
 def parse_utc_hour(value: str) -> datetime:
     """Parse an aware, hour-aligned UTC timestamp."""
@@ -94,19 +166,63 @@ def parse_utc_hour(value: str) -> datetime:
     return parsed
 
 
-def validate_period(period_start: str, period_end: str) -> None:
-    """Validate the explicit UTC period and its exclusive end boundary."""
+def validate_input_format(value: str) -> str:
+    """Return ``value`` when it names one of the two readers."""
 
+    if value not in INPUT_FORMATS:
+        raise ValueError(
+            f"input_format must be one of {', '.join(INPUT_FORMATS)}: {value}"
+        )
+    return value
+
+
+def resolve_input_path(value: str | None, input_format: str) -> str:
+    """The input path, defaulted to the root this format is written to.
+
+    One default cannot serve both readers, and silently reading Raw while
+    `--input-format stream-parquet` was asked for would produce a plausible
+    result from the wrong half of the pipeline.
+    """
+
+    validate_input_format(input_format)
+    if value:
+        return value
+    return (
+        DEFAULT_INPUT if input_format == INPUT_FORMAT_RAW_JSON else DEFAULT_STREAM_INPUT
+    )
+
+
+def validate_period(
+    period_start: str,
+    period_end: str,
+    *,
+    input_format: str = INPUT_FORMAT_RAW_JSON,
+) -> None:
+    """Validate the explicit UTC period against the input's side of the cutoff.
+
+    This is where "no hour is counted twice" is actually enforced.  Raw holds
+    the history below `SUPPORTED_HISTORICAL_CUTOFF` and the stream holds
+    everything from it onward, so a period that reaches across the boundary is
+    refused before any reading happens rather than being caught later as a
+    surprising row count.
+    """
+
+    validate_input_format(input_format)
     start = parse_utc_hour(period_start)
     end = parse_utc_hour(period_end)
     historical_start = parse_utc_hour(SUPPORTED_HISTORICAL_START)
     historical_cutoff = parse_utc_hour(SUPPORTED_HISTORICAL_CUTOFF)
-    if start < historical_start:
-        raise ValueError("period_start precedes historical_start")
-    if end > historical_cutoff:
-        raise ValueError("period_end exceeds exclusive historical_cutoff")
     if start >= end:
         raise ValueError("period_start must be before period_end")
+    if input_format == INPUT_FORMAT_RAW_JSON:
+        if start < historical_start:
+            raise ValueError("period_start precedes historical_start")
+        if end > historical_cutoff:
+            raise ValueError("period_end exceeds exclusive historical_cutoff")
+        return
+    # The stream has no upper bound: it is fed by hours that keep arriving.
+    if start < historical_cutoff:
+        raise ValueError("stream period_start precedes historical_cutoff")
 
 
 def parse_event_timestamp(value: object) -> datetime:
@@ -192,6 +308,168 @@ def week_is_fully_within_period(
     end = parse_utc_hour(period_end)
     week_begin = datetime.combine(monday, datetime.min.time(), tzinfo=UTC)
     return week_begin >= start and week_begin + timedelta(days=7) <= end
+
+
+# --- the stream input -------------------------------------------------------
+
+
+def format_stream_hour(moment: datetime) -> str:
+    """The hour key shape the publisher writes into ``source_id``.
+
+    Identical to `collector/gharchive/historical.format_utc_hour`.  Repeated
+    rather than imported because the Spark jobs are submitted with only
+    `Infra/spark` on the path; the test suite asserts the two agree.
+    """
+
+    if moment.tzinfo is None:
+        raise ValueError("timestamp must include a timezone")
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:00:00Z")
+
+
+def validate_stream_hour(hour_key: object) -> str:
+    """Return ``hour_key`` when it is an hour-aligned UTC hour key."""
+
+    if not isinstance(hour_key, str):
+        raise TypeError(f"hour key must be a string: {hour_key!r}")
+    if format_stream_hour(parse_utc_hour(hour_key)) != hour_key:
+        raise ValueError(f"hour key is not an aligned UTC hour: {hour_key!r}")
+    return hour_key
+
+
+def stream_hour_key(source_id: object) -> str:
+    """The hourly file an envelope came from.
+
+    `collector/gharchive/events.build_event_envelope` sets
+    ``source_id = f"{hour_key}/{event_id}"``, so the hour an event was
+    published under is carried by the envelope itself.  Deriving coverage from
+    this rather than from ``occurred_at`` means the gate checks *what the
+    publisher accounted for*, which is the same unit its checkpoint records.
+    """
+
+    if not isinstance(source_id, str) or "/" not in source_id:
+        raise ValueError(f"source_id must be '<hour>/<event id>': {source_id!r}")
+    hour_key, _, event_id = source_id.partition("/")
+    if not event_id:
+        raise ValueError(f"source_id is missing its event id: {source_id!r}")
+    # Round-trips through the hour parser so a malformed hour is rejected here
+    # rather than becoming a coverage hole with a plausible-looking name.
+    return validate_stream_hour(hour_key)
+
+
+def expected_stream_hours(period_start: str, period_end: str) -> tuple[str, ...]:
+    """Every UTC hour a `[period_start, period_end)` event can belong to.
+
+    This is the stream's completeness gate and it replaces `--expected-files`.
+    A Parquet part-file count says nothing — Spark decides it from batch sizes
+    — while GH Archive publishes exactly one file per UTC hour, which is the
+    unit `-105` counted (744 for a 31-day month) and the unit the publisher
+    checkpoints.  An hour with no row in the archive is an hour that never
+    reached Kafka.
+    """
+
+    start = parse_utc_hour(period_start)
+    end = parse_utc_hour(period_end)
+    if start >= end:
+        raise ValueError("period_start must be before period_end")
+    hours: list[str] = []
+    cursor = start
+    while cursor < end:
+        hours.append(format_stream_hour(cursor))
+        cursor += timedelta(hours=1)
+    return tuple(hours)
+
+
+def missing_stream_hours(
+    observed: Iterable[str], period_start: str, period_end: str
+) -> tuple[str, ...]:
+    """Expected hours with no event in the archive, in chronological order."""
+
+    seen = {value for value in observed if isinstance(value, str)}
+    return tuple(
+        hour
+        for hour in expected_stream_hours(period_start, period_end)
+        if hour not in seen
+    )
+
+
+def parse_stream_payload(payload: object) -> dict[str, object]:
+    """Decode a C1 ``payload`` column into the original GH Archive event.
+
+    C1 carries the event through as the JSON text that arrived and never parses
+    it (`c1_archiver_stream`: "the payload stays opaque").  This job is the
+    first reader that needs the two fields inside it, so the parsing — and the
+    decision about what a malformed one is — happens here.
+    """
+
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    if not isinstance(payload, str) or not payload.strip():
+        raise ValueError("payload must be a non-blank JSON object")
+    try:
+        decoded = json.loads(payload)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"payload is not valid JSON: {exc}") from exc
+    # A GH Archive event is always a JSON object; an array or a bare scalar is
+    # a content problem, not a Python type problem, so it stays a ValueError.
+    if isinstance(decoded, dict):
+        return decoded
+    raise ValueError(
+        f"payload must decode to a JSON object, got {type(decoded).__name__}"
+    )
+
+
+def normalize_stream_rows(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    cutoff: str = SUPPORTED_HISTORICAL_CUTOFF,
+) -> list[dict[str, object]]:
+    """Mirror of the Spark stream path, up to `aggregate_weekly_rows`'s input.
+
+    Filters to this job's source, de-duplicates on `DEDUP_KEYS`, lifts
+    ``repo.id``/``repo.name`` out of the payload and renames the two promoted
+    columns to the names the Raw reader produces.  Rows below the cutoff are
+    dropped here because they belong to the Raw path.
+
+    A row whose payload is unusable keeps null identifiers and is passed on:
+    `aggregate_weekly_rows` already owns the rule for dropping those, and
+    duplicating it would give two places to disagree about what invalid means.
+    """
+
+    cutoff_moment = parse_utc_hour(cutoff)
+    seen: set[tuple[object, object, object]] = set()
+    normalized: list[dict[str, object]] = []
+    for row in rows:
+        if row.get("source") != STREAM_SOURCE:
+            continue
+        key = tuple(row.get(field) for field in DEDUP_KEYS)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        occurred_at = row.get("occurred_at")
+        try:
+            moment = parse_event_timestamp(occurred_at)
+        except ValueError:
+            moment = None
+        if moment is not None and moment < cutoff_moment:
+            continue
+
+        try:
+            event = parse_stream_payload(row.get("payload"))
+        except ValueError:
+            event = {}
+        repo = event.get("repo")
+        repo = repo if isinstance(repo, Mapping) else {}
+        repo_id = repo.get("id")
+        normalized.append(
+            {
+                "repo_id": repo_id if isinstance(repo_id, int) else None,
+                "repo_name": repo.get("name"),
+                "event_type": row.get("event_type"),
+                "created_at": occurred_at,
+            }
+        )
+    return normalized
 
 
 def aggregate_weekly_rows(
@@ -492,12 +770,24 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
         StructType,
     )
 
-    validate_period(arguments.period_start, arguments.period_end)
+    input_format = validate_input_format(
+        getattr(arguments, "input_format", INPUT_FORMAT_RAW_JSON)
+    )
+    arguments.input_format = input_format
+    validate_period(
+        arguments.period_start, arguments.period_end, input_format=input_format
+    )
     cohorts = {
         label: load_repo_ids(path, max_rows=arguments.join_max_rows)
         for label, path in arguments.join_cohorts
     }
     expected_weeks = expected_week_starts(arguments.period_start, arguments.period_end)
+    period_start_ts = parse_utc_hour(arguments.period_start)
+    period_end_ts = parse_utc_hour(arguments.period_end)
+    historical_cutoff_ts = parse_utc_hour(SUPPORTED_HISTORICAL_CUTOFF)
+    period_start_date = period_start_ts.date().isoformat()
+    # The exclusive end belongs to the previous instant's date.
+    period_end_date = (period_end_ts - timedelta(microseconds=1)).date().isoformat()
 
     started = time.perf_counter()
     spark = (
@@ -508,27 +798,152 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
         .getOrCreate()
     )
     weekly = None
+    in_period = None
+    stream_summary: dict[str, object] | None = None
     try:
         if _hadoop_path_exists(spark, arguments.output):
             raise FileExistsError(
                 f"output already exists; refusing to overwrite: {arguments.output}"
             )
 
-        raw = spark.read.schema(build_event_schema()).json(arguments.input)
-        input_files = tuple(raw.inputFiles())
-        if len(input_files) != arguments.expected_files:
-            raise RuntimeError(
-                "input file count mismatch: "
-                f"expected {arguments.expected_files}, got {len(input_files)}"
+        if arguments.input_format == INPUT_FORMAT_RAW_JSON:
+            raw = spark.read.schema(build_event_schema()).json(arguments.input)
+            input_files = tuple(raw.inputFiles())
+            if len(input_files) != arguments.expected_files:
+                raise RuntimeError(
+                    "input file count mismatch: "
+                    f"expected {arguments.expected_files}, got {len(input_files)}"
+                )
+
+            typed = raw.select(
+                F.col("repo.id").cast("long").alias("repo_id"),
+                F.col("repo.name").alias("repo_name"),
+                F.col("type").alias("event_type"),
+                F.to_timestamp(F.col("created_at")).alias("created_at_ts"),
+                F.col("_corrupt_record"),
+            )
+        else:
+            archive = spark.read.parquet(arguments.input)
+            missing_columns = sorted(
+                set(STREAM_REQUIRED_COLUMNS) - set(archive.columns)
+            )
+            if missing_columns:
+                raise RuntimeError(
+                    "stream input is not a C1 archive; missing columns: "
+                    f"{missing_columns}"
+                )
+            input_files = tuple(archive.inputFiles())
+
+            scoped = archive.where(F.col("source") == F.lit(STREAM_SOURCE))
+            if "dt" in archive.columns:
+                # Partition pruning only.  C1 partitions by the `occurred_at`
+                # date, so scanning just the dates the period can touch avoids
+                # reading the whole topic archive on every run.  Membership is
+                # still decided by the exact bound below, not by `dt`.
+                scoped = scoped.where(
+                    (F.col("dt") >= F.lit(period_start_date))
+                    & (F.col("dt") <= F.lit(period_end_date))
+                )
+            # `-102` §4.1.  The publisher records an hour only after the whole
+            # file went out, so a retry re-sends the part that already landed;
+            # counting before this would inflate `event_count` on every replay.
+            deduped = scoped.dropDuplicates(list(DEDUP_KEYS))
+
+            typed_full = deduped.select(
+                F.substring_index(F.col("source_id"), "/", 1).alias("hour_key"),
+                F.get_json_object(F.col("payload"), "$.repo.id")
+                .cast("long")
+                .alias("repo_id"),
+                F.get_json_object(F.col("payload"), "$.repo.name").alias("repo_name"),
+                F.col("event_type"),
+                F.to_timestamp(F.col("occurred_at")).alias("created_at_ts"),
+                # `get_json_object(col, '$')` is null exactly when the text does
+                # not parse, which is what the Raw reader's `_corrupt_record`
+                # means.  Reusing the name keeps the quality block below shared.
+                F.when(
+                    F.get_json_object(F.col("payload"), "$").isNull(),
+                    F.col("payload"),
+                ).alias("_corrupt_record"),
             )
 
-        typed = raw.select(
-            F.col("repo.id").cast("long").alias("repo_id"),
-            F.col("repo.name").alias("repo_name"),
-            F.col("type").alias("event_type"),
-            F.to_timestamp(F.col("created_at")).alias("created_at_ts"),
-            F.col("_corrupt_record"),
-        )
+            out_of_period = F.col("created_at_ts").isNotNull() & (
+                (F.col("created_at_ts") < F.lit(period_start_ts))
+                | (F.col("created_at_ts") >= F.lit(period_end_ts))
+            )
+            # Reported rather than dropped in silence: a publisher whose
+            # boundary disagrees with ours must not look like a quiet success.
+            # `c1_archiver_stream` makes the same choice for its own guard.
+            stream_counts = (
+                typed_full.agg(
+                    F.count(F.lit(1)).alias("deduplicated_event_count"),
+                    F.sum(F.when(out_of_period, 1).otherwise(0)).alias(
+                        "out_of_period_event_count"
+                    ),
+                    F.sum(
+                        F.when(
+                            F.col("created_at_ts").isNotNull()
+                            & (F.col("created_at_ts") < F.lit(historical_cutoff_ts)),
+                            1,
+                        ).otherwise(0)
+                    ).alias("below_cutoff_event_count"),
+                )
+                .first()
+                .asDict()
+            )
+            below_cutoff_event_count = _as_int(
+                stream_counts["below_cutoff_event_count"]
+            )
+            if below_cutoff_event_count:
+                raise RuntimeError(
+                    "stream input carries events below "
+                    f"{SUPPORTED_HISTORICAL_CUTOFF}: {below_cutoff_event_count}. "
+                    "That range belongs to the Historical Raw path and would be "
+                    "counted twice."
+                )
+
+            in_period = typed_full.where(~out_of_period).persist(StorageLevel.DISK_ONLY)
+            observed_hours = sorted(
+                str(row["hour_key"])
+                for row in in_period.select("hour_key").distinct().collect()
+            )
+            for hour_key in observed_hours:
+                # A malformed `source_id` becomes a coverage hole with a
+                # plausible-looking name if it is not rejected here.
+                validate_stream_hour(hour_key)
+            expected_hours = expected_stream_hours(
+                arguments.period_start, arguments.period_end
+            )
+            absent_hours = missing_stream_hours(
+                observed_hours, arguments.period_start, arguments.period_end
+            )
+            if absent_hours:
+                shown = list(absent_hours[:MAX_REPORTED_MISSING_HOURS])
+                suffix = (
+                    f" (+{len(absent_hours) - len(shown)} more)"
+                    if len(absent_hours) > len(shown)
+                    else ""
+                )
+                raise RuntimeError(
+                    "stream input is missing "
+                    f"{len(absent_hours)} of {len(expected_hours)} "
+                    f"expected UTC hours: {shown}{suffix}"
+                )
+
+            stream_summary = {
+                "source": STREAM_SOURCE,
+                "dedup_keys": list(DEDUP_KEYS),
+                "deduplicated_event_count": _as_int(
+                    stream_counts["deduplicated_event_count"]
+                ),
+                "out_of_period_event_count": _as_int(
+                    stream_counts["out_of_period_event_count"]
+                ),
+                "below_cutoff_event_count": below_cutoff_event_count,
+                "expected_hour_count": len(expected_hours),
+                "observed_hour_count": len(observed_hours),
+                "missing_hours": [],
+            }
+            typed = in_period.drop("hour_key")
         quality_row = (
             typed.agg(
                 F.count(F.lit(1)).alias("total_input_events"),
@@ -871,9 +1286,20 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             "shuffle_partitions": spark.conf.get("spark.sql.shuffle.partitions"),
             "input": {
                 "path": arguments.input,
+                "format": input_format,
                 "file_count": len(input_files),
                 "total_input_events": total_input_events,
+                # `file_count` is the completeness gate for Raw and is only a
+                # scan statistic for the stream, where Spark decides how many
+                # part-files a batch becomes.  `stream.observed_hour_count` is
+                # the gate there.
+                "completeness_gate": (
+                    "expected_files"
+                    if input_format == INPUT_FORMAT_RAW_JSON
+                    else "expected_hours"
+                ),
             },
+            "stream": stream_summary,
             "week_rule": {
                 "week_start": "Monday",
                 "timezone": "UTC",
@@ -912,6 +1338,8 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
     finally:
         if weekly is not None:
             weekly.unpersist()
+        if in_period is not None:
+            in_period.unpersist()
         spark.stop()
 
 
@@ -919,9 +1347,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Aggregate GH Archive repo activity into Monday-start weeks."
     )
-    parser.add_argument("--input", default=DEFAULT_INPUT)
+    parser.add_argument(
+        "--input-format",
+        choices=list(INPUT_FORMATS),
+        default=INPUT_FORMAT_RAW_JSON,
+        help=(
+            "raw-json reads the Historical Raw hourly files below the cutoff; "
+            "stream-parquet reads C1's archive of github.events at or above it"
+        ),
+    )
+    parser.add_argument(
+        "--input",
+        default=None,
+        help=(
+            f"default: {DEFAULT_INPUT} for raw-json, "
+            f"{DEFAULT_STREAM_INPUT} for stream-parquet"
+        ),
+    )
     parser.add_argument("--output", required=True)
-    parser.add_argument("--expected-files", type=int, default=744)
+    parser.add_argument(
+        "--expected-files",
+        type=int,
+        default=744,
+        help="raw-json only; the stream gate is hour coverage, not file count",
+    )
     parser.add_argument("--period-start", default=HISTORICAL_START)
     parser.add_argument("--period-end", default=HISTORICAL_CUTOFF)
     parser.add_argument(
@@ -946,12 +1395,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
+    arguments.input = resolve_input_path(arguments.input, arguments.input_format)
     if arguments.expected_files < 1:
         parser.error("--expected-files must be positive")
     if arguments.join_max_rows < 1:
         parser.error("--join-max-rows must be positive")
     try:
-        validate_period(arguments.period_start, arguments.period_end)
+        validate_period(
+            arguments.period_start,
+            arguments.period_end,
+            input_format=arguments.input_format,
+        )
         cohorts = [parse_join_ids_argument(value) for value in arguments.join_ids]
     except ValueError as exc:
         parser.error(str(exc))

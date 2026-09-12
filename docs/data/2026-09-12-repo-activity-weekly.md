@@ -22,15 +22,113 @@ repository가 활동했는지를 말할 수 없기 때문이다. 이 job은 -109
 
 ## 2. 입력
 
+입력은 두 가지이고 **출력은 하나의 계약으로 수렴한다**. `--input-format`이
+reader와 completeness gate만 바꾸며, `typed` 이후의 집계·품질·coverage·출력은
+공유한다(`S15P21E102-224`).
+
+```text
+Historical   Raw JSON (.json.gz)    < HISTORICAL_CUTOFF  ─┐
+                                                          ├─→ ACTIVITY_COLUMNS
+Realtime     Streaming Parquet     >= HISTORICAL_CUTOFF  ─┘   (repo_id, repo_name,
+                                                               event_count, week_start)
+```
+
+### 2.1 `--input-format raw-json` (기본, `S15P21E102-166`)
+
 | 항목 | 값 |
 |---|---|
 | 기본 입력 | `hdfs:///gitjob/raw/gharchive/dt=2026-08-*/*.json.gz` |
 | 기본 기간 | `2026-08-01T00:00:00Z` ~ `2026-09-01T00:00:00Z` (end exclusive) |
 | 허용 기간 | `2026-03-01T00:00:00Z` ~ `2026-09-01T00:00:00Z` (-193이 검증한 Historical Raw 구간) |
 | 읽는 필드 | `repo.id`, `repo.name`, `type`, `created_at` (+ `_corrupt_record`) |
+| completeness gate | `--expected-files` (2026-08 = 744시간) |
 
 `_corrupt_record`는 malformed JSON 측정용이며 grouping key에 절대 들어가지 않는다.
-`--expected-files`로 입력 파일 수를 명시적으로 고정한다(2026-08 = 744시간).
+
+### 2.2 `--input-format stream-parquet` (`S15P21E102-224`)
+
+| 항목 | 값 |
+|---|---|
+| 기본 입력 | `hdfs:///gitjob/parquet/stream/github.events` (C1 Archiver 출력) |
+| 허용 기간 | `2026-09-01T00:00:00Z` 이상, 상한 없음 |
+| 읽는 컬럼 | `source`, `source_id`, `schema_version`, `event_type`, `occurred_at`, `payload` |
+| completeness gate | expected hour coverage (§2.4) |
+
+C1은 payload를 해석하지 않고 도착한 JSON 텍스트를 그대로 싣는다. 이 job이 그
+payload를 여는 첫 소비자이며, Raw reader가 만드는 것과 같은 4개 컬럼으로 맞춘다.
+
+| Raw reader | Stream reader |
+|---|---|
+| `repo.id` | `get_json_object(payload, '$.repo.id')` |
+| `repo.name` | `get_json_object(payload, '$.repo.name')` |
+| `type` | `event_type` (승격 컬럼) |
+| `created_at` | `occurred_at` (승격 컬럼) |
+| `_corrupt_record` | `get_json_object(payload, '$')`가 null인 payload |
+
+`event_type`과 `occurred_at`은 승격 컬럼을 쓴다. payload를 다시 열어 같은 값을
+꺼내면 두 값이 어긋날 수 있는 자리가 하나 더 생기고, 봉투가 계약이다(`-103` §4.1).
+
+### 2.3 중복 제거 — `(source, source_id, schema_version)`
+
+Raw는 시간당 파일 하나가 그대로 한 번 읽히므로 중복이 구조적으로 없다. Streaming은
+다르다. 발행자는 한 시간을 **전부 보낸 뒤에야** checkpoint에 기록하므로, 도중에
+실패하면 다음 회차가 그 시간을 다시 보내고 이미 들어간 부분이 중복된다
+(`AI/collector/gharchive/events.py`).
+
+그래서 집계 전에 `-102` §4.1이 정한 consumer 측 dedup key로 제거한다. `event_id`
+단독이 아니라 **세 값의 조합**이다 — C2도 같은 세 값으로 dedup하므로 여기서 더 좁은
+키를 새로 만들면 두 소비자의 판단이 갈린다.
+
+`source_id`는 `"{hour_key}/{event_id}"`이므로 같은 event id라도 다른 시간에서 온
+것은 다른 event로 남는다.
+
+### 2.4 Completeness gate — 파일 수가 아니라 hour coverage
+
+Raw의 744는 사실이다. GH Archive가 UTC 시간당 파일 하나를 발행하고 그 수를 세면
+된다. **Streaming Parquet의 part-file 수는 같은 의미를 갖지 않는다** — Spark가 배치
+크기와 partition 수에 따라 정하므로 같은 데이터가 실행마다 다른 파일 수로 쓰인다.
+
+대신 **요청한 기간의 UTC hour가 모두 있는지**를 본다.
+
+- expected: `[period_start, period_end)`의 모든 UTC hour (`expected_stream_hours`)
+- observed: `substring_index(source_id, '/', 1)`의 distinct 값
+- 하나라도 비면 `RuntimeError`로 중단하고 빠진 hour를 나열한다(최대 20개 표시)
+
+새 metadata 체계를 만들지 않았다. `source_id`의 hour 접두사는 **발행자가 자기
+checkpoint에 기록하는 바로 그 단위**이고, `-105`/`-179`가 "expected hours 4,416"으로
+센 단위와 같다.
+
+한계: 어떤 시간에 event가 0건이면 빠진 것과 구분되지 않는다. 실측 평균이 시간당
+약 117,600건(`-105`)이므로 실제로 0건인 시간은 관측된 적이 없고, 그런 시간이 생기면
+누락으로 보고된다.
+
+### 2.5 cutoff 경계 — 같은 시간을 두 번 세지 않는다
+
+`-102` §2.4가 경계를 정한다: cutoff 이전은 Raw, cutoff 이후는 Kafka. 이 job은 그
+경계를 두 겹으로 지킨다.
+
+1. **구조적 보장** — `validate_period`가 입력 포맷별로 기간을 거부한다.
+   `raw-json`은 `period_end > cutoff`를, `stream-parquet`은
+   `period_start < cutoff`를 거부한다. 두 경로가 같은 시간을 요청할 수 없다.
+2. **관측 가능한 방어** — stream 입력에 cutoff 미만 event가 실제로 있으면 조용히
+   버리지 않고 개수와 함께 중단한다. `c1_archiver_stream`이 자기 guard에 적용하는
+   규칙과 같다 — 경계가 어긋난 발행자가 조용한 성공처럼 보이면 안 된다.
+
+`dt` 파티션(C1의 `occurred_at` 날짜)은 스캔 범위를 좁히는 데만 쓴다. 소속 판정은
+`occurred_at`의 정확한 비교가 한다.
+
+### 2.6 late-arriving event — 현재는 반영되지 않는다
+
+주차 출력은 immutable snapshot이고 `errorifexists`로만 쓴다. 따라서 **이미 publish된
+주차에 뒤늦게 도착한 event는 그 snapshot에 반영되지 않는다.**
+
+이번 범위에서는 watermark나 snapshot versioning을 만들지 않았다. 현재 설계 안에서
+가능한 최소 정책은 하나다 — 해당 주차를 포함하는 기간으로 **새 snapshot_id를 만들어
+다시 집계한다.** 기존 snapshot은 덮어쓰지 않으며, 두 snapshot 중 어느 것을 쓸지는
+C조가 `dataset_snapshot_id`로 고른다.
+
+이것이 충분하지 않다고 판단되면 후속 Jira로 다룬다. 이 문서가 현재 동작을 숨기지
+않기 위해 여기에 적는다.
 
 ## 3. 주차 기준과 timezone
 
@@ -231,8 +329,11 @@ Spark를 실행하지 않았으므로 재검증된 값이 아니다.
 
 ## 8. 실행
 
+Historical Raw (기본):
+
 ```bash
 spark-submit /opt/gitjob/spark/jobs/repo_activity_weekly.py \
+  --input-format raw-json \
   --input 'hdfs:///gitjob/raw/gharchive/dt=2026-08-*/*.json.gz' \
   --output hdfs:///gitjob/parquet/github/repo_activity_weekly/period=2026-08/snapshot=<new-id> \
   --expected-files 744 \
@@ -241,6 +342,28 @@ spark-submit /opt/gitjob/spark/jobs/repo_activity_weekly.py \
   --join-ids TOP20K=/approved/top20k.json \
   --join-ids COMPLETE=/approved/complete-snapshot.json
 ```
+
+Streaming Parquet (cutoff 이후):
+
+```bash
+spark-submit /opt/gitjob/spark/jobs/repo_activity_weekly.py \
+  --input-format stream-parquet \
+  --input hdfs:///gitjob/parquet/stream/github.events \
+  --output hdfs:///gitjob/parquet/github/repo_activity_weekly/period=2026-09/snapshot=<new-id> \
+  --period-start 2026-09-01T00:00:00Z \
+  --period-end 2026-10-01T00:00:00Z \
+  --join-ids TOP20K=/approved/top20k.json
+```
+
+`--expected-files`는 `raw-json`에서만 쓰인다. `stream-parquet`의 gate는 §2.4의 hour
+coverage다. 출력 경로 규약은 두 입력이 같으므로, 어느 쪽에서 나온 snapshot인지는
+`snapshot=` ID에 담는 것이 운영상 안전하다(예: `...-stream-20260912`). job은 ID를
+강제하지 않고 실행 요약의 `input.format`으로 기록한다.
+
+실행 요약(stdout JSON)에는 `input.format`, `input.completeness_gate`가 들어가고,
+stream 실행에는 `stream` 블록이 추가된다 — `deduplicated_event_count`,
+`out_of_period_event_count`, `below_cutoff_event_count`, `expected_hour_count`,
+`observed_hour_count`.
 
 `--join-ids`는 `LABEL=PATH` 형식이고 반복 가능하다. cohort 이름을 job이 고정하지
 않는다 — Top20k와 COMPLETE는 이번 티켓이 묻는 두 cohort일 뿐이다. PATH는 exporter가

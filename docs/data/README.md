@@ -1112,6 +1112,17 @@ C조 범위다.
 - 해석 한계: `week_start`는 기술 사용 시작일이 아니라 event 발생 주차
 - 상세: [주간 Repo Activity 집계](2026-09-12-repo-activity-weekly.md)
 
+## Streaming Parquet 기반 주간 활동 증분 집계 (S15P21E102-224)
+
+- Jira: S15P21E102-224
+- 공백: `HISTORICAL_CUTOFF` 이후 event는 Kafka → C1 → `hdfs:///gitjob/parquet/stream/github.events`로만 들어오는데, 이를 Repo 주간 활동으로 집계하는 downstream이 없어 C조 Trend 입력에 반영되지 않았다
+- 구현: 별도 job을 만들지 않고 `repo_activity_weekly.py`에 `--input-format {raw-json,stream-parquet}` 추가. reader와 completeness gate만 분기하고 집계·품질·coverage·출력 계약은 공유한다
+- 입력 경계: Raw는 cutoff 미만, Stream은 cutoff 이상. `validate_period`가 입력 포맷별로 기간을 거부해 같은 시간이 두 번 집계되지 않는다
+- 중복 제거: `-102` §4.1의 `(source, source_id, schema_version)`. 발행자가 hour 단위 all-or-nothing으로 재전송하므로 replay가 `event_count`를 늘리지 않는다
+- Completeness: part-file 수가 아니라 **expected hour coverage**. `source_id`의 hour 접두사가 발행자 checkpoint와 같은 단위다
+- 한계: immutable snapshot이므로 이미 publish된 주차의 late event는 새 snapshot_id로 재집계해야 반영된다
+- 상세: [주간 Repo Activity 집계](2026-09-12-repo-activity-weekly.md) §2
+
 ## Repo Fetch Cost Benchmark
 
 - Jira: S15P21E102-104
