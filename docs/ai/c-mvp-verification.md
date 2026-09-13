@@ -403,3 +403,32 @@ schema/version 복합 FK와 hash 검증을 보존한다. B 원본 버전의 메�
 화면의 충돌은 새 카드/상세 레이아웃을 유지하면서 SO 출처를 제외하는 방식으로
 해결했다. 최종 FE lint·typecheck/build를 재실행해 통과했다. 브라우저 시각 QA나
 실 API 연결은 실행하지 않았으며 AI/BE 변경은 이 추가 동기화에 없다.
+
+## 14. 2026-09-13 corrected Top20k 공개 분석 사전 인수
+
+S15P21E102-206에서 최신 `origin/develop`의 `a9f27eee`를 기준으로 데이터 EC2의 corrected
+`s15p21e102-114-phase1-20260908-treefix-001`을 다시 읽었다. `_SUCCESS`가 고정한
+snapshot/summary/failures SHA-256은 HDFS 원문과 3/3 일치했고, Registry44
+`registry-20260911.4`와 parser v6 plan-only는 27개 partition을 만들었다.
+
+원인은 corrected metadata root의 Artifact descriptor가 계약대로 이전 불변
+`s15p21e102-114-phase1-20260907-fix-001/artifacts`를 참조하지만, HDFS reader가
+metadata root 하나만 허용한 것이었다. plan-only는 Artifact를 읽지 않아 이 연결 결함을
+찾지 못했다. 운영자가 명시한 동일 HDFS authority의 `artifact_root_uris`와 CLI
+`--artifact-root-uri`만 추가로 허용하고, 형제·상위·다른 authority URI 거절은 유지했다.
+
+수정 후 새 Registry44 checkpoint에서 전체 결과는 27/27 완료됐다. 첫 전체 완료는
+WebHDFS GET 4,236회·재시도 0회, 13,410 records 중 분석 분모 864, 관측 기술 25종,
+긍정 관측 1,143건, 긍정 관측 Repo 308개였다. 재실행은 실행 0/재사용 27,
+metadata GET 20회·Artifact 재읽기 0회였다. 최종 품질은 `INSUFFICIENT_DATA`이며
+COMPLETE 13,101개 중 Artifact 보유 866, 미보유 12,235를 기술 미사용으로 바꾸지 않는다.
+최종 파일 SHA-256은
+`b4c89d4be16e46f841175011949a6c2385ba3b565d37b22743d29ad5f70f7478`이다.
+
+추가 namespace·authority 경계, CLI 전달·plan-only 조기 실패, intake 설정 회귀는 수정 전
+실패·수정 후 통과했다. 격리 PostgreSQL에서는 실제 `PUBLIC_GITHUB` event/snapshot/head
+원자 게시, 소비자 재생성 후 재처리, lease 복구와 인증 HTTP read-back을 검증했다.
+관련 비DB 회귀는 144 passed/14 PostgreSQL·POSIX 조건부 skipped, 격리 PostgreSQL
+게시·API 회귀는 12 passed였고 Ruff check/format 및 `git diff --check`도 통과했다.
+운영 EC2 Worker는 아직 이 변경과 Registry44를 사용하지 않고 public source 설정도 없으므로,
+운영 DB 게시와 HTTP read-back은 아직 수행하지 않았으며 로컬 검증으로 대체하지 않는다.

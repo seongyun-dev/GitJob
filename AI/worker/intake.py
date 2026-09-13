@@ -35,6 +35,7 @@ class PublicInputConfig(BaseModel):
     root_uri: str
     namenode_base_url: str
     datanode_routes: dict[str, str] = Field(default_factory=dict)
+    artifact_root_uris: tuple[str, ...] = Field(default=(), max_length=4)
     checkpoint_dir: Path
     hdfs_user: str = "hadoop"
     include_partial: StrictBool = False
@@ -53,6 +54,7 @@ class PublicInputConfig(BaseModel):
         ReadOnlyWebHdfsReader(
             self.namenode_base_url,
             self.root_uri,
+            additional_uri_prefixes=self.artifact_root_uris,
             datanode_routes=self.datanode_routes,
             user=self.hdfs_user,
             max_requests=self.max_requests,
@@ -719,6 +721,7 @@ class _PublicSource:
             self.reader = ReadOnlyWebHdfsReader(
                 self.config.namenode_base_url,
                 self.config.root_uri,
+                additional_uri_prefixes=self.config.artifact_root_uris,
                 datanode_routes=self.config.datanode_routes,
                 user=self.config.hdfs_user,
                 max_requests=self.config.max_requests,

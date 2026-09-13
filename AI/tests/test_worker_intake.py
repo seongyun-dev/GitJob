@@ -367,6 +367,7 @@ def test_public_configuration_is_explicit_and_offline(tmp_path):
             "public_sources": [
                 {
                     "root_uri": "hdfs:///gitjob/snapshot/test",
+                    "artifact_root_uris": ["hdfs:///gitjob/snapshot/source/artifacts"],
                     "namenode_base_url": "http://hdfs-namenode:9870/webhdfs/v1",
                     "checkpoint_dir": str(tmp_path),
                 }
@@ -375,9 +376,18 @@ def test_public_configuration_is_explicit_and_offline(tmp_path):
     )
     assert not value.job_roots
     assert not value.public_sources[0].include_partial
+    assert value.public_sources[0].artifact_root_uris == (
+        "hdfs:///gitjob/snapshot/source/artifacts",
+    )
     raw = value.model_dump(mode="json")
     raw["public_sources"][0]["root_uri"] = "hdfs:///gitjob/../escape"
     with pytest.raises(ValueError):
+        IntakeConfig.model_validate(raw)
+    raw = value.model_dump(mode="json")
+    raw["public_sources"][0]["artifact_root_uris"] = [
+        "hdfs://other/gitjob/source/artifacts"
+    ]
+    with pytest.raises(ValueError, match="configured authority"):
         IntakeConfig.model_validate(raw)
 
 

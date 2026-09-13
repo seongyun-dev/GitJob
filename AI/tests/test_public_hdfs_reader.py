@@ -9,6 +9,7 @@ from common.webhdfs import WebHdfsError
 from github.artifact_reader import ReadOnlyWebHdfsReader
 
 PREFIX = "hdfs:///gitjob/input/snapshot-1"
+SOURCE_ARTIFACT_PREFIX = "hdfs:///gitjob/input/snapshot-0/artifacts"
 BASE = "http://namenode:9870/webhdfs/v1"
 URI = PREFIX + "/artifacts/package.json"
 
@@ -65,6 +66,21 @@ def test_reads_exact_namespace_through_explicit_datanode_route():
     )
     assert value.stats["requests"] == 2
     assert value.stats["bytes_read"] == 3
+
+
+def test_reads_only_an_explicit_additional_artifact_namespace():
+    old_uri = SOURCE_ARTIFACT_PREFIX + "/policy=p1/repo=1/package.json"
+    old_path = "/gitjob/input/snapshot-0/artifacts/policy=p1/repo=1/package.json"
+    opener = Opener(redirect(path=old_path), Response(b"abc"))
+    value = reader(opener, additional_uri_prefixes=(SOURCE_ARTIFACT_PREFIX,))
+
+    assert value.read(old_uri, max_bytes=3) == b"abc"
+    assert len(opener.requests) == 2
+
+    outside = SOURCE_ARTIFACT_PREFIX + "-other/package.json"
+    with pytest.raises(ValueError, match="outside the configured HDFS namespace"):
+        value.read(outside, max_bytes=3)
+    assert len(opener.requests) == 2
 
 
 @pytest.mark.parametrize(
@@ -138,5 +154,10 @@ def test_status_is_bounded_and_read_only():
 def test_configs_do_not_allow_credentials_or_unbounded_reads():
     with pytest.raises(ValueError):
         ReadOnlyWebHdfsReader("http://user:secret@host/webhdfs/v1", PREFIX)
+    with pytest.raises(ValueError, match="configured authority"):
+        reader(
+            Opener(),
+            additional_uri_prefixes=("hdfs://other/gitjob/source/artifacts",),
+        )
     with pytest.raises(ValueError):
         reader(Opener()).read(URI, max_bytes=100_000_000_000)

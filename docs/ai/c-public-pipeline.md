@@ -159,8 +159,13 @@ Tree 구조 경고는 품질 정보이고 외부 GitHub tree를 검증했다는 
 `python -m github.public_run --mode mirror`는 로컬 Snapshot 및 고정 Artifact mirror를 사용한다.
 `--mode hdfs`는 고정 `--root-uri`, `--namenode-base-url`과 운영자가 환경 변수
 `C_PUBLIC_DATANODE_ROUTES_JSON`에 지정한 origin→origin JSON 매핑을 사용한다.
-`--registry`, `--checkpoint-dir`와 분할 옵션으로 실행하며 `--plan-only`는 Artifact를 읽지 않는다.
-HDFS 모드의 plan-only도 완료 입력 JSON 검증을 위한 원격 GET은 수행한다.
+정정 Snapshot이 이전 불변 Snapshot의 Artifact를 그대로 참조하면 반복 가능한
+`--artifact-root-uri`로 그 Artifact namespace만 추가 허용한다. 이 값은 Snapshot
+원문에서 자동 추론하지 않으며 기본 metadata root와 같은 HDFS authority여야 한다.
+reader는 metadata root와 운영자가 명시한 Artifact root 밖 URI를 계속 거절한다.
+`--registry`, `--checkpoint-dir`와 분할 옵션으로 실행하며 `--plan-only`는 Artifact 본문을
+읽지 않는다. HDFS 모드의 plan-only도 완료 입력 JSON을 읽고, 모든 Artifact URI가 metadata
+root 또는 명시한 Artifact root 안인지 먼저 검증한다.
 로컬 전체 결과가 완료된 경우에만 최종 파일 경로를 알린다. CLI 자체는 API/DB에 저장하지 않는다.
 
 ## 최종 단일 DB 게시

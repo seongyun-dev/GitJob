@@ -4,7 +4,7 @@ import json
 import math
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -58,6 +58,7 @@ class ReadOnlyWebHdfsReader:
         base_url: str,
         uri_prefix: str,
         *,
+        additional_uri_prefixes: Iterable[str] | None = None,
         datanode_routes: Mapping[str, str] | None = None,
         user: str = "hadoop",
         timeout: float = 15,
@@ -74,7 +75,22 @@ class ReadOnlyWebHdfsReader:
         prefix = urlsplit(uri_prefix.rstrip("/"))
         if prefix.scheme != "hdfs" or prefix.query or prefix.fragment:
             raise ValueError("a fixed HDFS URI namespace is required")
-        self._prefix_path = _path(prefix.path)
+        prefix_paths = [_path(prefix.path)]
+        for value in additional_uri_prefixes or ():
+            if not isinstance(value, str):
+                raise TypeError("additional HDFS namespaces must be strings")
+            additional = urlsplit(value.rstrip("/"))
+            if (
+                additional.scheme != "hdfs"
+                or additional.netloc != prefix.netloc
+                or additional.query
+                or additional.fragment
+            ):
+                raise ValueError(
+                    "additional HDFS namespaces must use the configured authority"
+                )
+            prefix_paths.append(_path(additional.path))
+        self._prefix_paths = tuple(dict.fromkeys(prefix_paths))
         self._prefix_authority = prefix.netloc
         if not user or any(ord(c) < 33 for c in user):
             raise ValueError("invalid HDFS user")
@@ -115,12 +131,17 @@ class ReadOnlyWebHdfsReader:
             or parsed.netloc != self._prefix_authority
             or parsed.query
             or parsed.fragment
-            or not (
-                path == self._prefix_path or path.startswith(self._prefix_path + "/")
+            or not any(
+                path == prefix or path.startswith(prefix + "/")
+                for prefix in self._prefix_paths
             )
         ):
             raise ValueError("URI is outside the configured HDFS namespace")
         return path
+
+    def validate_uri(self, uri: str) -> None:
+        """Reject an artifact URI before an execution plan is accepted."""
+        self._uri_path(uri)
 
     def _get(self, url: str, limit: int):
         with self._lock:

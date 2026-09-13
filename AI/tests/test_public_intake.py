@@ -5,12 +5,17 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from test_public_pipeline import fixture_batch
 
 from github.snapshot_input import PublishedSnapshot, SnapshotQuality
 from registry.contracts import TechnologyRegistry
+from worker.api import create_compute_app
 from worker.public_intake import PublicPipelineConsumer
 from worker.store import ComputeStore, Ticket, apply_migration
+
+TOKEN = "local-c-public-test-token-only-00000000"
+PREFIX = "/internal/v1/c"
 
 
 @pytest.fixture
@@ -134,6 +139,18 @@ def test_postgres_publication_replay_after_restart_has_same_snapshot(
     )
     assert saved["payload"]["result"]["analyzed_repo_count"] == 2
     assert saved["payload"]["result"]["status"] == "INSUFFICIENT_DATA"
+    assert (
+        store.get_head("PUBLIC_GITHUB", None, worker.stream)
+        == result["results"][0]["snapshot_id"]
+    )
+
+    app = create_compute_app(store=store, token=TOKEN, registry=publication[2])
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as api_client:
+        response = api_client.get(
+            PREFIX + f"/snapshots/{result['results'][0]['snapshot_id']}"
+        )
+    assert response.status_code == 200
+    assert response.json()["data"] == saved
 
 
 @pytest.mark.parametrize("after_commit", [False, True])

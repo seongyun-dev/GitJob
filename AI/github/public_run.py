@@ -51,6 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--artifact-uri-prefix")
+    parser.add_argument("--artifact-root-uri", action="append", default=[])
     parser.add_argument("--root-uri")
     parser.add_argument("--namenode-base-url")
     parser.add_argument("--hdfs-user", default="hadoop")
@@ -75,7 +76,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest_hash = None
         reader = None
         if args.mode == "mirror":
-            if args.snapshot is None or args.root_uri or args.namenode_base_url:
+            if (
+                args.snapshot is None
+                or args.root_uri
+                or args.namenode_base_url
+                or args.artifact_root_uri
+            ):
                 raise ValueError("mirror mode requires a local Snapshot only")
             source = _local_bytes(args.snapshot)
             batch = GitHubRepoSnapshotBatch.model_validate_json(source)
@@ -104,6 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reader = ReadOnlyWebHdfsReader(
                 args.namenode_base_url,
                 args.root_uri,
+                additional_uri_prefixes=tuple(args.artifact_root_uri),
                 datanode_routes=routes,
                 user=args.hdfs_user,
                 timeout=args.timeout_seconds,
@@ -113,6 +120,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             published = load_published_snapshot(args.root_uri, reader)
             batch, source_hash = published.batch, published.source_sha256
             manifest_hash, quality = published.manifest_sha256, published.quality
+            for record in batch.records:
+                for artifact in record.artifacts:
+                    reader.validate_uri(artifact.uri)
         options = {
             "include_partial": args.include_partial,
             "max_records": args.max_records,

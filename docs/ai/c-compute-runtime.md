@@ -182,6 +182,9 @@ service-node DN4의 9864 origin을 사용했다. 운영 적용 전 각 advertise
   }],
   "public_sources": [{
     "root_uri": "hdfs:///gitjob/analysis_input/github/repo_snapshot/snapshot_id=REPLACE_WITH_PUBLISHED_ID",
+    "artifact_root_uris": [
+      "hdfs:///gitjob/analysis_input/github/repo_snapshot/snapshot_id=REPLACE_WITH_SOURCE_ID/artifacts"
+    ],
     "namenode_base_url": "http://hdfs-namenode:9870/webhdfs/v1",
     "datanode_routes": {"http://hdfs-datanode:9864": "http://hdfs-datanode:9864"},
     "checkpoint_dir": "/state/c-public/REPLACE_WITH_PUBLISHED_ID",
@@ -205,6 +208,9 @@ poll이 비용을 만들지 않는다. WebHDFS 장애는 이미 staging된 회�
 `criteria`를 함께 생략한다. 공개 입력은 명시한 불변 Snapshot만 읽으며 다른 root나
 Top50k를 자동 탐색하지 않는다. `as_of`와 기간/직무는 재현 가능한 계산 입력이며 시계에
 따라 몰래 바뀌지 않는다. 새 기준/새 Snapshot은 새 설정과 해당 checkpoint 경로로 실행한다.
+`artifact_root_uris`는 metadata 정정본이 이전 Snapshot의 불변 Artifact URI를 보존한
+경우에만 그 root를 명시적으로 추가한다. 비어 있으면 `root_uri` 안만 읽고, 설정한 경우에도
+같은 HDFS authority와 정확한 namespace 경계 및 DataNode route 검증을 유지한다.
 
 - 공고는 지정 root 또는 바로 아래 run 디렉터리의 `manifest.json`을 완료 신호로 사용한다.
   현재 Saramin/Worknet/JobKorea writer는 batch/CSV 다음에 manifest를 원자적으로 쓴다.

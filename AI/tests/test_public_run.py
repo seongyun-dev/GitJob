@@ -111,6 +111,9 @@ def test_hdfs_cli_uses_fixed_config_loader_hashes_and_exposes_reader_stats(
         def read(self, uri, *, max_bytes):
             raise AssertionError("zero new partitions cannot read artifacts")
 
+        def validate_uri(self, uri):
+            captured.setdefault("validated_uris", []).append(uri)
+
     def load(root_uri, reader):
         assert root_uri == "hdfs:///trusted/snapshot"
         return SimpleNamespace(
@@ -133,6 +136,8 @@ def test_hdfs_cli_uses_fixed_config_loader_hashes_and_exposes_reader_stats(
                 "hdfs",
                 "--root-uri",
                 "hdfs:///trusted/snapshot",
+                "--artifact-root-uri",
+                "hdfs:///trusted/source-snapshot/artifacts",
                 "--namenode-base-url",
                 "http://nn:9870/webhdfs/v1",
                 "--registry",
@@ -151,8 +156,57 @@ def test_hdfs_cli_uses_fixed_config_loader_hashes_and_exposes_reader_stats(
     assert captured["options"]["datanode_routes"] == {
         "http://advertised:9864": "http://reachable:9864"
     }
+    assert captured["options"]["additional_uri_prefixes"] == (
+        "hdfs:///trusted/source-snapshot/artifacts",
+    )
+    assert captured["validated_uris"] == [
+        artifact.uri
+        for record in cli_input.batch.records
+        for artifact in record.artifacts
+    ]
     state = json.loads((cli_input.checkpoint / "checkpoint.json").read_bytes())
     assert state["plan"]["manifest_sha256"] == "2" * 64
+
+
+def test_hdfs_plan_only_requires_explicit_reused_artifact_namespace(
+    cli_input, capsys, monkeypatch
+):
+    def load(root_uri, reader):
+        return SimpleNamespace(
+            batch=cli_input.batch,
+            source_sha256="1" * 64,
+            manifest_sha256="2" * 64,
+            quality=SimpleNamespace(model_dump=lambda **_: {"candidate_count": 2}),
+        )
+
+    monkeypatch.setattr(public_run, "load_published_snapshot", load)
+    args = [
+        "--mode",
+        "hdfs",
+        "--root-uri",
+        "hdfs:///trusted/snapshot",
+        "--namenode-base-url",
+        "http://nn:9870/webhdfs/v1",
+        "--registry",
+        str(cli_input.registry),
+        "--plan-only",
+    ]
+
+    assert public_run.main(args) == 2
+    assert json.loads(capsys.readouterr().err)["code"] == (
+        "INVALID_PUBLIC_INPUT_OR_CHECKPOINT"
+    )
+    assert (
+        public_run.main(
+            [
+                *args,
+                "--artifact-root-uri",
+                cli_input.prefix.rstrip("/"),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["status"] == "PLANNED"
 
 
 def test_cli_failure_does_not_print_invalid_argument_contents(capsys):
