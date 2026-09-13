@@ -561,3 +561,22 @@ def test_explicit_ai_development_engineer_title_matches_without_generic_ai_tags(
         criteria(target_role="AI_DATA"),
     )
     assert len(cohort.jobs) == 1
+
+
+@pytest.mark.parametrize(
+    ("title", "target_role"),
+    [
+        ("AI Research Engineer (ML/LLM Service)", "AI_DATA"),
+        ("React 웹 개발자", "FRONTEND"),
+    ],
+)
+def test_explicit_technology_role_titles_are_not_dropped(title, target_role):
+    cohort = build_cohort(
+        batch(posting(title=title, raw_job_category=None)),
+        criteria(target_role=target_role),
+    )
+
+    assert len(cohort.jobs) == 1
+    assert "ROLE_NOT_MATCHED" not in {
+        reason for exclusion in cohort.exclusions for reason in exclusion.reasons
+    }

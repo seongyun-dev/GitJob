@@ -235,6 +235,8 @@ class GitEvidenceAttributor:
                 capture_output=True,
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.timeout_seconds,
                 env={
                     **os.environ,

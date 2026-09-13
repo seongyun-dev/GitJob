@@ -10,7 +10,7 @@ from analysis.attribution import (
     FixtureIdentityResolver,
     GitEvidenceAttributor,
 )
-from analysis.configs import ConfigScanner
+from analysis.configs import ConfigScanner, facts_from_configs
 from analysis.judge import (
     EvidenceFact,
     Fact,
@@ -144,6 +144,21 @@ def test_unresolved_commit_identity_is_unknown_not_other(tmp_path):
     assert attributed[0].attribution == "UNKNOWN"
     assert attributed[0].attribution_commit_sha == pinned
     assert attributed[0].missing_scope == ("AUTHOR_IDENTITY_UNRESOLVED",)
+
+
+def test_git_output_is_decoded_as_utf8_on_windows(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    GitEvidenceAttributor()._git(tmp_path, "status")
+
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
 
 
 def test_shallow_boundary_is_unknown_and_never_sent_to_identity_resolver(tmp_path):
@@ -506,3 +521,81 @@ def test_typescript_l3_narrowed_alias_prerequisite_does_not_promote_owner(
         if item.tech_id == "typescript"
     )
     assert published.personal_level == "L2"
+
+
+def test_kubernetes_profile_does_not_lend_later_hardening_to_container_author(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet")
+    manifest = repo / "deployment.yaml"
+    manifest.write_text(
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "metadata:\n"
+        "  name: api\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: app:1\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "deployment.yaml")
+    _git(
+        repo,
+        "-c",
+        "user.name=Alice",
+        "-c",
+        "user.email=alice@example.invalid",
+        "commit",
+        "-m",
+        "add workload",
+    )
+    alice_sha = _git(repo, "rev-parse", "HEAD")
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "          resources:\n"
+        "            requests:\n"
+        "              cpu: 100m\n"
+        "              memory: 128Mi\n"
+        "          readinessProbe:\n"
+        "            httpGet:\n"
+        "              path: /ready\n"
+        "          livenessProbe:\n"
+        "            httpGet:\n"
+        "              path: /live\n"
+        "          securityContext:\n"
+        "            runAsNonRoot: true\n"
+        "            allowPrivilegeEscalation: false\n"
+        "            readOnlyRootFilesystem: true\n",
+        encoding="utf-8",
+    )
+    bob_sha = _commit(repo, "harden workload", name="Bob", email="bob@example.invalid")
+    rule_set = load_rule_pack(SCOPE_RULE_PACK_PATH).as_rule_set(
+        mappings=mappings_from_registry_artifact(SCOPE_REGISTRY_PATH)
+    )
+    configs = ConfigScanner().scan(repo)
+    judgement = Judge(rule_set).judge(facts_from_configs(configs.occurrences))
+    kubernetes_evidence = tuple(
+        item for item in judgement.personal_evidence if item.tech_id == "kubernetes"
+    )
+    attribution = GitEvidenceAttributor().attribute(
+        repo,
+        bob_sha,
+        "analysis-repository-kubernetes",
+        kubernetes_evidence,
+        FixtureIdentityResolver("alice", {alice_sha: "alice", bob_sha: "bob"}),
+    )
+    assessment = next(
+        item
+        for item in assess_personal_levels(rule_set, judgement, attribution)
+        if item.tech_id == "kubernetes"
+    )
+
+    assert (
+        next(item.level for item in judgement.verdicts if item.tech_id == "kubernetes")
+        == "L3"
+    )
+    assert assessment.personal_level == "L1"

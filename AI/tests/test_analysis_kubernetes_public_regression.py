@@ -74,13 +74,13 @@ def _kubernetes_verdict(tmp_path, content: str):
 
 
 def test_public_workload_is_detected_by_content_and_indentless_sequence():
-    [profile] = _profiles("nginx-platform-app/deployment.yml", PUBLIC_DEPLOYMENT)
+    profiles = _profiles("nginx-platform-app/deployment.yml", PUBLIC_DEPLOYMENT)
 
-    assert profile.format == "KUBERNETES"
-    assert profile.component == (
+    assert {profile.format for profile in profiles} == {"KUBERNETES"}
+    assert {profile.component for profile in profiles} == {
         "document:0/Deployment:nginx-platform-app/container:nginx@line:9"
-    )
-    assert set(profile.value.split()) == {
+    }
+    assert {profile.value for profile in profiles} == {
         "WORKLOAD_CONTAINER",
         "IMAGE",
         "REQUEST_CPU",
@@ -107,10 +107,12 @@ def test_indentless_sequence_does_not_mix_signals_between_containers():
         "document:0/Deployment:nginx-platform-app/container:sized@line:9",
         "document:0/Deployment:nginx-platform-app/container:probed@line:18",
     }
+    by_component = {}
+    for profile in profiles:
+        by_component.setdefault(profile.component, set()).add(profile.value)
     assert all(
-        not {"REQUEST_CPU", "REQUEST_MEMORY", "READINESS_PROBE"}
-        <= set(item.value.split())
-        for item in profiles
+        not {"REQUEST_CPU", "REQUEST_MEMORY", "READINESS_PROBE"} <= tokens
+        for tokens in by_component.values()
     )
 
 

@@ -141,9 +141,7 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
 """
-    [profile] = _profile(
-        "k8s/deployment.yaml", complete, "KUBERNETES_CONTAINER_PROFILE"
-    )
+    profiles = _profile("k8s/deployment.yaml", complete, "KUBERNETES_CONTAINER_PROFILE")
     assert {
         "REQUEST_CPU",
         "REQUEST_MEMORY",
@@ -152,8 +150,13 @@ spec:
         "RUN_AS_NON_ROOT",
         "NO_PRIVILEGE_ESCALATION",
         "READ_ONLY_ROOT_FILESYSTEM",
-    } <= set(profile.value.split())
-    assert profile.component == "document:0/Deployment:api/container:app@line:9"
+    } <= {profile.value for profile in profiles}
+    assert {profile.component for profile in profiles} == {
+        "document:0/Deployment:api/container:app@line:9"
+    }
+    assert {profile.value: profile.line for profile in profiles}[
+        "READ_ONLY_ROOT_FILESYSTEM"
+    ] == 27
 
     split = complete.replace(
         "        - name: app\n",
@@ -163,7 +166,10 @@ spec:
         "        - name: security-only\n          image: app:1\n          readinessProbe:",
     )
     profiles = _profile("k8s/deployment.yaml", split, "KUBERNETES_CONTAINER_PROFILE")
-    assert len(profiles) == 2
+    by_component = {}
+    for profile in profiles:
+        by_component.setdefault(profile.component, set()).add(profile.value)
+    assert len(by_component) == 2
     assert all(
         not {
             "REQUEST_CPU",
@@ -174,8 +180,8 @@ spec:
             "NO_PRIVILEGE_ESCALATION",
             "READ_ONLY_ROOT_FILESYSTEM",
         }
-        <= set(item.value.split())
-        for item in profiles
+        <= tokens
+        for tokens in by_component.values()
     )
 
 

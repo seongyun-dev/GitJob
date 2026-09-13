@@ -571,9 +571,14 @@ def _kubernetes_profiles(text: str, path: str):
                 "securityContext",
                 "runAsNonRoot",
             )
-            pod_nonroot = any(
-                event.path == pod_security_path and event.value.casefold() == "true"
-                for event in document_events
+            pod_nonroot_event = next(
+                (
+                    event
+                    for event in document_events
+                    if event.path == pod_security_path
+                    and event.value.casefold() == "true"
+                ),
+                None,
             )
             for index, start in enumerate(starts):
                 end_line = starts[index + 1].line if index + 1 < len(starts) else 10**9
@@ -588,62 +593,89 @@ def _kubernetes_profiles(text: str, path: str):
                     for event in container_events
                     if event.path[: len(prefix)] == prefix
                 ]
-                paths = {event.path[len(prefix) :] for event in relevant}
-                values = {
-                    event.path[len(prefix) :]: event.value.casefold()
-                    for event in relevant
+                relative_events = {
+                    event.path[len(prefix) :]: event for event in relevant
                 }
-                tokens = ["WORKLOAD_CONTAINER"]
-                if values.get(("image",)):
-                    tokens.append("IMAGE")
+                signal_events = [("WORKLOAD_CONTAINER", start)]
+                image = relative_events.get(("image",))
+                if image is not None and image.value:
+                    signal_events.append(("IMAGE", image))
                 for suffix, token in (
                     (("resources", "requests", "cpu"), "REQUEST_CPU"),
                     (("resources", "requests", "memory"), "REQUEST_MEMORY"),
                     (("resources", "limits", "cpu"), "LIMIT_CPU"),
                     (("resources", "limits", "memory"), "LIMIT_MEMORY"),
                 ):
-                    if values.get(suffix):
-                        tokens.append(token)
+                    event = relative_events.get(suffix)
+                    if event is not None and event.value:
+                        signal_events.append((token, event))
                 handlers = {"exec", "grpc", "httpGet", "tcpSocket"}
-                if any(
-                    len(parts) >= 2
-                    and parts[0] == "readinessProbe"
-                    and parts[1] in handlers
-                    for parts in paths
-                ):
-                    tokens.append("READINESS_PROBE")
-                if any(
-                    len(parts) >= 2
-                    and parts[0] == "livenessProbe"
-                    and parts[1] in handlers
-                    for parts in paths
-                ):
-                    tokens.append("LIVENESS_PROBE")
+                readiness = next(
+                    (
+                        event
+                        for parts, event in relative_events.items()
+                        if len(parts) >= 2
+                        and parts[0] == "readinessProbe"
+                        and parts[1] in handlers
+                    ),
+                    None,
+                )
+                if readiness is not None:
+                    signal_events.append(("READINESS_PROBE", readiness))
+                liveness = next(
+                    (
+                        event
+                        for parts, event in relative_events.items()
+                        if len(parts) >= 2
+                        and parts[0] == "livenessProbe"
+                        and parts[1] in handlers
+                    ),
+                    None,
+                )
+                if liveness is not None:
+                    signal_events.append(("LIVENESS_PROBE", liveness))
+                container_nonroot = relative_events.get(
+                    ("securityContext", "runAsNonRoot")
+                )
+                nonroot = (
+                    container_nonroot
+                    if container_nonroot is not None
+                    and container_nonroot.value.casefold() == "true"
+                    else pod_nonroot_event
+                )
+                if nonroot is not None:
+                    signal_events.append(("RUN_AS_NON_ROOT", nonroot))
+                no_escalation = relative_events.get(
+                    ("securityContext", "allowPrivilegeEscalation")
+                )
                 if (
-                    pod_nonroot
-                    or values.get(("securityContext", "runAsNonRoot")) == "true"
+                    no_escalation is not None
+                    and no_escalation.value.casefold() == "false"
                 ):
-                    tokens.append("RUN_AS_NON_ROOT")
-                if (
-                    values.get(("securityContext", "allowPrivilegeEscalation"))
-                    == "false"
-                ):
-                    tokens.append("NO_PRIVILEGE_ESCALATION")
-                if values.get(("securityContext", "readOnlyRootFilesystem")) == "true":
-                    tokens.append("READ_ONLY_ROOT_FILESYSTEM")
+                    signal_events.append(("NO_PRIVILEGE_ESCALATION", no_escalation))
+                read_only = relative_events.get(
+                    ("securityContext", "readOnlyRootFilesystem")
+                )
+                if read_only is not None and read_only.value.casefold() == "true":
+                    signal_events.append(("READ_ONLY_ROOT_FILESYSTEM", read_only))
                 component = (
                     f"document:{document}/{kind}:{name or document}"
                     f"/container:{start.value}@line:{start.line}"
                 )
-                yield ConfigOccurrence(
-                    "KUBERNETES",
-                    "KUBERNETES_CONTAINER_PROFILE",
-                    " ".join(tokens),
-                    path,
-                    start.line,
-                    scope=f"document:{document}",
-                    component=component,
-                )
+                # Each signal keeps the line that actually introduced it. The
+                # Judge still joins them by FILE_PATH + COMPONENT, while git
+                # attribution can no longer lend the whole profile to whoever
+                # happened to author the container's name line.
+                for token, source_event in signal_events:
+                    yield ConfigOccurrence(
+                        "KUBERNETES",
+                        "KUBERNETES_CONTAINER_PROFILE",
+                        token,
+                        path,
+                        source_event.line,
+                        scope=f"document:{document}",
+                        component=component,
+                    )
         elif kind == "HorizontalPodAutoscaler":
             target = next(
                 (

@@ -111,8 +111,15 @@ _ROLE_LOOKUP = {
 }
 _TITLE_ROLES = {
     "BACKEND": r"백엔드|backend",
-    "FRONTEND": r"프론트엔드|frontend",
-    "AI_DATA": r"데이터\s+엔지니어|AI\s+(?:(?:Agent|Application)\s+)?(?:개발자|개발\s+엔지니어|엔지니어|engineer)|data\s+engineer",
+    "FRONTEND": (
+        r"프론트엔드|frontend|"
+        r"(?:React|Vue(?:\.js)?|Next(?:\.js)?)\s*(?:웹\s*)?개발자"
+    ),
+    "AI_DATA": (
+        r"데이터\s+엔지니어|"
+        r"AI\s+(?:(?:Research|ML|LLM|Data|Agent|Application)\s+)*"
+        r"(?:개발자|개발\s+엔지니어|엔지니어|engineer)|data\s+engineer"
+    ),
     "INFRASTRUCTURE": r"데브옵스|devops|인프라\s+엔지니어",
     "MOBILE": r"모바일\s+개발자|mobile\s+(?:developer|engineer)",
 }
