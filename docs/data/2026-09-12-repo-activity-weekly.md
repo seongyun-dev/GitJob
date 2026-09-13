@@ -440,15 +440,28 @@ summary 의 `output.weeks_written` 이 주차별 `uri` / `row_count` / `row_dige
 도달한다.
 
 ```bash
-# 1) Spark weekly 실행 결과를 파일로 남긴다
-spark-submit /opt/gitjob/spark/jobs/repo_activity_weekly.py   --input-format stream-parquet   --output hdfs:///gitjob/parquet/github/repo_activity_weekly/period=2026-09/snapshot=<id>   --period-start 2026-09-01T00:00:00Z --period-end 2026-10-01T00:00:00Z   | tee .local/weekly/<id>-summary.json
+export ENV_FILE=.env.data
+# 2호스트 운영은 cluster overlay 다. deploy.sh 가 쓰는 것과 같아야 하고,
+# Spark 계열의 host networking 선언이 이 파일에 있다.
+export COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml
+export PROFILES=data
+export WEEKLY_SNAPSHOT_ID=s15p21e102-224-stream-20260913
+
+# 1) 집계 — summary JSON 이 호스트에 남는다
+WEEKLY_PERIOD=2026-09 WEEKLY_INPUT_FORMAT=stream-parquet WEEKLY_PERIOD_END=2026-10-01T00:00:00Z   ./Infra/scripts/weekly-repo-activity.sh
 
 # 2) 무엇이 게시될지 먼저 본다 — WebHDFS 와 Kafka 를 건드리지 않는다
-python -m github.weekly_activity_publish_cli   --summary .local/weekly/<id>-summary.json   --dataset-snapshot-id <id> --dry-run
+./Infra/scripts/weekly-snapshot-publish.sh --dry-run
 
-# 3) 실제 게시 (worker 이미지에서 실행한다)
-python -m github.weekly_activity_publish_cli   --summary .local/weekly/<id>-summary.json   --dataset-snapshot-id <id>
+# 3) 실제 게시
+./Infra/scripts/weekly-snapshot-publish.sh
 ```
+
+두 래퍼가 컨테이너 경계를 넘긴다. 집계는 `spark-worker` 안에서 돌고 summary 는
+`.local/weekly-repo-activity/<snapshot_id>-summary.json` 으로 떨어지며, 게시는 그
+디렉터리를 읽기 전용으로 마운트한 `worker` 컨테이너에서 돈다. **호스트에서 직접
+`python -m …` 을 실행하면 안 된다** — 의존성이 없고 `hdfs-namenode`/`kafka` 가
+Compose 네트워크 밖에서 해석되지 않는다.
 
 `--dataset-snapshot-id` 는 Spark 가 실제로 쓴 경로의 `snapshot=` 세그먼트와 일치해야
 한다. 다르면 CLI 가 거부한다 — 그렇지 않으면 디렉터리가 속하지 않은 snapshot id 를
