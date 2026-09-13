@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router'
 import { AppLayout } from '@/app/layouts/AppLayout'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { SystemStatesPage } from '@/app/pages/SystemStatesPage'
+import { TeamPage } from '@/features/about/pages/TeamPage'
 import { AdminLayout } from '@/features/admin/layouts/AdminLayout'
 import { SystemMonitoringPage } from '@/features/admin/monitoring/pages/SystemMonitoringPage'
 import { TechnologyCandidatePage } from '@/features/admin/pages/TechnologyCandidatePage'
@@ -12,6 +13,7 @@ import { GithubConnectPage } from '@/features/auth/pages/GithubConnectPage'
 import { EvidenceDetailPage } from '@/features/evidence/pages/EvidenceDetailPage'
 import { EvidenceOverviewPage } from '@/features/evidence/pages/EvidenceOverviewPage'
 import { LandingPage } from '@/features/landing/pages/LandingPage'
+import { PrivacyPolicyPage } from '@/features/legal/pages/PrivacyPolicyPage'
 import { SkillGapPage } from '@/features/matching/pages/SkillGapPage'
 import { TargetRolePage } from '@/features/matching/pages/TargetRolePage'
 import { WhatIfPage } from '@/features/matching/pages/WhatIfPage'
@@ -107,6 +109,21 @@ export const router = createBrowserRouter([
 
       // 티켓 204 · Final v2 15. 팀 내부 표기 레퍼런스라 헤더 네비게이션에는 넣지 않는다.
       { path: 'system-states', element: <SystemStatesPage /> },
+
+      /*
+       * 하단바가 가리키는 두 화면. 헤더 네비게이션에는 넣지 않는다 — 사용자 여정의
+       * 단계가 아니라 상시 참조용이고, Final v2 헤더도 5개로 고정돼 있다.
+       *
+       * 로그인 전에도 열려야 한다. 랜딩 하단바에서 들어오는 경로이고, 처리방침은
+       * 가입 여부와 무관하게 읽을 수 있어야 한다. 두 화면 모두 쿼리를 걸지 않아
+       * `providers.tsx`의 인증 실패 가드에 걸리지 않는다.
+       *
+       * 전용 레이아웃을 새로 만들지 않고 `AppLayout`에 둔다. 로그인 전 방문자에게
+       * 앱 헤더가 함께 보이지만, 헤더는 사용자 데이터를 쓰지 않아 그대로 그려진다.
+       * 정적 화면 두 개를 위해 세 번째 셸을 만들 만한 차이가 아니다.
+       */
+      { path: 'privacy', element: <PrivacyPolicyPage /> },
+      { path: 'team', element: <TeamPage /> },
 
       { path: '*', element: <NotFoundPage /> },
     ],

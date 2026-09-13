@@ -189,7 +189,10 @@ function IntroSection({
 const GLASS =
   'rounded-[22px] border border-white/35 bg-white/[0.12] p-6 backdrop-blur-[18px] shadow-[0_18px_44px_rgba(23,45,83,0.18)] lg:p-7'
 
-export function ServiceIntro() {
+/**
+ * @param footer 마지막 장 아래에 붙일 하단바. 아래 마지막 장 주석 참고.
+ */
+export function ServiceIntro({ footer }: { footer?: ReactNode }) {
   return (
     <>
       <IntroSection
@@ -294,13 +297,24 @@ export function ServiceIntro() {
         </div>
       </IntroSection>
 
-      {/* 마지막 장. 소개를 끝까지 읽은 사람에게 시작 지점을 준다. */}
+      {/*
+        마지막 장. 소개를 끝까지 읽은 사람에게 시작 지점을 준다.
+
+        하단바를 이 장 **안에** 넣는다. `ServiceIntro` 뒤에 따로 두면 데스크톱에서
+        읽을 수 없다 — `landing.css`가 1024px·700px 이상에서 스크롤 컨테이너에
+        `scroll-snap-type: y mandatory`를 걸어 두었고, 스냅 지점이 없는 꼬리 요소는
+        가장 가까운 스냅 지점(이 장의 시작)으로 되돌아가 화면에 머물지 않는다.
+
+        그래서 가로 정렬(`items-center`)을 세로(`flex-col`)로 바꾸고, CTA가 남는
+        높이를 가운데에서 차지한 뒤 하단바가 그 아래에 놓이게 했다. 스냅 지점은
+        이 장 하나 그대로다.
+      */}
       <section
         aria-label="시작하기"
-        className="lp-snap relative flex min-h-dvh w-full items-center overflow-hidden px-5 py-20 sm:px-8 lg:px-14"
+        className="lp-snap relative flex min-h-dvh w-full flex-col overflow-hidden px-5 pt-20 sm:px-8 lg:px-14"
       >
         <SectionGlow variant={3} />
-        <div className="relative z-[1] mx-auto w-full max-w-[820px] text-center">
+        <div className="relative z-[1] mx-auto flex w-full max-w-[820px] flex-1 flex-col justify-center pb-16 text-center">
           <p className="text-[11px] font-extrabold tracking-[0.18em] text-white/65">GET STARTED</p>
           <h2 className="mt-3 text-[32px] leading-[1.15] font-[750] tracking-[-0.04em] break-keep text-balance text-white sm:text-[40px] lg:text-[46px]">
             내 GitHub는 어떤 근거를 갖고 있을까요
@@ -332,6 +346,9 @@ export function ServiceIntro() {
             </Link>
           </div>
         </div>
+
+        {/* 장식 빛(`SectionGlow`)이 절대 배치라 하단바도 z-index를 올려야 위에 온다. */}
+        {footer !== undefined && <div className="relative z-[1] w-full">{footer}</div>}
       </section>
     </>
   )

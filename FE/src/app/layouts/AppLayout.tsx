@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router'
 import { AppHeader } from '@/app/layouts/AppHeader'
+import { SiteFooter } from '@/app/layouts/SiteFooter'
 
 /**
  * 로그인 이후 화면의 단일 반응형 셸.
@@ -33,11 +34,23 @@ const APP_BACKDROP = [
 
 export function AppLayout() {
   return (
-    <div className="min-h-full text-brand-ink" style={{ background: APP_BACKDROP }}>
+    /*
+      세로 flex인 것은 하단바 때문이다. 내용이 짧은 화면(404, 팀 소개)에서 하단바가
+      본문 바로 밑에 떠 있으면 페이지가 잘린 것처럼 보인다. `min-h-full` 컨테이너
+      안에서 `main`이 남는 높이를 먹으면(`flex-1`) 하단바가 항상 화면 아래에 붙는다.
+
+      `.gj-shell`의 아래 padding(96px)은 그대로 둔다. 본문과 하단바 사이 간격이고,
+      하단바가 자기 padding을 따로 갖는다.
+    */
+    <div
+      className="flex min-h-full flex-col text-brand-ink"
+      style={{ background: APP_BACKDROP }}
+    >
       <AppHeader />
-      <main className="gj-shell">
+      <main className="gj-shell flex-1">
         <Outlet />
       </main>
+      <SiteFooter />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { SiteFooter } from '@/app/layouts/SiteFooter'
 import { HeroSection } from '@/features/landing/components/HeroSection'
 import { LandingHeader } from '@/features/landing/components/LandingHeader'
 import { ProductPreview } from '@/features/landing/components/ProductPreview'
@@ -102,7 +103,15 @@ export function LandingPage() {
         </div>
       </section>
 
-      <ServiceIntro />
+      {/*
+        하단바는 마지막 장 안으로 넘긴다. 여기서 `<ServiceIntro />` 뒤에 두면
+        데스크톱 스크롤 스냅이 꼬리 요소를 붙잡아 두지 못한다 — 이유는
+        `ServiceIntro`의 마지막 장 주석에 있다.
+
+        `onDark`인 것은 이 페이지 배경이 짙은 그라데이션이기 때문이다. 기본
+        `light`를 쓰면 진한 글씨가 배경에 묻힌다.
+      */}
+      <ServiceIntro footer={<SiteFooter tone="onDark" />} />
     </div>
   )
 }
