@@ -40,7 +40,11 @@ parquet_root="${parquet_root:-hdfs:///gitjob/parquet}"
 checkpoint_root="${CHECKPOINT_ROOT:-hdfs:///gitjob/checkpoints}"
 master_url="${SPARK_MASTER_URL:-$(env_value SPARK_MASTER_URL)}"
 master_url="${master_url:-spark://spark-master:7077}"
-topics="${TOPICS:-github.events,so.raw}"
+# `C1_TOPICS` is the name the compose service uses, so it is the one an
+# operator sets in `.env.data`. `TOPICS` is still read for anyone with it
+# already in a shell, but the two must not disagree about which topics the
+# archiver subscribes to (S15P21E102-232).
+topics="${C1_TOPICS:-${TOPICS:-github.events,so.raw}}"
 max_offsets="${MAX_OFFSETS_PER_TRIGGER:-10000}"
 once="${ONCE:-1}"
 spark_submit_network_args

@@ -180,3 +180,31 @@ services:
     # local connection and not the docker-proxy hairpin the NameNode hit.
     healthcheck:
       test: ["CMD-SHELL", "bash -ec '</dev/tcp/${DATA_TS_IP}/8084'"]
+
+  # C1 joins the same host network as the master and the worker, and for the
+  # same reason (S15P21E102-232).
+  #
+  # `.env.data` sets `SPARK_DRIVER_BIND_ADDRESS` to `DATA_TS_IP`, because in the
+  # two-host topology the driver has to advertise an address the service host's
+  # executors can reach. A bridge container owns no interface with that address,
+  # so the driver dies binding it — which is what the first production start
+  # did. Publishing `SPARK_DRIVER_PORT`/`SPARK_DRIVER_BLOCK_MANAGER_PORT`
+  # through the bridge would not fix it either: the advertised host would still
+  # not be an address the container holds.
+  #
+  # `SPARK_MASTER_URL` and `HDFS_URI` in `.env.data` are host-IP addressed for
+  # the same topology, so the whole set is consistent only on host networking.
+  spark-c1-archiver:
+    network_mode: host
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    # Host networking makes the base file's container-name ports meaningless.
+    expose: !reset []
+    # The driver UI binds the address the driver binds, so 127.0.0.1 may not
+    # answer. The Tailscale address answers either way, which is why the master
+    # and the worker are probed the same way.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/${DATA_TS_IP}/4040'"]

@@ -637,7 +637,7 @@ services:
     logging: *default-logging
 
   spark-master:
-    image: ${SPARK_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
     hostname: spark-master
     profiles: [data]
     restart: unless-stopped
@@ -670,7 +670,7 @@ services:
     logging: *default-logging
 
   spark-worker:
-    image: ${SPARK_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
     profiles: [data]
     restart: unless-stopped
     environment:

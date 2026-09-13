@@ -111,14 +111,28 @@ compose exec -T hdfs-namenode hdfs dfs -ls /gitjob
 
 ### [B-2] analysis_input 게시
 
-- **상태**: 코드 있음 (`-220` 머지됨) / 자동 호출 배선 없음
-- **모듈**: [AI/job/collector/analysis_input.py](../../AI/job/collector/analysis_input.py)
+- **상태**: **배선됨** — 별도 단계가 아니라 **수집 회차의 일부**다
+- **모듈**: [AI/job/collector/analysis_input.py](../../AI/job/collector/analysis_input.py) (`-220`)
+- **호출 지점**: 네 수집기가 회차 끝에서 `publish_from_env`를 직접 부른다.
+  운영자가 따로 실행할 것이 없다
+
+  | 수집기 | 호출 |
+  |---|---|
+  | `AI/Worknet_Collector_V1/crawler.py` | `:822` |
+  | `AI/Saramin_Collector_V1/crawler.py` | `:764` |
+  | `AI/GameJob_Collector_V1/crawler.py` | `:935` |
+  | `AI/Career_Collector_V1/crawler.py` | `:903` |
+
+  `JobKorea_Collector_V1`에는 이 호출이 없다. `-230`으로 비활성이라 MVP에 영향이
+  없지만, 되살릴 때는 게시 경로도 함께 붙여야 한다
 - **입력**: B-1의 회차 디렉터리 (`manifest.json` + batch)
 - **출력**: `hdfs:///gitjob/analysis_input/jobs/{source}/{RUN_ID}/`
 - **PASS**: 게시된 3개 파일과 `analysis_input_publish.json` 기록.
   manifest의 `output_sha256`이 batch 바이트와 묶여 있어야 한다
 - **FAIL**: 조기 종료·detail 실패·invalid record가 있는 회차는 게시하지 않는다
-  (`worker.intake.load_job_output`이 거부한다)
+  (`worker.intake.load_job_output`이 거부한다). **거부는 정상 결과이고 수집을
+  실패시키지 않는다** — 신뢰할 수 있는 회차만 목적지에 두는 것이 목적이므로,
+  한 바이트도 옮기기 전에 거절한다
 - **재실행**: `store_immutable` — 같은 내용 멱등, 다른 내용 거부
 - **gate**: 게시 완료 후 B-3
 

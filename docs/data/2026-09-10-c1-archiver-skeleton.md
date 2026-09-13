@@ -335,6 +335,32 @@ Structured Streaming 쿼리는 자기 endpoint 가 없다. driver UI(4040)가 **
 `collector` 와 `worker` 가 이미 같은 것을 요구한다. `:?` 로 필수화하면 Compose 가
 profile 필터링 전에 파일 전체를 보간하므로 모든 profile 의 배포 계약이 바뀐다.
 
+### 네트워크 — 2호스트에서는 host networking이다 (S15P21E102-232)
+
+기본 bridge 로는 기동되지 않는다. 운영 첫 기동이 그렇게 실패했다.
+
+`.env.data` 가 `SPARK_DRIVER_BIND_ADDRESS` 를 `DATA_TS_IP`(호스트 Tailscale 주소)로
+둔다 — 2호스트 토폴로지에서 driver 는 service 호스트의 executor 가 닿을 수 있는
+주소를 advertise 해야 하기 때문이다. **bridge 컨테이너는 그 주소를 가진 인터페이스가
+없어서 driver 가 bind 하다 죽는다.**
+
+포트를 publish 해도 해결되지 않는다. `spark.driver.host` 로 advertise 하는 주소가
+여전히 컨테이너가 갖지 않은 주소이기 때문이다. 같은 이유로 `.env.data` 의
+`SPARK_MASTER_URL`(`spark://<DATA_TS_IP>:7077`)과 `HDFS_URI`(`hdfs://<DATA_TS_IP>:8020`)
+도 호스트 IP 로 적혀 있다. 이 집합은 host networking 에서만 일관된다.
+
+그래서 `compose.ec2-data-cluster.yaml` 이 `spark-master`·`spark-worker` 와 **같은
+방식으로** C1 에도 `network_mode: host` 를 선언한다. 임시 runtime override 가 아니라
+overlay 의 정식 설정이므로 재기동·재배포에서 재현된다.
+
+healthcheck 도 함께 덮어쓴다. driver UI 는 driver 가 bind 한 주소에 붙으므로
+`127.0.0.1` 이 응답하지 않을 수 있다. master 와 worker 가 이미 `DATA_TS_IP` 를 probe
+하는 것과 같은 이유이고, 그 주소는 UI 가 `0.0.0.0` 에 붙든 Tailscale 주소에만 붙든
+양쪽 다 응답한다.
+
+> 단일 호스트(WSL 등)에서는 이 overlay 를 쓰지 않으므로 base 정의의 bridge 가 그대로
+> 적용된다. 그쪽은 `SPARK_DRIVER_BIND_ADDRESS` 기본값이 `0.0.0.0` 이라 문제가 없다.
+
 ### 아직 검증되지 않은 것
 
 **이 서비스 정의는 실행된 적이 없다.** 작성 시점에 Docker 가 없는 호스트에서
