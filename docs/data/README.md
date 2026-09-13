@@ -1217,6 +1217,15 @@ C조 범위다.
 - 범위: `/data/<site>/identity.json`(range 무관) 추가, collector에 `collector-state` 볼륨, HDFS Raw는 불변 유지
 - 상세: [채용공고 회차 간 중복과 posting identity store](2026-09-11-collector-posting-identity.md)
 
+## Historical monthly chain terminal status 계약
+
+- Jira: `S15P21E102-194`
+- 발생: 2026-09-13 10:05 UTC — 2026-08 Artifact 10,000/10,000 종결·게시 완료 후 `validate_bootstrap`이 `checkpoint contains non-terminal status`로 `exit 1`
+- 원인: validator가 producer의 `TERMINAL_STATUSES`를 손으로 복제하면서 `HISTORICAL_HEAD_UNAVAILABLE`(2026-08 실측 27건) 누락. 이 상태는 `REPO_REQUIRE_HISTORICAL_HEAD=1`일 때만 생기고, 그 플래그를 켠 것이 같은 이슈의 hardening이었다
+- 판정: `HISTORICAL_HEAD_UNAVAILABLE`은 미완료가 아니라 fail-closed 종결(그 달 commit 미확정 → 현재 HEAD fallback 거부). `RATE_LIMITED`만 비종결로 유지
+- 범위: validator 종결 집합 정정, 두 집합 drift를 잡는 contract test 추가, resume 시 `MONTHLY_ARTIFACT_RUN_DATE` 고정 계약 명문화, self-match 없는 chain health probe
+- 상세: [Historical monthly chain이 자기 출력을 거부한 건](2026-09-13-monthly-chain-terminal-status-contract.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

@@ -363,7 +363,32 @@ checkpoint_counts = Counter(str(row.get("status")) for row in rows.values())
 state_counts = Counter({str(key): int(value) for key, value in (progress.get("status_counts") or {}).items()})
 if checkpoint_counts != state_counts:
     raise SystemExit("state/checkpoint status counts disagree")
-if any(status not in {"COMPLETE", "PARTIAL", "NOT_FOUND", "FAILED", "REUSED"} for status in checkpoint_counts):
+# Must equal `TERMINAL_STATUSES` in AI/github/repo_fetch_orchestrator.py, which
+# is what the producer uses to decide a repository is finished with. The only
+# status outside it is RATE_LIMITED, the one case that really does mean "come
+# back to this repository", so it stays out here too.
+#
+# HISTORICAL_HEAD_UNAVAILABLE was missing and stopped the 2026-08 run after all
+# 10,000 repositories had reached a terminal state and the snapshot was already
+# published. The status only appears when REPO_REQUIRE_HISTORICAL_HEAD=1, which
+# this chain now sets, so enabling the flag had made the chain reject its own
+# correct output. It is a decision, not an unfinished repository: the month's
+# commit could not be established, so no artifact was taken rather than pinning
+# today's tree to a historical month.
+#
+# `tests/test_monthly_chain_contract.py` fails if the two sets drift again.
+if any(
+    status
+    not in {
+        "COMPLETE",
+        "PARTIAL",
+        "NOT_FOUND",
+        "FAILED",
+        "REUSED",
+        "HISTORICAL_HEAD_UNAVAILABLE",
+    }
+    for status in checkpoint_counts
+):
     raise SystemExit("checkpoint contains non-terminal status")
 print(json.dumps(dict(sorted(checkpoint_counts.items())), sort_keys=True))
 PY
