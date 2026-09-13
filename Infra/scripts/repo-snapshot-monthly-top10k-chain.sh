@@ -40,11 +40,32 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || die "monthly chain is already running: $chain_root"
 fi
 
-months=(2026-07 2026-06 2026-05 2026-04 2026-03)
+# 2026-08 completes the Historical window the C side is waiting on. It was left
+# out while `-193`'s six-month aggregate was the only August artifact, but that
+# aggregate collapses 2026-03..08 into one period and therefore cannot produce a
+# per-month Top-N. S15P21E102-194.
+months=(2026-08 2026-07 2026-06 2026-05 2026-04 2026-03)
+
+# Activity snapshots produced before `-198` added `monthly_event_sha` cannot be
+# reused: `repo_fetch_candidates` fills the column with NULL when it is absent,
+# which silently turns every repository into a CURRENT_DEFAULT_HEAD fetch. Only
+# a snapshot verified to carry the column belongs here, and `assert_activity_*`
+# below re-checks it rather than trusting this list.
+#
+#   2026-07  s15p21e102-198-activity-20260911  (the `-198` run; column present)
+#
+# Anything not listed is rebuilt under this run's own snapshot id.
+activity_snapshot_override() {
+  case "$1" in
+    2026-07) printf '%s' "s15p21e102-198-activity-20260911" ;;
+    *) printf '' ;;
+  esac
+}
 
 month_config() {
   local month="$1"
   case "$month" in
+    2026-08) expected_files=744; end_exclusive=2026-09-01T00:00:00Z; end_date=2026-08-31 ;;
     2026-07) expected_files=744; end_exclusive=2026-08-01T00:00:00Z; end_date=2026-07-31 ;;
     2026-06) expected_files=720; end_exclusive=2026-07-01T00:00:00Z; end_date=2026-06-30 ;;
     2026-05) expected_files=744; end_exclusive=2026-06-01T00:00:00Z; end_date=2026-05-31 ;;
@@ -53,7 +74,8 @@ month_config() {
     *) die "unsupported month: $month" ;;
   esac
   start="${month}-01T00:00:00Z"
-  activity_snapshot="s15p21e102-194-activity-${month//-/}-${run_date}"
+  activity_snapshot="$(activity_snapshot_override "$month")"
+  activity_snapshot="${activity_snapshot:-s15p21e102-194-activity-${month//-/}-${run_date}}"
   artifact_snapshot="s15p21e102-194-monthly-top10k-${month//-/}-${run_date}"
   pipeline_run="s15p21e102-194-${month//-/}-${run_date}-run-001"
   activity_root="${parquet_root%/}/github/repo_activity/period=${month}/snapshot=${activity_snapshot}"
@@ -111,10 +133,64 @@ hdfs_json_readable() {
   compose exec -T hdfs-namenode hdfs dfs -cat "$1" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null
 }
 
+# Does this activity output carry `monthly_event_sha`?
+#
+# `_SUCCESS` only says a job finished; it says nothing about which version of
+# `repo_activity_topn.py` wrote the rows. The column arrived with `-198`, and
+# `repo_fetch_candidates` substitutes NULL when it is missing instead of
+# failing, so an older output passes every existing gate and then produces a
+# whole month of CURRENT_DEFAULT_HEAD artifacts. That is the exact defect this
+# check exists to catch.
+#
+# The column name is read out of the Parquet footer rather than by running
+# Spark: the footer holds the schema, the tail of one part file is enough to
+# find it, and a full job would cost cluster cores the chain needs for the
+# month it is actually computing.
+activity_has_monthly_event_sha() {
+  local root="$1" part
+  part="$(compose exec -T hdfs-namenode hdfs dfs -ls "$root/repo_activity" 2>/dev/null \
+    | awk '/part-.*\.parquet$/{print $NF}' | head -n 1 | tr -d '\r')"
+  [[ -n "$part" ]] || return 1
+  compose exec -T hdfs-namenode hdfs dfs -cat "$part" 2>/dev/null \
+    | python3 -c '
+import sys
+
+# The schema lives in the footer, so only the tail matters. A part file can be
+# hundreds of MB, so it is streamed through a rolling window rather than read
+# into memory, and the whole stream is consumed so the producer never sees a
+# broken pipe.
+WINDOW = 65536
+tail = b""
+while True:
+    chunk = sys.stdin.buffer.read(1 << 20)
+    if not chunk:
+        break
+    tail = (tail + chunk)[-WINDOW:]
+sys.exit(0 if b"monthly_event_sha" in tail else 1)
+'
+}
+
+# Reject a reusable-looking activity output that predates `-198`, and say which
+# one, so the operator sees a name rather than a silent rebuild.
+assert_activity_quality() {
+  local root="$1"
+  if activity_has_monthly_event_sha "$root"; then
+    return 0
+  fi
+  die "activity output has no monthly_event_sha column (pre-S15P21E102-198); \
+refusing to reuse it: $root
+  Point activity_snapshot_override at a verified snapshot, or clear the override
+  so this month rebuilds under its own snapshot id. Existing snapshots are
+  immutable and are never overwritten."
+}
+
 run_activity() {
   if hdfs_exists "$activity_root/repo_activity/_SUCCESS" \
     && hdfs_exists "$activity_root/data_quality/_SUCCESS" \
     && hdfs_exists "$activity_root/topn_coverage/_SUCCESS"; then
+    # Reuse is only safe once the schema is confirmed, whether the path came
+    # from the override map or from an earlier pass of this same run.
+    assert_activity_quality "$activity_root"
     return 0
   fi
   if hdfs_exists "$activity_root"; then
@@ -146,6 +222,9 @@ run_activity() {
     && hdfs_exists "$activity_root/data_quality/_SUCCESS" \
     && hdfs_exists "$activity_root/topn_coverage/_SUCCESS" \
     || die "activity durable gate failed: $activity_root"
+  # A job that just ran current code writes the column; checking anyway keeps a
+  # stale `repo_activity_topn.py` on the Spark worker from reaching candidates.
+  assert_activity_quality "$activity_root"
 }
 
 validate_candidate() {
@@ -240,7 +319,15 @@ PY
 
 run_bootstrap() {
   local snapshot="$1" pipeline="$2" candidate="$3" limit="$4" log="$5"
-  REPO_SNAPSHOT_ID="$snapshot" \
+  # Set here, not left to the caller's environment. `repo-snapshot-bootstrap.sh`
+  # defaults this to 0, and at 0 a repository whose monthly_event_sha is missing
+  # or unreachable falls through to `/branches/{default}` and is recorded as
+  # CURRENT_DEFAULT_HEAD — the current tree standing in for a historical month.
+  # An operator who forgets the variable gets that silently, across six months,
+  # and only finds out at C validation, by which point the snapshots are
+  # immutable. The chain owes historical accuracy, so it states the requirement.
+  REPO_REQUIRE_HISTORICAL_HEAD=1 \
+    REPO_SNAPSHOT_ID="$snapshot" \
     REPO_PIPELINE_RUN_ID="$pipeline" \
     REPO_FETCH_CANDIDATES_OUTPUT="$candidate" \
     REPO_FETCH_PHASE_TOP_N="$limit" \
