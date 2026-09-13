@@ -34,27 +34,34 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
+from analysis.attribution import AttributedEvidence
 from analysis.configs import ConfigReport
 from analysis.contracts import RepositoryAnalysisRequest
-from analysis.judge import Judgement
+from analysis.judge import EvidenceFact, Judgement
 from analysis.manifests import DependencyReport
 from analysis.parse import ParseReport
+from analysis.personal_level import PersonalTechnologyAssessment
 from analysis.results import (
     SCHEMA_VERSION,
     SCHEMA_VERSION_V2,
     SCHEMA_VERSION_V3,
+    SCHEMA_VERSION_V4,
     AnalysisStats,
     AnalysisStatsV2,
     AnalysisStatsV3,
     EvidenceItem,
     EvidenceItemV2,
     EvidenceItemV3,
+    EvidenceItemV4,
+    PersonalTechnologyAssessmentItem,
     RepositoryAnalysisResult,
     RepositoryAnalysisResultPayload,
     RepositoryAnalysisResultPayloadV2,
     RepositoryAnalysisResultPayloadV3,
+    RepositoryAnalysisResultPayloadV4,
     RepositoryAnalysisResultV2,
     RepositoryAnalysisResultV3,
+    RepositoryAnalysisResultV4,
     TechnologyCandidate,
     TechnologyCandidateV2,
     TechnologySupportItem,
@@ -91,9 +98,15 @@ def completed_result(
     checkout: Path | None = None,
     bytes_on_disk: int = 0,
     duration_ms: int = 0,
-) -> RepositoryAnalysisResult | RepositoryAnalysisResultV2 | RepositoryAnalysisResultV3:
+    attributed_evidence: tuple[AttributedEvidence, ...] | None = None,
+    personal_assessments: tuple[PersonalTechnologyAssessment, ...] | None = None,
+) -> (
+    RepositoryAnalysisResult
+    | RepositoryAnalysisResultV2
+    | RepositoryAnalysisResultV3
+    | RepositoryAnalysisResultV4
+):
     payload = request.payload
-    snippets = _snippets(judgement, checkout)
     common44 = bool(
         judgement.rule_pack_version
         and judgement.rule_pack_content_sha256
@@ -101,7 +114,16 @@ def completed_result(
     )
     inferred_schema = schema_for_rule_pack(judgement.rule_pack_version)
     depth = inferred_schema == SCHEMA_VERSION_V3
-    if depth and schema_version not in {None, SCHEMA_VERSION_V3}:
+    personal = attributed_evidence is not None or personal_assessments is not None
+    if (attributed_evidence is None) != (personal_assessments is None):
+        raise ValueError(
+            "attributed_evidence and personal_assessments must be supplied together"
+        )
+    if personal and not depth:
+        raise ValueError("personal attribution requires structural Rule Pack evidence")
+    if personal and schema_version not in {None, SCHEMA_VERSION_V4}:
+        raise ValueError("personal attribution requires repository-analysis-result/v4")
+    if depth and not personal and schema_version not in {None, SCHEMA_VERSION_V3}:
         raise ValueError(
             "depth Rule Pack results require repository-analysis-result/v3"
         )
@@ -110,6 +132,7 @@ def completed_result(
         SCHEMA_VERSION,
         SCHEMA_VERSION_V2,
         SCHEMA_VERSION_V3,
+        SCHEMA_VERSION_V4,
     }:
         raise ValueError(f"unsupported result schema_version {schema_version!r}")
     if schema_version == SCHEMA_VERSION and common44:
@@ -124,6 +147,8 @@ def completed_result(
         raise ValueError(
             "repository-analysis-result/v3 requires depth Rule Pack lineage"
         )
+    if schema_version == SCHEMA_VERSION_V4 and not personal:
+        raise ValueError("repository-analysis-result/v4 requires personal attribution")
     result_class = RepositoryAnalysisResultV2 if common44 else RepositoryAnalysisResult
     payload_class = (
         RepositoryAnalysisResultPayloadV2
@@ -135,6 +160,10 @@ def completed_result(
         result_class = RepositoryAnalysisResultV3
         payload_class = RepositoryAnalysisResultPayloadV3
         evidence_class = EvidenceItemV3
+    if personal:
+        result_class = RepositoryAnalysisResultV4
+        payload_class = RepositoryAnalysisResultPayloadV4
+        evidence_class = EvidenceItemV4
     support = (
         tuple(
             (TechnologySupportItemV3 if depth else TechnologySupportItem)(
@@ -177,6 +206,25 @@ def completed_result(
         if common44
         else {}
     )
+    attributed_by_fact_id = {item.fact_id: item for item in (attributed_evidence or ())}
+    published_evidence = _published_evidence(judgement, personal_assessments)
+    if personal and not {item.fact_id for item in published_evidence}.issubset(
+        attributed_by_fact_id
+    ):
+        raise ValueError("v4 attribution must cover every emitted evidence fact")
+    snippets = _snippets(published_evidence, checkout)
+    if personal:
+        extra["personal_assessments"] = tuple(
+            PersonalTechnologyAssessmentItem(
+                tech_id=item.tech_id,
+                personal_level=item.personal_level,
+                assessment_ceiling=item.assessment_ceiling,
+                attribution_status=item.attribution_status,
+                missing_scope=item.missing_scope,
+                decisive_fact_ids=tuple(proof.fact_id for proof in item.proofs),
+            )
+            for item in personal_assessments or ()
+        )
     return result_class(
         event_id=result_event_id(request.event_id),
         occurred_at=datetime.now(UTC),
@@ -204,8 +252,28 @@ def completed_result(
                     end_line=item.fact.line,
                     fact_payload=dict(item.fact.fields),
                     code_snippet=snippets.get((item.fact.file, item.fact.line)),
+                    **(
+                        {
+                            "fact_id": item.fact_id,
+                            "repository_analysis_id": attributed_by_fact_id[
+                                item.fact_id
+                            ].repository_analysis_id,
+                            "tech_id": item.tech_id,
+                            "attribution": attributed_by_fact_id[
+                                item.fact_id
+                            ].attribution,
+                            "attribution_commit_sha": attributed_by_fact_id[
+                                item.fact_id
+                            ].attribution_commit_sha,
+                            "attribution_missing_scope": attributed_by_fact_id[
+                                item.fact_id
+                            ].missing_scope,
+                        }
+                        if personal
+                        else {}
+                    ),
                 )
-                for item in judgement.evidence
+                for item in published_evidence
             ),
             candidates=tuple(
                 (TechnologyCandidateV2 if common44 else TechnologyCandidate)(
@@ -260,7 +328,12 @@ def failed_result(
     error_detail: str | None = None,
     *,
     schema_version: str = SCHEMA_VERSION,
-) -> RepositoryAnalysisResult | RepositoryAnalysisResultV2 | RepositoryAnalysisResultV3:
+) -> (
+    RepositoryAnalysisResult
+    | RepositoryAnalysisResultV2
+    | RepositoryAnalysisResultV3
+    | RepositoryAnalysisResultV4
+):
     """A failure the user has to see.
 
     The DLQ already holds the request, but the DLQ is for operators. Without
@@ -277,6 +350,9 @@ def failed_result(
     elif schema_version == SCHEMA_VERSION_V3:
         result_class = RepositoryAnalysisResultV3
         payload_class = RepositoryAnalysisResultPayloadV3
+    elif schema_version == SCHEMA_VERSION_V4:
+        result_class = RepositoryAnalysisResultV4
+        payload_class = RepositoryAnalysisResultPayloadV4
     else:
         raise ValueError(f"unsupported result schema_version {schema_version!r}")
     return result_class(
@@ -311,14 +387,25 @@ def _combined_skips(
     return combined
 
 
+def _published_evidence(
+    judgement: Judgement,
+    personal_assessments: tuple[PersonalTechnologyAssessment, ...] | None,
+) -> tuple[EvidenceFact, ...]:
+    published = {item.fact_id: item for item in judgement.evidence}
+    for assessment in personal_assessments or ():
+        for proof in assessment.proofs:
+            published.setdefault(proof.fact_id, proof.evidence)
+    return tuple(published.values())
+
+
 def _snippets(
-    judgement: Judgement, checkout: Path | None
+    evidence: tuple[EvidenceFact, ...], checkout: Path | None
 ) -> dict[tuple[str, int], str]:
     """The source line behind each evidence item, read once per file."""
     if checkout is None:
         return {}
     wanted: dict[str, set[int]] = {}
-    for item in judgement.evidence:
+    for item in evidence:
         wanted.setdefault(item.fact.file, set()).add(item.fact.line)
 
     found: dict[tuple[str, int], str] = {}
@@ -359,6 +446,7 @@ class ResultPublisher:
             SCHEMA_VERSION,
             SCHEMA_VERSION_V2,
             SCHEMA_VERSION_V3,
+            SCHEMA_VERSION_V4,
         }:
             raise ValueError(f"unsupported result schema_version {schema_version!r}")
         self.transport = transport
@@ -369,7 +457,8 @@ class ResultPublisher:
         self,
         result: RepositoryAnalysisResult
         | RepositoryAnalysisResultV2
-        | RepositoryAnalysisResultV3,
+        | RepositoryAnalysisResultV3
+        | RepositoryAnalysisResultV4,
     ) -> None:
         if (
             self.schema_version is not None

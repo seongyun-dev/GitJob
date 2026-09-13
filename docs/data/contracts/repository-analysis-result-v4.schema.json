@@ -1,0 +1,627 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitjob.local/contracts/repository-analysis-result-v4.schema.json",
+  "$defs": {
+    "AnalysisStatsV3": {
+      "additionalProperties": false,
+      "properties": {
+        "files_parsed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Files Parsed",
+          "type": "integer"
+        },
+        "files_skipped": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Files Skipped",
+          "type": "integer"
+        },
+        "import_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Import Count",
+          "type": "integer"
+        },
+        "dependency_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Dependency Count",
+          "type": "integer"
+        },
+        "bytes_on_disk": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Bytes On Disk",
+          "type": "integer"
+        },
+        "duration_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "source_file_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Source File Count",
+          "type": "integer"
+        },
+        "annotation_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Annotation Count",
+          "type": "integer"
+        },
+        "config_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Config Count",
+          "type": "integer"
+        },
+        "api_call_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Api Call Count",
+          "type": "integer"
+        },
+        "skipped_reasons": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Skipped Reasons",
+          "type": "object"
+        },
+        "syntax_node_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Syntax Node Count",
+          "type": "integer"
+        }
+      },
+      "title": "AnalysisStatsV3",
+      "type": "object"
+    },
+    "EvidenceItemV4": {
+      "additionalProperties": false,
+      "description": "V4 ties the existing Rule Pack fact to pinned-commit authorship.",
+      "properties": {
+        "rule_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "fact_type": {
+          "enum": [
+            "IMPORT",
+            "DEPENDENCY",
+            "ANNOTATION",
+            "CONFIG_KEY",
+            "API_CALL",
+            "SOURCE_FILE",
+            "SYNTAX_NODE"
+          ],
+          "title": "Fact Type",
+          "type": "string"
+        },
+        "file_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "File Path",
+          "type": "string"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "fact_payload": {
+          "additionalProperties": true,
+          "title": "Fact Payload",
+          "type": "object"
+        },
+        "code_snippet": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code Snippet"
+        },
+        "fact_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "repository_analysis_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Repository Analysis Id",
+          "type": "string"
+        },
+        "tech_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Tech Id",
+          "type": "string"
+        },
+        "attribution": {
+          "enum": [
+            "SELF",
+            "OTHER",
+            "UNKNOWN"
+          ],
+          "title": "Attribution",
+          "type": "string"
+        },
+        "attribution_commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribution Commit Sha"
+        },
+        "attribution_missing_scope": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Attribution Missing Scope",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rule_id",
+        "fact_type",
+        "file_path",
+        "start_line",
+        "end_line",
+        "fact_payload",
+        "fact_id",
+        "repository_analysis_id",
+        "tech_id",
+        "attribution"
+      ],
+      "title": "EvidenceItemV4",
+      "type": "object"
+    },
+    "PersonalTechnologyAssessmentItem": {
+      "additionalProperties": false,
+      "properties": {
+        "tech_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Tech Id",
+          "type": "string"
+        },
+        "personal_level": {
+          "anyOf": [
+            {
+              "enum": [
+                "L0",
+                "L1",
+                "L2",
+                "L3"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Personal Level"
+        },
+        "assessment_ceiling": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Assessment Ceiling",
+          "type": "string"
+        },
+        "attribution_status": {
+          "enum": [
+            "COMPLETE",
+            "PARTIAL",
+            "UNKNOWN"
+          ],
+          "title": "Attribution Status",
+          "type": "string"
+        },
+        "missing_scope": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Scope",
+          "type": "array"
+        },
+        "decisive_fact_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Decisive Fact Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tech_id",
+        "personal_level",
+        "assessment_ceiling",
+        "attribution_status"
+      ],
+      "title": "PersonalTechnologyAssessmentItem",
+      "type": "object"
+    },
+    "RepositoryAnalysisResultPayloadV4": {
+      "additionalProperties": false,
+      "properties": {
+        "analysis_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Analysis Id",
+          "type": "string"
+        },
+        "request_event_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Request Event Id",
+          "type": "string"
+        },
+        "registry_version": {
+          "minLength": 1,
+          "title": "Registry Version",
+          "type": "string"
+        },
+        "commit_sha": {
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "COMPLETED",
+            "FAILED"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "error_detail": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Detail"
+        },
+        "technologies": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TechnologyVerdict"
+          },
+          "title": "Technologies",
+          "type": "array"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceItemV4"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "candidates": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TechnologyCandidateV2"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisStatsV3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rule_pack_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Pack Version"
+        },
+        "rule_pack_content_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Pack Content Sha256"
+        },
+        "technology_support": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TechnologySupportItemV3"
+          },
+          "title": "Technology Support",
+          "type": "array"
+        },
+        "personal_assessments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PersonalTechnologyAssessmentItem"
+          },
+          "title": "Personal Assessments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "analysis_id",
+        "request_event_id",
+        "registry_version",
+        "commit_sha",
+        "status"
+      ],
+      "title": "RepositoryAnalysisResultPayloadV4",
+      "type": "object"
+    },
+    "TechnologyCandidateV2": {
+      "additionalProperties": false,
+      "properties": {
+        "ecosystem": {
+          "enum": [
+            "MAVEN",
+            "NPM",
+            "PYPI",
+            "NUGET",
+            "GO",
+            "CARGO",
+            "COMPOSER"
+          ],
+          "title": "Ecosystem",
+          "type": "string"
+        },
+        "coordinate": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Coordinate",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "occurrence_count": {
+          "minimum": 1,
+          "title": "Occurrence Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ecosystem",
+        "coordinate",
+        "occurrence_count"
+      ],
+      "title": "TechnologyCandidateV2",
+      "type": "object"
+    },
+    "TechnologySupportItemV3": {
+      "additionalProperties": false,
+      "properties": {
+        "tech_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Tech Id",
+          "type": "string"
+        },
+        "evaluation_scope": {
+          "const": "REPOSITORY",
+          "title": "Evaluation Scope",
+          "type": "string"
+        },
+        "required_fact_types": {
+          "items": {
+            "enum": [
+              "IMPORT",
+              "DEPENDENCY",
+              "ANNOTATION",
+              "CONFIG_KEY",
+              "API_CALL",
+              "SOURCE_FILE",
+              "SYNTAX_NODE"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Required Fact Types",
+          "type": "array"
+        },
+        "max_supported_level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Max Supported Level",
+          "type": "string"
+        },
+        "coverage": {
+          "enum": [
+            "SUPPORTED",
+            "PARTIAL",
+            "UNSUPPORTED"
+          ],
+          "title": "Coverage",
+          "type": "string"
+        },
+        "limitations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tech_id",
+        "evaluation_scope",
+        "required_fact_types",
+        "max_supported_level",
+        "coverage"
+      ],
+      "title": "TechnologySupportItemV3",
+      "type": "object"
+    },
+    "TechnologyVerdict": {
+      "additionalProperties": false,
+      "description": "One technology and the level the rules put it at.",
+      "properties": {
+        "tech_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Tech Id",
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "matched_rule_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Matched Rule Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tech_id",
+        "level",
+        "matched_rule_ids"
+      ],
+      "title": "TechnologyVerdict",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "repository-analysis-result/v4",
+      "default": "repository-analysis-result/v4",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "event_type": {
+      "const": "repository.analysis.completed",
+      "default": "repository.analysis.completed",
+      "title": "Event Type",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "trace_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "payload": {
+      "$ref": "#/$defs/RepositoryAnalysisResultPayloadV4"
+    }
+  },
+  "required": [
+    "event_id",
+    "occurred_at",
+    "trace_id",
+    "payload"
+  ],
+  "title": "RepositoryAnalysisResultV4",
+  "type": "object"
+}

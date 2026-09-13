@@ -31,6 +31,7 @@ from types import FrameType
 
 from pydantic import ValidationError
 
+from analysis.attribution import CommitAuthorIdentityResolver, GitEvidenceAttributor
 from analysis.claim import ClaimStatus, ClaimStore
 from analysis.clone import CloneError, RepositoryCloner, TransientCloneError
 from analysis.configs import ConfigReport, ConfigScanner, facts_from_configs
@@ -46,11 +47,13 @@ from analysis.judge import (
 )
 from analysis.manifests import DependencyReport, ManifestScanner
 from analysis.parse import ParseReport, RepositoryParser
+from analysis.personal_level import assess_personal_levels
 from analysis.publish import ResultPublisher, completed_result, failed_result
 from analysis.results import (
     SCHEMA_VERSION,
     SCHEMA_VERSION_V2,
     SCHEMA_VERSION_V3,
+    SCHEMA_VERSION_V4,
     schema_for_rule_pack,
 )
 from analysis.rules import RegistryStore, UnknownRegistryVersion
@@ -96,6 +99,9 @@ class AnalysisConsumer:
     results: ResultPublisher | None = None
     results_v2: ResultPublisher | None = None
     results_v3: ResultPublisher | None = None
+    results_v4: ResultPublisher | None = None
+    identity_resolver: CommitAuthorIdentityResolver | None = None
+    attributor: GitEvidenceAttributor | None = None
     dlq_topic: str | None = None
     dlq_transport: KafkaTransport | None = None
     poll_timeout_ms: int = 1_000
@@ -220,14 +226,47 @@ class AnalysisConsumer:
             configs = (self.config_scanner or ConfigScanner()).scan(result.path)
             judgement = self._judge(request, payload, dependencies, configs, report)
 
+            attributed_evidence = None
+            personal_assessments = None
+            if (
+                judgement is not None
+                and judgement.rule_pack_version == "rule-pack-20260911.4"
+                and self._personal_v4_active(payload.registry_version)
+            ):
+                assert self.registry is not None
+                attributed_evidence = (
+                    self.attributor or GitEvidenceAttributor()
+                ).attribute(
+                    result.path,
+                    payload.commit_sha,
+                    payload.analysis_repository_id,
+                    judgement.personal_evidence or judgement.evidence,
+                    self.identity_resolver,
+                )
+                personal_assessments = assess_personal_levels(
+                    self.registry.load(payload.registry_version),
+                    judgement,
+                    attributed_evidence,
+                    repository_coverage_complete=not (
+                        report.skipped_reasons
+                        or dependencies.skipped_reasons
+                        or configs.skipped_reasons
+                    ),
+                )
+
             common44 = bool(judgement and judgement.rule_pack_version)
-            result_schema = schema_for_rule_pack(
-                judgement.rule_pack_version if judgement else None
+            result_schema = (
+                SCHEMA_VERSION_V4
+                if personal_assessments is not None
+                else schema_for_rule_pack(
+                    judgement.rule_pack_version if judgement else None
+                )
             )
             result_publisher = {
                 SCHEMA_VERSION: self.results,
                 SCHEMA_VERSION_V2: self.results_v2,
                 SCHEMA_VERSION_V3: self.results_v3,
+                SCHEMA_VERSION_V4: self.results_v4,
             }[result_schema]
             if common44 and result_publisher is None:
                 error_code = "UNSUPPORTED_RESULT_SCHEMA"
@@ -265,6 +304,8 @@ class AnalysisConsumer:
                         checkout=result.path,
                         bytes_on_disk=result.bytes_on_disk,
                         duration_ms=int((monotonic() - started) * 1000),
+                        attributed_evidence=attributed_evidence,
+                        personal_assessments=personal_assessments,
                     )
                 )
 
@@ -384,12 +425,14 @@ class AnalysisConsumer:
                 and self.results_v2 is not None
             ):
                 schema, publisher = SCHEMA_VERSION_V2, self.results_v2
-            elif (
-                request.payload.registry_version
-                in {"registry-20260911.3", "registry-20260911.4"}
-                and self.results_v3 is not None
-            ):
-                schema, publisher = SCHEMA_VERSION_V3, self.results_v3
+            elif request.payload.registry_version in {
+                "registry-20260911.3",
+                "registry-20260911.4",
+            }:
+                if self._personal_v4_active(request.payload.registry_version):
+                    schema, publisher = SCHEMA_VERSION_V4, self.results_v4
+                elif self.results_v3 is not None:
+                    schema, publisher = SCHEMA_VERSION_V3, self.results_v3
         if publisher is None:
             return
         publisher.publish(
@@ -399,6 +442,15 @@ class AnalysisConsumer:
                 detail,
                 schema_version=schema,
             )
+        )
+
+    def _personal_v4_active(self, registry_version: str) -> bool:
+        """Use v4 only when both halves of personal attribution are configured."""
+
+        return (
+            registry_version == "registry-20260911.4"
+            and self.identity_resolver is not None
+            and self.results_v4 is not None
         )
 
     def _judge(

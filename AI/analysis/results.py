@@ -42,18 +42,23 @@ __all__ = [
     "SCHEMA_VERSION",
     "SCHEMA_VERSION_V2",
     "SCHEMA_VERSION_V3",
+    "SCHEMA_VERSION_V4",
     "AnalysisStats",
     "AnalysisStatsV2",
     "AnalysisStatsV3",
     "EvidenceItem",
     "EvidenceItemV2",
     "EvidenceItemV3",
+    "EvidenceItemV4",
+    "PersonalTechnologyAssessmentItem",
     "RepositoryAnalysisResult",
     "RepositoryAnalysisResultPayload",
     "RepositoryAnalysisResultPayloadV2",
     "RepositoryAnalysisResultPayloadV3",
+    "RepositoryAnalysisResultPayloadV4",
     "RepositoryAnalysisResultV2",
     "RepositoryAnalysisResultV3",
+    "RepositoryAnalysisResultV4",
     "TechnologyCandidate",
     "TechnologyCandidateV2",
     "TechnologySupportItem",
@@ -65,6 +70,7 @@ __all__ = [
 SCHEMA_VERSION = "repository-analysis-result/v1"
 SCHEMA_VERSION_V2 = "repository-analysis-result/v2"
 SCHEMA_VERSION_V3 = "repository-analysis-result/v3"
+SCHEMA_VERSION_V4 = "repository-analysis-result/v4"
 EVENT_TYPE = "repository.analysis.completed"
 
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -77,6 +83,7 @@ Identifier = Annotated[
 ]
 
 Level = Literal["L0", "L1", "L2", "L3"]
+_LEVEL_ORDER = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
 FactType = Literal["IMPORT", "DEPENDENCY", "ANNOTATION", "CONFIG_KEY", "API_CALL"]
 FactTypeV2 = Literal[
     "IMPORT", "DEPENDENCY", "ANNOTATION", "CONFIG_KEY", "API_CALL", "SOURCE_FILE"
@@ -322,6 +329,87 @@ class RepositoryAnalysisResultV3(BaseModel):
     occurred_at: datetime
     trace_id: Identifier
     payload: RepositoryAnalysisResultPayloadV3
+
+
+class EvidenceItemV4(EvidenceItemV3):
+    """V4 ties the existing Rule Pack fact to pinned-commit authorship."""
+
+    fact_id: str = Field(min_length=1, max_length=80)
+    repository_analysis_id: Identifier
+    tech_id: str = Field(min_length=1, max_length=80)
+    attribution: Literal["SELF", "OTHER", "UNKNOWN"]
+    attribution_commit_sha: str | None = None
+    attribution_missing_scope: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _coherent_attribution(self):
+        if self.attribution in {"SELF", "OTHER"} and not self.attribution_commit_sha:
+            raise ValueError("resolved attribution requires a commit SHA")
+        if self.attribution == "UNKNOWN" and not self.attribution_missing_scope:
+            raise ValueError("unknown attribution requires missing scope")
+        if self.attribution_commit_sha and not _COMMIT_SHA.match(
+            self.attribution_commit_sha
+        ):
+            raise ValueError(
+                "attribution_commit_sha must be 40 lowercase hex characters"
+            )
+        return self
+
+
+class PersonalTechnologyAssessmentItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tech_id: str = Field(min_length=1, max_length=80)
+    personal_level: Level | None
+    assessment_ceiling: Level
+    attribution_status: Literal["COMPLETE", "PARTIAL", "UNKNOWN"]
+    missing_scope: tuple[str, ...] = ()
+    decisive_fact_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _coherent_assessment(self):
+        if self.personal_level is not None and (
+            _LEVEL_ORDER[self.personal_level] > _LEVEL_ORDER[self.assessment_ceiling]
+        ):
+            raise ValueError("personal_level must not exceed assessment_ceiling")
+        if self.personal_level is None and self.attribution_status == "COMPLETE":
+            raise ValueError("complete assessment must resolve a personal_level")
+        if self.attribution_status != "COMPLETE" and not self.missing_scope:
+            raise ValueError("incomplete assessment requires missing scope")
+        return self
+
+
+class RepositoryAnalysisResultPayloadV4(RepositoryAnalysisResultPayloadV3):
+    evidence: tuple[EvidenceItemV4, ...] = ()
+    personal_assessments: tuple[PersonalTechnologyAssessmentItem, ...] = ()
+
+    @model_validator(mode="after")
+    def _personal_results_cover_repository_positives(self):
+        if self.status != "COMPLETED":
+            return self
+        if (
+            self.registry_version,
+            self.rule_pack_version,
+        ) != ("registry-20260911.4", "rule-pack-20260911.4"):
+            raise ValueError("v4 personal results require the scope Rule Pack pair")
+        tech_ids = [item.tech_id for item in self.personal_assessments]
+        if len(tech_ids) != len(set(tech_ids)):
+            raise ValueError("personal assessments must be unique by tech_id")
+        if set(tech_ids) != {item.tech_id for item in self.technologies}:
+            raise ValueError(
+                "v4 personal assessments must cover every positive technology"
+            )
+        return self
+
+
+class RepositoryAnalysisResultV4(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    event_id: Identifier
+    schema_version: Literal["repository-analysis-result/v4"] = SCHEMA_VERSION_V4
+    event_type: Literal["repository.analysis.completed"] = EVENT_TYPE
+    occurred_at: datetime
+    trace_id: Identifier
+    payload: RepositoryAnalysisResultPayloadV4
 
 
 def schema_for_rule_pack(rule_pack_version: str | None) -> str:

@@ -28,10 +28,12 @@ is four. Only dependencies become candidates.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from hashlib import sha256
 
 from analysis.manifests import DependencyOccurrence
 from analysis.parse import (
@@ -55,6 +57,7 @@ __all__ = [
     "Judge",
     "Judgement",
     "Verdict",
+    "fact_matches_clause",
     "facts_from_annotations",
     "facts_from_calls",
     "facts_from_dependencies",
@@ -105,6 +108,25 @@ class EvidenceFact:
     tech_id: str
     fact: Fact
 
+    @property
+    def fact_id(self) -> str:
+        """Stable identity for the exact Rule Pack fact consumed downstream."""
+
+        canonical = json.dumps(
+            {
+                "rule_id": self.rule_id,
+                "tech_id": self.tech_id,
+                "fact_type": self.fact.fact_type,
+                "fields": self.fact.fields,
+                "file": self.fact.file,
+                "line": self.fact.line,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return "fact_" + sha256(canonical.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -134,6 +156,10 @@ class Judgement:
     rule_pack_version: str | None = None
     rule_pack_content_sha256: str | None = None
     technology_support: dict[str, object] = field(default_factory=dict)
+    matched_rule_groups: dict[str, int] = field(default_factory=dict)
+    #: Full matched evidence retained in-process for personal attribution. The
+    #: public evidence tuple above remains display-capped for v1-v4 payloads.
+    personal_evidence: tuple[EvidenceFact, ...] = ()
 
 
 def facts_from_imports(occurrences: Iterable[ImportOccurrence]) -> tuple[Fact, ...]:
@@ -435,7 +461,9 @@ class Judge:
 
         matched: dict[str, list[Rule]] = defaultdict(list)
         evidence: list[EvidenceFact] = []
+        personal_evidence: list[EvidenceFact] = []
         skipped: list[str] = []
+        matched_rule_groups: dict[str, int] = {}
 
         for rule in self.rule_set.rules:
             if rule.evaluation_scope != "REPOSITORY":
@@ -444,12 +472,17 @@ class Judge:
                 # and an unmet one look the same from the outside.
                 skipped.append(rule.rule_id)
                 continue
-            supporting = self._match(rule, resolved)
-            if supporting is None:
+            matched_group = self._match(rule, resolved)
+            if matched_group is None:
                 continue
+            group_no, supporting = matched_group
             matched[rule.tech_id].append(rule)
-            for fact in supporting[: self.max_evidence_per_rule]:
-                evidence.append(EvidenceFact(rule.rule_id, rule.tech_id, fact))
+            matched_rule_groups[rule.rule_id] = group_no
+            supporting_evidence = [
+                EvidenceFact(rule.rule_id, rule.tech_id, fact) for fact in supporting
+            ]
+            personal_evidence.extend(supporting_evidence)
+            evidence.extend(supporting_evidence[: self.max_evidence_per_rule])
 
         verdicts = tuple(
             Verdict(
@@ -465,13 +498,17 @@ class Judge:
             verdicts=verdicts,
             evidence=tuple(evidence),
             candidates=self._candidates(resolved),
+            personal_evidence=tuple(personal_evidence),
             skipped_rule_ids=tuple(skipped),
             rule_pack_version=self.rule_set.rule_pack_version,
             rule_pack_content_sha256=self.rule_set.rule_pack_content_sha256,
             technology_support=dict(self.rule_set.technology_support),
+            matched_rule_groups=matched_rule_groups,
         )
 
-    def _match(self, rule: Rule, facts: tuple[Fact, ...]) -> list[Fact] | None:
+    def _match(
+        self, rule: Rule, facts: tuple[Fact, ...]
+    ) -> tuple[int, list[Fact]] | None:
         """Facts supporting `rule`, or `None` when no group is satisfied."""
         applicable = [
             fact
@@ -487,7 +524,7 @@ class Judge:
                 or fact.fields.get("ECOSYSTEM") == rule.language
             )
         ]
-        for clauses in rule.groups().values():
+        for group_no, clauses in rule.groups().items():
             hits_by_clause: list[tuple[Clause, list[Fact]]] = []
             for clause in clauses:
                 hits = self._clause_hits(clause, applicable)
@@ -499,7 +536,7 @@ class Judge:
             else:
                 supporting = self._bound_support(rule, hits_by_clause)
                 if supporting is not None:
-                    return supporting
+                    return group_no, supporting
         return None
 
     @staticmethod
@@ -645,6 +682,14 @@ def _predicate_holds(predicate: Predicate, fact: Fact) -> bool:
         _operator_holds(predicate, value, expected)
         for value in values
         for expected in predicate.expected
+    )
+
+
+def fact_matches_clause(clause: Clause, fact: Fact) -> bool:
+    """Return whether an already-resolved Fact satisfies one Rule Pack clause."""
+
+    return fact.fact_type == clause.fact_type and all(
+        _predicate_holds(predicate, fact) for predicate in clause.predicates
     )
 
 

@@ -368,8 +368,16 @@ def extract_syntax(root, language: str, file: str, imports: Iterable[object]):
                 emit("COMPREHENSION", kind.removesuffix("_comprehension"), node)
             elif kind == "try_statement":
                 emit("TRY_STATEMENT", "try", node)
-                if any(child.type == "finally_clause" for child in node.named_children):
-                    emit("TRY_FINALLY", "finally", node)
+                finally_clause = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == "finally_clause"
+                    ),
+                    None,
+                )
+                if finally_clause is not None:
+                    emit("TRY_FINALLY", "finally", finally_clause)
             elif kind in {"yield", "yield_expression"}:
                 emit("YIELD_EXPRESSION", "yield", node)
 
@@ -407,8 +415,16 @@ def extract_syntax(root, language: str, file: str, imports: Iterable[object]):
                 emit("TRY_WITH_RESOURCES", "try", node)
             elif kind == "try_statement":
                 emit("TRY_STATEMENT", "try", node)
-                if any(child.type == "finally_clause" for child in node.named_children):
-                    emit("TRY_FINALLY", "finally", node)
+                finally_clause = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == "finally_clause"
+                    ),
+                    None,
+                )
+                if finally_clause is not None:
+                    emit("TRY_FINALLY", "finally", finally_clause)
 
         elif language in {"javascript", "typescript", "tsx"}:
             if kind == "class_declaration":
@@ -506,8 +522,16 @@ def extract_syntax(root, language: str, file: str, imports: Iterable[object]):
                 emit("YIELD_EXPRESSION", "yield", node)
             elif kind == "try_statement":
                 emit("TRY_STATEMENT", "try", node)
-                if any(child.type == "finally_clause" for child in node.named_children):
-                    emit("TRY_FINALLY", "finally", node)
+                finally_clause = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == "finally_clause"
+                    ),
+                    None,
+                )
+                if finally_clause is not None:
+                    emit("TRY_FINALLY", "finally", finally_clause)
             elif kind == "arrow_function":
                 emit("LAMBDA_EXPRESSION", "lambda", node)
 
@@ -568,8 +592,16 @@ def extract_syntax(root, language: str, file: str, imports: Iterable[object]):
                 emit("LAMBDA_EXPRESSION", "lambda", node)
             elif kind == "try_statement":
                 emit("TRY_STATEMENT", "try", node)
-                if any(child.type == "finally_clause" for child in node.named_children):
-                    emit("TRY_FINALLY", "finally", node)
+                finally_clause = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == "finally_clause"
+                    ),
+                    None,
+                )
+                if finally_clause is not None:
+                    emit("TRY_FINALLY", "finally", finally_clause)
 
             if (
                 kind

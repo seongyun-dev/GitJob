@@ -391,6 +391,47 @@ interface IFoo {}
     assert suspense.fields["RESOLVED_MODULE"] == "react"
 
 
+@pytest.mark.parametrize(
+    ("path", "content", "finally_line"),
+    [
+        (
+            "service.py",
+            "def run():\n    try:\n        work()\n    finally:\n        close()\n",
+            4,
+        ),
+        (
+            "Service.java",
+            (
+                "class Service {\n  void run() {\n    try { work(); }\n"
+                "    finally { close(); }\n  }\n}\n"
+            ),
+            4,
+        ),
+        (
+            "service.js",
+            "function run() {\n  try { work(); }\n  finally { close(); }\n}\n",
+            3,
+        ),
+        (
+            "Service.cs",
+            (
+                "class Service {\n  void Run() {\n    try { Work(); }\n"
+                "    finally { Close(); }\n  }\n}\n"
+            ),
+            4,
+        ),
+    ],
+)
+def test_try_finally_fact_uses_finally_clause_line(
+    tmp_path, path, content, finally_line
+):
+    report = parse_file(tmp_path, path, content)
+
+    finally_fact = next(item for item in report.syntax if item.kind == "TRY_FINALLY")
+
+    assert finally_fact.line == finally_line
+
+
 def test_syntax_inside_a_parse_error_is_not_emitted(tmp_path):
     report = parse_file(
         tmp_path,
