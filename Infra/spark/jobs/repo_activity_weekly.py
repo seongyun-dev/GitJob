@@ -734,7 +734,8 @@ def slice_row_digest(spark: Any, F: Any, frame: Any) -> str:
     JSON options, so a digest taken here and one taken by
     `Infra/scripts/spark-dataset-digest.sh` over the same directory agree.
 
-    Row order does not matter; `content_digest` sorts the rendered rows.
+    Row order does not matter; Spark globally sorts rendered rows before the
+    digest is streamed to the driver.
     """
 
     import sys
@@ -745,7 +746,7 @@ def slice_row_digest(spark: Any, F: Any, frame: Any) -> str:
     parent = str(_Path(__file__).resolve().parents[1])
     if parent not in sys.path:
         sys.path.insert(0, parent)
-    from dataset_digest import JSON_OPTIONS, content_digest
+    from dataset_digest import JSON_OPTIONS, content_digest_ordered
 
     columns = sorted(frame.columns)
     ordered = frame.select(*[F.col(name) for name in columns])
@@ -755,8 +756,13 @@ def slice_row_digest(spark: Any, F: Any, frame: Any) -> str:
             options=JSON_OPTIONS,
         ).alias("row")
     )
-    return content_digest(
-        ordered.schema.json(), [str(item["row"]) for item in rendered.collect()]
+    # Sort in Spark, then stream the globally ordered result.  Equal JSON rows
+    # are interchangeable, so executor/partition tie ordering cannot change the
+    # digest while the driver never materializes the full weekly dataset.
+    globally_sorted = rendered.orderBy(F.col("row"))
+    return content_digest_ordered(
+        ordered.schema.json(),
+        (str(item["row"]) for item in globally_sorted.toLocalIterator()),
     )
 
 

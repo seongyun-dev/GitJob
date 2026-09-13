@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from itertools import chain
 from pathlib import Path
 import unittest
 
@@ -96,6 +97,44 @@ class DatasetDigestContractTest(unittest.TestCase):
             self.digest.content_digest(schema, rows),
             self.digest.content_digest(schema, reversed(rows)),
         )
+
+    def test_ordered_stream_matches_compatibility_digest(self):
+        schema = '{"fields":[{"name":"v","type":"integer"}],"type":"struct"}'
+        rows = ['{"v":3}', '{"v":1}', '{"v":2}', '{"v":2}']
+
+        self.assertEqual(
+            self.digest.content_digest(schema, rows),
+            self.digest.content_digest_ordered(schema, iter(sorted(rows))),
+        )
+
+    def test_partition_boundaries_do_not_change_ordered_stream_digest(self):
+        schema = '{"fields":[{"name":"v","type":"integer"}],"type":"struct"}'
+        rows = sorted([f'{{"v":{value}}}' for value in [9, 1, 7, 3, 5, 2, 8, 4, 6]])
+        expected = self.digest.content_digest_ordered(schema, iter(rows))
+
+        for partition_count in [1, 2, 3, 5, 8]:
+            partitions = [
+                rows[
+                    (len(rows) * index) // partition_count :
+                    (len(rows) * (index + 1)) // partition_count
+                ]
+                for index in range(partition_count)
+            ]
+            streamed = chain.from_iterable(partitions)
+            self.assertEqual(
+                expected, self.digest.content_digest_ordered(schema, streamed)
+            )
+
+    def test_weekly_digest_path_streams_instead_of_collecting(self):
+        source = (
+            ROOT / "Infra" / "spark" / "jobs" / "repo_activity_weekly.py"
+        ).read_text()
+        start = source.index("def slice_row_digest")
+        end = source.index(chr(10) + "def _hadoop_path_exists", start)
+        digest_block = source[start:end]
+
+        self.assertNotIn("rendered.collect()", digest_block)
+        self.assertIn("toLocalIterator()", digest_block)
 
 
 if __name__ == "__main__":

@@ -34,13 +34,23 @@ def _update_framed(digest: "hashlib._Hash", payload: str) -> None:
     digest.update(encoded)
 
 
-def content_digest(schema_json: str, rows: Iterable[str]) -> str:
+def _content_digest_in_order(schema_json: str, rows: Iterable[str]) -> str:
     digest = hashlib.sha256()
     _update_framed(digest, DIGEST_FORMAT)
     _update_framed(digest, schema_json)
-    for row in sorted(rows):
+    for row in rows:
         _update_framed(digest, row)
     return digest.hexdigest()
+
+
+def content_digest(schema_json: str, rows: Iterable[str]) -> str:
+    # Compatibility API for callers that provide an unordered iterable.
+    return _content_digest_in_order(schema_json, sorted(rows))
+
+
+def content_digest_ordered(schema_json: str, rows: Iterable[str]) -> str:
+    # Digest an iterable already globally ordered by canonical row text.
+    return _content_digest_in_order(schema_json, rows)
 
 
 def main() -> None:
