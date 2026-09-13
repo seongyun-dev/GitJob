@@ -125,17 +125,28 @@ lifespan이 입력 감시를 시작하고 종료 시 중단한다. 별도 수동
 
 ### Compose에서 반드시 추가할 mount
 
-기본 `Infra/compose/compose.yaml`은 `C_INTAKE_CONFIG` 환경 변수만 전달하며 Worker에
-입력 volume을 선언하지 않는다. **아래 JSON을 작성하고 환경 변수만 넣는 것으로는 실행되지 않는다.**
-운영자가 선택한 Compose override 또는 동등한 컨테이너 실행 설정에 bind mount를 추가한다.
+기본 `Infra/compose/compose.yaml`은 설정 디렉터리와 공고 staging 볼륨을 Worker에 선언한다
+(`S15P21E102-235`). 그 두 가지는 추가 override 없이 동작하지만, 나머지 입력 volume은
+운영자가 선택한 Compose override 또는 동등한 컨테이너 실행 설정에 직접 추가한다.
 실행 설정·입력 원본·비밀값은 Git에 넣지 않는다.
 
 | 호스트에서 준비할 것 | 컨테이너 경로 예 | 권한·설정 일치 |
 |---|---|---|
-| `c-intake.json` 파일 | `/config/c-intake.json` | read-only, `C_INTAKE_CONFIG`도 이 컨테이너 경로 |
-| 보존된 완료 공고 root | `/input/jobs/saramin`, `/input/jobs/worknet` | read-only, JSON `job_roots`와 일치 |
-| 공개 분석 checkpoint 전용 디렉터리 | `/state/c-public` | read-write, 공개 입력을 사용할 때만 필요 |
+| `c-intake.json` 파일 | `/config/c-intake.json` | read-only. 기본 Compose가 `${C_INTAKE_CONFIG_DIR:-.local/c-intake}`를 `/config`에 마운트한다. `C_INTAKE_CONFIG`도 이 컨테이너 경로 |
+| 보존된 완료 공고 root | `/input/jobs/saramin`, `/input/jobs/worknet` | read-only, JSON `job_roots`와 일치. 기본 Compose에 없으므로 직접 추가한다 |
+| 공개 분석 checkpoint 전용 디렉터리 | `/state/c-public` | read-write, 공개 입력을 사용할 때만 필요. 기본 Compose에 없으므로 직접 추가한다 |
 | 공고 HDFS staging 디렉터리 | `/state/c-jobs` | read-write, `job_hdfs_sources[].staging_dir`와 일치. 기본 Compose의 `c-job-staging` 볼륨이 이 경로다 |
+
+파일이 아니라 디렉터리를 마운트한다. 파일 경로를 마운트하면 호스트에 파일이 없을 때
+Docker가 그 자리에 디렉터리를 만들고 설정 로드가 실패한다. 디렉터리를 마운트하면
+없을 때 빈 `/config`가 생길 뿐이고, `C_INTAKE_CONFIG`가 비어 있으면 Worker는 그대로
+HTTP-only로 동작한다.
+
+`c-job-staging` 볼륨은 Docker가 root 소유로 만들고 Worker는 `appuser`로 실행되므로,
+기본 Compose의 `c-job-staging-init`가 먼저 소유권을 맞춘다. Worker는 이 서비스의
+`service_completed_successfully`에 의존한다. 이 단계가 없으면 첫 poll이
+`PermissionError`로 실패하는데, `/health`는 계속 살아 있다고 답하므로 겉으로는 정상이다.
+배포 후 `./Infra/scripts/verify-deployment.sh`의 `worker-intake` 항목이 이 상태를 잡는다.
 
 컨테이너 JSON에 Windows 호스트 경로를 쓰지 않는다. 아래 HDFS 주소는 컨테이너에서
 접근 가능한 이름의 예시이며 실제 허용 NameNode/DataNode route를 확인해야 한다.

@@ -344,6 +344,22 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  # Same shape as kafka-data-init and the hdfs-*-data-init services: a named
+  # volume arrives root-owned and the service that uses it does not run as root.
+  # The worker image is reused so that `appuser` resolves in the image that
+  # defines it — Infra/docker/worker/Dockerfile pins the uid but lets the base
+  # image pick the gid, so a numeric pair here would be a guess. S15P21E102-235.
+  c-job-staging-init:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /state/c-jobs && chown -R appuser:appuser /state/c-jobs"]
+    restart: "no"
+    volumes:
+      - c-job-staging:/state/c-jobs
+    logging: *default-logging
+
   worker:
     image: ${WORKER_IMAGE:-gitjob/worker:local}
     profiles: [data]
@@ -379,7 +395,20 @@ services:
       HDFS_URI: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
       PARQUET_ROOT: ${PARQUET_ROOT:-hdfs:///gitjob/parquet}
       SPARK_MASTER_URL: ${SPARK_MASTER_URL:-spark://spark-master:7077}
+    depends_on:
+      # Docker creates a named volume root-owned, and this container runs as
+      # appuser, so without this the first poll fails with PermissionError while
+      # /health keeps reporting the process alive. S15P21E102-235.
+      c-job-staging-init:
+        condition: service_completed_successfully
     volumes:
+      # S15P21E102-235. `c-intake.json` lives here, read-only, and C_INTAKE_CONFIG
+      # names it as /config/c-intake.json. The directory is mounted rather than the
+      # file: a missing file would make Docker create a directory in its place and
+      # the load would fail, whereas a missing directory only yields an empty
+      # /config, which an unset C_INTAKE_CONFIG ignores. The file itself stays out
+      # of Git — `.local/` is ignored, as with the Jenkins agent secret below.
+      - ${C_INTAKE_CONFIG_DIR:-.local/c-intake}:/config:ro
       # S15P21E102-220. Published job runs are staged here before the existing
       # local intake reads them; `job_hdfs_sources[].staging_dir` in
       # `c-intake.json` must point at this path. Named rather than bind so the

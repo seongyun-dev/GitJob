@@ -340,6 +340,68 @@ run_all_checks() {
     esac
   fi
 
+  # --- C completed-output intake ----------------------------------------------
+  # The container healthcheck is liveness and /ready only looks at the database,
+  # so an intake that cannot reach HDFS — or cannot write its staging directory —
+  # leaves the deployment green. That is exactly how a root-owned c-job-staging
+  # volume went unnoticed until someone read the logs. `last_poll.failed` counts
+  # both a refresh failure and a discovery failure, which is the signal wanted.
+  #
+  # The healthcheck deliberately stays out of this: /intake/status needs the
+  # bearer token, and a NameNode blip must not restart a worker that is still
+  # computing on what it already staged.
+  intake_config="$(read_env C_INTAKE_CONFIG)"
+  if ! profile_enabled data; then
+    skip worker-intake "data 프로필이 이 호스트에 없다"
+  elif [[ -z "$intake_config" ]]; then
+    # .env.example: empty means Worker stays HTTP-only. Not a deployment fault.
+    skip worker-intake "C_INTAKE_CONFIG 미설정 — 자동 입력 감시가 설계상 비활성"
+  elif ! running worker; then
+    undetermined worker-intake "worker 컨테이너가 이 호스트에 없다"
+  else
+    # Same shape as worker-ready above: the call is made inside the container so
+    # that the token stays there and never reaches this script or its output.
+    intake_status="$(compose exec -T worker sh -c '
+      code=$(curl -sS -o /tmp/verify-intake.json -w "%{http_code}" \
+        -H "Authorization: Bearer $C_COMPUTE_TOKEN" \
+        http://localhost:8080/internal/v1/c/intake/status 2>/dev/null || echo 000)
+      printf "%s " "$code"
+      tr -d "\n" < /tmp/verify-intake.json 2>/dev/null
+      rm -f /tmp/verify-intake.json
+    ' 2>/dev/null | tr -d '\r')"
+    intake_code="${intake_status%% *}"
+    intake_body="${intake_status#* }"
+    intake_remedy="worker 로그에서 실패 유형을 먼저 읽는다.
+    ENV_FILE=$ENV_FILE COMPOSE_OVERRIDE_FILE=$COMPOSE_OVERRIDE_FILE PROFILES=data \\
+      docker compose logs --tail 100 worker
+  PermissionError 라면 staging 볼륨이 root 소유다. c-job-staging-init 가 완료됐는지 확인한다.
+    ENV_FILE=$ENV_FILE COMPOSE_OVERRIDE_FILE=$COMPOSE_OVERRIDE_FILE PROFILES=data ./Infra/scripts/up.sh"
+    if [[ "$intake_code" != "200" ]]; then
+      undetermined worker-intake "/intake/status 응답 코드 $intake_code"
+    else
+      # No JSON parser is guaranteed in this shell, and the fields are flat
+      # booleans and one integer, so the body is matched directly.
+      configured=no; [[ "$intake_body" == *'"configured":true'* ]] && configured=yes
+      intake_running=no; [[ "$intake_body" == *'"running":true'* ]] && intake_running=yes
+      failed="$(printf '%s' "$intake_body" | sed -n 's/.*"failed":[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+      if [[ "$configured" != "yes" ]]; then
+        needs_action worker-intake "C_INTAKE_CONFIG 는 설정됐는데 runner 가 구성되지 않았다" \
+          "설정 파일이 컨테이너 안에 실제로 있는지, DB 와 32자 이상 토큰이 준비됐는지 확인한다.
+    C_INTAKE_CONFIG=$intake_config
+  /config 마운트는 compose.yaml 의 C_INTAKE_CONFIG_DIR 로 들어간다."
+      elif [[ "$intake_running" != "yes" ]]; then
+        needs_action worker-intake "intake runner 가 구성됐지만 동작하지 않는다" "$intake_remedy"
+      elif [[ -z "$failed" ]]; then
+        # A poll has not completed yet; poll_seconds defaults to 30.
+        undetermined worker-intake "아직 완료된 poll 이 없다 — 잠시 뒤 다시 확인한다"
+      elif [[ "$failed" != "0" ]]; then
+        needs_action worker-intake "마지막 poll 실패 ${failed}건" "$intake_remedy"
+      else
+        ok worker-intake "입력 감시 동작 중, 마지막 poll 실패 0건"
+      fi
+    fi
+  fi
+
   # --- Repository analysis consumer -----------------------------------------
   # This process has no HTTP endpoint. Its startup checks Kafka, PostgreSQL,
   # repo_analysis.event_claim and tree-sitter grammars before entering the
