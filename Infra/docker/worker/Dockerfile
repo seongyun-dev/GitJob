@@ -37,7 +37,7 @@ COPY BE/src/main/resources/db/c-compute/002_job_matching_projection.sql /app/mig
 COPY BE/src/main/resources/db/c-compute/003_registry_review.sql /app/migrations/003_registry_review.sql
 COPY BE/src/main/resources/db/c-compute/004_registry_review_source_identity.sql /app/migrations/004_registry_review_source_identity.sql
 ENV C_REGISTRY_REPOSITORY_ROOT=/opt/gitjob-provenance
-RUN python -c "from pathlib import Path; from registry.contracts import load_registry; load_registry(Path('registry/data/technology_registry_20260911_1.json'), repository_root=Path('/opt/gitjob-provenance'))"
+RUN python -c "from pathlib import Path; from analysis.rulepack import load_rule_pack; from registry.contracts import load_registry; registry = load_registry(Path('registry/data/technology_registry_20260911_4.json'), repository_root=Path('/opt/gitjob-provenance')); load_rule_pack(Path('analysis/data/rule_pack_20260911_4.json'), registry=registry)"
 
 # Collector resume state (`collector-state:/data`). Created here, before the
 # volume is ever mounted, because Docker seeds a fresh named volume from the

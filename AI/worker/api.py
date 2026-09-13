@@ -181,7 +181,7 @@ def default_registry(*, dsn: str | None = None) -> TechnologyRegistry:
     path = (
         Path(configured)
         if configured
-        else REGISTRY_ROOT / "technology_registry_20260911_1.json"
+        else REGISTRY_ROOT / "technology_registry_20260911_4.json"
     )
     source_root = Path(
         os.getenv(

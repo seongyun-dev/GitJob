@@ -13,7 +13,11 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from analysis.rules import UnknownRegistryVersion, load_rule_set
 from registry.contracts import load_registry
-from registry.db import ImmutableRegistryConflict, RegistryIntegrityError
+from registry.db import (
+    ImmutableRegistryConflict,
+    PostgresRegistryStore,
+    RegistryIntegrityError,
+)
 from registry.rulepack_db import PostgresRulePackStore
 
 AI_ROOT = Path(__file__).resolve().parents[1]
@@ -106,6 +110,42 @@ def test_atomic_publication_readback_legacy_and_unknown_version(rulepack_dsn):
         assert any(rule.binding_fields == ("FILE_PATH",) for rule in current.rules)
         with pytest.raises(UnknownRegistryVersion):
             load_rule_set(conn, "registry-20991231.99")
+
+
+def test_rule_pack_can_pair_with_a_preexisting_registry_provenance(rulepack_dsn):
+    dsn = rulepack_dsn
+    migrate(dsn)
+    registry = load_registry(REGISTRY_PATH, repository_root=AI_ROOT.parent)
+    PostgresRegistryStore(dsn).import_registry(
+        registry,
+        source_ref="manual:registry-reviewed-commit",
+    )
+
+    store = PostgresRulePackStore(dsn)
+    published = store.import_pack(
+        registry,
+        PACK_PATH,
+        source_ref="release:rule-pack-reviewed-commit",
+        registry_source_ref="manual:registry-reviewed-commit",
+    )
+
+    assert published.registry_version == VERSION
+    assert store.load_pack(VERSION).rule_pack_version == "rule-pack-20260911.2"
+    with psycopg.connect(dsn) as conn:
+        assert (
+            conn.execute(
+                "SELECT source_ref FROM technology_registry WHERE registry_version = %s",
+                (VERSION,),
+            ).fetchone()[0]
+            == "manual:registry-reviewed-commit"
+        )
+        assert (
+            conn.execute(
+                "SELECT source_ref FROM technology_rule_pack WHERE registry_version = %s",
+                (VERSION,),
+            ).fetchone()[0]
+            == "release:rule-pack-reviewed-commit"
+        )
 
 
 def test_conflict_and_tampering_fail_closed(rulepack_dsn):

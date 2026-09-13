@@ -302,12 +302,21 @@ def load_published_rule_set(connection, registry_version):
 
 class PostgresRulePackStore(PostgresRegistryStore):
     def import_pack(
-        self, registry: TechnologyRegistry, pack_path: Path, *, source_ref: str
+        self,
+        registry: TechnologyRegistry,
+        pack_path: Path,
+        *,
+        source_ref: str,
+        registry_source_ref: str | None = None,
     ):
         pack = load_rule_pack(pack_path, registry=registry)
         content = json.loads(pack_path.read_text(encoding="utf-8"))
         with self._connect() as conn:
-            snapshot = self._import_registry_in(conn, registry, source_ref=source_ref)
+            snapshot = self._import_registry_in(
+                conn,
+                registry,
+                source_ref=registry_source_ref or source_ref,
+            )
             _lock_pack_tables(conn, for_import=True)
             inserted = conn.execute(
                 """INSERT INTO technology_rule_pack

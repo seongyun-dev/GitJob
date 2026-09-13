@@ -62,7 +62,7 @@ def test_db_failure_never_falls_back_to_bundled_json(monkeypatch):
 def test_file_mode_is_explicit_and_preserves_immutable_version(monkeypatch):
     monkeypatch.setenv("C_REGISTRY_BACKEND", "file")
     monkeypatch.delenv("C_REGISTRY_PATH", raising=False)
-    assert default_registry().registry_version == "registry-20260911.1"
+    assert default_registry().registry_version == "registry-20260911.4"
 
 
 def test_real_db_default_survives_app_restart(

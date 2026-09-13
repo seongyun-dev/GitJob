@@ -1,6 +1,6 @@
 # Technology Registry DB 운영 계약
 
-> 상태: S15P21E102-199 로컬 구현·검증, 운영 미반영 / 기준일: 2026-09-10
+> 상태: S15P21E102-236 Registry44 배포 경로 검증, 운영 미반영 / 기준일: 2026-09-13
 
 ## 버전 경계
 
@@ -48,7 +48,8 @@ B 관리자 작업 중인 `DRAFT`로도 취급하지 않는다. C alias 활성�
 변경하지 않는다. 기존 B 버전과 같은 이름의 다른 snapshot은 import할 수 없으므로
 승인된 별도 concrete version을 사용한다.
 운영 기본 승인본은 B seed와 버전명이 겹치지 않는
-`AI/registry/data/technology_registry_20260911_1.json`(`registry-20260911.1`)이다.
+`AI/registry/data/technology_registry_20260911_4.json`(`registry-20260911.4`)과
+`AI/analysis/data/rule_pack_20260911_4.json`(`rule-pack-20260911.4`)의 쌍이다.
 기존 `registry-20260908.1` 파일은 B seed와 같은 이름이므로 운영 C import에 사용하지
 않는다. 아래 helper는 Worker 컨테이너 안에서 접속 정보를 조립하므로 비밀번호를 호스트
 명령행이나 로그에 노출하지 않으며, 동일 내용 재실행은 안전하다.
@@ -70,8 +71,14 @@ PROFILES=data VERIFY_TIMEOUT_SECONDS=60 \
   ./Infra/scripts/verify-deployment.sh
 ```
 
-Registry helper는 import와 alias 활성화 후 Worker를 재시작한다. 모든 release migration을
-적용한 뒤 마지막 명령으로 readiness를 확인한다.
+Registry helper는 Registry와 실행 Rule Pack을 각각 `C_REGISTRY_SOURCE_REF`,
+`C_RULE_PACK_SOURCE_REF`로 게시하고 read-back한 뒤 C alias를 활성화하고 Worker를 재시작한다.
+이미 같은 내용의 Registry가 게시돼 있으면 최초 `source_ref`를 보존해 Rule Pack과 연결한다.
+같은 버전에 다른 내용이 있거나 기존 Rule Pack의 출처와 새 출처가 다르면 불변성 충돌로
+중단하며, 이 경우 저장된 `source_ref`를 확인해 해당 환경 변수로 명시해야 한다. Registry만
+먼저 활성화하여 실행 Rule Pack이 없는 중간 상태를 만들지 않는다. 모든 release migration을
+적용한 뒤 마지막 명령으로 readiness를 확인한다. 배포 이미지도 같은 `.4` 두 파일을 함께
+검증한다.
 
 `--activate-alias`를 생략하면 immutable snapshot만 추가되고 현재 family pointer는
 움직이지 않는다. 활성화 전에는 대상 JSON의 repository-local provenance가 현재
@@ -90,7 +97,9 @@ checkout에서 검증되어야 한다. Import 결과의 `registry_version`, `con
 C DB mode는 시작할 때 family token을 concrete version으로 해석하고 그 process
 수명 동안 snapshot을 고정한다. Alias 변경은 live hot reload가 아니다. 새 snapshot
 import와 alias 활성화 뒤 C를 재기동하고 readiness의 version/hash를 확인한다.
-B는 별도 CURRENT 수명 주기를 유지한다. 두 결과를 연결할 때는 버전 호환을 먼저
+B는 별도 CURRENT 수명 주기를 유지한다. 따라서 C alias를 `.4`로 옮기는 것만으로 B의 신규
+분석 요청이 `.4`를 사용하지 않는다. B가 Registry44 분석 요청을 발행하려면 별도 승인 절차로
+동일 `registry-20260911.4`를 CURRENT로 선택해야 한다. 두 결과를 연결할 때는 버전 호환을 먼저
 확인해야 하며, C alias를 옮겼다는 이유로 B도 바뀌었다고 가정하지 않는다. 기존 요청과 retry는
 계속 원래 concrete version을 사용하므로 해당 snapshot row를 보존한다.
 
