@@ -87,7 +87,10 @@ class AnalysisOutboxIntegrationTest {
                 .getContentAsString(StandardCharsets.UTF_8);
         int start = baseline.indexOf("CREATE TABLE \"analysis_job\"");
         String jobSql = baseline.substring(start, baseline.indexOf(");", start) + 2)
-                + " ALTER TABLE analysis_job ADD PRIMARY KEY (analysis_id);";
+                + " ALTER TABLE analysis_job ADD PRIMARY KEY (analysis_id);"
+                // baseline 이후 analysis_job 에 붙은 컬럼은 여기에 따라 붙여야 한다.
+                // 이 테스트는 V1 만 잘라 쓰고 나머지 마이그레이션을 돌리지 않는다.
+                + " ALTER TABLE analysis_job ADD COLUMN repository_full_name VARCHAR(255);";
         // Stops at the outbox index: the baseline goes on to create a partial index on
         // analysis_job, and H2 rejects the WHERE clause on CREATE INDEX.
         int outboxStart = baseline.indexOf("CREATE TABLE analysis_outbox");

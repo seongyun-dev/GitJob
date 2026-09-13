@@ -34,6 +34,12 @@ export const queryKeys = {
   analysisRepositories: (analysisId: string) =>
     ['analysis', analysisId, 'repositories'] as const,
 
+  // 내 기술 판정. analysisId 가 아니라 사용자 단위다 -- BE 가 저장소별 최신 성공
+  // 분석을 모아 집계하므로 화면이 analysisId 를 알 필요가 없다. 분석이 하나 더
+  // 끝나면 결과가 달라지므로 무한 staleTime 을 쓰지 않는다.
+  myTechnologies: () => ['me', 'technologies'] as const,
+  myTechnologyEvidence: (techId: string) => ['me', 'technologies', techId, 'evidence'] as const,
+
   // 관리자 — 후보 목록과 레지스트리 상태. 승격·거절이 둘 다 바꾸므로
   // 한 뮤테이션이 두 키를 모두 무효화한다.
   technologyCandidates: (limit: number) => ['admin', 'technology-candidates', limit] as const,

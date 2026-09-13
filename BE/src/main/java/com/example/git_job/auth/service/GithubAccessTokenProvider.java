@@ -13,8 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>토큰 접근을 auth 모듈 안에 가둬 두는 통로다. 다른 모듈이 {@link User}를 직접
  * 들고 다니면 토큰이 응답 DTO나 로그로 흘러갈 경로가 그만큼 늘어난다. 여기서는
- * 문자열 하나만 넘기고, 저장 방식이 바뀌어도(현재 평문, 암호화는 별도 티켓)
- * 호출부는 그대로 둔다.</p>
+ * 문자열 하나만 넘기고, 저장 방식이 바뀌어도 호출부는 그대로 둔다. 현재는
+ * 엔티티 변환기가 DB의 AES-GCM 암호문을 읽을 때만 평문으로 복원한다.</p>
  */
 @Service
 @RequiredArgsConstructor

@@ -1,6 +1,6 @@
 # GitHub 저장소 분석 파이프라인 — 구현 정리
 
-> 기준일: 2026-09-10 · 브랜치 `feat/S15P21E102-121-be-github-analyze-repo`
+> 기준일: 2026-09-11 · 브랜치 `feat/S15P21E102-121-be-github-analyze-repo`
 >
 > 이 문서 하나만 읽어도 "저장소를 분석해서 기술 숙련도를 뽑는다"가 실제로
 > 어떻게 돌아가는지 알 수 있게 쓴 것이다. 배경 지식은 없다고 가정한다.
@@ -23,10 +23,13 @@
 12. [⑧ 결과 발행](#12--결과-발행)
 13. [⑨ BE가 결과를 받는다](#13--be가-결과를-받는다)
 14. [⑩ 기술 후보와 관리자 화면](#14--기술-후보와-관리자-화면)
-15. [실측 결과](#15-실측-결과)
-16. [테스트](#16-테스트)
-17. [실행 방법](#17-실행-방법)
-18. [아직 안 한 것](#18-아직-안-한-것)
+15. [⑪ 결과를 화면으로 — 조회 API](#15--결과를-화면으로--조회-api)
+16. [토큰 암호화](#16-토큰-암호화)
+17. [실측 결과](#17-실측-결과)
+18. [테스트](#18-테스트)
+19. [실행 방법](#19-실행-방법)
+20. [다음 — 커밋 기여도](#20-다음--커밋-기여도)
+21. [아직 안 한 것](#21-아직-안-한-것)
 
 ---
 
@@ -56,6 +59,10 @@
         │
         ▼
    [관리자 화면] 후보 검토 → 레지스트리 초안 → 발행                        ⑩
+        │
+        ▼
+   [조회 API] 쌓인 근거를 화면이 읽어 간다                                 ⑪
+        GET /me/technologies · /me/technologies/{techId}/evidence
 ```
 
 핵심 설계 결정 세 가지만 먼저 말하면:
@@ -138,9 +145,10 @@ technology_candidate_observation 그걸 누가 어디서 봤는지
 
 ── 사용자 ─────────────────────────────────────────
 user                         GitHub 로그인 + role (USER / ADMIN)
+                             access_token_enc — AES-GCM 암호문 (V12)
 ```
 
-마이그레이션은 Flyway `V1` ~ `V10`이고 `ddl-auto=validate`다. 스키마는
+마이그레이션은 Flyway `V1` ~ `V13`이고 `ddl-auto=validate`다. 스키마는
 마이그레이션 파일만이 바꾼다.
 
 | 버전 | 내용 |
@@ -155,6 +163,9 @@ user                         GitHub 로그인 + role (USER / ADMIN)
 | V8 | 기술 후보 + 관찰 테이블 |
 | V9 | `registry-20260910.2` — L2 규칙 23개 추가 |
 | V10 | `user.role` 컬럼 |
+| V11 | 레지스트리 스냅샷 메타데이터 (C조) |
+| V12 | GitHub Access Token 암호화 (`access_token_enc`) |
+| V13 | `analysis_job.repository_full_name` |
 
 ### 4-2. 레지스트리 버전이 기본키에 들어간 이유
 
@@ -768,9 +779,194 @@ RETIRED (registry-20260910.2)      ← 행은 그대로
 
 ---
 
-## 15. 실측 결과
+## 15. ⑪ 결과를 화면으로 — 조회 API
 
-`spring-projects/spring-petclinic` 한 건을 라이브 스택에서 돌린 기록.
+⑩까지가 전부 **쓰기 경로**였다. 요청을 받아 판정해서 저장하는 데까지. 그것을
+다시 꺼내 보여주는 읽기 경로가 없어서, 분석이 끝나도 화면은 비어 있었다.
+
+| 엔드포인트 | 하는 일 |
+|---|---|
+| `GET /api/v1/analyses/{analysisId}` | 진행 상황. 등록 응답의 `statusUrl`이 가리키는 곳 |
+| `GET /api/v1/me/technologies` | 지표 + 기술별 판정 + 판정에 쓰인 저장소 |
+| `GET /api/v1/me/technologies/{techId}/evidence` | Level로 묶은 근거 + GitHub permalink |
+
+프로필은 셋을 **한 응답으로** 내려준다. 따로 부르면 그사이 분석이 하나 끝났을 때
+지표와 목록이 서로 어긋난 화면이 된다.
+
+### 집계 단위: 저장소마다 최신 성공 분석
+
+분석은 저장소 하나에 한 건씩 만들어진다. 같은 저장소를 두 번 분석하면 행이 둘
+생기는데, 둘을 합치면 **지운 코드가 근거로 남는다.**
+
+```sql
+SELECT DISTINCT ON (repository_id) analysis_id, repository_id, ...
+FROM analysis_job WHERE user_id = ? AND status = 'SUCCEEDED'
+ORDER BY repository_id, completed_at DESC
+```
+
+### Level은 최고치를 채택한다
+
+한 기술이 저장소 A에서는 import만(L1), B에서는 호출까지(L2) 확인될 수 있다. 이때
+답은 "이 사람은 L2를 해 봤다"이다. 평균을 내면 실제로 한 일이 사라지고, 최저치를
+쓰면 안 쓴 저장소가 판정을 끌어내린다.
+
+`rule_type`이 `L0`..`L3` 문자열이라 사전순 최대가 곧 최고 Level이다.
+
+### 근거는 Level마다 따로 자른다
+
+전체에 하나의 `LIMIT`을 걸면 안 된다. 정렬이 Level 내림차순이라 **L2가 상한을
+채우는 순간 L0과 L1이 통째로 사라지고**, 화면은 "의존성 선언이 없다"로 읽힌다.
+실제로 Spring Security 한 기술이 저장소 하나에서 L2 40건 · L1 40건을 낸다.
+
+```sql
+row_number() OVER (PARTITION BY r.rule_type ORDER BY file_path, start_line) AS rank_in_level,
+count(*)     OVER (PARTITION BY r.rule_type)                               AS total_in_level
+```
+
+같은 윈도우 함수가 자르기 전 총계도 준다. 그래서 "근거 40건 · 상위 20건만 표시"라고
+말할 수 있다. 잘렸다는 사실을 감추면 화면이 "근거는 이게 전부"라고 거짓말을 한다.
+
+### 응답은 Level → 파일 → 라인으로 접는다
+
+평평하게 두면 같은 파일의 연속된 import 세 줄이 세 행을 차지한다. `SecurityConfig.java`
+하나가 5행이 되고, 화면은 "왜 L2인가"가 아니라 로그가 된다.
+
+```
+L2 구현   Spring Security 필터 체인 구성        근거 40건 · 파일 16개
+  cseongbo/Tripplannerz / config/SecurityConfig.java
+    IMPORT L10 · IMPORT L11 · IMPORT L12 · API_CALL L30 · API_CALL L32
+  …
+L1 노출   Spring Security import                근거 40건 · 파일 18개
+L0 없음   Spring Security 의존성 선언           근거  2건 · 파일  1개
+```
+
+### permalink는 커밋을 고정한다
+
+```
+https://github.com/{owner}/{repo}/blob/{commit_sha}/{path}#L{n}
+```
+
+브랜치 이름으로 걸면 그 줄이 나중에 밀리거나 지워졌을 때 링크가 엉뚱한 코드를
+가리키고, **근거가 조용히 거짓이 된다.**
+
+저장소 이름이 필요해서 V13이 `analysis_job.repository_full_name`을 추가했다. 조회
+시점에 GitHub에 숫자 id로 물어보는 방법도 있지만 호출 한도를 쓰고, 저장소가
+삭제되거나 비공개로 바뀌면 과거 근거를 영영 못 읽는다. 이름은 바뀔 수 있으므로
+**분석 당시의 이름**으로 박아 둔다 — 동일성 판단은 계속 `repository_id`가 한다.
+
+V13 이전 분석은 이 값이 `NULL`이라 링크를 만들지 못한다. 지어내지 않고 경로만
+보여준다.
+
+### Personal Level은 비운다
+
+화면의 `PERSONAL` 칸은 항상 미판정이다. "본인 Commit이 확인된 범위"를 알려면 근거
+라인마다 작성자를 봐야 하는데 `analysis_evidence_commit`을 **아직 아무도 채우지
+않는다.** Repository Level을 대신 넣으면 화면이 "본인이 썼다"고 말하게 된다.
+[20장](#20-다음--커밋-기여도)이 그 작업이다.
+
+### 빈 결과는 오류가 아니다
+
+`dataStatus`가 셋을 구분한다.
+
+| 값 | 뜻 |
+|---|---|
+| `READY` | 판정된 기술이 있다 |
+| `INSUFFICIENT_DATA` | 분석은 했는데 Registry가 아는 기술이 안 나왔다 |
+| `NO_DATA` | 분석한 적이 없다 |
+
+뒤의 둘은 사용자가 해야 할 일이 다르다. 하나로 합치면 화면이 잘못된 안내를 한다.
+
+---
+
+## 16. 토큰 암호화
+
+`user.access_token`이 **평문**이었다. scope가 `read:user,repo`라 DB를 읽을 수 있는
+사람은 그 사용자의 비공개 저장소를 전부 읽을 수 있었다. V1의 TODO가 가리키던
+작업이고 V12가 그것을 메운다.
+
+엔티티 필드는 `String` 그대로 두고 `AttributeConverter`가 영속화 시점에만 바꾼다.
+그래서 이 값을 쓰는 코드는 하나도 달라지지 않았다.
+
+```java
+@Convert(converter = EncryptedStringConverter.class)
+@Column(name = "access_token_enc")
+private String accessToken;
+```
+
+### CBC가 아니라 GCM인 이유
+
+기존 빈 설정 `new AesBytesEncryptor(key, salt)`에 실제 취약점이 있었다. Spring의
+`CipherAlgorithm.CBC`는 기본 IV 생성기가 `NULL_IV_GENERATOR` — **0으로 채운 고정
+IV**다. IV를 출력에 붙이지도 않는다. 결과적으로:
+
+- **결정적 암호화** — 같은 토큰이 언제나 같은 암호문이 되어, 토큰이 같은 두 행이
+  DB에서 그대로 드러난다
+- **인증 없음** — 변조를 잡지 못한다
+
+GCM에 난수 IV 16바이트를 명시했다. 인증 태그 16바이트가 붙어 한 바이트만 바뀌어도
+복호화가 실패한다. 이 빈을 쓰는 곳이 없을 때 바꿔서 비용이 0이었다 — 배포한 뒤
+알고리즘을 바꾸면 저장된 토큰을 전부 재암호화해야 한다.
+
+**이 컬럼으로는 조회할 수 없다.** 매번 다른 바이트가 되므로 `WHERE access_token_enc = ?`는
+절대 맞지 않는다.
+
+### 기존 토큰을 조용히 삭제하지 않는다
+
+V12는 기존 `access_token` 값이 한 건이라도 있으면 암호화 컬럼으로 전환하기 전에
+실패한다. 현재 공용 DB는 V11까지 적용됐고 2026-09-13 확인 당시 사용자와 토큰이 모두
+0건이므로 그대로 적용할 수 있다. 배포가 늦어져 토큰이 생기면 애플리케이션 메모리에서
+AES-GCM으로 암호화해 `access_token_enc`에 백필하거나, 재로그인 정책을 명시적으로
+선택한 뒤 기존 값을 비워야 한다. 암호문만 UPDATE하면 새 SQL/WAL에 평문을 다시 싣지
+않으므로 WAL은 백필 자체를 금지하는 이유가 아니다.
+
+V12의 컬럼 삭제는 과거 평문의 물리적 완전 삭제를 보장하지 않는다. 기존 테이블 저장
+공간·WAL·백업의 잔존 데이터 처리는 별도 운영 범위이며, 이 마이그레이션은 테이블
+재작성이나 백업 삭제를 수행하지 않는다.
+
+### 복호화 실패를 삼키지 않는다
+
+`null`을 돌려주면 호출자는 "토큰이 없다"로 읽고 재로그인을 시킨다. 그러면 **잘못된
+키로 새 값이 덮여 쓰이고 설정 오류는 끝까지 드러나지 않는다.** 시끄럽게 실패하는
+편이 맞다.
+
+---
+
+## 17. 실측 결과
+
+### 처음으로 전 구간이 실물로 돌았다
+
+2026-09-11, 로그인 → 저장소 선택 → `POST /api/v1/analyses` → CDC → 워커 → 결과
+저장까지 **HTTP로 관통한 첫 사례**다. 그전의 성공 기록은 전부 outbox에 직접 넣은
+합성 데이터였다.
+
+실제 사용자(`cseongbo`)의 분석 3건:
+
+```
+cseongbo/Tripplannerz     SUCCEEDED
+(비공개 저장소)            SUCCEEDED
+(비공개 저장소)            FAILED   REPOSITORY_NOT_ACCESSIBLE
+```
+
+마지막 하나가 [8장](#8--클론)의 제약이 실제로 드러난 것이다 — 워커가 익명으로
+clone하므로 비공개 저장소는 받아오지 못한다.
+
+기술 판정 결과:
+
+```
+spring-security  L2   근거 82        lombok           L1   근거 46
+spring-boot      L2   근거 45        spring-data-jpa  L1   근거 24
+react            L2   근거 42        junit            L1   근거 10
+redis            L2   근거 22        axios            L1   근거  9
+                                     postgresql       L0   근거  1
+                                     mysql            L0   근거  1
+```
+
+Java와 TypeScript가 한 사람의 저장소에서 같이 잡혔다. `react`·`axios`가 나온 것은
+파싱이 6개 언어를 함께 본다는 증거다.
+
+### 속도
+
+`spring-projects/spring-petclinic` 한 건을 라이브 스택에서 돌린 기록:
 
 ```
 02:16:00.208  cloned        1.9MB
@@ -781,57 +977,50 @@ RETIRED (registry-20260910.2)      ← 행은 그대로
 02:16:00.440  published     COMPLETED
 ```
 
-전 구간 **250ms**. 이 기록은 L2 규칙(V9)을 넣기 전이라 규칙이 60개다.
-L2를 추가한 뒤 같은 저장소를 다시 돌린 최종 판정:
+전 구간 **250ms**. 이 기록은 L2 규칙(V9) 이전이라 규칙이 60개다.
 
-```
-junit           L2      mockito         L2      spring-boot     L2
-spring-data-jpa L1      testcontainers  L1
-postgresql      L0      mysql           L0
-```
-
-Evidence 155건 (L0 30 · L1 67 · L2 58), 후보 10건.
-
-같은 결과를 다시 발행해서 멱등성도 확인했다 — `Result ignored, job already
+멱등성도 확인했다 — 같은 결과를 다시 발행하면 `Result ignored, job already
 SUCCEEDED`.
 
-**현재 DB 전체 누적:**
+### 현재 DB 전체 누적
 
 ```
-analysis_job                       6   (SUCCEEDED 3 · QUEUED 3)
-analysis_outbox                    6   (PENDING 6 — CDC 모드에서 정상)
-analysis_evidence                349   (L0 90 · L1 201 · L2 58)
-technology_candidate              10
-technology_candidate_observation  20
+analysis_job                       9   (SUCCEEDED 6 · FAILED 3)
+analysis_outbox                    9   (PENDING 9 — CDC 모드에서 정상)
+analysis_evidence                651
+technology_candidate              72
+technology_candidate_observation  93
 technology_registry                3   (CURRENT = registry-20260910.2)
 ```
 
+레지스트리는 기술 29 · 매핑 117 · 규칙 83으로 그대로다.
+
 ---
 
-## 16. 테스트
+## 18. 테스트
 
 | 대상 | 결과 |
 |---|---|
-| **BE** | **164 passed · 0 failed** |
-| **AI (worker)** | **1,515 passed · 2 failed · 64 skipped** |
+| **BE** | **264 passed · 0 failed** |
+| **AI (worker)** | **1,554 passed · 1 failed · 64 skipped** |
 | **FE** | `tsc --noEmit` 통과 · `oxlint` 통과 |
 
-AI의 실패 2건(`test_registry_contracts`, `test_repo_fetch_orchestrator`)은 이
-작업 범위 밖의 기존 실패다. 작업 트리에 `AI/` 변경이 없다.
+AI의 실패 1건(`test_registry_contracts`)은 이 작업 범위 밖의 기존 실패다.
 
-주목할 테스트:
+집계와 변환은 조용히 틀리는 종류라 실제 PostgreSQL로 고정한 것이 많다.
 
-- `RegistryDraftStoreTest` — **실제 PostgreSQL**(Testcontainers)로 초안·발행
-  흐름 전체. 초안이 CURRENT의 복사본인지, 두 번 열어도 하나인지, 발행이
-  이전 버전을 지우지 않고 RETIRED로만 바꾸는지, CURRENT가 언제나 하나인지.
-- `TechnologyCandidateAdminServiceTest` — 승격·거절의 결정 경로 10건.
-  경합 시 초안 편집이 롤백되는지 포함.
-- `AdminTechnologyCandidateControllerTest` — HTTP 계약 8건. 409가 정말
-  409로 내려가는지(500이면 화면이 서버 장애로 표시한다).
+| 테스트 | 무엇을 막는가 |
+|---|---|
+| `TechnologyProfileStoreTest` | 저장소별 최신 분석만 세는지, Level 최고치를 채택하는지, 남의 분석이 안 섞이는지 |
+| `TechnologyEvidenceResponseTest` | 같은 파일이 접히는지, 잘림이 보고되는지, permalink가 커밋을 고정하는지 |
+| `EncryptedStringConverterTest` | 평문이 컬럼에 남지 않는지, 같은 값이 매번 다른 바이트가 되는지, 변조를 잡는지 |
+| `UserAccessTokenEncryptionTest` | Hibernate가 변환기를 Spring 빈으로 받아 가는지 (원시 바이트를 JDBC로 직접 확인) |
+| `SchemaValidationTest` | 엔티티 매핑이 마이그레이션과 어긋나지 않는지 |
+| `RegistryDraftStoreTest` | 초안이 CURRENT의 복사본인지, CURRENT가 언제나 하나인지 |
 
 ---
 
-## 17. 실행 방법
+## 19. 실행 방법
 
 ### 인프라 (PowerShell)
 
@@ -853,7 +1042,18 @@ Flyway가 기동 시 마이그레이션을 적용한다.
 cd FE && npm install && npm run dev
 ```
 
-Vite가 `/api`를 `http://localhost:8080`(nginx)으로 프록시한다.
+Vite가 `/api`를 `http://localhost:8080`(nginx)으로 프록시한다. 8080의 프론트
+컨테이너는 빌드된 번들이라 소스 변경이 보이지 않으므로, 개발 중에는 5173을 본다.
+
+로그인 후 브라우저가 도착할 화면은 `FRONTEND_CALLBACK_URL`이 정한다. 개발 서버를
+보는 동안에는 `.env`에서 5173으로 돌려 둔다.
+
+```
+FRONTEND_CALLBACK_URL=http://localhost:5173/auth/callback
+```
+
+`GITHUB_REDIRECT_URI`와 헷갈리면 안 된다. 그쪽은 **GitHub이** 호출하는 주소라 OAuth
+앱 설정과 일치해야 하고 8080 그대로 둔다.
 
 ### CDC 커넥터 등록
 
@@ -875,15 +1075,92 @@ docker exec gitjob-postgres-1 psql -U gitjob -d gitjob -c "UPDATE \"user\" SET r
 
 ---
 
-## 18. 아직 안 한 것
+## 20. 다음 — 커밋 기여도
+
+"이 근거를 **본인이** 썼는가"를 판정하는 작업이다. 아직 구현하지 않았고, 조사해서
+나온 설계를 남겨 둔다.
+
+### 이미 준비된 것
+
+```
+analysis_evidence_commit   contribution_type, matched_line_count   ← 0행
+repository_commit          author_email, github_login, authored_at ← 0행
+FE ContributionLabel       주 작성자 / 공동 작업 / 일부 수정 / 미확인
+```
+
+FE 타입은 **비율 숫자를 받지 못하게** 막혀 있다(와이어프레임 1-1 금지). 라벨 4종만
+넣으면 된다.
+
+### 막는 것 세 가지
+
+**① `--depth 1`이라 blame이 불가능하다.** `clone.py` 주석이 이미 예고하고 있다 —
+*"Contribution analysis will need history later; that is a larger `--depth`, not a
+different mechanism."*
+
+**② 요청 페이로드에 사용자 신원이 없다.** 워커가 "누구 커밋인지" 알 방법이 없다.
+이건 의도된 것이다(`contracts.py`: *"토픽이 자격증명보다 오래 산다"*). 여기에
+이메일을 넣으면 그 원칙이 깨진다.
+
+**③ 이메일 매칭은 밑천이 없다.** scope가 `read:user,repo`라 `/user/emails`가
+막히고 프로필 이메일도 비공개다. 지금 가진 신원은 `github_id` 하나뿐이다.
+
+### 제안 — GitHub에게 직접 묻는다
+
+③ 때문에 이메일 매칭을 1차 수단으로 삼으면 안 된다.
+
+```
+워커                                   BE
+────                                   ──
+히스토리 포함 클론
+근거 파일만 git blame -L start,end
+  → 근거마다 "이 줄을 마지막에 바꾼 커밋 SHA"
+결과에 commit_sha 실어 보냄  ────────▶  distinct SHA를 GitHub에 조회
+  (신원 판단 안 함)                      GET /repos/{o}/{r}/commits/{sha}
+                                         → author.login 을 GitHub이 해석해 준다
+                                       repository_commit 에 캐시
+                                       본인이면 analysis_evidence_commit 기록
+```
+
+이메일을 한 번도 다루지 않는다. scope를 늘릴 필요도, 남의 이메일을 Kafka에 실을
+필요도 없다. 호출 비용은 저장소당 distinct 커밋 수이고, 캐시하면 재분석 때 0건이다.
+
+| 라벨 | 조건 |
+|---|---|
+| 주 작성자 | 근거 줄 전부가 본인 커밋 |
+| 공동 작업 | 근거 줄 일부가 본인 |
+| 일부 수정 | 근거 줄은 남이 썼지만 그 파일을 본인이 건드린 적 있음 |
+| 미확인 | 본인 흔적 없음, 또는 GitHub이 계정을 연결하지 못한 커밋 |
+
+### 정해야 할 것
+
+**클론 비용.** petclinic이 depth 1에 1.9MB였는데 full은 수십 MB다.
+`--filter=blob:none`이 대안인데 근거 파일만 blame하므로 유리할 수 있다. **재 보고
+정할 일**이지 지금 단정할 수 없다.
+
+**Personal Level을 어떻게 셀지.** L2 규칙은 `API_CALL AND IMPORT` 두 절이다. 본인이
+import 한 줄만 썼을 때 L2를 줄 것인가. 느슨하게 하면 Repository Level과 거의 같아져
+구분 자체가 의미를 잃는다. 화면 각주가 이미 *"Personal Level이 Repository Level보다
+낮은 기술은…"*이라고 둘이 자주 갈리는 것을 전제하므로 **엄격한 쪽**을 권한다.
+
+---
+
+## 21. 아직 안 한 것
 
 | 항목 | 상태 |
 |---|---|
-| `analysis_outbox` 보존 정책 | 행이 무한히 쌓인다. 정리 배치가 필요하다. |
-| L3 규칙 | 기술 29개 중 2개만 있다. |
-| 인증된 관리자 API 왕복 검증 | 401 응답까지만 확인. 로그인 후 브라우저 확인 필요. |
-| `.uv-python` / `.uv-cache-review` 제외 | `EXCLUDED_DIRECTORIES`에 없다. |
-| `git push` | 아직 안 했다. |
+| 커밋 기여도 · Personal Level | [20장](#20-다음--커밋-기여도)의 설계까지. 구현 안 됨 |
+| 비공개 저장소 분석 | 워커가 익명으로 clone한다. `REPOSITORY_NOT_ACCESSIBLE`로 실패 |
+| `analysis_outbox` 보존 정책 | 행이 무한히 쌓인다. 정리 배치가 필요하다 |
+| L3 규칙 | 기술 29개 중 2개만 있다 |
+| FE 조회 클라이언트 이원화 | `evidenceApi.ts`(티켓 208)와 `technologiesApi.ts`가 같은 엔드포인트를 본다. 하나로 정리해야 한다 |
+| 인증된 왕복 검증 | BE 응답을 눈으로 본 적이 없다. 집계 SQL은 실제 PostgreSQL로 검증했다 |
+| `.uv-python` / `.uv-cache-review` 제외 | `EXCLUDED_DIRECTORIES`에 없다 |
+
+### 문서 불일치 하나
+
+`docs/fe/shared-api-contract.md`가 `AUTH-403-1`을 **"삭제 (BE에 없고 명세와 충돌)"**
+목록에 두고 있는데, BE에 `ANALYSIS_ACCESS_DENIED(AUTH-403-1)`이 생겼다. FE의
+`errorCodes.ts`가 이 코드를 모르면 남의 분석을 조회했을 때 일반 오류로 떨어진다.
 
 ---
 

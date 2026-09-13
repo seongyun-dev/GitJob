@@ -68,7 +68,11 @@ public enum ErrorCode {
     TECHNOLOGY_CANDIDATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ADMIN-404-1", "기술 후보를 찾을 수 없습니다."),
     TECHNOLOGY_CANDIDATE_ALREADY_DECIDED(HttpStatus.CONFLICT, "ADMIN-409-1", "이미 처리된 기술 후보입니다."),
     REGISTRY_DRAFT_EMPTY(HttpStatus.CONFLICT, "ADMIN-409-2", "발행할 레지스트리 초안이 없습니다."),
-    INVALID_TECHNOLOGY_ID(HttpStatus.BAD_REQUEST, "ADMIN-400-1", "기술 식별자 형식이 올바르지 않습니다.");
+    INVALID_TECHNOLOGY_ID(HttpStatus.BAD_REQUEST, "ADMIN-400-1", "기술 식별자 형식이 올바르지 않습니다."),
+
+    // 근거 조회. ANALYSIS_NOT_FOUND 는 위(AN-404-1)에 이미 있으므로 다시 만들지
+    // 않는다 -- 같은 뜻의 코드가 둘이면 화면이 어느 쪽으로 분기해야 할지 알 수 없다.
+    TECHNOLOGY_NOT_IN_REGISTRY(HttpStatus.NOT_FOUND, "EVD-404-2", "레지스트리에 없는 기술입니다.");
 
 
 

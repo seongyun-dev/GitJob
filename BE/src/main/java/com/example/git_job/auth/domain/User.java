@@ -1,6 +1,8 @@
 package com.example.git_job.auth.domain;
 
+import com.example.git_job.global.crypto.EncryptedStringConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Enumerated;
@@ -68,11 +70,19 @@ public class User {
     private String grantedScopes;
 
     /**
-     * TODO([BE] Access Token 암호화 저장 티켓): 현재 평문 컬럼이다.
-     *  {@code access_token_enc}로 옮기고 AesBytesEncryptor를 적용하는 것은 별도 티켓이며,
-     *  그때까지 이 값은 응답·로그·이벤트에 절대 싣지 않는다.
+     * GitHub Access Token. 컬럼에는 AES-GCM 암호문이 들어간다(V12).
+     *
+     * <p>필드는 평문 {@code String}이고 변환은 {@link EncryptedStringConverter}가
+     * 저장·조회 시점에만 한다. 그래서 이 값을 쓰는 코드는 달라지지 않는다.</p>
+     *
+     * <p>암호화했다고 해서 노출해도 되는 값이 아니다. 메모리 위에서는 평문이므로
+     * <b>응답·로그·이벤트에 절대 싣지 않는다.</b> 분석 요청 이벤트가 토큰 대신
+     * {@code analysis_repository_id}를 싣는 것도 같은 이유다.</p>
+     *
+     * <p>암호문은 매번 달라지므로 이 컬럼으로 조회할 수 없다.</p>
      */
-    @Column(name = "access_token", columnDefinition = "TEXT")
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "access_token_enc")
     private String accessToken;
 
     /**

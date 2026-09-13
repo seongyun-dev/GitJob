@@ -35,7 +35,7 @@ class AnalysisStatusControllerTest {
         jobs = mock(AnalysisJobRepository.class);
         submission = mock(AnalysisSubmissionService.class);
         principal = new AuthenticatedUser("42", "tester", "jti", NOW.plusSeconds(3600));
-        job = AnalysisJob.queue("an_test", 42L, "123", "main", "a".repeat(40), NOW);
+        job = AnalysisJob.queue("an_test", 42L, "123", "octocat/repo", "main", "a".repeat(40), NOW);
         when(jobs.findById("an_test")).thenReturn(Optional.of(job));
         mvc = MockMvcBuilders.standaloneSetup(new AnalysisController(submission, new AnalysisStatusService(jobs)))
                 .setControllerAdvice(new GlobalExceptionHandler())

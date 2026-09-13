@@ -6,16 +6,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.Map;
+import org.hibernate.cfg.AvailableSettings;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.orm.jpa.hibernate.SpringBeanContainer;
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
+import org.springframework.security.crypto.encrypt.AesBytesEncryptor;
+import org.springframework.security.crypto.encrypt.AesBytesEncryptor.CipherAlgorithm;
+import org.springframework.security.crypto.encrypt.BytesEncryptor;
+import org.springframework.security.crypto.keygen.KeyGenerators;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -59,7 +65,13 @@ class SchemaValidationTest {
         entityManagers.setPackagesToScan("com.example.git_job");
         entityManagers.setPersistenceUnitName("schema-validation");
         entityManagers.setJpaVendorAdapter(new HibernateJpaVendorAdapter());
-        entityManagers.setJpaPropertyMap(Map.of("hibernate.hbm2ddl.auto", "validate"));
+        entityManagers.setJpaPropertyMap(Map.of(
+                "hibernate.hbm2ddl.auto", "validate",
+                // 애플리케이션에서는 Spring Boot 가 이것을 끼워 준다. 없으면 Hibernate 가
+                // AttributeConverter 를 기본 생성자로 만들려 하고, 의존성을 주입받는
+                // 변환기는 만들어지지 못한다. 검증 대상이 아닌 이유로 실패하지 않도록
+                // 운영과 같은 방식으로 빈을 공급한다.
+                AvailableSettings.BEAN_CONTAINER, new SpringBeanContainer(beanFactory())));
 
         // validate 실패는 EntityManagerFactory 생성 시점에 예외로 나온다.
         assertDoesNotThrow(entityManagers::afterPropertiesSet);
@@ -67,6 +79,18 @@ class SchemaValidationTest {
         // 스캔이 조용히 0개를 잡고 통과하는 것을 막는다. 그러면 이 테스트는 아무것도 지키지 않는다.
         assertTrue(entityManagers.getObject().getMetamodel().getEntities().size() >= 2,
                 "엔티티 스캔 범위가 잘못되어 검증 대상이 없다");
+    }
+
+    /**
+     * 변환기가 필요로 하는 빈만 담은 최소 팩토리. 키는 아무 값이나 되며, 여기서
+     * 확인하는 것은 복호화 결과가 아니라 매핑이 스키마와 맞는지다.
+     */
+    private static DefaultListableBeanFactory beanFactory() {
+        var beans = new DefaultListableBeanFactory();
+        beans.registerSingleton("bytesEncryptor", (BytesEncryptor) new AesBytesEncryptor(
+                "0".repeat(64), "5c0744940b5c369b",
+                KeyGenerators.secureRandom(16), CipherAlgorithm.GCM));
+        return beans;
     }
 
     @Test

@@ -56,7 +56,8 @@ class AnalysisResultServiceTest {
     }
 
     private AnalysisJob queuedJob() {
-        return AnalysisJob.queue("an_1", USER_ID, "repo_1", "main", SHA, Instant.now());
+        return AnalysisJob.queue("an_1", USER_ID, "repo_1", "octocat/repo", "main", SHA,
+                Instant.now());
     }
 
     private RepositoryAnalysisResultEvent completed() {

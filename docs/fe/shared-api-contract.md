@@ -90,6 +90,9 @@ interface PageParams { page?: number; perPage?: number }
 | `EVD-404-2` | Registry에 없는 techId | `SHOW_NOT_FOUND` |
 | `EVD-404-3` | 해당 Snapshot에서 근거 0건 — 오류가 아니라 정상 빈 결과 | `SILENT_EMPTY` |
 
+`EVD-404-2`는 BE 구현됨(`TECHNOLOGY_NOT_IN_REGISTRY`). 근거가 0건인 것은 오류가 아니라
+200 + `dataStatus: INSUFFICIENT_DATA` 로 내려간다.
+
 관리자 화면(티켓 14)의 코드는 넷 다 `SHOW_INLINE_ERROR`다. 화면 전체를 오류로 덮으면
 다른 후보를 계속 처리할 수 없는데, 실제로 막힌 것은 그 한 행이다.
 
@@ -116,6 +119,8 @@ interface PageParams { page?: number; perPage?: number }
 | `['repositories', 'selection']` | BE 미구현 | 명세 B-FN-003 |
 | `['me']` | BE 미구현 | `GET /me` 없음 |
 | `['analysis', analysisId, ...]` (증거 계열) | BE 미구현 | 설계 4-1 · `staleTime: Infinity` |
+| `['me', 'technologies']` | BE 구현됨 | 기술별 판정 한 장 (지표·기술·저장소) |
+| `['me', 'technologies', techId, 'evidence']` | BE 구현됨 | 근거 상세 · permalink 포함 |
 | `['matching', analysisId, target, ...]` (매칭 계열) | BE 미구현 | 설계 4-1 · 기본 staleTime |
 | `['admin', 'technology-candidates', limit]` | BE 구현됨 | 티켓 14 · 분석마다 늘어나므로 기본 staleTime |
 | `['admin', 'registry']` | BE 구현됨 | 〃 · 승격·거절이 둘 다 무효화한다 |

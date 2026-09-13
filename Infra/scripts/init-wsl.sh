@@ -30,6 +30,8 @@ if command -v openssl >/dev/null 2>&1; then
   replace_value CDC_DATABASE_PASSWORD "$(openssl rand -hex 24)"
   replace_value REDIS_PASSWORD "$(openssl rand -hex 24)"
   replace_value JWT_SECRET "$(openssl rand -hex 32)"
+  replace_value AES_SYMMETRIC_KEY "$(openssl rand -hex 32)"
+  replace_value AES_SALT "$(openssl rand -hex 16)"
   replace_value JENKINS_ADMIN_PASSWORD "$(openssl rand -hex 24)"
 else
   echo "warning: openssl is unavailable; replace all change-me values manually" >&2

@@ -59,6 +59,19 @@ public class AnalysisJob implements Persistable<String> {
     @Column(name = "repository_id", nullable = false, length = 80)
     private String repositoryId;
 
+    /**
+     * 분석 당시의 {@code owner/repo}. 표시와 permalink 전용이다.
+     *
+     * <p>저장소 이름은 바뀔 수 있으므로 동일성은 {@code repositoryId}로 본다.
+     * 여기에 그때의 이름을 박아 두는 것은, 이름이 바뀐 뒤에도 그때 만든 근거
+     * 링크가 그 커밋을 가리켜야 하기 때문이다.</p>
+     *
+     * <p>V13 이전에 만들어진 행은 {@code null}이다. 받아 적지 않았던 값이라
+     * 되살릴 수 없고, 조회 쪽이 permalink 없는 근거로 다룬다.</p>
+     */
+    @Column(name = "repository_full_name", length = 255)
+    private String repositoryFullName;
+
     @Column(name = "branch_name", nullable = false, length = 255)
     private String branchName;
 
@@ -93,10 +106,12 @@ public class AnalysisJob implements Persistable<String> {
     private boolean isNew = true;
 
     private AnalysisJob(String analysisId, Long userId, String repositoryId,
-            String branchName, String commitSha, Instant requestedAt) {
+            String repositoryFullName, String branchName, String commitSha,
+            Instant requestedAt) {
         this.analysisId = analysisId;
         this.userId = userId;
         this.repositoryId = repositoryId;
+        this.repositoryFullName = repositoryFullName;
         this.branchName = branchName;
         this.commitSha = commitSha;
         this.requestedAt = requestedAt;
@@ -106,11 +121,14 @@ public class AnalysisJob implements Persistable<String> {
 
     /** Initial state of an accepted request. The worker owns every transition after this. */
     public static AnalysisJob queue(String analysisId, long userId, String repositoryId,
-            String branchName, String commitSha, Instant requestedAt) {
+            String repositoryFullName, String branchName, String commitSha,
+            Instant requestedAt) {
         return new AnalysisJob(
                 Objects.requireNonNull(analysisId, "analysisId must not be null"),
                 userId,
                 Objects.requireNonNull(repositoryId, "repositoryId must not be null"),
+                // 이름은 없어도 분석은 성립한다. 없으면 근거 링크만 만들지 못한다.
+                repositoryFullName,
                 Objects.requireNonNull(branchName, "branchName must not be null"),
                 Objects.requireNonNull(commitSha, "commitSha must not be null"),
                 Objects.requireNonNull(requestedAt, "requestedAt must not be null"));

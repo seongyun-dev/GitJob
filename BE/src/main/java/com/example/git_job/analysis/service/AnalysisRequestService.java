@@ -49,7 +49,8 @@ public class AnalysisRequestService {
         // there first. Both still roll back together as one transaction.
         analysisJobs.saveAndFlush(AnalysisJob.queue(
                 payload.analysisId(), userId, Long.toString(payload.githubRepositoryId()),
-                payload.branchName(), payload.commitSha(), event.occurredAt()));
+                payload.repositoryFullName(), payload.branchName(), payload.commitSha(),
+                event.occurredAt()));
         outbox.insert(event, topics.requests(), json);
         return event;
     }

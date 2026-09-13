@@ -127,7 +127,9 @@ SQL 파일은 자동 적용되지 않는다. 스키마 파일은 그대로 실�
 직접 추가한다. 값이 없으면 `up.sh`가 바로 실패한다.
 
 처음 생성되는 `.env.wsl`은 Git에 포함되지 않으며, 초기화 스크립트가 PostgreSQL,
-Redis, JWT, Jenkins, webhook용 임시 secret을 생성한다. OAuth client secret과
+Redis, JWT, AES 키·salt, Jenkins, webhook용 임시 secret을 생성한다. 이미 존재하는
+env 파일의 AES 값은 재생성하지 않는다. 저장된 토큰을 복호화하려면 같은 값을 유지해야
+하므로 기존 환경의 변경은 별도 키 이전 절차가 필요하다. OAuth client secret과
 GitHub token은 직접 입력하지 말고 로컬 secret 또는 Jenkins Credentials에 둔다.
 
 ### 실행 범위 선택

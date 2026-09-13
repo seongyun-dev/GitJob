@@ -146,7 +146,7 @@ class AnalysisSubmissionServiceTest {
     void reusesAnInProgressJobInsteadOfCreatingADuplicate() {
         githubReturns("octocat/repo", 555L, false, "main");
         AnalysisJob running = AnalysisJob.queue(
-                "an_existing", USER_ID, "555", "develop", SHA, Instant.now());
+                "an_existing", USER_ID, "555", "octocat/repo", "develop", SHA, Instant.now());
         when(analysisJobs.findFirstByUserIdAndRepositoryIdAndStatusInOrderByRequestedAtDesc(
                 USER_ID, "555", AnalysisJob.IN_PROGRESS_STATUSES)).thenReturn(Optional.of(running));
 
@@ -164,7 +164,7 @@ class AnalysisSubmissionServiceTest {
     void handsBackTheWinnerWhenTheUniqueIndexRejectsAConcurrentInsert() {
         githubReturns("octocat/repo", 555L, false, "main");
         AnalysisJob winner = AnalysisJob.queue(
-                "an_winner", USER_ID, "555", "main", SHA, Instant.now());
+                "an_winner", USER_ID, "555", "octocat/repo", "main", SHA, Instant.now());
         // 사전 검사에서는 비어 있었고, 인덱스 위반 뒤 재조회에서 상대가 보인다.
         when(analysisJobs.findFirstByUserIdAndRepositoryIdAndStatusInOrderByRequestedAtDesc(
                 anyLong(), anyString(), any()))
