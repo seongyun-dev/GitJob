@@ -27,8 +27,9 @@ granularity=..., include_partial=False)`는 다음 입력만 받는다.
   주별 `week_start`. `repo_id` 중복/null/문자열, 음수 count, metadata와 다른 기간,
   metadata count 불일치를 거절한다.
 - `PublicBatchResult`: `github-repo-snapshot/v1`을 C가 Registry로 분석한
-  `c-public-repo-analysis/v1`. Registry version과 `include_partial` 선택이 요청과
-  정확히 같아야 한다.
+  `c-public-repo-analysis/v1` 또는 현재 v2 결과. DB에 게시된
+  `c-public-published-result/v1` wrapper도 같은 내부 result로 해석한다. Registry
+  version과 `include_partial` 선택이 요청과 정확히 같아야 한다.
 - public snapshot URI/SHA-256: URI는 저장된 C artifact ID를 사용한
   `c-compute://snapshot/{stored_PUBLIC_GITHUB_snapshot_id}`, hash는 DB에 저장한
   `PublicBatchResult` payload에 `worker.store.digest()`를 적용한 값이다. stored ID는
@@ -48,8 +49,9 @@ granularity=..., include_partial=False)`는 다음 입력만 받는다.
 API 프로세스에는 Parquet dependency를 추가하지 않았다.
 
 `Infra/spark/jobs/export_c_archive_activity.py`는 기존 Spark runtime에서 790만 행 수준의
-Parquet와 bounded `repo-fetch-candidates/v1`, `github-repo-snapshot/v1` 또는
-`c-public-repo-analysis/v1` ID 파일을 broadcast left-semi join한다. 원본 전체 row를
+Parquet와 bounded `repo-fetch-candidates/v1`, `github-repo-snapshot/v1`, PUBLIC v1/v2
+결과 또는 게시 wrapper ID 파일을 broadcast left-semi join한다. PUBLIC 입력은
+`included_in_denominator=true`인 저장소만 사용한다. 원본 전체 row를
 Driver로 collect하지 않고, 선택된 Top-N 이하만 `toLocalIterator()`로 immutable
 CSV/NDJSON에 쓴다. 출력에는 `metadata.json`, 그 hash와 data hash를 가진
 `manifest.json`이 포함되고 기존 output directory는 덮어쓰지 않는다. 최종
@@ -263,3 +265,54 @@ field를 request hash에서 제외해 배포 전 retry identity를 유지한다.
 검증한다. exporter 회귀는 최종 metadata/stdout 계약과 POSIX 게시 mode를 검사한다.
 이는 A의 2026-03~08 실제 Parquet read-back, 실제 다른 UID container mount 또는 실제
 Top 10k/20k public snapshot 완성을 증명하지 않는다.
+
+## 주간 완료 이벤트 자동 소비 (S15P21E102-238)
+
+구현된 `weekly-trend-consumer`는 A의
+`gitjob.repo-activity-weekly.completed.v1`을 전용 consumer group으로 읽는다. A의 v1
+payload는 `dataset_snapshot_id`, 월요일 `week_start`, `manifest_uri` 세 필드 그대로이며
+C 전용 필드를 추가하지 않는다. C는 manifest를 WebHDFS에서 다시 읽고 event key와 경로,
+snapshot, 주차, 전체 행 수와 `typed-json-v2` digest를 검증한 뒤에만 계산을 시작한다.
+
+C Worker image에는 Spark/Parquet runtime이 없으므로 수백만 행 Parquet를 직접 읽지 않는다.
+대신 기존 `export_c_archive_activity.py`가 PUBLIC_GITHUB 분석 분모와 left-semi join해 만든
+최대 50,000행 CSV/NDJSON을 아래의 불변 경로에서 읽는다.
+
+```text
+${C_WEEKLY_EXPORT_DIR}/
+  public=<c-public-snapshot-id>/
+    snapshot=<dataset-snapshot-id>/
+      week=<YYYY-MM-DD>/
+        manifest.json
+        metadata.json
+        activity.csv | activity.ndjson
+```
+
+별도 sidecar나 A 완료 이벤트 확장은 필요 없다. export manifest의 정확한 6개 필드와
+data/metadata SHA-256, metadata의 upstream URI/digest, 행 수, 이벤트 합계, 주차를
+검증한다. 각 export row는 C가 선택한 같은 Registry·기간의 PUBLIC_GITHUB 분석 분모에
+속해야 한다. 한 주에 활동이 없는 PUBLIC 저장소는 정상적인 교집합 부재이므로 export
+전체를 실패시키지 않고, 실제 활동한 교집합의 행·이벤트 수를 metadata에 기록한다.
+`repo-fetch-candidates/v1`과 snapshot 후보 입력의 누락은 기존처럼 실패한다.
+manifest/metadata는 각각 1 MiB, data는 32 MiB, row는 50,000건을 넘지 못하며 mount 밖
+symlink와 임의 파일명은 거절한다.
+
+정상 입력은 활성 Registry 기술마다 동일한 주간 stream을 사용한다. 매주 새 불변 TREND
+snapshot을 만들고 이전 head의 점을 합쳐 저장하므로 첫 주는 기준선 부족, 연속된 두 주
+이상과 각 주 품질이 모두 정상일 때 `READY`가 된다. 같은 완료 이벤트 재전달은 기존
+완료 결과를 반환하고 PUBLIC/export를 다시 읽지 않는다. event의 `occurred_at`은 원 주차로
+유지해 idempotency를 고정하고, 누적 head 순서는 A의 `ingested_at`으로 갱신해 늦게 게시된
+과거 주차도 최신 누적 결과에 포함한다.
+
+- PUBLIC_GITHUB 또는 export가 아직 없거나 DB/WebHDFS가 일시 실패하면 offset을
+  commit하지 않고 프로세스가 75로 종료되어 Compose 재시작 후 재전달된다.
+- 계약 위반 입력은 소유한 claim을 `FAILED`로 닫은 후 거절 offset만 commit한다.
+- claim이 BUSY이거나 실패 상태를 기록하지 못하면 offset을 commit하지 않는다.
+- A의 Spark exporter 실행과 topic·운영 배포는 A/Infra 책임이며, 해당 export가 실제
+  mount에 게시되기 전까지 소비 결과는 `INPUT_ADAPTER_UNAVAILABLE` 재시도 상태다.
+
+Compose의 `data` profile은 `C_WEEKLY_EXPORT_DIR`을 read-only로 mount한다.
+`WEBHDFS_URL`, `WEBHDFS_USER`, 필요 시 `WEBHDFS_DATANODE_HOSTS`,
+`WEEKLY_ACTIVITY_CONSUMER_GROUP`, `C_WEEKLY_HDFS_ROOT`,
+`C_WEEKLY_INCLUDE_PARTIAL`, PostgreSQL/Registry 설정을 Worker와 동일하게 제공한다.
+코드·fixture 검증과 실제 Kafka/HDFS/DB 운영 E2E는 별도 상태로 기록한다.

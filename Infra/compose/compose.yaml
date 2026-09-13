@@ -425,6 +425,32 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  weekly-trend-consumer:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    restart: unless-stopped
+    command: ["python", "-m", "worker.weekly_activity_consumer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      WEEKLY_ACTIVITY_CONSUMER_GROUP: ${WEEKLY_ACTIVITY_CONSUMER_GROUP:-gitjob-weekly-trend}
+      WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
+      WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
+      C_WEEKLY_HDFS_ROOT: ${C_WEEKLY_HDFS_ROOT:-hdfs:///gitjob/parquet/github/repo_activity_weekly}
+      C_WEEKLY_EXPORT_ROOT: /state/weekly-exports
+      C_WEEKLY_INCLUDE_PARTIAL: ${C_WEEKLY_INCLUDE_PARTIAL:-false}
+      C_COMPUTE_LEASE_SECONDS: ${C_COMPUTE_LEASE_SECONDS:-120}
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-gitjob}
+      POSTGRES_USER: ${POSTGRES_USER:-gitjob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      C_REGISTRY_BACKEND: ${C_REGISTRY_BACKEND:-postgres}
+      C_REGISTRY_VERSION: ${C_REGISTRY_VERSION:-technology-registry/v1}
+    volumes:
+      - ${C_WEEKLY_EXPORT_DIR:-.local/c-weekly-exports}:/state/weekly-exports:ro
+    logging: *default-logging
+
   # Consumes gitjob.repository-analysis.requests.v1 and fetches the requested
   # commit onto local disk. Separate from `worker` (C's compute HTTP API) because
   # a consumer and a web service restart and scale differently; same image, other

@@ -148,6 +148,73 @@ def test_old_event_does_not_move_current_pointer_backwards(store):
     assert store.get_head("RECOMMENDATION", "123", stream) == new_ref["snapshot_id"]
 
 
+def test_bulk_head_payload_read_and_period_compatible_public_selection(store):
+    now = datetime.now(UTC)
+
+    def publish_public(
+        event_id, stream, period_start, period_end, at, *, target_period=None
+    ):
+        ticket = store.claim(
+            event_id=event_id,
+            kind="PUBLIC_REPO",
+            owner=None,
+            occurred_at=at,
+            request={"snapshot": event_id},
+        )
+        payload = {
+            "result": {
+                "registry_version": "registry-test",
+                "include_partial": False,
+                "records": [
+                    {
+                        "included_in_denominator": True,
+                        "target_period": target_period,
+                        "activity_period_start": period_start,
+                        "activity_period_end": period_end,
+                    }
+                ],
+            }
+        }
+        row = Artifact("PUBLIC_GITHUB", None, payload, stream)
+        reference = store.complete(ticket, [row])[0]
+        return reference["snapshot_id"], payload
+
+    august_id, august = publish_public(
+        str(uuid4()),
+        str(uuid4()),
+        "2026-08-01",
+        "2026-08-31",
+        now,
+        target_period="2026-08-01/2026-08-31",
+    )
+    publish_public(
+        str(uuid4()),
+        str(uuid4()),
+        "2026-09-01",
+        "2026-09-30",
+        now + timedelta(seconds=1),
+    )
+    assert store.select_public_snapshot(
+        registry_version="registry-test",
+        include_partial=False,
+        week_start="2026-08-24",
+    ) == (august_id, august)
+
+    trend_ticket = store.claim(
+        event_id=str(uuid4()),
+        kind="TREND",
+        owner=None,
+        occurred_at=now,
+        request={"week": "2026-08-24"},
+    )
+    stream = str(uuid4())
+    payload = {"tech_id": "python", "points": []}
+    store.complete(trend_ticket, [Artifact("TREND", None, payload, stream)])
+    assert store.get_head_payloads(
+        kind="TREND", owner=None, streams=(stream, str(uuid4()))
+    ) == {stream: payload}
+
+
 def test_public_snapshot_is_not_visible_under_forged_personal_scope(store):
     ticket = store.claim(
         event_id=str(uuid4()),

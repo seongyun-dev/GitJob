@@ -16,7 +16,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Iterable, Mapping
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -30,6 +30,7 @@ PUBLISHED_FILE_MODE = 0o444
 _MONTH_PATTERN = re.compile(r"^(?P<year>[0-9]{4})-(0[1-9]|1[0-2])$")
 _WEEK_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+UTC = timezone.utc
 
 
 def validate_period(period: str, granularity: str) -> None:
@@ -127,14 +128,31 @@ def _read_bounded_json(path: Path) -> Mapping[str, object]:
 def load_repo_ids(path: Path, *, max_rows: int) -> tuple[int, ...]:
     """Load only an approved candidate/public-snapshot repository ID envelope."""
 
+    repo_ids, _ = _load_repo_id_source(path, max_rows=max_rows)
+    return repo_ids
+
+
+def _load_repo_id_source(path: Path, *, max_rows: int) -> tuple[tuple[int, ...], bool]:
+    """Return IDs and whether a PUBLIC denominator may have inactive repos."""
+
     if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 1:
         raise ValueError("max_rows must be a positive integer")
     payload = _read_bounded_json(path)
     schema = payload.get("schema_version")
+    if schema == "c-public-published-result/v1":
+        result = payload.get("result")
+        if not isinstance(result, Mapping):
+            raise TypeError("published PUBLIC result must be an object")
+        payload = result
+        schema = payload.get("schema_version")
+    public_source = schema in {
+        "c-public-repo-analysis/v1",
+        "c-public-repo-analysis/v2",
+    }
     if schema == "repo-fetch-candidates/v1":
         rows = payload.get("candidates")
         field = "repo_id"
-    elif schema == "github-repo-snapshot/v1" or schema == "c-public-repo-analysis/v1":
+    elif schema == "github-repo-snapshot/v1" or public_source:
         rows = payload.get("records")
         field = "github_repo_id"
     else:
@@ -148,6 +166,14 @@ def load_repo_ids(path: Path, *, max_rows: int) -> tuple[int, ...]:
     for row in rows:
         if not isinstance(row, Mapping):
             raise TypeError("repository ID row must be an object")
+        if public_source:
+            included = row.get("included_in_denominator")
+            if not isinstance(included, bool):
+                raise TypeError(
+                    "PUBLIC repository rows need boolean included_in_denominator"
+                )
+            if not included:
+                continue
         repo_id = row.get(field)
         if isinstance(repo_id, bool) or not isinstance(repo_id, int) or repo_id <= 0:
             raise ValueError("repo_id must be a strict positive integer")
@@ -156,7 +182,7 @@ def load_repo_ids(path: Path, *, max_rows: int) -> tuple[int, ...]:
         raise ValueError("repository ID source must not be empty")
     if len(repo_ids) != len(set(repo_ids)):
         raise ValueError("duplicate repo_id in repository ID source")
-    return tuple(sorted(repo_ids))
+    return tuple(sorted(repo_ids)), public_source
 
 
 def _absolute_uri(value: str) -> str:
@@ -164,6 +190,14 @@ def _absolute_uri(value: str) -> str:
     if not value.strip() or not parsed.scheme or not parsed.path:
         raise ValueError("source_uri must be an absolute URI")
     return value
+
+
+def _validate_selected_repository_coverage(
+    *, selected_repo_count: int, requested_repo_count: int, public_source: bool
+) -> None:
+    """PUBLIC denominators may contain repos with no event in one week."""
+    if not public_source and selected_repo_count != requested_repo_count:
+        raise RuntimeError("candidate repository IDs are missing from Repo Activity")
 
 
 def build_export_metadata(
@@ -494,7 +528,9 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             f"refusing to overwrite existing output: {arguments.output}"
         )
     validate_period(arguments.period, arguments.granularity)
-    repo_ids = load_repo_ids(arguments.repo_ids, max_rows=arguments.top_n_limit)
+    repo_ids, public_source = _load_repo_id_source(
+        arguments.repo_ids, max_rows=arguments.top_n_limit
+    )
     spark = SparkSession.builder.appName(arguments.app_name).getOrCreate()
     try:
         activity = spark.read.parquet(arguments.input)
@@ -552,10 +588,11 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
         )
         selected_repo_count = int(selected_summary["repo_count"] or 0)
         selected_event_count = int(selected_summary["event_count"] or 0)
-        if selected_repo_count != len(repo_ids):
-            raise RuntimeError(
-                "candidate repository IDs are missing from Repo Activity"
-            )
+        _validate_selected_repository_coverage(
+            selected_repo_count=selected_repo_count,
+            requested_repo_count=len(repo_ids),
+            public_source=public_source,
+        )
 
         metadata = build_export_metadata(
             source_schema_version=arguments.source_schema_version,

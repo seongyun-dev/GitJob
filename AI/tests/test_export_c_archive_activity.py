@@ -57,14 +57,67 @@ def test_public_snapshot_records_are_an_allowed_id_source(tmp_path):
             {
                 "schema_version": "c-public-repo-analysis/v1",
                 "records": [
-                    {"github_repo_id": 4},
-                    {"github_repo_id": 3},
+                    {"github_repo_id": 4, "included_in_denominator": True},
+                    {"github_repo_id": 3, "included_in_denominator": True},
                 ],
             }
         ),
         encoding="utf-8",
     )
     assert load_repo_ids(path, max_rows=10) == (3, 4)
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_current_public_result_exports_only_denominator_ids(tmp_path, wrapped):
+    result = {
+        "schema_version": "c-public-repo-analysis/v2",
+        "records": [
+            {"github_repo_id": 4, "included_in_denominator": True},
+            {"github_repo_id": 3, "included_in_denominator": False},
+            {"github_repo_id": 2, "included_in_denominator": True},
+        ],
+    }
+    payload = (
+        {
+            "schema_version": "c-public-published-result/v1",
+            "publication": {"status": "published"},
+            "result": result,
+        }
+        if wrapped
+        else result
+    )
+    path = tmp_path / "public.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_repo_ids(path, max_rows=10) == (2, 4)
+
+
+def test_public_result_requires_explicit_denominator_decision(tmp_path):
+    path = tmp_path / "public.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "c-public-repo-analysis/v2",
+                "records": [{"github_repo_id": 4}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(TypeError, match="included_in_denominator"):
+        load_repo_ids(path, max_rows=10)
+
+
+def test_weekly_public_denominator_allows_repos_without_activity():
+    exporter._validate_selected_repository_coverage(
+        selected_repo_count=1,
+        requested_repo_count=2,
+        public_source=True,
+    )
+    with pytest.raises(RuntimeError, match="missing from Repo Activity"):
+        exporter._validate_selected_repository_coverage(
+            selected_repo_count=1,
+            requested_repo_count=2,
+            public_source=False,
+        )
 
 
 def test_period_contract_supports_month_and_monday_week_only():
@@ -290,7 +343,10 @@ def test_published_export_has_cross_uid_read_mode(tmp_path):
         assert stat.S_IMODE((output / name).stat().st_mode) == 0o444
 
 
-def test_cli_stdout_uses_the_final_export_metadata(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("public_source", [False, True])
+def test_cli_stdout_uses_the_final_export_metadata(
+    tmp_path, monkeypatch, capsys, public_source
+):
     class FakeExpression:
         def cast(self, *_args):
             return self
@@ -303,10 +359,8 @@ def test_cli_stdout_uses_the_final_export_metadata(tmp_path, monkeypatch, capsys
             return dict(self)
 
     class FakeSelected:
-        rows = (
-            FakeRow(repo_id=1, repo_name="o/one", event_count=5),
-            FakeRow(repo_id=2, repo_name="o/two", event_count=3),
-        )
+        def __init__(self, rows):
+            self.rows = rows
 
         def select(self, *_args):
             return self
@@ -315,13 +369,19 @@ def test_cli_stdout_uses_the_final_export_metadata(tmp_path, monkeypatch, capsys
             return self
 
         def agg(self, *_args):
-            summary = FakeRow(repo_count=2, event_count=8)
+            summary = FakeRow(
+                repo_count=len(self.rows),
+                event_count=sum(row["event_count"] for row in self.rows),
+            )
             return SimpleNamespace(first=lambda: summary)
 
         def toLocalIterator(self):
             return iter(self.rows)
 
-    selected = FakeSelected()
+    selected_rows = (FakeRow(repo_id=1, repo_name="o/one", event_count=5),)
+    if not public_source:
+        selected_rows += (FakeRow(repo_id=2, repo_name="o/two", event_count=3),)
+    selected = FakeSelected(selected_rows)
 
     class FakeActivity:
         columns = ("repo_id", "repo_name", "event_count", "period")
@@ -368,7 +428,20 @@ def test_cli_stdout_uses_the_final_export_metadata(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(exporter, "_activity_quality", lambda *_args: (2, 20))
 
     repo_ids = tmp_path / "repo-ids.json"
-    repo_ids.write_text(json.dumps(_candidate_payload()), encoding="utf-8")
+    id_payload = _candidate_payload()
+    if public_source:
+        id_payload = {
+            "schema_version": "c-public-published-result/v1",
+            "publication": {"status": "published"},
+            "result": {
+                "schema_version": "c-public-repo-analysis/v2",
+                "records": [
+                    {"github_repo_id": 1, "included_in_denominator": True},
+                    {"github_repo_id": 2, "included_in_denominator": True},
+                ],
+            },
+        }
+    repo_ids.write_text(json.dumps(id_payload), encoding="utf-8")
     output = tmp_path / "export"
     assert (
         exporter.main(
@@ -399,6 +472,7 @@ def test_cli_stdout_uses_the_final_export_metadata(tmp_path, monkeypatch, capsys
     stdout = json.loads(capsys.readouterr().out)
     stored_metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert stdout["metadata"] == stored_metadata
+    assert stdout["metadata"]["selected_repo_count"] == (1 if public_source else 2)
     assert stdout["metadata"]["source_hash"] == stdout["manifest"]["data_sha256"]
     assert stdout["metadata"]["upstream_source_hash"] == "a" * 64
 

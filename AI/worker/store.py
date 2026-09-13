@@ -2,8 +2,9 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -98,6 +99,7 @@ class Artifact:
     stream: str
     matching: dict[str, Any] | None = None
     review_records: tuple[dict[str, Any], ...] = ()
+    head_occurred_at: datetime | None = None
 
     def __post_init__(self):
         if self.kind not in {
@@ -116,6 +118,8 @@ class Artifact:
             raise ValueError("only recommendation snapshots have matching rows")
         if self.review_records and self.kind != "COHORT":
             raise ValueError("only cohort snapshots have Registry review records")
+        if self.head_occurred_at is not None and self.head_occurred_at.tzinfo is None:
+            raise ValueError("head timestamp needs a timezone")
 
     @property
     def snapshot_id(self) -> str:
@@ -307,7 +311,14 @@ class ComputeStore:
             return row is not None
 
     def complete(
-        self, ticket: Ticket, artifacts: list[Artifact]
+        self,
+        ticket: Ticket,
+        artifacts: list[Artifact],
+        *,
+        head_merger: Callable[
+            [Mapping[str, Any], Mapping[str, Any] | None], dict[str, Any]
+        ]
+        | None = None,
     ) -> list[dict[str, str]]:
         allowed = {
             "JOB_BATCH": {"COHORT", "DEMAND"},
@@ -321,11 +332,8 @@ class ComputeStore:
             raise ValueError("result scope does not match event")
         if len({(a.kind, a.stream) for a in artifacts}) != len(artifacts):
             raise ValueError("duplicate result stream")
-        identified = [(artifact, artifact.snapshot_id) for artifact in artifacts]
-        results = [
-            {"kind": artifact.kind, "snapshot_id": snapshot_id}
-            for artifact, snapshot_id in identified
-        ]
+        if head_merger is not None and ticket.kind != "TREND":
+            raise ValueError("head merging is only supported for Trend events")
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT event_id FROM c_compute.event
@@ -335,6 +343,51 @@ class ComputeStore:
             ).fetchone()
             if not row:
                 raise LeaseLost("attempt no longer owns a live lease")
+            if head_merger is not None:
+                # A can publish several weeks with the same ingestion timestamp,
+                # and separate partitions/workers can complete them concurrently.
+                # Lock every stream in stable order before reading its current
+                # payload so accumulation and head replacement are one operation.
+                for artifact in sorted(
+                    artifacts,
+                    key=lambda value: (value.kind, value.owner or "", value.stream),
+                ):
+                    lock_scope = digest(
+                        {
+                            "kind": artifact.kind,
+                            "owner": artifact.owner,
+                            "stream": artifact.stream,
+                        }
+                    )
+                    conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (lock_scope,),
+                    )
+                merged_artifacts = []
+                for artifact in artifacts:
+                    previous = conn.execute(
+                        """SELECT s.payload
+                           FROM c_compute.head h JOIN c_compute.snapshot s
+                             ON s.snapshot_id = h.snapshot_id
+                           WHERE h.kind = %s AND h.owner = %s AND h.stream = %s
+                           FOR UPDATE OF h""",
+                        (artifact.kind, artifact.owner or "", artifact.stream),
+                    ).fetchone()
+                    merged_artifacts.append(
+                        replace(
+                            artifact,
+                            payload=head_merger(
+                                artifact.payload,
+                                None if previous is None else previous["payload"],
+                            ),
+                        )
+                    )
+                artifacts = merged_artifacts
+            identified = [(artifact, artifact.snapshot_id) for artifact in artifacts]
+            results = [
+                {"kind": artifact.kind, "snapshot_id": snapshot_id}
+                for artifact, snapshot_id in identified
+            ]
             for artifact, snapshot_id in identified:
                 conn.execute(
                     """INSERT INTO c_compute.snapshot(snapshot_id, kind, owner, payload)
@@ -352,20 +405,30 @@ class ComputeStore:
                     from worker.reviews import insert_reviews
 
                     insert_reviews(conn, artifact.review_records, snapshot_id)
-                conn.execute(
+                head_sql = (
                     """INSERT INTO c_compute.head(kind, owner, stream, snapshot_id, occurred_at, event_id)
+                       VALUES (%s, %s, %s, %s, %s, %s)
+                       ON CONFLICT(kind, owner, stream) DO UPDATE
+                       SET snapshot_id = EXCLUDED.snapshot_id,
+                           occurred_at = GREATEST(c_compute.head.occurred_at, EXCLUDED.occurred_at),
+                           event_id = EXCLUDED.event_id"""
+                    if head_merger is not None
+                    else """INSERT INTO c_compute.head(kind, owner, stream, snapshot_id, occurred_at, event_id)
                        VALUES (%s, %s, %s, %s, %s, %s)
                        ON CONFLICT(kind, owner, stream) DO UPDATE
                        SET snapshot_id = EXCLUDED.snapshot_id, occurred_at = EXCLUDED.occurred_at,
                            event_id = EXCLUDED.event_id
                        WHERE (EXCLUDED.occurred_at, EXCLUDED.event_id) >
-                             (c_compute.head.occurred_at, c_compute.head.event_id)""",
+                             (c_compute.head.occurred_at, c_compute.head.event_id)"""
+                )
+                conn.execute(
+                    head_sql,
                     (
                         artifact.kind,
                         artifact.owner or "",
                         artifact.stream,
                         snapshot_id,
-                        ticket.occurred_at,
+                        artifact.head_occurred_at or ticket.occurred_at,
                         ticket.event_id,
                     ),
                 )
@@ -769,3 +832,94 @@ class ComputeStore:
                 (kind, owner or "", stream),
             ).fetchone()
             return row["snapshot_id"] if row else None
+
+    def get_head_payloads(
+        self, *, kind: str, owner: str | None, streams: tuple[str, ...]
+    ) -> dict[str, dict]:
+        """Load a bounded set of immutable head payloads in one transaction."""
+        if not streams:
+            return {}
+        if len(streams) > 256 or len(streams) != len(set(streams)):
+            raise ValueError("invalid head stream selection")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT h.stream, s.payload
+                   FROM c_compute.head h JOIN c_compute.snapshot s
+                     ON s.snapshot_id = h.snapshot_id
+                   WHERE h.kind = %s AND h.owner = %s AND h.stream = ANY(%s)""",
+                (kind, owner or "", list(streams)),
+            ).fetchall()
+        return {row["stream"]: row["payload"] for row in rows}
+
+    def select_public_snapshot(
+        self, *, registry_version: str, include_partial: bool, week_start: str
+    ) -> tuple[str, dict] | None:
+        """Newest PUBLIC_GITHUB head compatible with one weekly observation."""
+        try:
+            requested_week = date.fromisoformat(week_start)
+        except (TypeError, ValueError):
+            raise ValueError("week_start must be an ISO date") from None
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT h.snapshot_id, s.payload
+                   FROM c_compute.head h JOIN c_compute.snapshot s
+                     ON s.snapshot_id = h.snapshot_id
+                   WHERE h.kind = 'PUBLIC_GITHUB' AND h.owner = ''
+                   ORDER BY h.occurred_at DESC, h.event_id DESC"""
+            ).fetchall()
+        for row in rows:
+            payload = row["payload"]
+            result = (
+                payload.get("result", payload) if isinstance(payload, dict) else None
+            )
+            if (
+                isinstance(result, dict)
+                and result.get("registry_version") == registry_version
+                and result.get("include_partial") is include_partial
+                and _public_payload_covers_week(result, requested_week)
+            ):
+                return row["snapshot_id"], payload
+        return None
+
+
+def _public_payload_covers_week(result: dict, requested_week) -> bool:
+    records = result.get("records")
+    if not isinstance(records, list | tuple):
+        return False
+    included = [
+        record
+        for record in records
+        if isinstance(record, dict) and record.get("included_in_denominator") is True
+    ]
+    if not included:
+        return False
+    for record in included:
+        target_period = record.get("target_period")
+        if target_period is not None and not _target_period_covers_week(
+            target_period, requested_week
+        ):
+            return False
+        try:
+            start = datetime.fromisoformat(str(record["activity_period_start"])).date()
+            end = datetime.fromisoformat(str(record["activity_period_end"])).date()
+        except (KeyError, ValueError):
+            return False
+        if not start <= requested_week <= end:
+            return False
+    return True
+
+
+def _target_period_covers_week(value: object, requested_week: date) -> bool:
+    """Accept the current A date range and the legacy monthly shorthand."""
+    if not isinstance(value, str):
+        return False
+    if value == requested_week.strftime("%Y-%m"):
+        return True
+    parts = value.split("/")
+    if len(parts) != 2:
+        return False
+    try:
+        start, end = (date.fromisoformat(part) for part in parts)
+    except ValueError:
+        return False
+    return start <= requested_week <= end
