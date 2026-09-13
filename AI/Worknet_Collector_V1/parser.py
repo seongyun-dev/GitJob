@@ -224,6 +224,22 @@ def _condition_text(text: str) -> str:
     return ""
 
 
+def _detail_job_category(text: str) -> str | None:
+    """Read the 모집직종 value, which is the only job-category field Worknet labels.
+
+    Every other collector fills `raw_job_category` from a site category field, and
+    `job.cohort._matches_role` splits that value on `[,;|]` before comparing each
+    token to the role aliases. Worknet publishes the same kind of value —
+    `펌웨어(Firmware),회로설계` on the 2026-09-13 sample — under 모집직종, so the
+    shared slot was simply left unfilled rather than being unavailable here.
+
+    The label already belongs to `_DETAIL_FIELD_LABELS`, so the table caption that
+    repeats every label on one line does not match and the value stops at 모집인원.
+    """
+    _, value = _detail_field(text, frozenset({"모집직종"}))
+    return value
+
+
 def _detail_filters(text: str) -> tuple[str | None, str | None]:
     has_career, career = _detail_field(text, frozenset({"경력", "경력조건"}))
     has_region, region = _detail_field(
@@ -455,12 +471,14 @@ def parse_detail(html: str) -> DetailContent:
     education = _EDUCATION_RE.search(flat)
     employment = _EMPLOYMENT_RE.search(flat)
     career, region = _detail_filters(description_text)
+    raw_job_category = _detail_job_category(description_text)
 
     return DetailContent(
         description_text=description_text,
         section_names=tuple(dict.fromkeys(_SECTION_RE.findall(flat))),
         career_level=career,
         region=region,
+        raw_job_category=raw_job_category,
         education=education.group(1) if education else None,
         employment_type=employment.group(1) if employment else None,
         posted_at=posted_at,

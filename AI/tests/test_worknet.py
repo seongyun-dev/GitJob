@@ -1094,3 +1094,89 @@ def test_every_preset_code_is_a_documented_group():
     for codes in OCCUPATION_PRESETS.values():
         for code in codes:
             assert code in OCCUPATION_GROUPS
+
+
+# --- 모집직종 -> raw_job_category ------------------------------------------
+#
+# Every other collector fills the shared `raw_job_category` slot and
+# `job.cohort._matches_role` reads it before falling back to the title regex.
+# Worknet left it empty, so a Worknet posting could only ever match a role by
+# its title. The label was already known to the parser as a field boundary; it
+# just was not read as a value.
+
+JOB_CATEGORY_DETAIL_HTML = """
+<html><body>
+  <h2>펌웨어 개발</h2>
+  <section>
+    <h3>모집요강</h3>
+    <p>모집 직종,모집 인원,경력,학력,고용형태를 제공하는 표</p>
+    <dl>
+      <dt>모집 직종</dt><dd>펌웨어(Firmware),회로설계</dd>
+      <dt>모집 인원</dt><dd>1명</dd>
+      <dt>경력</dt><dd>경력무관</dd>
+      <dt>학력</dt><dd>대졸(2~3년)</dd>
+    </dl>
+  </section>
+  <h3>기업정보</h3><p>모집 직종</p><p>영업</p>
+</body></html>
+"""
+
+# The exact text the live 2026-09-13 posting (wantedAuthNo 2609120000064)
+# carried, so the assertion is anchored to production bytes rather than to a
+# fixture written to pass.
+LIVE_CONDITION_TEXT = (
+    "모집 직종,모집 인원,경력,학력,고용형태,근무 예정지,임금조건,채용 직급,"
+    "우대조건을(를) 제공하는 표\n\n"
+    "모집 직종\n\n펌웨어(Firmware),회로설계\n\n모집 인원\n\n1명\n\n"
+    "경력\n\n경력\n\n(최소 7년\n\n이상)\n\n학력\n\n대졸(2~3년)\n"
+)
+
+
+def test_detail_reads_the_job_category_label():
+    detail = parse_detail(JOB_CATEGORY_DETAIL_HTML)
+    assert detail.raw_job_category == "펌웨어(Firmware),회로설계"
+
+
+def test_job_category_is_read_from_the_live_posting_text():
+    from Worknet_Collector_V1.parser import _detail_job_category
+
+    assert _detail_job_category(LIVE_CONDITION_TEXT) == "펌웨어(Firmware),회로설계"
+
+
+def test_job_category_value_splits_into_role_tokens():
+    # `_matches_role` splits on [,;|]; the value has to survive that tokenizer
+    # the same way Saramin's "백엔드/서버개발, API, Java" does.
+    import re
+
+    detail = parse_detail(JOB_CATEGORY_DETAIL_HTML)
+    tokens = [t.strip() for t in re.split(r"[,;|]", detail.raw_job_category)]
+    assert tokens == ["펌웨어(Firmware)", "회로설계"]
+
+
+def test_job_category_ignores_the_table_caption_and_company_section():
+    # The caption repeats every label on one line and the company block reuses
+    # the label; neither may become the value.
+    detail = parse_detail(JOB_CATEGORY_DETAIL_HTML)
+    assert "제공하는 표" not in detail.raw_job_category
+    assert detail.raw_job_category != "영업"
+
+
+def test_detail_without_the_label_reports_no_job_category():
+    # Regression guard: the existing fixture has no 모집직종, and the parser must
+    # leave the slot empty rather than invent one from nearby prose.
+    assert parse_detail(DETAIL_HTML).raw_job_category is None
+
+
+def test_job_category_reaches_the_emitted_record_and_csv(tmp_path):
+    crawler = WorknetCrawler(
+        _config(), FakeClient([LIST_HTML], detail_html=JOB_CATEGORY_DETAIL_HTML)
+    )
+    result = crawler.run()
+    assert result.batch.records, "fixture crawl produced no record"
+    assert result.batch.records[0].raw_job_category == "펌웨어(Firmware),회로설계"
+
+    paths = write_outputs(result, tmp_path)
+    with paths["csv"].open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert "raw_job_category" in CSV_FIELDS
+    assert rows[0]["raw_job_category"] == "펌웨어(Firmware),회로설계"
