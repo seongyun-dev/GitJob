@@ -2,15 +2,34 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+
+_LOGGER = logging.getLogger(__name__)
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+_RETRYABLE_ERRNOS = frozenset(
+    {
+        errno.ECONNREFUSED,
+        errno.ECONNRESET,
+        errno.ETIMEDOUT,
+        errno.EHOSTUNREACH,
+        errno.ENETUNREACH,
+    }
+)
+_WRITE_MAX_ATTEMPTS = 3
+_WRITE_BACKOFF_BASE_SECONDS = 1.0
+_WRITE_BACKOFF_CAP_SECONDS = 2.0
 
 
 class WebHdfsError(RuntimeError):
@@ -322,20 +341,89 @@ class WebHdfsClient:
             raise self._error("create object directory", response)
 
     def _create(self, path: str, content: bytes) -> None:
-        redirect = self._call("PUT", path, "CREATE", overwrite="false")
+        redirect = self._request_with_retry(
+            "open temporary object",
+            lambda: self._call("PUT", path, "CREATE", overwrite="false"),
+        )
         if redirect.status != 307:
             raise self._error("open temporary object", redirect)
         location = _header(redirect.headers, "Location")
         if not location:
             raise WebHdfsError("WebHDFS CREATE returned no redirect Location")
-        written = self.transport.request(
-            "PUT",
-            self._redirect_target(location),
-            body=content,
-            timeout=self.timeout,
+        upload_url = self._redirect_target(location)
+        written = self._request_with_retry(
+            "upload temporary object",
+            lambda: self.transport.request(
+                "PUT",
+                upload_url,
+                body=content,
+                timeout=self.timeout,
+            ),
         )
         if written.status != 201:
             raise self._error("upload temporary object", written)
+
+    def _request_with_retry(
+        self,
+        action: str,
+        request: Callable[[], WebHdfsResponse],
+    ) -> WebHdfsResponse:
+        """Retry only transient failures on the two-hop immutable CREATE.
+
+        WebHDFS CREATE first asks the NameNode for a redirect and then uploads
+        to the selected DataNode. A DataNode joining or briefly restarting can
+        make either hop time out or refuse a connection. Retry the bounded
+        transport operation, while leaving validation, immutable conflicts,
+        auth/permission failures, and other permanent responses fail-closed.
+        """
+
+        last_error: Exception | None = None
+        for attempt in range(1, _WRITE_MAX_ATTEMPTS + 1):
+            try:
+                response = request()
+            except Exception as error:
+                if not _is_retryable_transport_error(error):
+                    raise
+                last_error = error
+                if attempt == _WRITE_MAX_ATTEMPTS:
+                    break
+                self._sleep_before_retry(action, attempt, error)
+                continue
+
+            if response.status not in _TRANSIENT_HTTP_STATUSES:
+                return response
+            if attempt == _WRITE_MAX_ATTEMPTS:
+                return response
+            self._sleep_before_retry(
+                action,
+                attempt,
+                self._error(action, response),
+            )
+
+        if isinstance(last_error, WebHdfsError):
+            raise last_error
+        if last_error is not None:
+            raise WebHdfsError(
+                f"WebHDFS {action} failed after {_WRITE_MAX_ATTEMPTS} attempts: "
+                f"{last_error}"
+            ) from last_error
+        raise AssertionError("retry loop ended without a response or error")
+
+    @staticmethod
+    def _sleep_before_retry(action: str, attempt: int, reason: Exception) -> None:
+        delay = min(
+            _WRITE_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+            _WRITE_BACKOFF_CAP_SECONDS,
+        )
+        _LOGGER.warning(
+            "WebHDFS %s transient failure; retry %d/%d in %.1fs: %s",
+            action,
+            attempt + 1,
+            _WRITE_MAX_ATTEMPTS,
+            delay,
+            reason,
+        )
+        time.sleep(delay)
 
     def _discard(self, path: str) -> None:
         try:
@@ -401,3 +489,36 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
         (value for key, value in headers.items() if key.casefold() == lowered),
         None,
     )
+
+
+def _is_retryable_transport_error(error: BaseException) -> bool:
+    """Classify only connection failures that can clear on their own."""
+
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, ConnectionError)):
+            return True
+        if isinstance(current, OSError) and current.errno in _RETRYABLE_ERRNOS:
+            return True
+        if isinstance(current, urllib.error.URLError):
+            reason = current.reason
+            if isinstance(reason, str):
+                lowered = reason.casefold()
+                if any(
+                    marker in lowered
+                    for marker in (
+                        "timed out",
+                        "timeout",
+                        "connection refused",
+                        "connection reset",
+                        "temporarily unavailable",
+                    )
+                ):
+                    return True
+            if isinstance(reason, BaseException):
+                current = reason
+                continue
+        current = current.__cause__ or current.__context__
+    return False
