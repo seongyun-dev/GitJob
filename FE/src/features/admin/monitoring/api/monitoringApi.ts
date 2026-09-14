@@ -45,8 +45,61 @@ export interface MonitoringOverview {
     scrapeIntervalSeconds: number | null
   }
   servers: readonly ServerMetrics[]
-  /** exporter 시계열이 없으면 `null`. "죽었다"와 "아직 재보지 않았다"는 다르다. */
-  kafka: { up: boolean | null }
+  /**
+   * Kafka 처리 현황 · 티켓 S15P21E102-261 Phase 1.
+   *
+   * `up`은 kafka-exporter 도달 여부. 붙어 있으면 topic 수·초당 유입 메시지·consumer lag
+   * 합계가 실값으로 온다. exporter 시계열이 없으면 `up`이 `null`이고("아직 재보지 않았다"),
+   * 값 필드도 `null`이다. `0`(실제로 0)과 구분해야 하므로 `?? 0`으로 채우지 않는다.
+   */
+  kafka: {
+    up: boolean | null
+    topicCount: number | null
+    messagesInPerSecond: number | null
+    consumerLagTotal: number | null
+  }
+  /**
+   * HDFS 현황 · 티켓 S15P21E102-261 Phase 2.
+   *
+   * `up`은 NameNode /jmx 를 옮기는 json-exporter 도달 여부. 붙어 있으면 용량(사용/전체
+   * 바이트)·전체 Block 수·DataNode Live/Dead 수가 실값으로 온다. 미도달이면 `up`이 `null`이고
+   * 값 필드도 `null`이다(`0`과 구분).
+   */
+  hdfs: {
+    up: boolean | null
+    capacityUsedBytes: number | null
+    capacityTotalBytes: number | null
+    blocksTotal: number | null
+    liveDataNodes: number | null
+    deadDataNodes: number | null
+  }
+  /**
+   * Spark 현황 · 티켓 S15P21E102-261 Phase 3.
+   *
+   * `up`은 Spark Master /json/ 을 옮기는 json-exporter 도달 여부. 붙어 있으면 살아 있는
+   * Worker 수·Core(사용/전체)·Memory(사용/전체, MB)가 실값으로 온다. 미도달이면 `up`이
+   * `null`이고 값 필드도 `null`이다.
+   */
+  spark: {
+    up: boolean | null
+    aliveWorkers: number | null
+    coresTotal: number | null
+    coresUsed: number | null
+    memoryTotalMb: number | null
+    memoryUsedMb: number | null
+  }
+  /**
+   * DB 적재 현황 · 티켓 S15P21E102-261 Phase 4.
+   *
+   * 수집 파이프라인이 Postgres에 쌓은 것(기술 목록·기술 후보·분석 요청 건수). HDFS/Spark/
+   * Kafka와 달리 Prometheus가 아니라 BE가 자기 DB를 직접 세어 준다(배치 산출물이라 scrape할
+   * 장기 exporter가 없다). 개별 count가 `null`이면 세지 못한 것(`0`과 구분).
+   */
+  dataStore: {
+    technologyCount: number | null
+    technologyCandidateCount: number | null
+    analysisJobCount: number | null
+  }
   coverage: {
     hdfs: CoverageState
     spark: CoverageState

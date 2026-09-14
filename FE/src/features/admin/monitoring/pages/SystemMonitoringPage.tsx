@@ -222,7 +222,13 @@ export function SystemMonitoringPage() {
 
           {/* → Data Platform · Quick Access 28 */}
           <div className="gj-split mt-7">
-            <DataPlatformCards coverage={view.coverage} />
+            <DataPlatformCards
+              coverage={view.coverage}
+              kafka={view.kafka}
+              hdfs={view.hdfs}
+              spark={view.spark}
+              dataStore={view.dataStore}
+            />
             <QuickAccessPanel links={view.links} />
           </div>
         </>

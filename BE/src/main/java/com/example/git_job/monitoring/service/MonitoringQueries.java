@@ -61,6 +61,88 @@ public class MonitoringQueries {
         return "max(up{job=\"kafka-exporter\"," + clusterSelector() + "})";
     }
 
+    /**
+     * Topic 수 (S15P21E102-261 Phase 1). 파티션 metric을 {@code topic}으로 묶어 센다 —
+     * 파티션 개수가 아니라 topic 개수다.
+     */
+    public String kafkaTopicCount() {
+        return "count(count by (topic) (kafka_topic_partitions{" + clusterSelector() + "}))";
+    }
+
+    /**
+     * 초당 유입 메시지 수. 파티션 current offset 증가율의 합이라 특정 topic이 아니라 클러스터
+     * 전체 처리량이고, kafka-exporter의 offset metric만 쓴다.
+     */
+    public String kafkaMessagesInPerSecond() {
+        return "sum(rate(kafka_topic_partition_current_offset{" + clusterSelector()
+                + "}[" + RATE_WINDOW + "]))";
+    }
+
+    /**
+     * Consumer lag 합계. exporter는 커밋 오프셋이 없는 파티션에 {@code -1}을 준다. clamp_min으로
+     * 0 밑을 잘라 합계가 음수가 되지 않게 한다 — {@code -1}들의 합은 lag이 아니라 "측정 불가"라
+     * "밀린 메시지 0"과 다르다.
+     */
+    public String kafkaConsumerLagTotal() {
+        return "sum(clamp_min(kafka_consumergroup_lag{" + clusterSelector() + "}, 0))";
+    }
+
+    /**
+     * HDFS json-exporter 도달 여부 (S15P21E102-261 Phase 2). NameNode /jmx 를 json-exporter가
+     * 변환하고 Prometheus가 {@code job="hdfs"}로 scrape 한다. 값이 하나라도 살아 있으면 1이다.
+     */
+    public String hdfsUp() {
+        return "max(up{job=\"hdfs\"," + clusterSelector() + "})";
+    }
+
+    public String hdfsCapacityUsedBytes() {
+        return "max(hdfs_capacity_used_bytes{" + clusterSelector() + "})";
+    }
+
+    public String hdfsCapacityTotalBytes() {
+        return "max(hdfs_capacity_total_bytes{" + clusterSelector() + "})";
+    }
+
+    public String hdfsBlocksTotal() {
+        return "max(hdfs_blocks_total{" + clusterSelector() + "})";
+    }
+
+    public String hdfsLiveDataNodes() {
+        return "max(hdfs_live_datanodes{" + clusterSelector() + "})";
+    }
+
+    public String hdfsDeadDataNodes() {
+        return "max(hdfs_dead_datanodes{" + clusterSelector() + "})";
+    }
+
+    /**
+     * Spark Master json-exporter 도달 여부 (S15P21E102-261 Phase 3). Master /json/을
+     * json-exporter가 변환하고 Prometheus가 {@code job="spark"}로 scrape 한다.
+     */
+    public String sparkUp() {
+        return "max(up{job=\"spark\"," + clusterSelector() + "})";
+    }
+
+    public String sparkWorkersAlive() {
+        return "max(spark_workers_alive{" + clusterSelector() + "})";
+    }
+
+    public String sparkCoresTotal() {
+        return "max(spark_cores_total{" + clusterSelector() + "})";
+    }
+
+    public String sparkCoresUsed() {
+        return "max(spark_cores_used{" + clusterSelector() + "})";
+    }
+
+    public String sparkMemoryTotalMb() {
+        return "max(spark_memory_total_mb{" + clusterSelector() + "})";
+    }
+
+    public String sparkMemoryUsedMb() {
+        return "max(spark_memory_used_mb{" + clusterSelector() + "})";
+    }
+
     public String cpuPercent() {
         return "100 - (avg by (cluster, role, instance) (rate(node_cpu_seconds_total{"
                 + clusterSelector() + ",mode=\"idle\"}[" + RATE_WINDOW + "])) * 100)";

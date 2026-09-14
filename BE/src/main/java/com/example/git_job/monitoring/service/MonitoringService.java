@@ -5,10 +5,14 @@ import com.example.git_job.monitoring.client.PrometheusUnavailableException;
 import com.example.git_job.monitoring.config.MonitoringProperties;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.Coverage;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.DataStoreStatus;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.HdfsStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.KafkaStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.Links;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.PrometheusStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServerMetrics;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.SparkStatus;
+import com.example.git_job.monitoring.controller.dto.CoverageState;
 import com.example.git_job.monitoring.controller.dto.MonitoringTimeseriesResponse;
 import com.example.git_job.monitoring.controller.dto.PrometheusState;
 import java.time.Instant;
@@ -52,19 +56,24 @@ public class MonitoringService {
     private final PrometheusClient prometheus;
     private final MonitoringQueries queries;
     private final MonitoringProperties properties;
+    private final DataStoreMetrics dataStoreMetrics;
 
     public MonitoringOverviewResponse overview() {
+        // DB 적재 현황은 Prometheus와 무관하다(BE 자기 DB). Prometheus가 끊겨도 이 카드는
+        // 살아 있어야 하므로 두 경로 모두에 싣는다.
+        DataStoreStatus dataStore = dataStoreMetrics.current();
+
         if (!properties.isPrometheusConfigured()) {
             log.debug("Prometheus 주소가 설정되지 않아 overview를 NOT_CONFIGURED로 반환한다");
-            return disconnectedOverview(PrometheusState.NOT_CONFIGURED);
+            return disconnectedOverview(PrometheusState.NOT_CONFIGURED, dataStore);
         }
 
         try {
-            return collectOverview();
+            return collectOverview(dataStore);
         } catch (PrometheusUnavailableException e) {
             // 주소는 로그에 남기지 않는다. 필요한 것은 실패 사실과 종류다.
             log.warn("Prometheus overview 수집 실패 (state={}): {}", e.getState(), e.getMessage());
-            return disconnectedOverview(e.getState());
+            return disconnectedOverview(e.getState(), dataStore);
         }
     }
 
@@ -87,7 +96,7 @@ public class MonitoringService {
         }
     }
 
-    private MonitoringOverviewResponse collectOverview() {
+    private MonitoringOverviewResponse collectOverview(DataStoreStatus dataStore) {
         PrometheusClient.TargetHealth health = prometheus.targets();
 
         List<PrometheusClient.Sample> nodes = prometheus.instant(queries.nodeUp());
@@ -131,6 +140,10 @@ public class MonitoringService {
                 .comparing((ServerMetrics server) -> server.role() == null ? "" : server.role())
                 .thenComparing(ServerMetrics::instance));
 
+        KafkaStatus kafka = kafkaStatus();
+        HdfsStatus hdfs = hdfsStatus();
+        SparkStatus spark = sparkStatus();
+
         return new MonitoringOverviewResponse(
                 Instant.now(),
                 PrometheusStatus.connected(
@@ -138,9 +151,38 @@ public class MonitoringService {
                         health.total(),
                         (int) properties.getPrometheusScrapeInterval().toSeconds()),
                 List.copyOf(servers),
-                kafkaStatus(),
-                Coverage.current(),
+                kafka,
+                hdfs,
+                spark,
+                dataStore,
+                coverageFor(kafka, hdfs, spark, dataStore),
                 links());
+    }
+
+    /**
+     * exporter/소스가 붙어 값을 신뢰할 수 있는 범위만 COLLECTED다. Phase 1 Kafka
+     * (kafka-exporter), Phase 2 HDFS·Phase 3 Spark(json-exporter), Phase 4 데이터 적재
+     * (BE가 자기 DB를 직접 count). {@code collector} 슬롯은 이제 DB 적재 현황을 나타낸다.
+     */
+    private static Coverage coverageFor(
+            KafkaStatus kafka, HdfsStatus hdfs, SparkStatus spark, DataStoreStatus dataStore) {
+        return new Coverage(
+                collectedIf(hdfs.up()),
+                collectedIf(spark.up()),
+                collectedIfDataStore(dataStore),
+                collectedIf(kafka.up()));
+    }
+
+    private static CoverageState collectedIf(Boolean up) {
+        return Boolean.TRUE.equals(up) ? CoverageState.COLLECTED : CoverageState.NOT_COLLECTED;
+    }
+
+    /** DB count가 하나라도 있으면(=DB에 닿음) COLLECTED. 전부 null이면 세지 못한 것. */
+    private static CoverageState collectedIfDataStore(DataStoreStatus dataStore) {
+        boolean any = dataStore.technologyCount() != null
+                || dataStore.technologyCandidateCount() != null
+                || dataStore.analysisJobCount() != null;
+        return any ? CoverageState.COLLECTED : CoverageState.NOT_COLLECTED;
     }
 
     private MonitoringTimeseriesResponse collectTimeseries(
@@ -186,24 +228,91 @@ public class MonitoringService {
     }
 
     /**
-     * Kafka exporter 도달 여부. exporter가 없으면 시계열이 없고, 그때는 {@code false}가
-     * 아니라 {@code null}이다. "브로커가 죽었다"와 "아직 재보지 않았다"는 다른 사실이다.
+     * Kafka 처리 현황. exporter가 없으면 시계열이 없고, 그때는 {@code false}가 아니라
+     * {@code null}이다 — "브로커가 죽었다"와 "아직 재보지 않았다"는 다른 사실이다.
+     *
+     * <p>exporter가 붙어 있으면(도달=1) topic 수·처리량·lag을 함께 읽는다. 브로커가 죽어
+     * 도달=0이면 도달 여부만 사실이고 나머지 값은 신뢰할 수 없어 {@code null}로 둔다.</p>
      */
     private KafkaStatus kafkaStatus() {
-        List<PrometheusClient.Sample> samples = prometheus.instant(queries.kafkaUp());
-        if (samples.isEmpty()) {
+        List<PrometheusClient.Sample> up = prometheus.instant(queries.kafkaUp());
+        if (up.isEmpty()) {
             return KafkaStatus.unknown();
         }
-        return new KafkaStatus(samples.get(0).value() > 0);
+        if (up.get(0).value() <= 0) {
+            return new KafkaStatus(false, null, null, null);
+        }
+        return new KafkaStatus(
+                true,
+                toInteger(firstValue(prometheus.instant(queries.kafkaTopicCount()))),
+                firstValue(prometheus.instant(queries.kafkaMessagesInPerSecond())),
+                toLong(firstValue(prometheus.instant(queries.kafkaConsumerLagTotal()))));
     }
 
-    private MonitoringOverviewResponse disconnectedOverview(PrometheusState state) {
+    /**
+     * HDFS 현황. json-exporter가 없으면(도달 결과 비어 있음) {@code null}이다. exporter가
+     * 붙어 있으면(도달=1) 용량·Block·DataNode 수를 함께 읽는다. NameNode가 죽어 도달=0이면
+     * 도달 여부만 사실이고 나머지 값은 신뢰할 수 없어 {@code null}로 둔다.
+     */
+    private HdfsStatus hdfsStatus() {
+        List<PrometheusClient.Sample> up = prometheus.instant(queries.hdfsUp());
+        if (up.isEmpty()) {
+            return HdfsStatus.unknown();
+        }
+        if (up.get(0).value() <= 0) {
+            return new HdfsStatus(false, null, null, null, null, null);
+        }
+        return new HdfsStatus(
+                true,
+                toLong(firstValue(prometheus.instant(queries.hdfsCapacityUsedBytes()))),
+                toLong(firstValue(prometheus.instant(queries.hdfsCapacityTotalBytes()))),
+                toLong(firstValue(prometheus.instant(queries.hdfsBlocksTotal()))),
+                toInteger(firstValue(prometheus.instant(queries.hdfsLiveDataNodes()))),
+                toInteger(firstValue(prometheus.instant(queries.hdfsDeadDataNodes()))));
+    }
+
+    /**
+     * Spark 현황. json-exporter가 없으면(도달 결과 비어 있음) {@code null}이다. 도달=1이면
+     * Worker·Core·Memory를 함께 읽는다. Master가 죽어 도달=0이면 도달 여부만 사실이고
+     * 나머지 값은 신뢰할 수 없어 {@code null}로 둔다.
+     */
+    private SparkStatus sparkStatus() {
+        List<PrometheusClient.Sample> up = prometheus.instant(queries.sparkUp());
+        if (up.isEmpty()) {
+            return SparkStatus.unknown();
+        }
+        if (up.get(0).value() <= 0) {
+            return new SparkStatus(false, null, null, null, null, null);
+        }
+        return new SparkStatus(
+                true,
+                toInteger(firstValue(prometheus.instant(queries.sparkWorkersAlive()))),
+                toInteger(firstValue(prometheus.instant(queries.sparkCoresTotal()))),
+                toInteger(firstValue(prometheus.instant(queries.sparkCoresUsed()))),
+                toLong(firstValue(prometheus.instant(queries.sparkMemoryTotalMb()))),
+                toLong(firstValue(prometheus.instant(queries.sparkMemoryUsedMb()))));
+    }
+
+    /** 스칼라 질의의 첫 값. 결과가 없으면 {@code null} — 0으로 채우지 않는다. */
+    private static Double firstValue(List<PrometheusClient.Sample> samples) {
+        return samples.isEmpty() ? null : samples.get(0).value();
+    }
+
+    private MonitoringOverviewResponse disconnectedOverview(
+            PrometheusState state, DataStoreStatus dataStore) {
+        // Prometheus가 끊겨도 DB 적재 현황은 유효하다 — collector 슬롯은 dataStore로 판단한다.
+        KafkaStatus kafka = KafkaStatus.unknown();
+        HdfsStatus hdfs = HdfsStatus.unknown();
+        SparkStatus spark = SparkStatus.unknown();
         return new MonitoringOverviewResponse(
                 Instant.now(),
                 PrometheusStatus.disconnected(state),
                 List.of(),
-                KafkaStatus.unknown(),
-                Coverage.current(),
+                kafka,
+                hdfs,
+                spark,
+                dataStore,
+                coverageFor(kafka, hdfs, spark, dataStore),
                 links());
     }
 

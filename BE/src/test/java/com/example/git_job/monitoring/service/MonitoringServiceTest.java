@@ -13,6 +13,7 @@ import com.example.git_job.monitoring.client.PrometheusUnavailableException;
 import com.example.git_job.monitoring.config.MonitoringProperties;
 import com.example.git_job.monitoring.controller.dto.CoverageState;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.DataStoreStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServerMetrics;
 import com.example.git_job.monitoring.controller.dto.MonitoringTimeseriesResponse;
 import com.example.git_job.monitoring.controller.dto.PrometheusState;
@@ -41,10 +42,14 @@ class MonitoringServiceTest {
 
     private PrometheusClient prometheus;
     private MonitoringQueries queries;
+    private DataStoreMetrics dataStoreMetrics;
 
     @BeforeEach
     void setUp() {
         prometheus = mock(PrometheusClient.class);
+        dataStoreMetrics = mock(DataStoreMetrics.class);
+        // 기본은 DB 미도달(모두 null) — 개별 테스트가 필요하면 실수치로 덮어쓴다.
+        when(dataStoreMetrics.current()).thenReturn(DataStoreStatus.unknown());
         queries = new MonitoringQueries(configured());
     }
 
@@ -69,7 +74,8 @@ class MonitoringServiceTest {
     }
 
     private MonitoringService service(MonitoringProperties properties) {
-        return new MonitoringService(prometheus, new MonitoringQueries(properties), properties);
+        return new MonitoringService(
+                prometheus, new MonitoringQueries(properties), properties, dataStoreMetrics);
     }
 
     private static PrometheusClient.Sample node(String instance, String role, double up) {
@@ -228,7 +234,7 @@ class MonitoringServiceTest {
                 .thenThrow(PrometheusUnavailableException.invalidResponse("형식 이상"));
         MonitoringProperties properties = configured();
         MonitoringOverviewResponse overview = new MonitoringService(
-                other, new MonitoringQueries(properties), properties).overview();
+                other, new MonitoringQueries(properties), properties, dataStoreMetrics).overview();
         assertThat(overview.prometheus().state()).isEqualTo(PrometheusState.INVALID_RESPONSE);
         assertThat(overview.servers()).isEmpty();
     }
@@ -242,6 +248,141 @@ class MonitoringServiceTest {
         assertThat(overview.coverage().spark()).isEqualTo(CoverageState.NOT_COLLECTED);
         assertThat(overview.coverage().collector()).isEqualTo(CoverageState.NOT_COLLECTED);
         assertThat(overview.coverage().kafkaBusiness()).isEqualTo(CoverageState.NOT_COLLECTED);
+    }
+
+    @Test
+    @DisplayName("kafka-exporter가 붙으면 kafkaBusiness가 COLLECTED로 실지표를 싣는다")
+    void kafkaMetricsBecomeCollectedWhenExporterIsUp() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+        when(prometheus.instant(queries.kafkaUp())).thenReturn(List.of(value(SERVICE, 1)));
+        when(prometheus.instant(queries.kafkaTopicCount())).thenReturn(List.of(value(SERVICE, 10)));
+        when(prometheus.instant(queries.kafkaMessagesInPerSecond()))
+                .thenReturn(List.of(value(SERVICE, 0.5)));
+        when(prometheus.instant(queries.kafkaConsumerLagTotal()))
+                .thenReturn(List.of(value(SERVICE, 0)));
+
+        MonitoringOverviewResponse overview = service(configured()).overview();
+
+        assertThat(overview.kafka().up()).isTrue();
+        assertThat(overview.kafka().topicCount()).isEqualTo(10);
+        assertThat(overview.kafka().messagesInPerSecond()).isEqualTo(0.5);
+        assertThat(overview.kafka().consumerLagTotal()).isEqualTo(0L);
+        assertThat(overview.coverage().kafkaBusiness()).isEqualTo(CoverageState.COLLECTED);
+        // 나머지 범위는 exporter가 없어 그대로 NOT_COLLECTED다.
+        assertThat(overview.coverage().hdfs()).isEqualTo(CoverageState.NOT_COLLECTED);
+    }
+
+    @Test
+    @DisplayName("kafka-exporter가 없으면 kafkaBusiness는 NOT_COLLECTED, 값은 비운다")
+    void kafkaStaysNotCollectedWhenExporterIsAbsent() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+        // kafkaUp 결과가 비어 있음 = exporter 미도달. 값을 만들지 않고 상태만 내린다.
+
+        MonitoringOverviewResponse overview = service(configured()).overview();
+
+        assertThat(overview.kafka().up()).isNull();
+        assertThat(overview.kafka().topicCount()).isNull();
+        assertThat(overview.kafka().consumerLagTotal()).isNull();
+        assertThat(overview.coverage().kafkaBusiness()).isEqualTo(CoverageState.NOT_COLLECTED);
+    }
+
+    @Test
+    @DisplayName("json-exporter가 붙으면 hdfs가 COLLECTED로 실지표를 싣는다")
+    void hdfsMetricsBecomeCollectedWhenExporterIsUp() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+        when(prometheus.instant(queries.hdfsUp()))
+                .thenReturn(List.of(value("hdfs-namenode", 1)));
+        when(prometheus.instant(queries.hdfsCapacityUsedBytes()))
+                .thenReturn(List.of(value("hdfs-namenode", 86016)));
+        when(prometheus.instant(queries.hdfsCapacityTotalBytes()))
+                .thenReturn(List.of(value("hdfs-namenode", 3_243_303_530_496d)));
+        when(prometheus.instant(queries.hdfsBlocksTotal()))
+                .thenReturn(List.of(value("hdfs-namenode", 0)));
+        when(prometheus.instant(queries.hdfsLiveDataNodes()))
+                .thenReturn(List.of(value("hdfs-namenode", 3)));
+        when(prometheus.instant(queries.hdfsDeadDataNodes()))
+                .thenReturn(List.of(value("hdfs-namenode", 0)));
+
+        MonitoringOverviewResponse overview = service(configured()).overview();
+
+        assertThat(overview.hdfs().up()).isTrue();
+        assertThat(overview.hdfs().capacityUsedBytes()).isEqualTo(86016L);
+        assertThat(overview.hdfs().capacityTotalBytes()).isEqualTo(3_243_303_530_496L);
+        assertThat(overview.hdfs().blocksTotal()).isEqualTo(0L);
+        assertThat(overview.hdfs().liveDataNodes()).isEqualTo(3);
+        assertThat(overview.hdfs().deadDataNodes()).isEqualTo(0);
+        assertThat(overview.coverage().hdfs()).isEqualTo(CoverageState.COLLECTED);
+    }
+
+    @Test
+    @DisplayName("json-exporter가 붙으면 spark가 COLLECTED로 실지표를 싣는다")
+    void sparkMetricsBecomeCollectedWhenExporterIsUp() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+        when(prometheus.instant(queries.sparkUp()))
+                .thenReturn(List.of(value("spark-master", 1)));
+        when(prometheus.instant(queries.sparkWorkersAlive()))
+                .thenReturn(List.of(value("spark-master", 1)));
+        when(prometheus.instant(queries.sparkCoresTotal()))
+                .thenReturn(List.of(value("spark-master", 2)));
+        when(prometheus.instant(queries.sparkCoresUsed()))
+                .thenReturn(List.of(value("spark-master", 0)));
+        when(prometheus.instant(queries.sparkMemoryTotalMb()))
+                .thenReturn(List.of(value("spark-master", 2048)));
+        when(prometheus.instant(queries.sparkMemoryUsedMb()))
+                .thenReturn(List.of(value("spark-master", 0)));
+
+        MonitoringOverviewResponse overview = service(configured()).overview();
+
+        assertThat(overview.spark().up()).isTrue();
+        assertThat(overview.spark().aliveWorkers()).isEqualTo(1);
+        assertThat(overview.spark().coresTotal()).isEqualTo(2);
+        assertThat(overview.spark().coresUsed()).isEqualTo(0);
+        assertThat(overview.spark().memoryTotalMb()).isEqualTo(2048L);
+        assertThat(overview.spark().memoryUsedMb()).isEqualTo(0L);
+        assertThat(overview.coverage().spark()).isEqualTo(CoverageState.COLLECTED);
+    }
+
+    @Test
+    @DisplayName("DB 적재 건수가 있으면 collector 슬롯이 COLLECTED로 실수치를 싣는다")
+    void dataStoreBecomesCollectedWhenCountsExist() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+        when(dataStoreMetrics.current()).thenReturn(new DataStoreStatus(61L, 5L, 4L));
+
+        MonitoringOverviewResponse overview = service(configured()).overview();
+
+        assertThat(overview.dataStore().technologyCount()).isEqualTo(61L);
+        assertThat(overview.dataStore().technologyCandidateCount()).isEqualTo(5L);
+        assertThat(overview.dataStore().analysisJobCount()).isEqualTo(4L);
+        assertThat(overview.coverage().collector()).isEqualTo(CoverageState.COLLECTED);
+    }
+
+    @Test
+    @DisplayName("Prometheus가 끊겨도 DB 적재 현황은 collector 슬롯에 그대로 실린다")
+    void dataStoreSurvivesPrometheusDisconnect() {
+        when(dataStoreMetrics.current()).thenReturn(new DataStoreStatus(61L, 5L, 4L));
+
+        MonitoringOverviewResponse overview = service(notConfigured()).overview();
+
+        assertThat(overview.prometheus().reachable()).isFalse();
+        assertThat(overview.dataStore().technologyCount()).isEqualTo(61L);
+        assertThat(overview.coverage().collector()).isEqualTo(CoverageState.COLLECTED);
+        // Prometheus 계열은 여전히 미수집이다.
+        assertThat(overview.coverage().hdfs()).isEqualTo(CoverageState.NOT_COLLECTED);
     }
 
     @Test

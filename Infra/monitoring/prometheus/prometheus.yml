@@ -28,3 +28,44 @@ scrape_configs:
           cluster: gitjob
           host: service-server
           role: core
+
+  # HDFS NameNode /jmx → json-exporter 변환 (S15P21E102-261 Phase 2). multi-target 패턴:
+  # target(=NameNode /jmx URL)을 __param_target으로 옮기고 실제 scrape 주소는 json-exporter로
+  # 바꾼다. 지표에 cluster 라벨을 붙여 BE PromQL(cluster="gitjob")과 맞춘다.
+  - job_name: hdfs
+    metrics_path: /probe
+    params:
+      module: [hdfs_fsnamesystem]
+    static_configs:
+      - targets:
+          - "http://hdfs-namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState"
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: data
+          instance: hdfs-namenode
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: json-exporter:7979
+
+  # Spark Master /json/ → json-exporter 변환 (S15P21E102-261 Phase 3). HDFS와 같은
+  # multi-target 패턴. spark-master 컨테이너는 건드리지 않는다.
+  - job_name: spark
+    metrics_path: /probe
+    params:
+      module: [spark_master]
+    static_configs:
+      - targets:
+          - "http://spark-master:8080/json/"
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: data
+          instance: spark-master
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: json-exporter:7979

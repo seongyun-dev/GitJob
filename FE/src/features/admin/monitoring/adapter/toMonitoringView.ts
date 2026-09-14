@@ -50,6 +50,14 @@ export interface MonitoringView {
   monitoring: MonitoringNode
   replicationFactor: number | null
   kafkaUp: boolean | null
+  /** Kafka 처리 현황(topic 수·처리량·lag). Data Platform의 Kafka 카드가 쓴다. */
+  kafka: MonitoringOverview['kafka']
+  /** HDFS 현황(용량·Block·DataNode). Data Platform의 HDFS 카드가 쓴다. */
+  hdfs: MonitoringOverview['hdfs']
+  /** Spark 현황(Worker·Core·Memory). Data Platform의 Spark 카드가 쓴다. */
+  spark: MonitoringOverview['spark']
+  /** DB 적재 현황(기술·후보·분석 건수). Data Platform의 "데이터 적재" 카드가 쓴다. */
+  dataStore: MonitoringOverview['dataStore']
   coverage: MonitoringOverview['coverage']
   links: MonitoringOverview['links']
 }
@@ -116,6 +124,10 @@ export function toMonitoringView(
     monitoring: topology.monitoring,
     replicationFactor: topology.replicationFactor,
     kafkaUp: overview.kafka.up,
+    kafka: overview.kafka,
+    hdfs: overview.hdfs,
+    spark: overview.spark,
+    dataStore: overview.dataStore,
     coverage: overview.coverage,
     links: overview.links,
   }

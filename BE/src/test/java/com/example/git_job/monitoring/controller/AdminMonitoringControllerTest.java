@@ -14,7 +14,10 @@ import com.example.git_job.global.handler.GlobalExceptionHandler;
 import com.example.git_job.monitoring.controller.dto.CoverageState;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.Coverage;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.DataStoreStatus;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.HdfsStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.KafkaStatus;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.SparkStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.Links;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.PrometheusStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServerMetrics;
@@ -69,8 +72,12 @@ class AdminMonitoringControllerTest {
                         "10.0.0.1:9100", "service", "service-1", "service-server", true,
                         23.4, 4, 41.0, 6_600_000_000L, 16_000_000_000L,
                         54.0, 216_000_000_000L, 400_000_000_000L, 4_100_000d, 2_100_000d)),
-                new KafkaStatus(true),
-                Coverage.current(),
+                new KafkaStatus(true, 10, 0.5d, 0L),
+                new HdfsStatus(true, 86016L, 3_243_303_530_496L, 0L, 3, 0),
+                new SparkStatus(true, 1, 2, 0, 2048L, 0L),
+                new DataStoreStatus(61L, 5L, 4L),
+                new Coverage(CoverageState.COLLECTED, CoverageState.COLLECTED,
+                        CoverageState.COLLECTED, CoverageState.COLLECTED),
                 new Links("https://grafana.example.internal", null)));
 
         mockMvc.perform(get(BASE + "/overview"))
@@ -87,8 +94,31 @@ class AdminMonitoringControllerTest {
                 .andExpect(jsonPath("$.data.servers[0].cpuCores").value(4))
                 .andExpect(jsonPath("$.data.servers[0].memoryUsedBytes").value(6_600_000_000L))
                 .andExpect(jsonPath("$.data.kafka.up").value(true))
+                // Kafka 실지표(S15P21E102-261 Phase 1). exporter가 붙으면 값과 COLLECTED가 함께 온다.
+                .andExpect(jsonPath("$.data.kafka.topicCount").value(10))
+                .andExpect(jsonPath("$.data.kafka.messagesInPerSecond").value(0.5))
+                .andExpect(jsonPath("$.data.kafka.consumerLagTotal").value(0))
+                .andExpect(jsonPath("$.data.coverage.kafkaBusiness")
+                        .value(CoverageState.COLLECTED.name()))
+                // HDFS 실지표(S15P21E102-261 Phase 2). json-exporter가 붙으면 값과 COLLECTED가 함께 온다.
+                .andExpect(jsonPath("$.data.hdfs.up").value(true))
+                .andExpect(jsonPath("$.data.hdfs.capacityTotalBytes").value(3_243_303_530_496L))
+                .andExpect(jsonPath("$.data.hdfs.liveDataNodes").value(3))
                 .andExpect(jsonPath("$.data.coverage.hdfs")
-                        .value(CoverageState.NOT_COLLECTED.name()))
+                        .value(CoverageState.COLLECTED.name()))
+                // Spark 실지표(S15P21E102-261 Phase 3). json-exporter가 붙으면 값과 COLLECTED가 함께 온다.
+                .andExpect(jsonPath("$.data.spark.up").value(true))
+                .andExpect(jsonPath("$.data.spark.aliveWorkers").value(1))
+                .andExpect(jsonPath("$.data.spark.coresTotal").value(2))
+                .andExpect(jsonPath("$.data.spark.memoryTotalMb").value(2048))
+                .andExpect(jsonPath("$.data.coverage.spark")
+                        .value(CoverageState.COLLECTED.name()))
+                // 데이터 적재 DB count(S15P21E102-261 Phase 4). collector 슬롯이 이걸 나타낸다.
+                .andExpect(jsonPath("$.data.dataStore.technologyCount").value(61))
+                .andExpect(jsonPath("$.data.dataStore.technologyCandidateCount").value(5))
+                .andExpect(jsonPath("$.data.dataStore.analysisJobCount").value(4))
+                .andExpect(jsonPath("$.data.coverage.collector")
+                        .value(CoverageState.COLLECTED.name()))
                 .andExpect(jsonPath("$.data.links.grafanaUrl")
                         .value("https://grafana.example.internal"))
                 // 미설정 링크는 빈 문자열이 아니라 null이어야 한다. 화면이 눌러도 아무 일
@@ -104,6 +134,9 @@ class AdminMonitoringControllerTest {
                 PrometheusStatus.disconnected(PrometheusState.UNREACHABLE),
                 List.of(),
                 KafkaStatus.unknown(),
+                HdfsStatus.unknown(),
+                SparkStatus.unknown(),
+                DataStoreStatus.unknown(),
                 Coverage.current(),
                 new Links(null, null)));
 

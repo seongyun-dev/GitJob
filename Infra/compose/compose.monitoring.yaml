@@ -47,6 +47,24 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # /jmx(JSON)만 노출하는 HDFS NameNode를 Prometheus 지표로 변환한다 (S15P21E102-261 Phase 2).
+  # namenode 컨테이너는 건드리지 않는다. Prometheus가 이 exporter의 /probe를 scrape 한다.
+  json-exporter:
+    image: ${JSON_EXPORTER_IMAGE:-quay.io/prometheuscommunity/json-exporter:v0.6.0}
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --config.file=/config/config.yml
+    expose:
+      - "7979"
+    volumes:
+      - ./Infra/monitoring/json-exporter/config.yml:/config/config.yml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   prometheus:
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.54.1}
     profiles: [observability]

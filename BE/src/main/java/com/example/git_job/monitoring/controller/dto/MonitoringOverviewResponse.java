@@ -19,6 +19,9 @@ public record MonitoringOverviewResponse(
         PrometheusStatus prometheus,
         List<ServerMetrics> servers,
         KafkaStatus kafka,
+        HdfsStatus hdfs,
+        SparkStatus spark,
+        DataStoreStatus dataStore,
         Coverage coverage,
         Links links
 ) {
@@ -83,12 +86,92 @@ public record MonitoringOverviewResponse(
     }
 
     /**
-     * Kafka exporter 도달 여부만 본다. topic 처리량·consumer lag은 이 화면의 범위가 아니라
-     * 대시보드가 담당하고, 비즈니스 지표는 {@link Coverage}에서 미수집으로 표시된다.
+     * Kafka 처리 현황 (S15P21E102-261 Phase 1).
+     *
+     * <p>{@code up}은 kafka-exporter 도달 여부다. 붙어 있으면 topic 수·초당 유입 메시지·
+     * consumer lag 합계를 함께 싣는다 — 이 값들이 있어 Data Platform의 Kafka 카드가
+     * COLLECTED로 실수치를 그린다.</p>
+     *
+     * <p>{@code null}과 0은 다르다. exporter가 없으면 시계열이 없어 {@code null}이고("아직
+     * 재보지 않음"), 값이 왔는데 0이면 실제로 0이다("밀린 메시지 없음"). 그래서 미도달 시
+     * 값 자리를 {@code null}로 비운다.</p>
      */
-    public record KafkaStatus(Boolean up) {
+    public record KafkaStatus(
+            Boolean up,
+            Integer topicCount,
+            Double messagesInPerSecond,
+            Long consumerLagTotal
+    ) {
         public static KafkaStatus unknown() {
-            return new KafkaStatus(null);
+            return new KafkaStatus(null, null, null, null);
+        }
+    }
+
+    /**
+     * HDFS 현황 (S15P21E102-261 Phase 2).
+     *
+     * <p>{@code up}은 NameNode /jmx 를 옮기는 json-exporter 도달 여부다. 붙어 있으면 용량
+     * (사용/전체 바이트)·전체 Block 수·DataNode Live/Dead 수를 함께 싣는다 — 이 값들이 있어
+     * Data Platform의 HDFS 카드가 COLLECTED로 실수치를 그린다.</p>
+     *
+     * <p>{@code null}과 0은 다르다. exporter가 없으면 시계열이 없어 {@code null}이고, 값이
+     * 왔는데 0이면 실제로 0이다(예: 방금 포맷한 클러스터의 Block 0). 미도달 시 값 자리를
+     * {@code null}로 비운다.</p>
+     */
+    public record HdfsStatus(
+            Boolean up,
+            Long capacityUsedBytes,
+            Long capacityTotalBytes,
+            Long blocksTotal,
+            Integer liveDataNodes,
+            Integer deadDataNodes
+    ) {
+        public static HdfsStatus unknown() {
+            return new HdfsStatus(null, null, null, null, null, null);
+        }
+    }
+
+    /**
+     * Spark 현황 (S15P21E102-261 Phase 3).
+     *
+     * <p>{@code up}은 Spark Master /json/ 을 옮기는 json-exporter 도달 여부다. 붙어 있으면
+     * 살아 있는 Worker 수·Core(사용/전체)·Memory(사용/전체, MB)를 함께 싣는다 — 이 값들이
+     * 있어 Data Platform의 Spark 카드가 COLLECTED로 실수치를 그린다.</p>
+     *
+     * <p>Application·실패율은 Master /json/의 배열이라 exporter 스칼라로 옮기지 않는다. 값을
+     * 만들지 않고, 후속 작업(Spark PrometheusServlet)이 붙으면 그때 채운다. 미도달 시 값
+     * 자리는 {@code null}이다.</p>
+     */
+    public record SparkStatus(
+            Boolean up,
+            Integer aliveWorkers,
+            Integer coresTotal,
+            Integer coresUsed,
+            Long memoryTotalMb,
+            Long memoryUsedMb
+    ) {
+        public static SparkStatus unknown() {
+            return new SparkStatus(null, null, null, null, null, null);
+        }
+    }
+
+    /**
+     * DB 적재 현황 (S15P21E102-261 Phase 4).
+     *
+     * <p>수집 파이프라인의 산출물 중 Postgres에 쌓이는 것 — 기술 목록·기술 후보·분석 요청
+     * 건수다. HDFS·Spark·Kafka와 달리 Prometheus scrape 대상이 아니라 BE가 자기 DB를 직접
+     * 세어 낸다(배치가 만드는 값이라 scrape할 장기 exporter가 없다).</p>
+     *
+     * <p>개별 count가 실패하면 그 값만 {@code null}이다. {@code null}과 0은 다르다 —
+     * {@code null}은 세지 못했다는 뜻, 0은 실제로 0건이다.</p>
+     */
+    public record DataStoreStatus(
+            Long technologyCount,
+            Long technologyCandidateCount,
+            Long analysisJobCount
+    ) {
+        public static DataStoreStatus unknown() {
+            return new DataStoreStatus(null, null, null);
         }
     }
 

@@ -1,0 +1,56 @@
+# json_exporter 변환 규칙 · 티켓 S15P21E102-261 Phase 2 (HDFS).
+#
+# NameNode는 /jmx(JSON)만 노출하고 Prometheus는 JSON을 직접 긁지 못한다. json_exporter가
+# /jmx 를 읽어 아래 지표로 바꾸면 Prometheus가 그것을 scrape 한다. namenode 컨테이너는
+# 건드리지 않는다(비침습).
+#
+# Prometheus scrape target을 /jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState 로 두어
+# beans[0]이 곧 그 bean이다. 그래서 JSONPath는 필터 없이 `{ .beans[0].<Field> }`로 단순하다.
+modules:
+  hdfs_fsnamesystem:
+    metrics:
+      - name: hdfs_capacity_total_bytes
+        path: '{ .beans[0].CapacityTotal }'
+        help: HDFS total capacity in bytes
+      - name: hdfs_capacity_used_bytes
+        path: '{ .beans[0].CapacityUsed }'
+        help: HDFS used capacity in bytes
+      - name: hdfs_capacity_remaining_bytes
+        path: '{ .beans[0].CapacityRemaining }'
+        help: HDFS remaining capacity in bytes
+      - name: hdfs_blocks_total
+        path: '{ .beans[0].BlocksTotal }'
+        help: HDFS total block count
+      - name: hdfs_files_total
+        path: '{ .beans[0].FilesTotal }'
+        help: HDFS total file+directory count
+      - name: hdfs_live_datanodes
+        path: '{ .beans[0].NumLiveDataNodes }'
+        help: HDFS live DataNode count
+      - name: hdfs_dead_datanodes
+        path: '{ .beans[0].NumDeadDataNodes }'
+        help: HDFS dead DataNode count
+      - name: hdfs_under_replicated_blocks
+        path: '{ .beans[0].UnderReplicatedBlocks }'
+        help: HDFS under-replicated block count
+
+  # Spark Master /json/ → Prometheus (S15P21E102-261 Phase 3). /json/은 평평한 객체라 필터
+  # 없이 최상위 스칼라를 읽는다. activeapps/completedapps는 배열(개수)이라 여기서 다루지
+  # 않고, Worker·Core·Memory 스칼라만 옮긴다.
+  spark_master:
+    metrics:
+      - name: spark_workers_alive
+        path: '{ .aliveworkers }'
+        help: Spark alive worker count
+      - name: spark_cores_total
+        path: '{ .cores }'
+        help: Spark total cores
+      - name: spark_cores_used
+        path: '{ .coresused }'
+        help: Spark cores in use
+      - name: spark_memory_total_mb
+        path: '{ .memory }'
+        help: Spark total memory in MB
+      - name: spark_memory_used_mb
+        path: '{ .memoryused }'
+        help: Spark memory in use in MB
