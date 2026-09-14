@@ -1226,6 +1226,15 @@ C조 범위다.
 - 범위: validator 종결 집합 정정, 두 집합 drift를 잡는 contract test 추가, resume 시 `MONTHLY_ARTIFACT_RUN_DATE` 고정 계약 명문화, self-match 없는 chain health probe
 - 상세: [Historical monthly chain이 자기 출력을 거부한 건](2026-09-13-monthly-chain-terminal-status-contract.md)
 
+## 기존 Raw → analysis_input backfill
+
+- Jira: `S15P21E102-248` (`-220` 후속)
+- 측정(2026-09-14): HDFS Raw 36 회차 중 **7건만 게시**, 29건 미게시. 그중 15건은 로컬 디렉터리 없이 HDFS 에만 존재
+- 규모: record 17,615 / unique 14,868 / 81.8 MiB. Historical corpus 의 BACKEND 후보를 최근 delta 15건 수준에서 **최대 2,130건 규모로 확장 가능**(현재 활성 공고 수가 아님)
+- 범위: `HISTORICAL_ANALYSIS_CORPUS` 전용. `CURRENT_ACTIVE_JOBS` 판정은 범위 밖
+- 내용: Raw 회차 탐색·재게시 CLI, checkpoint 재개, 단계별 실행 절차와 GO gate
+- 상세: [기존 Raw → analysis_input backfill 실행 Runbook](2026-09-14-analysis-input-backfill-runbook.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

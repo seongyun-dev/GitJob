@@ -236,6 +236,44 @@ class WebHdfsClient:
                 f"GETFILESTATUS returned an unexpected shape: {error}"
             ) from error
 
+    def list_directories(self, path: str | PurePosixPath) -> tuple[str, ...]:
+        """Names of the immediate subdirectories, sorted. Empty when absent.
+
+        Every other method here addresses one object the caller already knows
+        the path of, because a collector always does: it just wrote the run.
+        Backfill is the first caller that has to *find* runs — the historical
+        ones predate the local state volume and exist only in HDFS — so it
+        needs to enumerate `raw/{source}/dt=*/{RUN_ID}/`.
+
+        Files are dropped rather than returned alongside directories. Both
+        levels this walks hold only directories, and a caller that wanted a
+        file would already know its name.
+
+        A missing path is empty, not an error: a source that has never
+        collected has no `dt=` partition, and that is an ordinary state.
+        """
+
+        response = self._call("GET", path, "LISTSTATUS")
+        if response.status == 404:
+            return ()
+        if response.status != 200:
+            raise self._error("list directory", response)
+        try:
+            payload = json.loads(response.body.decode("utf-8"))
+            entries = payload["FileStatuses"]["FileStatus"]
+        except (ValueError, KeyError, TypeError) as error:
+            raise WebHdfsError(
+                f"LISTSTATUS returned an unexpected shape: {error}"
+            ) from error
+        if not isinstance(entries, list):
+            raise WebHdfsError("LISTSTATUS returned a non-list FileStatus")
+        names = [
+            str(entry.get("pathSuffix", ""))
+            for entry in entries
+            if isinstance(entry, Mapping) and entry.get("type") == "DIRECTORY"
+        ]
+        return tuple(sorted(name for name in names if name))
+
     def read(self, path: str | PurePosixPath) -> bytes:
         response = self._call("GET", path, "OPEN")
         if response.status == 307:
