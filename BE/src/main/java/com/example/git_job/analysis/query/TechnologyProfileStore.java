@@ -1,4 +1,4 @@
-package com.example.git_job.analysis.outbox;
+package com.example.git_job.analysis.query;
 
 import java.time.Instant;
 import java.util.List;
@@ -8,6 +8,9 @@ import org.springframework.stereotype.Repository;
 
 /**
  * 사용자의 분석 결과를 화면이 읽을 수 있는 모양으로 집계한다.
+ *
+ * <p>읽기 전용이다. 이 패키지에는 쓰기가 없다 -- 판정은 조회 시점에 만들어지고
+ * 어디에도 저장되지 않는다. 쓰는 쪽은 {@code analysis.store} 다.</p>
  *
  * <h2>집계 단위: 저장소마다 최신 성공 분석 한 건</h2>
  *
@@ -40,6 +43,9 @@ public class TechnologyProfileStore {
                        analysis_id, repository_id, repository_full_name, commit_sha, completed_at
                 FROM analysis_job
                 WHERE user_id = ? AND status = 'SUCCEEDED'
+                -- NULLS LAST 가 필요하다. completed_at 은 nullable 이고 PostgreSQL 의
+                -- DESC 기본값은 NULLS FIRST 라, 끝난 시각이 없는 SUCCEEDED 행이
+                -- 하나라도 있으면 그 행이 '최신'으로 뽑힌다.
                 ORDER BY repository_id, completed_at DESC NULLS LAST
             )
             """;
@@ -128,6 +134,66 @@ public class TechnologyProfileStore {
                 userId, techId, perLevelLimit);
     }
 
+    /**
+     * 기술별 Personal Level. 본인이 쓴 근거만으로 같은 규칙을 다시 판정한 결과다.
+     *
+     * <h2>왜 점수가 아닌가</h2>
+     *
+     * <p>화면이 Personal 과 Repository 를 나란히 놓는다. 한쪽이 규칙 판정이고 한쪽이
+     * 가중치 합이면 나란히 둘 이유가 없다 -- 같은 자로 재야 차이가 정보가 된다.
+     * 같은 규칙에 좁은 사실을 넣으므로 {@code Personal <= Repository} 도 자동으로
+     * 성립한다.</p>
+     *
+     * <h2>저장소 안에서 판정하고, 저장소를 넘어 최고치를 고른다</h2>
+     *
+     * <p>이 순서가 뒤집히면 저장소 A 의 IMPORT 와 저장소 B 의 API_CALL 을 붙여 L2 를
+     * 만든다. 어느 저장소에서도 하지 않은 일이다. 그래서 절 커버리지는
+     * {@code analysis_id} 안에서 따지고, 최고치는 그다음에 고른다.</p>
+     *
+     * <h2>엄격 판정</h2>
+     *
+     * <p>규칙의 <b>모든</b> REQUIRED 절이 본인 근거로 덮여야 한다. 하나라도 있으면
+     * 되는 쪽으로 하면 Personal 과 Repository 가 거의 같아져 두 칸을 두는 의미가
+     * 사라진다.</p>
+     *
+     * <p>{@code PARTIAL_EDIT} 는 세지 않는다. 정의상 그 근거 줄을 본인이 쓰지 않았고,
+     * 파일을 만졌다는 것은 레벨의 근거가 아니라 화면에 보여줄 사실이다.</p>
+     */
+    public List<TechnologyLevel> personalLevels(long userId) {
+        return jdbc.query(LATEST_PER_REPOSITORY + """
+                , mine AS (
+                    SELECT DISTINCT e.analysis_id, e.rule_id, e.fact_type
+                    FROM latest l
+                    JOIN analysis_evidence e ON e.analysis_id = l.analysis_id
+                    JOIN analysis_evidence_commit c
+                      ON c.analysis_evidence_id = e.analysis_evidence_id
+                    WHERE c.user_id = ?
+                      AND c.contribution_type IN ('SOLE_AUTHOR', 'CO_AUTHORED')
+                ),
+                -- 저장소 하나 안에서 그 규칙의 모든 절이 본인 근거로 덮였는가
+                holds AS (
+                    SELECT mine.analysis_id, r.tech_id, r.rule_type
+                    FROM evidence_rule r
+                    JOIN evidence_rule_clause cl
+                      ON cl.rule_id = r.rule_id AND cl.registry_version = r.registry_version
+                    JOIN mine ON mine.rule_id = r.rule_id
+                    WHERE cl.role = 'REQUIRED'
+                    GROUP BY mine.analysis_id, r.tech_id, r.rule_id, r.rule_type
+                    HAVING count(DISTINCT cl.fact_type)
+                         = count(DISTINCT cl.fact_type) FILTER (
+                               WHERE cl.fact_type IN (
+                                   SELECT m2.fact_type FROM mine m2
+                                   WHERE m2.analysis_id = mine.analysis_id
+                                     AND m2.rule_id = r.rule_id))
+                )
+                SELECT tech_id, max(rule_type) AS level
+                FROM holds GROUP BY tech_id
+                """, (rs, row) -> new TechnologyLevel(
+                        rs.getString("tech_id"), rs.getString("level")),
+                // LATEST_PER_REPOSITORY 에 하나, mine CTE 에 하나.
+                userId, userId);
+    }
+
     /** 화면 상단 지표. 기술 수·L2 이상·저장소 수·마지막 분석 시각. */
     public ProfileSummary summary(long userId) {
         return jdbc.queryForObject(LATEST_PER_REPOSITORY + """
@@ -164,16 +230,19 @@ public class TechnologyProfileStore {
                 LEFT JOIN analysis_evidence e ON e.analysis_id = l.analysis_id
                 GROUP BY l.repository_id, l.repository_full_name, l.commit_sha, l.completed_at
                 ORDER BY l.completed_at DESC
-                """, (rs, row) -> {
-                    var completedAt = rs.getTimestamp("completed_at");
-                    return new AnalyzedRepository(
-                            rs.getString("repository_id"),
-                            rs.getString("repository_full_name"),
-                            rs.getString("commit_sha"),
-                            completedAt == null ? null : completedAt.toInstant(),
-                            rs.getInt("evidence_count"));
-                },
+                """, (rs, row) -> new AnalyzedRepository(
+                        rs.getString("repository_id"),
+                        rs.getString("repository_full_name"),
+                        rs.getString("commit_sha"),
+                        // 정렬이 NULL 을 뒤로 보내도 그런 행만 있는 저장소가 있을 수
+                        // 있다. summary() 도 같은 값을 이렇게 다룬다.
+                        completedAt(rs.getTimestamp("completed_at")),
+                        rs.getInt("evidence_count")),
                 userId);
+    }
+
+    private static java.time.Instant completedAt(java.sql.Timestamp value) {
+        return value == null ? null : value.toInstant();
     }
 
     /** 그 버전의 레지스트리가 아는 기술인지. 오타와 "근거 0건"을 구분하려고 본다. */
@@ -184,6 +253,9 @@ public class TechnologyProfileStore {
                 WHERE t.tech_id = ? AND g.status IN ('CURRENT', 'RETIRED')
                 """, Integer.class, techId);
         return found != null && found > 0;
+    }
+
+    public record TechnologyLevel(String techId, String level) {
     }
 
     public record TechnologyVerdict(String techId, String displayName, String repositoryLevel,

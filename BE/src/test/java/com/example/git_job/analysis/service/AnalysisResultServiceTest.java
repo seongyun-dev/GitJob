@@ -19,8 +19,8 @@ import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload.Status;
 import com.example.git_job.analysis.event.TechnologyCandidate;
 import com.example.git_job.analysis.event.TechnologyVerdict;
-import com.example.git_job.analysis.outbox.AnalysisEvidenceStore;
-import com.example.git_job.analysis.outbox.TechnologyCandidateStore;
+import com.example.git_job.analysis.store.AnalysisEvidenceStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore;
 import com.example.git_job.analysis.repository.AnalysisJobRepository;
 import com.example.git_job.analysis.service.AnalysisResultService.Applied;
 import java.time.Instant;
@@ -67,7 +67,7 @@ class AnalysisResultServiceTest {
                         List.of("spring-boot.l1.import"))),
                 List.of(new EvidenceItem("spring-boot.l1.import", "IMPORT",
                         "src/App.java", 3, 3, Map.of("MODULE", "org.springframework.boot"),
-                        "import org.springframework.boot.SpringApplication;")),
+                        "import org.springframework.boot.SpringApplication;", null)),
                 List.of(new TechnologyCandidate(TechnologyCandidate.Ecosystem.MAVEN,
                         "com.h2database:h2", "runtimeOnly", 1)),
                 new AnalysisStats(50, 82, 471, 55, 1932742, 250)));

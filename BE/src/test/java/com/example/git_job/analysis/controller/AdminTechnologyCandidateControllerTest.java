@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.example.git_job.analysis.outbox.TechnologyCandidateStore.Ranked;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService.RegistryStatus;
 import com.example.git_job.auth.domain.Role;

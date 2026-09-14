@@ -739,3 +739,149 @@ def test_unsafe_analysis_id_is_rejected_before_claim_or_cleanup(tmp_path, analys
     assert claims.claimed == []
     assert cloner.calls == []
     assert cloner.cleaned == []
+
+
+# -- line authorship --------------------------------------------------------
+
+
+def _git(repository, *args, **env):
+    import subprocess
+
+    subprocess.run(
+        ["git", *args],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        env={
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_SYSTEM": "/dev/null",
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "GIT_AUTHOR_NAME": "A",
+            "GIT_AUTHOR_EMAIL": "a@example.com",
+            "GIT_COMMITTER_NAME": "A",
+            "GIT_COMMITTER_EMAIL": "a@example.com",
+            **env,
+        },
+    )
+
+
+def _repository_with_history(root, *, shallow: bool):
+    """근거가 가리키는 파일이 실제로 blame 되는 체크아웃."""
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+
+    origin = root / "origin"
+    (origin / "src/main/java").mkdir(parents=True)
+    _git(origin.parent, "init", "--quiet", "--initial-branch", "main", str(origin))
+    (origin / "src/main/java/App.java").write_text(
+        "package a;\nimport b.C;\nimport org.springframework.boot.SpringApplication;\n",
+        encoding="utf-8",
+    )
+    _git(origin, "add", ".")
+    _git(origin, "commit", "-m", "first")
+
+    if not shallow:
+        return origin
+
+    checkout = root / "shallow"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--depth", "1", f"file://{origin}", str(checkout)],
+        check=True,
+        capture_output=True,
+    )
+    return checkout
+
+
+class MatchingRegistry:
+    """App.java 의 import 를 실제로 맞춰 근거를 만드는 레지스트리."""
+
+    def load(self, registry_version):
+        from analysis.rules import Clause, Mapping, Predicate, Rule, RuleSet
+
+        return RuleSet(
+            registry_version=registry_version,
+            mappings=(
+                Mapping(
+                    "spring-boot", "IMPORT_PATH", "JAVA",
+                    "org.springframework.boot", "PREFIX",
+                ),
+            ),
+            rules=(
+                Rule(
+                    rule_id="spring-boot.l1.import",
+                    tech_id="spring-boot",
+                    rule_type="L1",
+                    language=None,
+                    evaluation_scope="REPOSITORY",
+                    priority=50,
+                    clauses=(
+                        Clause(
+                            clause_id=1, group_no=1, clause_key="resolved-tech",
+                            role="REQUIRED", fact_type="IMPORT", min_match_count=1,
+                            predicates=(
+                                Predicate("TECH_ID", "EXACT", None, ("spring-boot",)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+
+def _evidence_of(results) -> list[dict]:
+    assert results.published, "발행된 결과가 없으면 이 테스트는 아무것도 지키지 않는다"
+    return json.loads(results.published[0][2])["payload"]["evidence"]
+
+
+def test_authorship_is_attached_when_the_checkout_has_history(tmp_path):
+    checkout = _repository_with_history(tmp_path, shallow=False)
+    results = FakeResults()
+    cloner = FakeCloner(tmp_path, result=CloneResult(path=checkout, bytes_on_disk=10))
+
+    build(
+        tmp_path, cloner=cloner, registry=MatchingRegistry(),
+        results=results.publisher(), attribute_authors=True,
+    ).handle(message(event()))
+
+    evidence = _evidence_of(results)
+    assert evidence, "근거가 없으면 기여 판정을 확인할 수 없다"
+    assert any(item["commit_sha"] is not None for item in evidence)
+
+
+def test_a_shallow_checkout_publishes_no_authorship_instead_of_a_wrong_one(tmp_path):
+    """이 기능에서 가장 중요한 테스트다.
+
+    얕은 클론에서 blame 은 실패하지 않고 모든 줄을 tip 커밋에 돌린다. 그것을
+    그대로 실으면 팀원의 코드가 전부 마지막에 푸시한 사람의 기여가 된다.
+    분석 자체는 계속돼야 하므로 실패가 아니라 "없음"으로 나가야 한다.
+    """
+    checkout = _repository_with_history(tmp_path, shallow=True)
+    results = FakeResults()
+    cloner = FakeCloner(tmp_path, result=CloneResult(path=checkout, bytes_on_disk=10))
+
+    outcome = build(
+        tmp_path, cloner=cloner, registry=MatchingRegistry(),
+        results=results.publisher(), attribute_authors=True,
+    ).handle(message(event()))
+
+    assert outcome.action == "parsed", "기여 판정 실패가 분석을 깨뜨리면 안 된다"
+    evidence = _evidence_of(results)
+    assert evidence
+    assert all(item["commit_sha"] is None for item in evidence)
+
+
+def test_authorship_is_off_by_default(tmp_path):
+    # 히스토리 클론을 쓰지 않는 배포가 blame 비용을 내면 안 된다.
+    checkout = _repository_with_history(tmp_path, shallow=False)
+    results = FakeResults()
+    cloner = FakeCloner(tmp_path, result=CloneResult(path=checkout, bytes_on_disk=10))
+
+    build(
+        tmp_path, cloner=cloner, registry=MatchingRegistry(),
+        results=results.publisher(),
+    ).handle(message(event()))
+
+    assert all(item["commit_sha"] is None for item in _evidence_of(results))

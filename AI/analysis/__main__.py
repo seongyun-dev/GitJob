@@ -70,11 +70,17 @@ def build() -> AnalysisConsumer:
 
     work_root = work_root_from_env()
     work_root.mkdir(parents=True, exist_ok=True)
+
+    # 기여 판정을 켜면 히스토리가 필요하다. 얕은 체크아웃에서 blame 은 실패하지
+    # 않고 모든 줄을 tip 커밋에 돌리므로, 둘을 따로 켜게 두면 조용히 틀린 값이
+    # 나오는 설정이 만들어진다. 한 스위치로 묶는다.
+    attribute_authors = _flag("ANALYSIS_ATTRIBUTE_AUTHORS", default=False)
     cloner = RepositoryCloner(
         work_root=work_root,
         github_base_url=os.getenv("GITHUB_CLONE_BASE_URL", "https://github.com"),
         timeout_seconds=_int("ANALYSIS_CLONE_TIMEOUT_SECONDS", 600),
         max_bytes=_int("ANALYSIS_MAX_REPOSITORY_BYTES", 2 * 1024 * 1024 * 1024),
+        with_history=attribute_authors,
     )
 
     dlq_topic = (
@@ -153,12 +159,27 @@ def build() -> AnalysisConsumer:
         results_v3=results_v3,
         dlq_topic=dlq_topic,
         max_attempts=_int("ANALYSIS_MAX_ATTEMPTS", 5),
+        attribute_authors=attribute_authors,
         dlq_transport=(
             transport_from_env(default_client_id="gitjob-analysis-dlq")
             if dlq_topic
             else None
         ),
     )
+
+
+def _flag(name: str, *, default: bool) -> bool:
+    """Read a boolean switch. Anything unrecognised keeps the default.
+
+    Not `bool(os.getenv(...))`: that reads "false" and "0" as true, which would
+    turn on a full clone for a deployment that tried to turn it off.
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def result_destination_from_env(

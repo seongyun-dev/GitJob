@@ -1,4 +1,4 @@
-package com.example.git_job.analysis.outbox;
+package com.example.git_job.analysis.store;
 
 import com.example.git_job.analysis.event.EvidenceItem;
 import java.nio.charset.StandardCharsets;
@@ -32,8 +32,8 @@ public class AnalysisEvidenceStore {
             INSERT INTO analysis_evidence
                 (analysis_id, user_id, rule_id, file_path, start_line, end_line,
                  fact_type, fact_payload, code_snippet, snippet_hash,
-                 matched_at, registry_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                 matched_at, registry_version, commit_sha)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
             """;
 
     private final JdbcTemplate jdbc;
@@ -62,6 +62,9 @@ public class AnalysisEvidenceStore {
             ps.setString(10, sha256(item.codeSnippet()));
             ps.setTimestamp(11, matched);
             ps.setString(12, registryVersion);
+            // NULL 은 "작성자 미확인"이다. 기여 없음과 구분해야 하므로 빈 문자열로
+            // 바꾸지 않는다.
+            ps.setString(13, item.commitSha());
         });
         return java.util.Arrays.stream(applied).flatMapToInt(java.util.Arrays::stream).sum();
     }

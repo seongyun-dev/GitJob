@@ -93,6 +93,23 @@ class RepositoryCloner:
     github_base_url: str = "https://github.com"
     timeout_seconds: int = 600
     max_bytes: int = 2 * 1024 * 1024 * 1024
+    #: Fetch the whole history instead of one commit.
+    #:
+    #: Contribution analysis needs it: `git blame` on a shallow checkout does not
+    #: fail, it attributes every line to the single commit that was fetched. The
+    #: answer looks fine and is wrong, which is worse than an error.
+    #:
+    #: Measured on spring-petclinic, blaming 40 files:
+    #:
+    #:     depth 1                 clone 1.4s   disk  3MB   blame  2.1s  (wrong)
+    #:     full                    clone 4.0s   disk 13MB   blame  2.7s
+    #:     --filter=blob:none      clone 2.5s   disk  4MB   blame 10m37s
+    #:     --filter=tree:0         clone 3.0s   disk  3MB   blame 35m18s
+    #:
+    #: Partial clones save a second on the fetch and pay it back 240-800x in
+    #: blame, because every missing blob is a round trip. Full history is the
+    #: only option that both works and finishes.
+    with_history: bool = False
 
     def fetch(self, full_name: str, commit_sha: str, into: str) -> CloneResult:
         target = self._target(into)
@@ -103,17 +120,9 @@ class RepositoryCloner:
         url = f"{self.github_base_url.rstrip('/')}/{full_name}.git"
         self._git(["init", "--quiet"], target, "init")
         self._git(["remote", "add", "origin", url], target, "remote")
+        depth = [] if self.with_history else ["--depth", "1"]
         self._git(
-            [
-                "-c",
-                "protocol.version=2",
-                "fetch",
-                "--depth",
-                "1",
-                "--quiet",
-                "origin",
-                commit_sha,
-            ],
+            ["-c", "protocol.version=2", "fetch", *depth, "--quiet", "origin", commit_sha],
             target,
             "fetch",
         )

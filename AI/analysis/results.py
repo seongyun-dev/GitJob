@@ -127,6 +127,17 @@ class EvidenceItem(BaseModel):
     #: SCOPE, LANGUAGE, FILE_PATH). Free-form so a new fact type needs no contract change.
     fact_payload: dict[str, Any]
     code_snippet: str | None = Field(default=None, max_length=2000)
+    #: The commit that last changed this line, from `git blame`.
+    #:
+    #: `None` when authorship could not be read -- a shallow checkout, a file
+    #: git could not blame, or contribution analysis turned off. The backend
+    #: reads that as "not verified" rather than guessing.
+    #:
+    #: Deliberately the commit and not the author. Deciding whose commit it is
+    #: needs the requesting user's identity, and this payload travels a topic
+    #: that outlives their consent. The backend resolves it where the token
+    #: already lives.
+    commit_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
 
     @model_validator(mode="after")
     def _line_range(self) -> EvidenceItem:

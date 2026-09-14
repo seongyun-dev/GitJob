@@ -110,7 +110,7 @@ class RepositoryAnalysisResultEventTest {
     @Test
     void refusesAnInvertedLineRange() {
         assertThrows(IllegalArgumentException.class,
-                () -> new EvidenceItem("r", "IMPORT", "a.java", 10, 9, Map.of(), null));
+                () -> new EvidenceItem("r", "IMPORT", "a.java", 10, 9, Map.of(), null, null));
     }
 
     @Test
@@ -148,7 +148,7 @@ class RepositoryAnalysisResultEventTest {
                 List.of(verdict()),
                 List.of(new EvidenceItem("spring-boot.l1.java-import", "IMPORT",
                         "src/main/java/App.java", 3, 3,
-                        Map.of("MODULE", "org.springframework.boot.SpringApplication"), null)),
+                        Map.of("MODULE", "org.springframework.boot.SpringApplication"), null, null)),
                 List.of(new TechnologyCandidate(Ecosystem.MAVEN,
                         "org.postgresql:postgresql", "runtimeOnly", 1)),
                 new AnalysisStats(50, 82, 471, 17, 1932742, 1400));

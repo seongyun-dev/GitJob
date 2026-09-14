@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.git_job.analysis.controller.dto.TechnologyEvidenceResponse.LevelGroup;
-import com.example.git_job.analysis.outbox.TechnologyProfileStore.EvidenceLine;
+import com.example.git_job.analysis.query.TechnologyProfileStore.EvidenceLine;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

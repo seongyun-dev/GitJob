@@ -1,24 +1,18 @@
 import { Link } from 'react-router'
-import type { TechnologyProfile } from '@/features/evidence/api/types'
 import {
   AnalysisContextPanel,
   ReinforcementPanel,
 } from '@/features/evidence/components/EvidenceSidePanels'
-import { EvidenceRows } from '@/features/evidence/components/EvidenceRows'
 import { EvidenceTable } from '@/features/evidence/components/EvidenceTable'
-import { DesignMockBadge } from '@/mocks/DesignMockBadge'
-import { withDesignFixture } from '@/mocks/designFixtures'
+import type { TechnologyVerdict } from '@/features/evidence/api/technologiesApi'
 import {
-  ANALYSIS_CONTEXT_FOOTER,
-  ANALYSIS_CONTEXT_REPOS,
-  EVIDENCE_SUMMARY,
-  REINFORCEMENT_NEEDED,
-} from '@/mocks/fixtures/evidenceScreen'
-import { TECHNOLOGY_PROFILE } from '@/mocks/fixtures/technologyProfile'
+  profileErrorMessage,
+  useTechnologyProfile,
+} from '@/features/evidence/hooks/useTechnologyProfile'
+import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
 import { PageFootnote } from '@/shared/ui/DataRegion'
 import { LevelLegend } from '@/shared/ui/LevelBadge'
 import { StatStrip } from '@/shared/ui/StatStrip'
-import type { StatItem } from '@/shared/ui/StatStrip'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
@@ -28,10 +22,16 @@ import { StateCard } from '@/shared/ui/StateCard'
  * v2 구조: hero(+우측 CTA 2개) → 지표 4연 스트립 → `956/372` split
  * (기술별 판정 표 | 근거 보강 필요 + ANALYSIS CONTEXT) → 각주.
  *
- * Evidence 결과 목록 API가 develop에 없다(S15P21E102-134 미착수). 그래서 값은
- * 디자인 fixture에서 오고 `VITE_DESIGN_FIXTURES=on`일 때만 채워진다. 꺼져 있으면
- * 아래 `StateCard`들이 그대로 보인다 — 그게 현재 develop의 실제 모습이다.
- * 규칙과 켜는 법은 `src/mocks/README.md`.
+ * 기술 목록은 `GET /me/technologies`에서 읽는다. Level 판정은 BE가 하고 FE는
+ * 계산하지 않는다.
+ *
+ * PERSONAL 은 본인이 쓴 근거만으로 같은 규칙을 다시 판정한 값이라 언제나
+ * REPOSITORY 이하다. 둘의 차이가 "저장소에는 있으나 본인 기여가 확인되지 않았다"를
+ * 뜻한다.
+ *
+ * null 은 "본인이 안 썼다"가 아니라 확인되지 않았다는 뜻이다 -- 기여 판정을 끄고
+ * 돌린 분석이거나, 얕은 체크아웃이거나, GitHub 이 커밋을 계정과 연결하지 못한
+ * 경우다. 그래서 "미판정"으로 쓰고 L0 로 표시하지 않는다.
  *
  * v2 hero 우측의 `분석 완료 | 분석 전` 세그먼트는 아트보드에서 상태를 바꿔 보기
  * 위한 디자인 도구 장치라 옮기지 않는다. 그 옆 CTA 두 개는 실제 이동이라 남긴다.
@@ -40,54 +40,45 @@ import { StateCard } from '@/shared/ui/StateCard'
  */
 
 /**
- * v2가 hero 아래에 두는 네 지표.
- *
- * 이름과 기준은 제품 정의라 값이 없어도 보여준다. 값이 없을 때 `0`으로 채우지 않는
- * 것이 `StatStrip`의 규약이다 — `0`은 "확인했더니 없었다"는 다른 사실이 된다.
+ * v2가 hero 아래에 두는 네 지표. 이름과 기준은 제품 정의라 지금 보여줄 수 있고,
+ * 값은 Evidence 결과 목록 API가 준다(S15P21E102-134 미착수).
  */
-function toStats(profile: TechnologyProfile | null): readonly StatItem[] {
-  const counts =
-    profile === null
-      ? null
-      : {
-          confirmed: `${EVIDENCE_SUMMARY.confirmedTechCount}개`,
-          l2: `${EVIDENCE_SUMMARY.personalL2OrAbove}개`,
-          reinforce: `${EVIDENCE_SUMMARY.needsMoreEvidence}개`,
-          l0: `${EVIDENCE_SUMMARY.declarationOnly}개`,
-        }
+export function EvidenceOverviewPage() {
+  const profile = useTechnologyProfile()
+  const summary = profile.data?.summary
+  const technologies = profile.data?.technologies ?? []
+  const analyzedNothing = (profile.data?.repositories.length ?? 0) === 0
 
-  return [
+  /**
+   * v2 가 hero 아래에 두는 네 지표.
+   *
+   * 값이 없을 때 `0`이나 `-`로 채우지 않는다. `0`은 "분석했더니 없었다"는 거짓이
+   * 되고 `-`는 무엇을 기다리는지 알려주지 않는다. `StatStrip`이 note 문자열만
+   * 받으므로 수치도 문자열로 넣는다.
+   */
+  const stats = [
     {
       label: '확인된 기술',
-      note: counts?.confirmed ?? '분석 후 표시',
-      caption: 'Personal Evidence 기준',
+      note: summary === undefined ? '분석 후 표시' : `${summary.technologyCount}개`,
+      caption: 'Repository Level 기준',
     },
     {
-      label: 'Personal L2 이상',
-      note: counts?.l2 ?? '분석 후 표시',
-      caption: '본인 Commit으로 확인된 범위',
+      label: 'L2 이상',
+      note: summary === undefined ? '분석 후 표시' : `${summary.advancedCount}개`,
+      caption: '코드에서 실제로 다룬 기술',
     },
     {
-      label: '근거 보강 필요',
-      note: counts?.reinforce ?? '분석 후 표시',
-      caption: 'Repository Level보다 낮음',
+      label: '분석한 Repository',
+      note: summary === undefined ? '분석 후 표시' : `${summary.repositoryCount}개`,
+      caption: '저장소별 최신 분석 기준',
     },
     {
-      label: '선언만 확인 · L0',
-      note: counts?.l0 ?? '분석 후 표시',
-      caption: '의존성 선언 · 사용 코드 없음',
+      label: '마지막 분석',
+      note:
+        summary?.analyzedAt == null ? '기록 없음' : formatDateTime(summary.analyzedAt),
+      caption: '가장 최근 성공한 분석',
     },
-  ]
-}
-
-export function EvidenceOverviewPage() {
-  /*
-   * 실제 값 자리는 `null`이다. 조회 API가 붙으면 이 자리가
-   * `useQuery(queryKeys.analysisProfile(id), fetchTechnologyProfile).data`가 되고,
-   * fixture 인수만 지우면 된다. 화면 코드는 그대로 쓴다.
-   */
-  const profile = withDesignFixture<TechnologyProfile | null>(null, () => TECHNOLOGY_PROFILE)
-
+  ] as const
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -96,8 +87,7 @@ export function EvidenceOverviewPage() {
           title="내 GitHub에서 확인된 기술"
           description="Evidence는 점수가 아니라 근거입니다. Personal은 본인 Commit으로 확인된 범위, Repository는 저장소 전체 기준입니다."
         />
-        <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-          <DesignMockBadge />
+        <div className="flex shrink-0 flex-wrap gap-2.5">
           <Link
             to="/onboarding/repositories"
             className="rounded-xl border border-brand-line bg-white px-5 py-3 text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
@@ -114,43 +104,22 @@ export function EvidenceOverviewPage() {
       </div>
 
       <div className="mt-7">
-        <StatStrip items={toStats(profile)} />
+        <StatStrip items={stats} />
       </div>
-
-      {/*
-        부분 결과를 감추지 않는다. 일부 저장소 분석이 실패한 결과를 목록만 보여주면
-        사용자는 전체를 본 것으로 오해한다 — `missingScope`가 그 사유 문장이다.
-      */}
-      {profile?.partial === true && (
-        <div className="mt-4">
-          <StateCard
-            kind="PARTIAL"
-            title="일부 저장소만 분석됐어요"
-            description={profile.missingScope.join(' ')}
-            meta={`${profile.criteria.analyzedRepositoryCount} / ${profile.criteria.repositoryCount}`}
-          />
-        </div>
-      )}
 
       <div className="gj-split mt-4">
         <EvidenceTable>
-          {profile === null ? (
-            <StateCard
-              kind="PREPARING"
-              title="판정 결과를 아직 불러올 수 없어요"
-              description="기술별 판정을 돌려주는 조회 API가 준비되면 이 표에 채워집니다. 추정값으로 채우지 않습니다."
-            />
-          ) : (
-            <EvidenceRows profile={profile} />
-          )}
+          <TechnologyRows
+            loading={profile.isPending}
+            error={profile.isError ? profileErrorMessage(profile.error) : null}
+            analyzedNothing={analyzedNothing}
+            technologies={technologies}
+          />
         </EvidenceTable>
 
         <div className="grid gap-4">
-          <ReinforcementPanel items={profile === null ? undefined : REINFORCEMENT_NEEDED} />
-          <AnalysisContextPanel
-            repositories={profile === null ? undefined : ANALYSIS_CONTEXT_REPOS}
-            footer={profile === null ? undefined : ANALYSIS_CONTEXT_FOOTER}
-          />
+          <ReinforcementPanel />
+          <AnalysisContextPanel />
         </div>
       </div>
 
@@ -165,13 +134,102 @@ export function EvidenceOverviewPage() {
       <PageFootnote>
         Personal Level이 Repository Level보다 낮은 기술은 저장소에는 구현이 있으나 본인 기여
         근거가 확인되지 않은 경우입니다. 점수로 환산하지 않습니다.
-        {profile !== null && (
-          <>
-            {' · '}
-            {profile.judgementLimits.join(' ')}
-          </>
-        )}
       </PageFootnote>
     </div>
   )
+}
+
+/**
+ * 표 본문.
+ *
+ * 빈 상태가 둘이라 구분한다. 분석한 적이 없는 것과, 분석했는데 Registry 가 아는
+ * 기술이 하나도 안 나온 것은 사용자가 해야 할 일이 다르다.
+ */
+function TechnologyRows({
+  loading,
+  error,
+  analyzedNothing,
+  technologies,
+}: {
+  loading: boolean
+  error: string | null
+  analyzedNothing: boolean
+  technologies: TechnologyVerdict[]
+}) {
+  if (loading) {
+    return <StateCard kind="LOADING" title="불러오는 중" description="판정 결과를 읽고 있습니다." />
+  }
+  if (error !== null) {
+    return <StateCard kind="ERROR" title="판정 결과를 불러오지 못했어요" description={error} />
+  }
+  if (analyzedNothing) {
+    return (
+      <StateCard
+        kind="NO_DATA"
+        title="아직 분석한 저장소가 없어요"
+        description="저장소를 선택해 분석하면 여기에 기술별 판정이 쌓입니다."
+        action={
+          <Link to="/onboarding/repositories" className="text-tone-accent underline">
+            저장소 선택하기
+          </Link>
+        }
+      />
+    )
+  }
+  if (technologies.length === 0) {
+    return (
+      <StateCard
+        kind="INSUFFICIENT_DATA"
+        title="판정할 수 있는 기술이 없었어요"
+        description="분석은 끝났지만 Registry가 아는 기술이 저장소에서 확인되지 않았습니다."
+      />
+    )
+  }
+
+  return (
+    <ul className="px-[22px] py-2">
+      {technologies.map((technology) => (
+        <li
+          key={technology.techId}
+          className="grid items-center gap-[18px] border-b border-brand-line py-3 last:border-b-0 lg:grid-cols-[minmax(0,206fr)_150px_110px_minmax(0,319fr)_44px]"
+        >
+          <span className="truncate text-[14px] font-semibold text-brand-ink">
+            {technology.displayName}
+          </span>
+
+          {technology.personalLevel === null ? (
+            <span className="text-[12.5px] text-brand-faint">미판정</span>
+          ) : (
+            <EvidenceLevel level={technology.personalLevel} />
+          )}
+
+          <span>
+            <EvidenceLevel level={technology.repositoryLevel} />
+          </span>
+
+          <span className="truncate text-[12.5px] text-brand-faint">
+            근거 {technology.evidenceCount.toLocaleString('ko-KR')}건 · 저장소{' '}
+            {technology.repositoryCount}개
+          </span>
+
+          <Link
+            to={`/evidence/${technology.techId}`}
+            className="text-right text-[12.5px] text-tone-accent underline"
+          >
+            보기
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }

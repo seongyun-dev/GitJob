@@ -32,6 +32,7 @@ from types import FrameType
 from pydantic import ValidationError
 
 from analysis.attribution import CommitAuthorIdentityResolver, GitEvidenceAttributor
+from analysis.blame import BlameError, blame_files
 from analysis.claim import ClaimStatus, ClaimStore
 from analysis.clone import CloneError, RepositoryCloner, TransientCloneError
 from analysis.configs import ConfigReport, ConfigScanner, facts_from_configs
@@ -92,6 +93,12 @@ class AnalysisConsumer:
     transport: ConsumerTransport
     claims: ClaimStore
     cloner: RepositoryCloner
+    #: Read line authorship so the backend can judge personal level.
+    #:
+    #: Needs a checkout with history (`RepositoryCloner.with_history`). Left off
+    #: by default: it costs a full clone, and a deployment that does not use
+    #: personal level should not pay for it.
+    attribute_authors: bool = False
     parser: RepositoryParser | None = None
     scanner: ManifestScanner | None = None
     config_scanner: ConfigScanner | None = None
@@ -225,6 +232,7 @@ class AnalysisConsumer:
 
             configs = (self.config_scanner or ConfigScanner()).scan(result.path)
             judgement = self._judge(request, payload, dependencies, configs, report)
+            authorship = self._authorship(result.path, judgement)
 
             attributed_evidence = None
             personal_assessments = None
@@ -304,6 +312,7 @@ class AnalysisConsumer:
                         checkout=result.path,
                         bytes_on_disk=result.bytes_on_disk,
                         duration_ms=int((monotonic() - started) * 1000),
+                        authorship=authorship,
                         attributed_evidence=attributed_evidence,
                         personal_assessments=personal_assessments,
                     )
@@ -443,6 +452,37 @@ class AnalysisConsumer:
                 schema_version=schema,
             )
         )
+
+    def _authorship(
+        self, checkout: Path, judgement: Judgement | None
+    ) -> dict[tuple[str, int], str]:
+        """Which commit last changed each line that produced evidence.
+
+        Only the lines that matter. A repository has tens of thousands of lines
+        and a few hundred of them are evidence; blaming the rest would cost
+        minutes and be thrown away.
+
+        Empty on any failure, including a shallow checkout. That is not a
+        degraded answer -- it is the absence of one, and the backend reads a
+        missing commit as "not verified". Attributing lines from a shallow
+        checkout would credit every contributor's work to whoever pushed last,
+        silently, which is why `blame_files` refuses rather than guessing.
+        """
+        if judgement is None or not self.attribute_authors:
+            return {}
+
+        targets: dict[str, set[int]] = {}
+        for item in judgement.evidence:
+            targets.setdefault(item.fact.file, set()).add(item.fact.line)
+        if not targets:
+            return {}
+
+        try:
+            authors = blame_files(checkout, targets)
+        except BlameError as unavailable:
+            log.info("authorship unavailable: %s", unavailable)
+            return {}
+        return {(a.file_path, a.line_no): a.commit_sha for a in authors}
 
     def _personal_v4_active(self, registry_version: str) -> bool:
         """Use v4 only when both halves of personal attribution are configured."""

@@ -12,9 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.example.git_job.analysis.outbox.RegistryDraftStore;
-import com.example.git_job.analysis.outbox.TechnologyCandidateStore;
-import com.example.git_job.analysis.outbox.TechnologyCandidateStore.Ranked;
+import com.example.git_job.analysis.store.RegistryDraftStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
 import java.time.Instant;

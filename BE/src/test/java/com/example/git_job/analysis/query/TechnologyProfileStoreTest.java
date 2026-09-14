@@ -1,4 +1,4 @@
-package com.example.git_job.analysis.outbox;
+package com.example.git_job.analysis.query;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -85,6 +85,7 @@ class TechnologyProfileStoreTest {
 
     @BeforeEach
     void clearAnalyses() {
+        jdbc.update("DELETE FROM analysis_evidence_commit");
         jdbc.update("DELETE FROM analysis_evidence");
         jdbc.update("DELETE FROM analysis_outbox");
         jdbc.update("DELETE FROM analysis_job");
@@ -111,12 +112,36 @@ class TechnologyProfileStoreTest {
                 """, analysisId, userId, ruleId, path, line, line, Timestamp.from(NOW), registry);
     }
 
+    private void evidenceOf(String analysisId, long userId, String ruleId, String path,
+            int line, String factType) {
+        jdbc.update("""
+                INSERT INTO analysis_evidence (analysis_id, user_id, rule_id, file_path,
+                    start_line, end_line, fact_type, fact_payload, matched_at, registry_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, '{}'::jsonb, ?, ?)
+                """, analysisId, userId, ruleId, path, line, line, factType,
+                Timestamp.from(NOW), registry);
+    }
+
     private String ruleOf(String techId, String ruleType) {
         return jdbc.queryForObject("""
                 SELECT rule_id FROM evidence_rule
                 WHERE tech_id = ? AND rule_type = ? AND registry_version = ?
                 ORDER BY rule_id LIMIT 1
                 """, String.class, techId, ruleType, registry);
+    }
+
+
+    /** 그 근거를 본인이 썼다고 기록한다. */
+    private void mine(String analysisId, String ruleId, String path, int line) {
+        jdbc.update("""
+                INSERT INTO analysis_evidence_commit
+                    (analysis_evidence_id, analysis_id, repository_id, commit_sha,
+                     user_id, contribution_type, matched_line_count)
+                SELECT e.analysis_evidence_id, e.analysis_id, ?, ?, ?, 'SOLE_AUTHOR', 1
+                FROM analysis_evidence e
+                WHERE e.analysis_id = ? AND e.rule_id = ? AND e.file_path = ?
+                  AND e.start_line = ?
+                """, "111", SHA, USER, analysisId, ruleId, path, line);
     }
 
     @Test
@@ -132,18 +157,6 @@ class TechnologyProfileStoreTest {
 
         assertEquals(1, verdicts.size());
         assertEquals("lombok", verdicts.getFirst().techId());
-    }
-
-    @Test
-    @DisplayName("완료 시각 없는 레거시 행보다 완료된 분석을 최신으로 고른다")
-    void completedAnalysisWinsOverLegacyRowWithoutCompletedAt() {
-        job("an_legacy", USER, "111", "octocat/app", "SUCCEEDED", null);
-        job("an_completed", USER, "111", "octocat/app", "SUCCEEDED", NOW.minusSeconds(60));
-        evidence("an_legacy", USER, ruleOf("junit", "L1"), "Legacy.java", 1);
-        evidence("an_completed", USER, ruleOf("lombok", "L1"), "Completed.java", 1);
-
-        assertEquals(List.of("lombok"), store.verdicts(USER).stream()
-                .map(TechnologyProfileStore.TechnologyVerdict::techId).toList());
     }
 
     @Test
@@ -230,17 +243,6 @@ class TechnologyProfileStoreTest {
     }
 
     @Test
-    @DisplayName("완료 시각 없는 레거시 분석도 저장소 목록에서 읽을 수 있다")
-    void legacyAnalysisWithoutCompletedAtHasANullTimestamp() {
-        job("an_legacy", USER, "111", "octocat/legacy", "SUCCEEDED", null);
-
-        var repositories = store.repositories(USER);
-
-        assertEquals(1, repositories.size());
-        assertNull(repositories.getFirst().completedAt());
-    }
-
-    @Test
     @DisplayName("근거는 파일과 라인, 커밋까지 함께 온다")
     void evidenceCarriesWhatAPermalinkNeeds() {
         job("an_a", USER, "111", "octocat/app", "SUCCEEDED", NOW);
@@ -260,5 +262,117 @@ class TechnologyProfileStoreTest {
     void aTypoIsNotTheSameAsNoEvidence() {
         assertTrue(store.isKnownTechnology("spring-boot"));
         assertFalse(store.isKnownTechnology("spirng-boot"));
+    }
+
+    // -- Personal Level ----------------------------------------------------
+
+    @Test
+    @DisplayName("본인이 쓴 근거가 없으면 Personal Level 도 없다")
+    void noAuthoredEvidenceMeansNoPersonalLevel() {
+        job("an_a", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+        evidence("an_a", USER, ruleOf("junit", "L1"), "T.java", 1);
+
+        assertTrue(store.personalLevels(USER).isEmpty());
+    }
+
+    @Test
+    @DisplayName("절이 하나인 규칙은 그 절만 본인 것이면 성립한다")
+    void aSingleClauseRuleHoldsWhenThatClauseIsMine() {
+        job("an_a", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+        evidence("an_a", USER, ruleOf("junit", "L1"), "T.java", 1);
+        mine("an_a", ruleOf("junit", "L1"), "T.java", 1);
+
+        assertEquals(List.of("L1"), store.personalLevels(USER).stream()
+                .map(TechnologyProfileStore.TechnologyLevel::level).toList());
+    }
+
+    @Test
+    @DisplayName("절이 둘인 규칙은 한쪽만 본인 것이면 성립하지 않는다")
+    void aTwoClauseRuleNeedsBothClausesAuthored() {
+        // 엄격 판정의 핵심이다. import 만 본인이 썼다면 "호출까지 했다"가 아니다.
+        String l2 = ruleOf("spring-boot", "L2");
+        job("an_a", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+        evidenceOf("an_a", USER, l2, "A.java", 1, "IMPORT");
+        evidenceOf("an_a", USER, l2, "A.java", 2, "API_CALL");
+        mine("an_a", l2, "A.java", 1);
+
+        assertTrue(store.personalLevels(USER).isEmpty());
+
+        mine("an_a", l2, "A.java", 2);
+        assertEquals(List.of("L2"), store.personalLevels(USER).stream()
+                .map(TechnologyProfileStore.TechnologyLevel::level).toList());
+    }
+
+    @Test
+    @DisplayName("저장소를 가로질러 절을 조립하지 않는다")
+    void clausesFromDifferentRepositoriesDoNotCombine() {
+        // A 에서 import, B 에서 호출을 본인이 썼다고 L2 가 되면 안 된다.
+        // 어느 저장소에서도 둘 다 한 적이 없다.
+        String l2 = ruleOf("spring-boot", "L2");
+        job("an_a", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+        job("an_b", USER, "222", "octocat/b", "SUCCEEDED", NOW);
+        evidenceOf("an_a", USER, l2, "A.java", 1, "IMPORT");
+        evidenceOf("an_b", USER, l2, "B.java", 1, "API_CALL");
+        mine("an_a", l2, "A.java", 1);
+        mine("an_b", l2, "B.java", 1);
+
+        assertTrue(store.personalLevels(USER).isEmpty());
+    }
+
+    @Test
+    @DisplayName("UNVERIFIED 와 PARTIAL_EDIT 는 세지 않는다")
+    void unverifiedAndPartialEditDoNotCount() {
+        job("an_a", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+        evidence("an_a", USER, ruleOf("junit", "L1"), "T.java", 1);
+        jdbc.update("""
+                INSERT INTO analysis_evidence_commit
+                    (analysis_evidence_id, analysis_id, repository_id, commit_sha,
+                     user_id, contribution_type, matched_line_count)
+                SELECT analysis_evidence_id, analysis_id, '111', ?, ?, 'PARTIAL_EDIT', 0
+                FROM analysis_evidence WHERE analysis_id = 'an_a'
+                """, SHA, USER);
+
+        assertTrue(store.personalLevels(USER).isEmpty());
+    }
+
+    @Test
+    @DisplayName("남의 기여는 내 Personal Level 이 되지 않는다")
+    void anotherUsersContributionIsNotMine() {
+        job("an_a", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+        evidence("an_a", USER, ruleOf("junit", "L1"), "T.java", 1);
+        jdbc.update("""
+                INSERT INTO analysis_evidence_commit
+                    (analysis_evidence_id, analysis_id, repository_id, commit_sha,
+                     user_id, contribution_type, matched_line_count)
+                SELECT analysis_evidence_id, analysis_id, '111', ?, ?, 'SOLE_AUTHOR', 1
+                FROM analysis_evidence WHERE analysis_id = 'an_a'
+                """, SHA, OTHER_USER);
+
+        assertTrue(store.personalLevels(USER).isEmpty());
+    }
+
+    @Test
+    @DisplayName("끝난 시각이 없는 성공 분석이 있어도 목록이 터지지 않는다")
+    void aSucceededJobWithoutACompletionTimeDoesNotBreakTheList() {
+        // completed_at 은 nullable 이고 PostgreSQL 의 DESC 기본값은 NULLS FIRST 다.
+        // 정렬만 고치고 가드를 빼면 그런 저장소만 있을 때 다시 터진다.
+        job("an_null", USER, "111", "octocat/app", "SUCCEEDED", null);
+
+        var repositories = store.repositories(USER);
+
+        assertEquals(1, repositories.size());
+        assertNull(repositories.getFirst().completedAt());
+    }
+
+    @Test
+    @DisplayName("끝난 시각이 있는 분석이 최신으로 뽑힌다")
+    void theJobWithACompletionTimeWinsOverOneWithout() {
+        // NULLS FIRST 면 시각 없는 행이 '최신'이 되어 근거가 통째로 사라진다.
+        job("an_null", USER, "111", "octocat/app", "SUCCEEDED", null);
+        job("an_done", USER, "111", "octocat/app", "SUCCEEDED", NOW);
+        evidence("an_done", USER, ruleOf("junit", "L1"), "T.java", 1);
+
+        assertEquals(1, store.verdicts(USER).size());
+        assertEquals(NOW, store.repositories(USER).getFirst().completedAt());
     }
 }

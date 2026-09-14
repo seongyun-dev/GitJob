@@ -98,6 +98,7 @@ def completed_result(
     checkout: Path | None = None,
     bytes_on_disk: int = 0,
     duration_ms: int = 0,
+    authorship: dict[tuple[str, int], str] | None = None,
     attributed_evidence: tuple[AttributedEvidence, ...] | None = None,
     personal_assessments: tuple[PersonalTechnologyAssessment, ...] | None = None,
 ) -> (
@@ -106,7 +107,24 @@ def completed_result(
     | RepositoryAnalysisResultV3
     | RepositoryAnalysisResultV4
 ):
+    """Build the result event.
+
+    Two attribution paths live here because they answer different questions.
+    `authorship` maps (file, line) to the commit that last changed it and rides
+    on every schema version; the backend resolves those commits to accounts
+    afterwards, where the token already is. `attributed_evidence` is the v4
+    path, where a resolver has already handed the worker the logins and the
+    event carries SELF/OTHER/UNKNOWN outright.
+
+    They are not alternatives to choose between here. A caller supplies
+    whichever it has, and a v4 event carries both -- `commit_sha` is on the
+    base evidence item, so inheritance gives it to V4 as well.
+
+    Absent `authorship` leaves `commit_sha=None`. The backend reads that as
+    unverified rather than crediting the line to whoever pushed last.
+    """
     payload = request.payload
+    authored = authorship or {}
     common44 = bool(
         judgement.rule_pack_version
         and judgement.rule_pack_content_sha256
@@ -252,6 +270,7 @@ def completed_result(
                     end_line=item.fact.line,
                     fact_payload=dict(item.fact.fields),
                     code_snippet=snippets.get((item.fact.file, item.fact.line)),
+                    commit_sha=authored.get((item.fact.file, item.fact.line)),
                     **(
                         {
                             "fact_id": item.fact_id,

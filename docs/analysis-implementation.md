@@ -28,7 +28,7 @@
 17. [실측 결과](#17-실측-결과)
 18. [테스트](#18-테스트)
 19. [실행 방법](#19-실행-방법)
-20. [다음 — 커밋 기여도](#20-다음--커밋-기여도)
+20. [⑫ 개인 판정 — 누가 이 근거를 썼는가](#20--개인-판정--누가-이-근거를-썼는가)
 21. [아직 안 한 것](#21-아직-안-한-것)
 
 ---
@@ -46,7 +46,7 @@
         │  gitjob.repository-analysis.requests.v1
         ▼
    [Worker] 요청 선점 (fencing token)                                    ③
-        ├─ git clone --depth 1                                          ④
+        ├─ git clone (기여 판정을 켜면 full)                             ④
         ├─ tree-sitter 파싱 → import / API 호출                          ⑤
         ├─ 매니페스트 스캔 → 선언된 의존성                                ⑥
         └─ 판정: 사실 → 기술 → L0~L3                                     ⑦
@@ -63,6 +63,10 @@
         ▼
    [조회 API] 쌓인 근거를 화면이 읽어 간다                                 ⑪
         GET /me/technologies · /me/technologies/{techId}/evidence
+        │
+        ▼
+   [개인 판정] 본인이 쓴 근거만으로 같은 규칙을 다시 판정                    ⑫
+        blame → 커밋 → GitHub 계정 → 절 커버리지
 ```
 
 핵심 설계 결정 세 가지만 먼저 말하면:
@@ -143,12 +147,16 @@ technology_registry          버전 카탈로그 (DRAFT / CURRENT / RETIRED)
 technology_candidate             레지스트리에 없던 의존성
 technology_candidate_observation 그걸 누가 어디서 봤는지
 
+── 기여 ───────────────────────────────────────────
+analysis_evidence_commit     근거 한 줄을 누가 썼는지 (V14 이후 채워진다)
+repository_commit            커밋 → GitHub 계정 캐시
+
 ── 사용자 ─────────────────────────────────────────
 user                         GitHub 로그인 + role (USER / ADMIN)
                              access_token_enc — AES-GCM 암호문 (V12)
 ```
 
-마이그레이션은 Flyway `V1` ~ `V13`이고 `ddl-auto=validate`다. 스키마는
+마이그레이션은 Flyway `V1` ~ `V14`이고 `ddl-auto=validate`다. 스키마는
 마이그레이션 파일만이 바꾼다.
 
 | 버전 | 내용 |
@@ -166,6 +174,7 @@ user                         GitHub 로그인 + role (USER / ADMIN)
 | V11 | 레지스트리 스냅샷 메타데이터 (C조) |
 | V12 | GitHub Access Token 암호화 (`access_token_enc`) |
 | V13 | `analysis_job.repository_full_name` |
+| V14 | 근거 작성자 (`analysis_evidence.commit_sha` + 멱등 제약) |
 
 ### 4-2. 레지스트리 버전이 기본키에 들어간 이유
 
@@ -355,10 +364,14 @@ except TransientCloneError as transient:
 ## 8. ④ 클론
 
 ```bash
-git clone --depth 1 --branch <branch> --single-branch <url> <tmpdir>
+git fetch --depth 1 origin <sha>        # 기본
+git fetch origin <sha>                  # ANALYSIS_ATTRIBUTE_AUTHORS=true
 ```
 
-- **`--depth 1`** — 전체 히스토리는 필요 없다. 판정은 현재 코드로만 한다.
+- **`--depth 1`** — 기본값. 판정은 현재 코드로만 하므로 히스토리가 필요 없다.
+- **기여 판정을 켜면 히스토리를 받는다.** `git blame` 에 필요하다. 얕은 체크아웃에서
+  blame 은 실패하지 않고 모든 줄을 tip 커밋에 돌리므로, 이 둘은 한 스위치로 묶여
+  있다 ([20장](#20--개인-판정--누가-이-근거를-썼는가)).
 - **크기 상한 2GB** — 넘으면 `REPOSITORY_TOO_LARGE`로 명시적 실패.
 - **임시 디렉터리** — 처리가 끝나면 지운다. 저장소를 보관하지 않는다.
 
@@ -862,7 +875,7 @@ V13 이전 분석은 이 값이 `NULL`이라 링크를 만들지 못한다. 지�
 화면의 `PERSONAL` 칸은 항상 미판정이다. "본인 Commit이 확인된 범위"를 알려면 근거
 라인마다 작성자를 봐야 하는데 `analysis_evidence_commit`을 **아직 아무도 채우지
 않는다.** Repository Level을 대신 넣으면 화면이 "본인이 썼다"고 말하게 된다.
-[20장](#20-다음--커밋-기여도)이 그 작업이다.
+[20장](#20--개인-판정--누가-이-근거를-썼는가)이 그 작업이다.
 
 ### 빈 결과는 오류가 아니다
 
@@ -910,18 +923,44 @@ GCM에 난수 IV 16바이트를 명시했다. 인증 태그 16바이트가 붙�
 **이 컬럼으로는 조회할 수 없다.** 매번 다른 바이트가 되므로 `WHERE access_token_enc = ?`는
 절대 맞지 않는다.
 
-### 기존 토큰을 조용히 삭제하지 않는다
+### 평문을 옮기지 않았다
 
-V12는 기존 `access_token` 값이 한 건이라도 있으면 암호화 컬럼으로 전환하기 전에
-실패한다. 현재 공용 DB는 V11까지 적용됐고 2026-09-13 확인 당시 사용자와 토큰이 모두
-0건이므로 그대로 적용할 수 있다. 배포가 늦어져 토큰이 생기면 애플리케이션 메모리에서
-AES-GCM으로 암호화해 `access_token_enc`에 백필하거나, 재로그인 정책을 명시적으로
-선택한 뒤 기존 값을 비워야 한다. 암호문만 UPDATE하면 새 SQL/WAL에 평문을 다시 싣지
-않으므로 WAL은 백필 자체를 금지하는 이유가 아니다.
+백필하려면 `UPDATE` 문 안에 평문이 들어가고, 그 문장은 WAL을 타고 흐른다. 토큰이
+없는 사용자는 다음 요청에서 `GITHUB_TOKEN_INVALID` → "다시 로그인해 주세요"를 받고,
+재로그인 한 번으로 암호화된 값이 채워진다.
 
-V12의 컬럼 삭제는 과거 평문의 물리적 완전 삭제를 보장하지 않는다. 기존 테이블 저장
-공간·WAL·백업의 잔존 데이터 처리는 별도 운영 범위이며, 이 마이그레이션은 테이블
-재작성이나 백업 삭제를 수행하지 않는다.
+**대신 남아 있는 토큰을 조용히 버리지도 않는다.** V12 는 `access_token` 에 값이
+한 건이라도 있으면 컬럼을 지우기 전에 예외를 던지고 멈춘다.
+
+```sql
+IF EXISTS (SELECT 1 FROM "user" WHERE "access_token" IS NOT NULL) THEN
+    RAISE EXCEPTION 'V12 cannot drop user.access_token while GitHub tokens remain; ...';
+```
+
+토큰을 잃는 줄 모르고 배포하는 것보다, 애플리케이션에서 암호화 이관을 하든 재로그인
+정책을 택하든 **명시적으로 고른 뒤** 다시 적용하는 편이 낫다. 백필을 안 하는 것과
+가드를 두는 것은 상충하지 않는다 — 전자는 평문을 WAL 에 흘리지 않겠다는 것이고,
+후자는 그 결정의 대가를 운영자가 모르고 치르지 않게 하는 것이다.
+
+### 평문은 디스크에서 지워지지 않았다
+
+백필의 WAL 노출은 피했지만, `DROP COLUMN` 자체는 **논리적 삭제**다. PostgreSQL 은
+`pg_attribute` 에 `attisdropped` 를 세울 뿐 힙 튜플의 바이트를 건드리지 않는다.
+그 튜플이 다시 쓰이기 전까지(`UPDATE` · `VACUUM FULL` · `CLUSTER`) 회수할 수 있고,
+이미 만들어진 WAL 세그먼트와 베이스 백업에도 남아 있다.
+
+**V12 가 없앤 것은 "애플리케이션 경로로 읽히는 평문"이지 "디스크 위의 평문"이
+아니다.** 백필을 WAL 노출을 근거로 거부했으므로 같은 기준을 여기에도 적어 둔다 —
+두 조치의 보호 수준이 다르다는 것을 감추지 않기 위해서다.
+
+완전히 지우려면 `VACUUM FULL "user"` 후 기존 백업·WAL 을 폐기해야 한다.
+마이그레이션에 넣지 않은 이유가 둘이다. `VACUUM FULL` 은 트랜잭션 안에서 실행될 수
+없는데 Flyway 가 마이그레이션을 트랜잭션으로 감싸고, `ACCESS EXCLUSIVE` 락을 잡아
+그동안 `user` 테이블 접근이 전부 막힌다. 운영 절차로 다룰 일이다.
+
+> 이 설명을 V12 파일 주석이 아니라 여기에 둔 것도 이유가 있다. 적용된 마이그레이션은
+> 주석만 고쳐도 체크섬이 바뀌어 Flyway 가 거부하고, 그것을 이미 실행한 사람은
+> 전부 `repair` 를 돌려야 한다.
 
 ### 복호화 실패를 삼키지 않는다
 
@@ -964,6 +1003,48 @@ redis            L2   근거 22        axios            L1   근거  9
 Java와 TypeScript가 한 사람의 저장소에서 같이 잡혔다. `react`·`axios`가 나온 것은
 파싱이 6개 언어를 함께 본다는 증거다.
 
+### 개인 판정도 실물로 돌았다
+
+2026-09-11, 워커를 재빌드해 `cseongbo/cardGGaduekMainServiceBackend`(커밋
+`dc90016`)를 **같은 커밋으로 두 번** 돌려 `-w -M` 전후를 비교했다.
+
+```
+근거          90 건   (90건 전부 commit_sha 가 채워졌다)
+SOLE_AUTHOR   46
+UNVERIFIED    44
+```
+
+라벨 분포는 두 번이 **같다.** 줄 단위로 대조하니 한 줄이 움직였다.
+
+```
+SpendPredictionService.java:43
+  before  9734616e  (2025-08-19)
+  after   138e1ad4  (2025-08-11)
+```
+
+8/19 커밋이 그 줄의 **공백만** 고쳤다는 뜻이고, `-w`가 원래 작성자에게 돌려준
+것이다. 두 커밋 모두 작성자가 같은 팀원이라 라벨까지 바뀌지는 않았다. 수정은
+동작하고, 이 저장소에서는 결과를 바꾸지 않았다.
+
+기술별로는 이렇게 갈렸다.
+
+| 기술 | `SOLE_AUTHOR` | `UNVERIFIED` |
+|---|---|---|
+| `spring-security` | 32 | 12 |
+| `redis` | 11 | 8 |
+| `lombok` | 2 | 22 |
+| `mysql` | 1 | — |
+| `junit` | — | 2 |
+
+`lombok`이 22:2로 남의 것이다. 팀 프로젝트에서 개인 판정이 저장소 판정보다 낮게
+나오는 것이 정상이라는 증거다 — 저장소는 `lombok`을 쓰지만 이 사람이 그것을
+들여온 것은 아니다.
+
+> **컨테이너가 둘이다.** `gitjob-worker-1`과 `gitjob-analysis-worker-1`은 같은
+> 이미지를 쓰지만 컨슈머 그룹이 다르다. 저장소 분석을 처리하고
+> `ANALYSIS_ATTRIBUTE_AUTHORS`를 들고 있는 쪽은 **`gitjob-analysis-worker-1`**
+> 이다. 로그를 앞의 것에서 보면 아무 일도 안 일어난 것처럼 보인다.
+
 ### 속도
 
 `spring-projects/spring-petclinic` 한 건을 라이브 스택에서 돌린 기록:
@@ -982,7 +1063,7 @@ Java와 TypeScript가 한 사람의 저장소에서 같이 잡혔다. `react`·`
 멱등성도 확인했다 — 같은 결과를 다시 발행하면 `Result ignored, job already
 SUCCEEDED`.
 
-### 현재 DB 전체 누적
+### DB 누적 (2026-09-11 기준)
 
 ```
 analysis_job                       9   (SUCCEEDED 6 · FAILED 3)
@@ -995,17 +1076,28 @@ technology_registry                3   (CURRENT = registry-20260910.2)
 
 레지스트리는 기술 29 · 매핑 117 · 규칙 83으로 그대로다.
 
+이 숫자는 위의 기여 판정 실측 **이전**이다. 그 뒤 재분석 2건이 더해져
+`analysis_evidence_commit`과 `repository_commit`이 처음으로 채워졌다.
+
 ---
 
 ## 18. 테스트
 
 | 대상 | 결과 |
 |---|---|
-| **BE** | **264 passed · 0 failed** |
-| **AI (worker)** | **1,554 passed · 1 failed · 64 skipped** |
+| **BE** | **272 passed · 0 failed** |
+| **AI (worker)** | **1,741 passed · 1 failed · 106 skipped** |
 | **FE** | `tsc --noEmit` 통과 · `oxlint` 통과 |
 
 AI의 실패 1건(`test_registry_contracts`)은 이 작업 범위 밖의 기존 실패다.
+
+`AI/`에는 venv가 없다. 호스트 파이썬에 `pytest`가 없으므로 워커 이미지 안에서
+돌린다 — `test_analysis_blame`은 진짜 git 저장소를 만들어 쓰기 때문에 `git`이
+있는 환경이어야 한다.
+
+```bash
+docker run --rm -v "$PWD/AI:/w" -w //w gitjob/worker:local   sh -c 'pip install -q pytest && python -m pytest tests -q'
+```
 
 집계와 변환은 조용히 틀리는 종류라 실제 PostgreSQL로 고정한 것이 많다.
 
@@ -1017,6 +1109,9 @@ AI의 실패 1건(`test_registry_contracts`)은 이 작업 범위 밖의 기존 
 | `UserAccessTokenEncryptionTest` | Hibernate가 변환기를 Spring 빈으로 받아 가는지 (원시 바이트를 JDBC로 직접 확인) |
 | `SchemaValidationTest` | 엔티티 매핑이 마이그레이션과 어긋나지 않는지 |
 | `RegistryDraftStoreTest` | 초안이 CURRENT의 복사본인지, CURRENT가 언제나 하나인지 |
+| `test_analysis_blame` | 얕은 체크아웃이 거부되는지 — 거부 안 했을 때 무엇이 나왔을지까지 함께. 공백만 바꾼 커밋이 기여를 가져가지 않는지 |
+| `TechnologyProfileStoreTest` (Personal) | 절이 둘인 규칙에 한쪽만 본인 것이면 안 서는지, 저장소를 가로질러 조립하지 않는지 |
+| `test_entrypoints` | 기여 판정과 히스토리가 한 스위치인지, 기본이 off 인지 |
 
 ---
 
@@ -1075,72 +1170,203 @@ docker exec gitjob-postgres-1 psql -U gitjob -d gitjob -c "UPDATE \"user\" SET r
 
 ---
 
-## 20. 다음 — 커밋 기여도
+## 20. ⑫ 개인 판정 — 누가 이 근거를 썼는가
 
-"이 근거를 **본인이** 썼는가"를 판정하는 작업이다. 아직 구현하지 않았고, 조사해서
-나온 설계를 남겨 둔다.
+⑪까지는 **저장소**가 그 기술을 어떻게 쓰는지였다. 이 장은 **그 사람**이 어떻게
+썼는지다. 화면의 `PERSONAL` 칸이 여기서 나온다.
 
-### 이미 준비된 것
+### 점수를 만들지 않는다
 
-```
-analysis_evidence_commit   contribution_type, matched_line_count   ← 0행
-repository_commit          author_email, github_login, authored_at ← 0행
-FE ContributionLabel       주 작성자 / 공동 작업 / 일부 수정 / 미확인
-```
+Personal Level 은 **Repository Level 과 같은 판정을, 본인이 쓴 근거만으로 다시 한
+것**이다. 기여도·기간을 가중치로 더하지 않는다.
 
-FE 타입은 **비율 숫자를 받지 못하게** 막혀 있다(와이어프레임 1-1 금지). 라벨 4종만
-넣으면 된다.
+| | Repository | Personal |
+|---|---|---|
+| 규칙 | 같은 규칙 | 같은 규칙 |
+| 사실 | 모든 근거 | 본인이 쓴 근거만 |
 
-### 막는 것 세 가지
+같은 자로 재기 때문에 얻는 것이 셋이다.
 
-**① `--depth 1`이라 blame이 불가능하다.** `clone.py` 주석이 이미 예고하고 있다 —
-*"Contribution analysis will need history later; that is a larger `--depth`, not a
-different mechanism."*
+**① 두 값이 비교 가능하다.** 화면이 나란히 놓는데 한쪽이 규칙 판정이고 한쪽이
+가중치 합이면 나란히 둘 이유가 없다. 차이 자체가 정보가 되려면 같은 자여야 한다.
 
-**② 요청 페이로드에 사용자 신원이 없다.** 워커가 "누구 커밋인지" 알 방법이 없다.
-이건 의도된 것이다(`contracts.py`: *"토픽이 자격증명보다 오래 산다"*). 여기에
-이메일을 넣으면 그 원칙이 깨진다.
+**② `Personal ≤ Repository` 가 자동으로 성립한다.** 부분집합이 더 많은 규칙을
+만족할 수 없다. 각주의 *"Personal Level이 Repository Level보다 낮은 기술은 저장소에는
+구현이 있으나 본인 기여 근거가 확인되지 않은 경우"* 가 그냥 참이 된다.
 
-**③ 이메일 매칭은 밑천이 없다.** scope가 `read:user,repo`라 `/user/emails`가
-막히고 프로필 이메일도 비공개다. 지금 가진 신원은 `github_id` 하나뿐이다.
+**③ 설명할 수 있다.** "왜 personal L1인가" → *"L2 규칙의 `API_CALL` 절을 만족하는
+근거 중 본인이 쓴 것이 없다."* 파일과 라인을 그대로 가리킨다.
 
-### 제안 — GitHub에게 직접 묻는다
-
-③ 때문에 이메일 매칭을 1차 수단으로 삼으면 안 된다.
+### 흐름
 
 ```
-워커                                   BE
-────                                   ──
-히스토리 포함 클론
+워커                                    BE
+────                                    ──
+full clone (히스토리 포함)
 근거 파일만 git blame -L start,end
-  → 근거마다 "이 줄을 마지막에 바꾼 커밋 SHA"
-결과에 commit_sha 실어 보냄  ────────▶  distinct SHA를 GitHub에 조회
-  (신원 판단 안 함)                      GET /repos/{o}/{r}/commits/{sha}
-                                         → author.login 을 GitHub이 해석해 준다
-                                       repository_commit 에 캐시
-                                       본인이면 analysis_evidence_commit 기록
+  근거 ─→ 그 줄을 마지막에 바꾼 commit_sha
+결과 이벤트에 실음  ──────────────────▶  analysis_evidence.commit_sha 저장
+  (신원 판단은 안 함)                     ↓ 별도 트랜잭션
+                                        커밋 → GitHub 계정 해석
+                                        repository_commit 에 캐시
+                                        analysis_evidence_commit 적재
+                                          ↓ 조회 시점
+                                        본인 근거로 절 커버리지 재판정
 ```
 
-이메일을 한 번도 다루지 않는다. scope를 늘릴 필요도, 남의 이메일을 Kafka에 실을
-필요도 없다. 호출 비용은 저장소당 distinct 커밋 수이고, 캐시하면 재분석 때 0건이다.
+### 왜 워커가 신원을 모르는가
 
-| 라벨 | 조건 |
+워커는 **"어느 커밋"** 까지만 답하고 **"누구의 커밋"** 은 답하지 않는다. 후자를
+알려면 요청자의 신원이 필요한데, 요청 토픽은 그 신원보다 오래 산다
+(`contracts.py`: *"토픽이 자격증명보다 오래 산다"*).
+
+BE 는 이메일을 비교하지 않는다. GitHub 이 커밋의 이메일을 등록 계정과 이미
+맞춰 두었으므로 `GET /repos/{o}/{r}/commits/{sha}` 의 `author.login` 을 받아 쓴다.
+`user:email` scope 도, 남의 이메일을 우리 시스템에 들이는 일도 필요 없다.
+
+### 클론은 full 이어야 한다 — 측정으로 정했다
+
+`spring-petclinic`, 근거 파일 40개 blame:
+
+| 전략 | 클론 | 디스크 | blame | 판정 |
+|---|---|---|---|---|
+| `--depth 1` | 1.4s | 3MB | 2.1s | ❌ **답이 틀림** |
+| **`full`** | 4.0s | 13MB | 2.7s | ✅ |
+| `--filter=blob:none` | 2.5s | 4MB | **10분 37초** | ❌ |
+| `--filter=tree:0` | 3.0s | 3MB | **35분 18초** | ❌ |
+
+부분 클론은 클론에서 1~1.5초 아끼고 blame 에서 **240~800배** 돌려준다. 없는 blob
+하나하나가 원격 왕복이다.
+
+### 얕은 클론은 실패하지 않는다 — 거짓말을 한다
+
+이 작업에서 가장 중요한 발견이다.
+
+```
+blame 이 지목한 커밋 : 818c4136…  (단 하나)
+저장소의 커밋 수     : 1
+실패 건수            : 0
+```
+
+`--depth 1` 에는 커밋이 하나뿐이라 **모든 줄을 그 tip 커밋 작성자에게 돌린다.**
+출력은 멀쩡하고 오류도 없다. 검증을 "blame 이 되는가" 로 했으면 통과했을 것이다.
+
+그래서 `blame_files` 는 얕은 저장소에서 **결과를 내는 대신 거부한다.**
+
+```python
+if is_shallow(repository):
+    raise ShallowRepositoryError(...)
+```
+
+배포 스위치도 하나로 묶었다. `ANALYSIS_ATTRIBUTE_AUTHORS` 가 `with_history` 와
+`attribute_authors` 를 함께 켠다 — 따로 두면 "기여 판정만 켜고 히스토리는 끈"
+조용히 틀린 설정을 만들 수 있다.
+
+### 포맷터가 기여를 가져가지 않게 한다 — `-w -M`
+
+이 모듈의 오차는 거의 전부 *본인 기여를 놓치는* 쪽이다. 방향이 반대인 것이 딱
+하나 있었다.
+
+동료가 `import` 한 줄을 쓰고, 그 뒤에 누가 그 줄의 **들여쓰기만** 바꾼다. 기본
+`git blame`은 그 줄의 작성자를 들여쓰기를 바꾼 사람으로 옮긴다. 그러면 만들지도
+않은 기술이 그 사람의 개인 판정에 잡힌다 — 과대평가다. 다른 오차와 달리 이것만은
+없는 기여를 주장하게 된다.
+
+두 사람짜리 저장소로 재현했다.
+
+```
+커밋 1  동료가  import …SpringApplication;  을 쓴다
+커밋 2  우리가  그 줄의 들여쓰기만 바꾼다
+
+그 줄을 blame 하면
+  기본   → 커밋 2  (우리)      ❌
+  -w     → 커밋 1  (동료)      ✅
+```
+
+`-M`은 같은 이유로 파일 안에서 옮겨진 코드를 따라간다.
+
+줄을 **건드리지 않고 위치만 밀린** 경우(위에 빈 줄 하나를 넣는 식)는 git이 이미
+스스로 따라간다. `-w`가 무엇을 *더* 막는지 드러나도록 그 경우도 함께 테스트로
+고정해 뒀다.
+
+`--no-color`는 주지 않는다. `git blame`이 `--no-color-lines`·`--no-color-by-age`와
+모호하다며 거부하고, porcelain 출력은 애초에 색이 없다.
+
+### 판정: 절 커버리지, 엄격
+
+개수를 세지 않는다. `spring-security` L2 규칙은 두 절이 AND 다.
+
+```
+API_CALL    2건  (SecurityConfig.java)
+IMPORT     18건  (9개 파일)
+```
+
+IMPORT 18건을 전부 본인이 썼어도 **API_CALL 이 하나도 없으면 L1** 이다. 82건 중
+2건짜리 절이 L2 를 결정한다 — 그게 L2 의 정의(호출까지 했다)이기 때문이다.
+
+세는 것은 `SOLE_AUTHOR` 와 `CO_AUTHORED` 뿐이다. `PARTIAL_EDIT` 는 정의상 *그 근거
+줄을* 본인이 쓰지 않았다는 뜻이라 레벨의 근거가 아니다.
+
+### 순서: 저장소 안에서 판정, 저장소 밖에서 최고치
+
+```sql
+mine  AS (... WHERE c.contribution_type IN ('SOLE_AUTHOR','CO_AUTHORED'))
+holds AS (... GROUP BY mine.analysis_id, r.rule_id  -- 저장소 안에서 절 커버리지
+               HAVING 모든 REQUIRED 절이 덮였는가)
+SELECT tech_id, max(rule_type) FROM holds GROUP BY tech_id   -- 그다음 최고치
+```
+
+뒤집으면 저장소 A 의 IMPORT 와 저장소 B 의 API_CALL 을 붙여 L2 를 만든다. 어느
+저장소에서도 하지 않은 일이다. 실제로 같은 규칙이 저장소 7개에 걸쳐 있어 이 실수가
+가능하다.
+
+### 저장되는 것과 계산되는 것
+
+```
+저장                                       계산
+────                                       ────
+analysis_evidence.commit_sha   (V14)       Repository Level   ← 조회 시점
+analysis_evidence_commit                   Personal Level     ← 조회 시점
+repository_commit              커밋 캐시
+```
+
+**Level 은 어디에도 저장하지 않는다.** 근거에서 유도되는 값이라 저장하면 둘을
+맞출 책임이 생기고, 규칙 버전이 바뀌면 판정만 낡는다. 근거에 `registry_version` 이
+박혀 있으니 계산하면 자동으로 맞는다.
+
+V14 가 채운 빈칸 셋:
+
+| | 왜 |
 |---|---|
-| 주 작성자 | 근거 줄 전부가 본인 커밋 |
-| 공동 작업 | 근거 줄 일부가 본인 |
-| 일부 수정 | 근거 줄은 남이 썼지만 그 파일을 본인이 건드린 적 있음 |
-| 미확인 | 본인 흔적 없음, 또는 GitHub이 계정을 연결하지 못한 커밋 |
+| `analysis_evidence.commit_sha` | 근거가 어느 커밋에서 왔는지 |
+| `UQ_REPOSITORY_COMMIT` | 커밋 캐시의 동일성 |
+| `UQ_EVIDENCE_COMMIT_USER` | 재배달 시 기여가 두 배로 세어지는 것 방지 |
 
-### 정해야 할 것
+### 실패해도 근거를 버리지 않는다
 
-**클론 비용.** petclinic이 depth 1에 1.9MB였는데 full은 수십 MB다.
-`--filter=blob:none`이 대안인데 근거 파일만 blame하므로 유리할 수 있다. **재 보고
-정할 일**이지 지금 단정할 수 없다.
+기여 판정은 근거 적재와 **다른 트랜잭션**이다. 같은 트랜잭션이면 GitHub 이 잠깐
+느렸다는 이유로 이미 판정된 근거 651건이 롤백된다.
 
-**Personal Level을 어떻게 셀지.** L2 규칙은 `API_CALL AND IMPORT` 두 절이다. 본인이
-import 한 줄만 썼을 때 L2를 줄 것인가. 느슨하게 하면 Repository Level과 거의 같아져
-구분 자체가 의미를 잃는다. 화면 각주가 이미 *"Personal Level이 Repository Level보다
-낮은 기술은…"*이라고 둘이 자주 갈리는 것을 전제하므로 **엄격한 쪽**을 권한다.
+```java
+results.apply(event);            // 근거 커밋됨
+try {
+    authorship.attribute(job);   // 별도 트랜잭션
+} catch (RuntimeException unavailable) {
+    log.warn("authorship deferred: ...");
+}
+```
+
+커밋 조회에 상한도 뒀다. 한 분석이 사용자의 시간당 한도를 다 쓰면 그 뒤 저장소
+분석이 전부 막힌다.
+
+### null 은 "안 썼다"가 아니다
+
+`personalLevel` 이 `null` 이면 **확인되지 않았다**는 뜻이다 — 기여 판정을 끄고
+돌렸거나, 얕은 체크아웃이었거나, GitHub 이 커밋을 계정과 연결하지 못했다. 계정에
+등록하지 않은 이메일로 커밋하면 본인 코드여도 그렇게 된다.
+
+그때 기여는 **과소평가**된다. 없는 기여를 주장하는 것보다 낫다. 화면은 `L0` 가
+아니라 "미판정"으로 쓴다.
 
 ---
 
@@ -1148,7 +1374,11 @@ import 한 줄만 썼을 때 L2를 줄 것인가. 느슨하게 하면 Repository
 
 | 항목 | 상태 |
 |---|---|
-| 커밋 기여도 · Personal Level | [20장](#20-다음--커밋-기여도)의 설계까지. 구현 안 됨 |
+| ~~개인 판정 라이브 검증~~ | **끝났다.** 재빌드 후 실물로 돌려 근거 90건에 기여 판정이 붙었다([17장](#17-실측-결과)) |
+| 기존 분석 9건의 기여 판정 | 소급되지 않는다. `commit_sha`가 없어 재분석해야 한다. 지금까지 재분석한 것은 저장소 1개다 |
+| `UNVERIFIED`가 두 가지를 뭉갠다 | "팀원이 썼다"와 "GitHub이 커밋을 계정과 연결하지 못했다"가 같은 값이다. 화면에서 구분하려면 `UNLINKED_COMMIT`이 따로 필요하다 |
+| 사용 기간 | 미착수. `repository_commit.authored_at`이 채워지므로 재료는 생겼다 |
+| `CO_AUTHORED` · `PARTIAL_EDIT` | 값은 있지만 안 나온다. 근거가 한 줄짜리라 `SOLE_AUTHOR`/`UNVERIFIED`로만 갈린다 |
 | 비공개 저장소 분석 | 워커가 익명으로 clone한다. `REPOSITORY_NOT_ACCESSIBLE`로 실패 |
 | `analysis_outbox` 보존 정책 | 행이 무한히 쌓인다. 정리 배치가 필요하다 |
 | L3 규칙 | 기술 29개 중 2개만 있다 |
@@ -1172,4 +1402,6 @@ import 한 줄만 썼을 때 L2를 줄 것인가. 느슨하게 하면 Repository
 - [요청 계약](be/repository-analysis-request.md) · [결과 계약](be/repository-analysis-result.md)
 - [Outbox와 CDC](be/analysis-outbox.md)
 - [FE shared API 계약](fe/shared-api-contract.md)
+- [기술 요약 LLM 계약](ai/technology-summary-contract.md) — 판정 결과를 로컬 LLM 에
+  보내 요약을 받는 입출력. 수준은 규칙이 정하고 LLM 은 설명만 쓴다
 - [스키마 JSON](be/technology-registry-schema.json)

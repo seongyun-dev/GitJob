@@ -132,6 +132,14 @@
           ],
           "default": null,
           "title": "Code Snippet"
+        },
+        "commit_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit that last changed this line, from git blame. Null when authorship could not be read -- a shallow checkout, a file git could not blame, or contribution analysis turned off -- and the backend reads that as not verified rather than guessing. Deliberately the commit and not the author: deciding whose commit it is needs the requesting user's identity, and this payload travels a topic that outlives their consent."
         }
       },
       "required": [

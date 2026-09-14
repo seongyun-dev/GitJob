@@ -1,4 +1,4 @@
-package com.example.git_job.analysis.outbox;
+package com.example.git_job.analysis.store;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;

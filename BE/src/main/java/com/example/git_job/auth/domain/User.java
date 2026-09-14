@@ -80,6 +80,17 @@ public class User {
      * {@code analysis_repository_id}를 싣는 것도 같은 이유다.</p>
      *
      * <p>암호문은 매번 달라지므로 이 컬럼으로 조회할 수 없다.</p>
+     *
+     * <p><b>V12 이전의 평문은 디스크에서 지워지지 않았다.</b> PostgreSQL 의 DROP
+     * COLUMN 은 논리적 삭제라 힙 튜플의 바이트가 그대로 남고, 그 튜플이 다시
+     * 쓰이기 전까지(UPDATE · VACUUM FULL · CLUSTER) 회수할 수 있다. 이미 만들어진
+     * WAL 세그먼트와 베이스 백업에도 남아 있다. 즉 V12 가 없앤 것은 "애플리케이션
+     * 경로로 읽히는 평문"이지 "디스크 위의 평문"이 아니다.</p>
+     *
+     * <p>완전히 지우려면 {@code VACUUM FULL "user"} 후 기존 백업과 WAL 을 폐기해야
+     * 한다. 마이그레이션에 넣지 않은 것은 VACUUM FULL 이 트랜잭션 안에서 실행될 수
+     * 없고(Flyway 가 마이그레이션을 트랜잭션으로 감싼다) ACCESS EXCLUSIVE 락을
+     * 잡기 때문이다 -- 운영 절차로 다룰 일이다.</p>
      */
     @Convert(converter = EncryptedStringConverter.class)
     @Column(name = "access_token_enc")

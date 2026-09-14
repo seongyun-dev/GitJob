@@ -3,8 +3,8 @@ package com.example.git_job.analysis.service;
 import com.example.git_job.analysis.domain.AnalysisJob;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultEvent;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload;
-import com.example.git_job.analysis.outbox.AnalysisEvidenceStore;
-import com.example.git_job.analysis.outbox.TechnologyCandidateStore;
+import com.example.git_job.analysis.store.AnalysisEvidenceStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore;
 import com.example.git_job.analysis.repository.AnalysisJobRepository;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -86,4 +86,18 @@ public class AnalysisResultService {
     }
 
     public enum Applied { SUCCEEDED, FAILED, ALREADY_TERMINAL, UNKNOWN_JOB }
+
+    /**
+     * 기여 판정을 붙일 대상. {@link Applied#SUCCEEDED} 일 때만 값이 있다.
+     *
+     * <p>이 서비스가 직접 붙이지 않는 이유는 트랜잭션 경계 때문이다. 기여 판정은
+     * GitHub 을 호출하는데, 그것이 느리거나 한도에 걸렸다고 이미 판정된 근거를
+     * 되돌릴 이유가 없다.</p>
+     */
+    public AnalysisJob attributionTarget(RepositoryAnalysisResultEvent event, Applied applied) {
+        if (applied != Applied.SUCCEEDED) {
+            return null;
+        }
+        return jobs.findById(event.payload().analysisId()).orElse(null);
+    }
 }

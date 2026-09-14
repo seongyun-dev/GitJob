@@ -1,6 +1,6 @@
 package com.example.git_job.analysis.controller.dto;
 
-import com.example.git_job.analysis.outbox.TechnologyProfileStore.EvidenceLine;
+import com.example.git_job.analysis.query.TechnologyProfileStore.EvidenceLine;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -78,12 +78,24 @@ public record TechnologyEvidenceResponse(
     private static List<FileGroup> files(List<EvidenceLine> rows) {
         Map<FileKey, List<EvidenceLine>> byFile = new LinkedHashMap<>();
         for (EvidenceLine line : rows) {
-            byFile.computeIfAbsent(new FileKey(line.repositoryFullName(), line.filePath()),
+            byFile.computeIfAbsent(
+                    new FileKey(line.repositoryFullName(), line.filePath()),
                     key -> new ArrayList<>()).add(line);
         }
         return byFile.values().stream().map(FileGroup::from).toList();
     }
 
+    /**
+     * 한 파일을 가리키는 키.
+     *
+     * <p>문자열을 이어 붙여 키를 만들지 않는다. 구분자를 골라야 하고, 그 구분자가
+     * 경로에 나타날 수 있으며, 소스에 눈에 안 보이는 문자를 넣게 된다 -- 실제로
+     * 이 자리에 NUL 바이트가 박혀 파일 전체가 바이너리로 취급된 적이 있다.
+     * 레코드를 쓰면 그 선택 자체가 없어진다.</p>
+     *
+     * <p>{@code repository} 는 null 일 수 있다. V13 이전 분석이 그렇고, 레코드의
+     * equals/hashCode 가 null 을 그대로 다룬다.</p>
+     */
     private record FileKey(String repository, String filePath) {
     }
 

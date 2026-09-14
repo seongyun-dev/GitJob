@@ -1,10 +1,11 @@
 package com.example.git_job.analysis.controller.dto;
 
-import com.example.git_job.analysis.outbox.TechnologyProfileStore.AnalyzedRepository;
-import com.example.git_job.analysis.outbox.TechnologyProfileStore.ProfileSummary;
-import com.example.git_job.analysis.outbox.TechnologyProfileStore.TechnologyVerdict;
+import com.example.git_job.analysis.query.TechnologyProfileStore.AnalyzedRepository;
+import com.example.git_job.analysis.query.TechnologyProfileStore.ProfileSummary;
+import com.example.git_job.analysis.query.TechnologyProfileStore.TechnologyVerdict;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * "내 GitHub 에서 확인된 기술" 화면 한 장.
@@ -29,12 +30,16 @@ public record TechnologyProfileResponse(
     private static final String INSUFFICIENT_DATA = "INSUFFICIENT_DATA";
 
     public static TechnologyProfileResponse of(ProfileSummary summary,
-            List<TechnologyVerdict> verdicts, List<AnalyzedRepository> repositories) {
+            List<TechnologyVerdict> verdicts, List<AnalyzedRepository> repositories,
+            Map<String, String> personalLevels) {
         return new TechnologyProfileResponse(
                 status(verdicts, repositories),
                 new Summary(summary.technologyCount(), summary.advancedCount(),
                         summary.repositoryCount(), summary.analyzedAt()),
-                verdicts.stream().map(Technology::from).toList(),
+                verdicts.stream()
+                        .map(verdict -> Technology.from(verdict,
+                                personalLevels.get(verdict.techId())))
+                        .toList(),
                 repositories.stream().map(Repository::from).toList());
     }
 
@@ -55,9 +60,10 @@ public record TechnologyProfileResponse(
     /**
      * 기술 한 줄.
      *
-     * <p>{@code personalLevel} 은 언제나 {@code null} 이다. 본인 Commit 범위를 알려면
-     * 근거 라인마다 작성자를 봐야 하는데 워커가 아직 그것을 하지 않는다. Repository
-     * Level 을 대신 넣으면 화면이 "본인이 썼다"고 말하게 되므로 비워 둔다.</p>
+     * <p>{@code personalLevel} 은 본인이 쓴 근거만으로 같은 규칙을 다시 판정한
+     * 결과다. 기여 판정이 아직 없는 기술은 {@code null} 인데, 그것은 "본인이 안
+     * 썼다"가 아니라 "확인되지 않았다"는 뜻이다 -- 화면이 그 둘을 구분해야 한다.
+     * Repository Level 을 대신 채우면 화면이 "본인이 썼다"고 말하게 된다.</p>
      */
     public record Technology(
             String techId,
@@ -68,8 +74,8 @@ public record TechnologyProfileResponse(
             int repositoryCount,
             String registryVersion
     ) {
-        public static Technology from(TechnologyVerdict verdict) {
-            return new Technology(verdict.techId(), verdict.displayName(), null,
+        public static Technology from(TechnologyVerdict verdict, String personalLevel) {
+            return new Technology(verdict.techId(), verdict.displayName(), personalLevel,
                     verdict.repositoryLevel(), verdict.evidenceCount(),
                     verdict.repositoryCount(), verdict.registryVersion());
         }

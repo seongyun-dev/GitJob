@@ -40,7 +40,8 @@ public class TechnologyProfileController {
     ) {
         Profile profile = profiles.profile(CurrentUser.idOf(user));
         return ResponseEntity.ok(ApiResponse.success(TechnologyProfileResponse.of(
-                profile.summary(), profile.technologies(), profile.repositories())));
+                profile.summary(), profile.technologies(), profile.repositories(),
+                profile.personalLevels())));
     }
 
     /** 한 기술을 무엇으로 판정했는지. 레지스트리에 없는 기술이면 404 다. */

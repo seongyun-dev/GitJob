@@ -477,6 +477,17 @@ services:
       # partitions to someone else, who then clones the same repository again.
       KAFKA_MAX_POLL_INTERVAL_MS: ${ANALYSIS_MAX_POLL_INTERVAL_MS:-900000}
       ANALYSIS_CLONE_TIMEOUT_SECONDS: ${ANALYSIS_CLONE_TIMEOUT_SECONDS:-600}
+      # 근거 한 줄을 누가 썼는지 읽어 Personal Level 을 만들 수 있게 한다.
+      #
+      # 켜면 전체 히스토리를 클론한다. 얕은 체크아웃에서 git blame 은 실패하지
+      # 않고 모든 줄을 tip 커밋에 돌리므로, 히스토리 없이 기여만 읽으면 팀원의
+      # 코드가 전부 마지막에 푸시한 사람의 것이 된다. 그래서 스위치가 하나다.
+      #
+      # 측정(spring-petclinic, 근거 40 파일):
+      #   depth 1  클론 1.4s / 디스크  3MB / blame 2.1s  (답이 틀림)
+      #   full     클론 4.0s / 디스크 13MB / blame 2.7s
+      # 부분 클론(--filter)은 blame 에서 240~800배 느려 쓸 수 없다.
+      ANALYSIS_ATTRIBUTE_AUTHORS: ${ANALYSIS_ATTRIBUTE_AUTHORS:-false}
       ANALYSIS_CLAIM_LEASE_SECONDS: ${ANALYSIS_CLAIM_LEASE_SECONDS:-900}
       # A repository that times out is a transient failure on every delivery.
       # Without a cap it is redelivered forever and its partition never moves.

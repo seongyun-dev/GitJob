@@ -1,6 +1,7 @@
 package com.example.git_job.analysis.client;
 
 import com.example.git_job.analysis.client.dto.GithubBranchResponse;
+import com.example.git_job.analysis.client.dto.GithubCommitResponse;
 import com.example.git_job.analysis.client.dto.GithubRepositoryResponse;
 import com.example.git_job.global.config.GithubOAuthProperties;
 import com.example.git_job.global.exceptions.CustomException;
@@ -107,6 +108,35 @@ public class GithubRepositoryClient {
             throw new CustomException(ErrorCode.BRANCH_NOT_FOUND);
         }
         return response;
+    }
+
+    /**
+     * 커밋 하나에 연결된 GitHub 계정.
+     *
+     * <p>이메일 비교를 하지 않기 위한 호출이다. GitHub이 커밋의 이메일을 등록된
+     * 계정과 이미 맞춰 두었으므로 그 결과를 받아 쓴다 -- 사용자의 주소 목록도,
+     * 남의 이메일을 다루는 일도 필요 없다.</p>
+     *
+     * <p>없는 커밋은 {@code null}을 돌려준다. 예외로 올리지 않는 것은, 기여 판정을
+     * 못 하는 것이 분석 실패는 아니기 때문이다. force push 로 사라진 커밋이 근거에
+     * 남아 있을 수 있고, 그 하나 때문에 나머지 근거를 버릴 이유가 없다.</p>
+     */
+    public GithubCommitResponse fetchCommit(
+            String accessToken, String owner, String repository, String commitSha) {
+        URI uri = repositoryUri(owner, repository)
+                .pathSegment("commits", commitSha)
+                .build()
+                .encode()
+                .toUri();
+        try {
+            return get(uri, accessToken, GithubCommitResponse.class,
+                    ErrorCode.REPOSITORY_NOT_FOUND);
+        } catch (CustomException notFound) {
+            if (notFound.getErrorCode() == ErrorCode.REPOSITORY_NOT_FOUND) {
+                return null;
+            }
+            throw notFound;
+        }
     }
 
     private UriComponentsBuilder repositoryUri(String owner, String repository) {

@@ -1,6 +1,7 @@
 import type {
   AnalysisAccepted,
   AnalysisRequestBody,
+  AnalysisStatus,
   BranchSummary,
   RepositorySummary,
 } from '@/features/analysis/api/types'
@@ -50,4 +51,9 @@ export function fetchBranches(
 /** 등록만 하고 결과를 기다리지 않는다. 신규는 202, 진행 중 Job 재안내는 200이며 본문 형태는 같다. */
 export function requestAnalysis(body: AnalysisRequestBody): Promise<AnalysisAccepted> {
   return post<AnalysisAccepted>('/analyses', body)
+}
+
+/** 진행 상황. 종료 상태가 될 때까지 화면이 되풀이해 부른다. */
+export function fetchAnalysisStatus(analysisId: string): Promise<AnalysisStatus> {
+  return get<AnalysisStatus>(`/analyses/${encodeURIComponent(analysisId)}`)
 }

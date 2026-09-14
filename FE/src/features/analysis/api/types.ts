@@ -59,8 +59,8 @@ export interface AnalysisRequestBody {
  * 와이어프레임 확정 6종과 집합이 다르다(계약 3장, 미결 2). 신규 등록은 항상
  * `QUEUED`지만 진행 중 Job을 재안내하면 나머지 값도 올 수 있다.
  *
- * `statusUrl`은 `/api/v1/analyses/{analysisId}`를 가리키나 그 GET endpoint는
- * 아직 BE에 없다(S15P21E102-133 미구현). 화면은 이 값을 링크로 쓰지 않는다.
+ * `statusUrl`은 `/api/v1/analyses/{analysisId}`를 가리킨다. 이 endpoint는 BE에
+ * 구현됐다 — 응답 모양은 `AnalysisStatus`다.
  */
 export interface AnalysisAccepted {
   analysisId: string
@@ -94,3 +94,38 @@ export interface AnalysisTarget {
 export type AnalysisRequestOutcome =
   | { target: AnalysisTarget; ok: true; accepted: AnalysisAccepted }
   | { target: AnalysisTarget; ok: false; error: unknown }
+
+/**
+ * 분석 진행 상황 · `GET /analyses/{analysisId}` 응답.
+ *
+ * BE `AnalysisStatusResponse`가 원본이다. `analysisStatus`는 다섯 값으로 접혀서
+ * 온다 — 저장은 열려 있고 응답 경계에서만 닫으므로, 화면이 모르는 값을 받는 일은
+ * 없다.
+ *
+ * `completedCount`/`totalCount`는 **저장소 수**이지 파일 수가 아니다. 지금은 분석
+ * 한 건이 저장소 하나라 `totalCount`가 1이고 `progressPercent`는 0 또는 100만
+ * 나온다. 워커가 중간 진행을 발행하지 않아 그 사이 값을 만들 근거가 없다.
+ */
+export interface AnalysisStatus {
+  analysisId: string
+  /** QUEUED · RUNNING · SUCCEEDED · PARTIAL_SUCCEEDED · FAILED */
+  analysisStatus: string
+  currentStage: string
+  completedCount: number
+  totalCount: number
+  progressPercent: number
+  requestedAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  /** 종료 상태면 null. 아니면 이 초만큼 뒤에 다시 물으라는 뜻이다 */
+  pollAfterSeconds: number | null
+  errorCode: string | null
+  stages: { stage: string; status: string; processed: number; total: number }[]
+  repositories: {
+    repositoryId: string
+    branchName: string
+    commitSha: string
+    status: string
+    errorCode: string | null
+  }[]
+}

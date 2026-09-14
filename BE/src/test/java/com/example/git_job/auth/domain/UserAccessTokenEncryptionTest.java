@@ -112,7 +112,9 @@ class UserAccessTokenEncryptionTest {
     @Test
     @DisplayName("토큰이 없는 사용자는 NULL 로 남는다")
     void aUserWithoutATokenStaysNull() {
-        // GitHub 연결을 하지 않은 사용자는 빈 암호문 대신 NULL이어야 한다.
+        // GitHub 을 연결한 적 없는 사용자와, V12 뒤 아직 재로그인하지 않은
+        // 기존 사용자가 모두 이 상태다. 빈 암호문이 들어가면 "토큰이 있는데
+        // 비어 있다"가 되어 재로그인 안내가 나가지 않는다.
         saveUser(null);
 
         assertNull(jdbc.queryForObject(

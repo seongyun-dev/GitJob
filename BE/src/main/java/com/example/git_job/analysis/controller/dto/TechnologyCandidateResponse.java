@@ -1,6 +1,6 @@
 package com.example.git_job.analysis.controller.dto;
 
-import com.example.git_job.analysis.outbox.TechnologyCandidateStore.Ranked;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import java.time.Instant;
 
 /**

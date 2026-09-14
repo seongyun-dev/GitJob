@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   fetchBranches,
   fetchRepositories,
+  fetchAnalysisStatus,
   requestAnalysis,
 } from '@/features/analysis/api/repositoriesApi'
 import type { AnalysisRequestOutcome, AnalysisTarget } from '@/features/analysis/api/types'
@@ -86,6 +87,29 @@ export function useAnalysisRequests() {
           ? { target, ok: true, accepted: result.value }
           : { target, ok: false, error: result.reason }
       })
+    },
+  })
+}
+
+/**
+ * 진행 상황 폴링.
+ *
+ * 다음 호출 간격을 서버가 정한다 -- 응답의 `pollAfterSeconds`다. 화면이 상수를
+ * 들고 있으면 워커가 느려졌을 때 같이 조정할 방법이 없다. 종료 상태에서는 BE가
+ * `null`을 주고, 그때 폴링을 멈춘다.
+ *
+ * `isTerminalJobStatus`를 쓰지 않는 이유는 이 응답의 상태 집합이 다섯 값으로
+ * 접혀 오기 때문이다(`PARTIAL_SUCCEEDED` 포함). 종료 판정을 두 곳에서 하면
+ * 어긋난다 -- 서버가 준 `pollAfterSeconds`가 유일한 기준이다.
+ */
+export function useAnalysisStatus(analysisId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.analysis(analysisId ?? ''),
+    queryFn: () => fetchAnalysisStatus(analysisId as string),
+    enabled: analysisId !== undefined && analysisId !== '',
+    refetchInterval: (query) => {
+      const seconds = query.state.data?.pollAfterSeconds
+      return seconds === null || seconds === undefined ? false : seconds * 1000
     },
   })
 }

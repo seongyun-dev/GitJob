@@ -239,3 +239,43 @@ def test_a_broker_failure_is_raised_rather_than_swallowed():
         assert "broker is down" in str(raised)
     else:  # pragma: no cover - the point of the test
         raise AssertionError("a failed publish must not be silent")
+
+
+# -- line authorship --------------------------------------------------------
+
+
+def test_authorship_rides_on_the_evidence_it_belongs_to():
+    # 근거 한 줄과 그 줄을 쓴 커밋이 같은 항목에 있어야 BE 가 둘을 잇는다.
+    report, dependencies = reports()
+    blamed = {("src/main/java/App.java", 3): "b" * 40}
+
+    result = completed_result(
+        request(), judgement(), report, dependencies, authorship=blamed
+    )
+
+    assert result.payload.evidence[0].commit_sha == "b" * 40
+
+
+def test_evidence_without_authorship_carries_none_not_a_guess():
+    """얕은 클론이나 blame 실패의 결과다.
+
+    여기서 다른 값을 채우면 BE 는 그것을 기여로 읽는다. 근거가 없다는 사실은
+    없음으로 표현해야 한다.
+    """
+    report, dependencies = reports()
+
+    result = completed_result(request(), judgement(), report, dependencies)
+
+    assert result.payload.evidence[0].commit_sha is None
+
+
+def test_authorship_for_other_lines_does_not_leak_onto_this_one():
+    # (파일, 줄) 이 키다. 파일만 맞고 줄이 다르면 붙으면 안 된다.
+    report, dependencies = reports()
+    blamed = {("src/main/java/App.java", 99): "c" * 40}
+
+    result = completed_result(
+        request(), judgement(), report, dependencies, authorship=blamed
+    )
+
+    assert result.payload.evidence[0].commit_sha is None
