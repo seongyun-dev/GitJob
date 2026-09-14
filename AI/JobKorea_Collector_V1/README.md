@@ -17,6 +17,11 @@ $env:PYTHONPATH = "AI"
 Remove-Item Env:PYTHONPATH
 ```
 
+`WEBHDFS_URL`이 설정된 환경에서는 로컬 저장 뒤 공통 Raw 경로에 업로드하고,
+Raw 파일의 존재·크기 및 release gate를 통과한 실행만
+`analysis_input/jobs/jobkorea/`에 게시합니다. 로컬 확인만 할 때는
+`--no-upload-raw`를 추가합니다.
+
 GUI는 아래 명령으로 실행합니다.
 
 ```powershell
@@ -32,9 +37,10 @@ Remove-Item Env:PYTHONPATH
 
 ## 출력
 
-각 실행은 `data/jobkorea/<pipeline-run-id>/` 아래에 JSON 계약 출력, CSV 요약,
-`manifest.json`, OCR 처리 상태와 오류 정보를 남깁니다. 원본 수집 스냅샷은
-저장소에 커밋하지 않습니다.
+각 실행은 `data/jobkorea/<pipeline-run-id>/` 아래에 공통 계약 파일
+`job_analysis_input.json`, `postings.csv`, `manifest.json`과 OCR 처리 상태 및
+오류 정보를 남깁니다. 공통 ID는 `JOBKOREA:<source-posting-id>` 형식입니다.
+원본 수집 스냅샷은 저장소에 커밋하지 않습니다.
 
 ## V1 인수인계 참고
 

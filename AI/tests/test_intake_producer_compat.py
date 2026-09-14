@@ -6,11 +6,10 @@ from dataclasses import replace
 from datetime import date, datetime
 
 import pytest
-from test_job_cohort import criteria
-from test_jobkorea import FakeJobKoreaClient
-
 from JobKorea_Collector_V1.crawler import CrawlConfig, JobKoreaCrawler, write_outputs
 from JobKorea_Collector_V1.dates import SEOUL
+from test_job_cohort import criteria
+from test_jobkorea import FakeJobKoreaClient
 from worker.intake import IntakeConfig, IntakeRunner, load_job_output
 
 
@@ -33,7 +32,7 @@ def test_jobkorea_actual_writer_completion_is_accepted(tmp_path):
     collected = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
     paths = write_outputs(collected, tmp_path)
 
-    assert paths["json"].name == "job_analysis_input_v1.json"
+    assert paths["json"].name == "job_analysis_input.json"
     assert_manifest_binds_exact_bytes(paths)
     loaded = load_job_output(paths["manifest"], tmp_path)
 
@@ -47,19 +46,17 @@ def test_actual_career_gamejob_writer_completion_is_accepted_and_tamper_rejected
     tmp_path, source
 ):
     if source == "CAREER":
-        from test_career import FakeClient, _config, _list_page, _row
-
         from Career_Collector_V1.crawler import CareerCrawler as Crawler
         from Career_Collector_V1.crawler import write_outputs as write
+        from test_career import FakeClient, _config, _list_page, _row
 
         collected = Crawler(
             _config(), FakeClient({"H0": [_list_page(_row("1"))]})
         ).run()
     else:
-        from test_gamejob import LIST_HTML, FakeClient, _config
-
         from GameJob_Collector_V1.crawler import GameJobCrawler as Crawler
         from GameJob_Collector_V1.crawler import write_outputs as write
+        from test_gamejob import LIST_HTML, FakeClient, _config
 
         collected = Crawler(_config(), FakeClient([LIST_HTML])).run()
 
@@ -67,9 +64,8 @@ def test_actual_career_gamejob_writer_completion_is_accepted_and_tamper_rejected
     assert_manifest_binds_exact_bytes(paths)
     loaded = load_job_output(paths["manifest"], tmp_path)
     assert loaded.collection_issues == ()
-    from test_compute_matching import REGISTRY, MemoryStore
-
     from registry.mapper import RegistryMapper
+    from test_compute_matching import REGISTRY, MemoryStore
     from worker.intake import publish_job_output
 
     # Execute the real publication guard and calculation, not only watcher dispatch.
@@ -106,13 +102,11 @@ def test_actual_career_gamejob_writer_completion_is_accepted_and_tamper_rejected
 @pytest.mark.parametrize("source", ["SARAMIN", "WORKNET"])
 def test_actual_saramin_worknet_writer_completion_is_accepted(tmp_path, source):
     if source == "SARAMIN":
-        from test_saramin import LIST_HTML, FakeClient, _config
-
         from Saramin_Collector_V1.crawler import SaraminCrawler as Crawler
         from Saramin_Collector_V1.crawler import write_outputs as write
+        from test_saramin import LIST_HTML, FakeClient, _config
     else:
         from test_worknet import LIST_HTML, FakeClient, _config
-
         from Worknet_Collector_V1.crawler import WorknetCrawler as Crawler
         from Worknet_Collector_V1.crawler import write_outputs as write
 
@@ -134,14 +128,12 @@ def test_existing_manifest_cannot_complete_new_batch_during_writer_replay(
     from test_job_cohort import criteria
 
     if source == "SARAMIN":
-        from test_saramin import LIST_HTML, FakeClient, _config
-
         from Saramin_Collector_V1 import crawler
+        from test_saramin import LIST_HTML, FakeClient, _config
 
         collected = crawler.SaraminCrawler(_config(), FakeClient([LIST_HTML])).run()
     elif source == "WORKNET":
         from test_worknet import LIST_HTML, FakeClient, _config
-
         from Worknet_Collector_V1 import crawler
 
         collected = crawler.WorknetCrawler(_config(), FakeClient([LIST_HTML])).run()
@@ -164,8 +156,8 @@ def test_existing_manifest_cannot_complete_new_batch_during_writer_replay(
     batch = collected.batch.model_copy(
         update={"records": (first, *collected.batch.records[1:])}
     )
-    counter = "stats" if source == "JOBKOREA" else "counts"
-    error_field = "detail_failures" if source == "JOBKOREA" else "detail_errors"
+    counter = "counts"
+    error_field = "detail_errors"
     manifest = {
         **collected.manifest,
         counter: {**collected.manifest[counter], error_field: 1},

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import os
-import re
 import sys
 from collections import Counter
 from collections.abc import Callable
@@ -17,14 +17,19 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urljoin
 
+from job.collector import dataset_snapshot_id_for, pipeline_run_id_for
+from job.collector.analysis_input import publish_from_env
+from job.collector.raw_sink import sink_from_env, write_upload_record
+from job.collector.raw_verify import verify_run
 from job.contracts import (
     JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
     BodyStatus,
     JobAnalysisInputBatch,
     JobPostingInput,
-    PostingStatus,
 )
+from pydantic import ValidationError
 
+from .adapter import SOURCE_SITE, normalize_jobkorea_posting
 from .client import (
     JobKoreaBlockedError,
     JobKoreaHttpClient,
@@ -38,13 +43,11 @@ from .ocr import (
     image_suffix,
 )
 from .parser import DetailContent, JobListItem, parse_detail, parse_job_list
-from .technology import extract_technology_mentions
 
 COLLECTOR_VERSION = "jobkorea-crawler/v2"
 DEFAULT_BASE_URL = "https://www.jobkorea.co.kr"
 DEFAULT_DUTY_CODE = "1000229"
 DEFAULT_DUTY_NAME = "백엔드개발자"
-_SAFE_RUN_ID_RE = re.compile(r"[^A-Za-z0-9_.+-]+")
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
@@ -320,7 +323,7 @@ class JobKoreaCrawler:
         seen_ids: set[str] = set()
         selected: list[tuple[JobListItem, datetime]] = []
         stats: Counter[str] = Counter()
-        stopped_reason = "max_pages"
+        scan_stop_reason = "max_pages"
         cursor = Cursor.load(self.config.cursor_path, self.config)
         already = set(cursor.collected_ids)
 
@@ -342,7 +345,7 @@ class JobKoreaCrawler:
                     raise JobKoreaHttpError(
                         "JobKorea list response contained no parseable postings"
                     )
-                stopped_reason = "empty_page"
+                scan_stop_reason = "empty_page"
                 break
 
             page_dates: list[datetime] = []
@@ -387,10 +390,10 @@ class JobKoreaCrawler:
                 and page_dates
                 and max(page_dates) < start_at
             ):
-                stopped_reason = "before_start_date"
+                scan_stop_reason = "before_start_date"
                 break
             if len(rows) < self.config.page_size:
-                stopped_reason = "short_page"
+                scan_stop_reason = "short_page"
                 break
         else:
             warnings.append("max_pages reached before the date boundary was observed")
@@ -405,6 +408,7 @@ class JobKoreaCrawler:
 
         records: list[JobPostingInput] = []
         detail_failures: list[dict[str, str]] = []
+        invalid_records: list[dict[str, str]] = []
         body_status_counts: Counter[str] = Counter()
         posting_status_counts: Counter[str] = Counter()
         ocr_stats: Counter[str] = Counter()
@@ -547,58 +551,39 @@ class JobKoreaCrawler:
                 deadline_label,
                 default_year=self.config.start_date.year,
             )
-            posting_status = _posting_status(
-                deadline_label,
-                deadline,
-                collected_at,
+            image_sources = (
+                tuple(self._resolve_image_sources(row, detail.image_sources))
+                if detail is not None
+                else ()
             )
-            raw_artifact_uri = (
-                self.detail_url(row.posting_id)
-                if body_status is BodyStatus.IMAGE_ONLY
-                else None
-            )
-            technology_mentions = extract_technology_mentions(
-                row.title,
-                description_text,
-            )
-            technology_mention_count += len(technology_mentions)
-            content_basis = "\n".join(
-                [
-                    row.posting_id,
-                    row.company_name,
-                    row.title,
-                    description_text or "",
-                    deadline_label or "",
-                ]
-            )
-            record = JobPostingInput(
-                source_record_id=f"jobkorea:{row.posting_id}",
-                canonical_job_id=None,
-                source_site="JOBKOREA",
-                source_posting_id=row.posting_id,
-                source_url=row.source_url,
-                company_name=row.company_name or "(회사명 미확인)",
-                title=row.title,
-                raw_job_category=self.config.duty_name,
-                career_level=row.career_level,
-                region=row.region,
-                description_text=description_text,
-                raw_artifact_uri=raw_artifact_uri,
-                body_status=body_status,
-                posting_status=posting_status,
-                posted_at=posted_at,
-                deadline=deadline,
-                collected_at=collected_at,
-                content_hash=sha256(content_basis.encode("utf-8")).hexdigest(),
-                technology_mentions=technology_mentions,
-            )
+            try:
+                record = normalize_jobkorea_posting(
+                    item=row,
+                    detail=detail,
+                    description_text=description_text,
+                    image_sources=image_sources,
+                    posted_at=posted_at,
+                    deadline=deadline,
+                    collected_at=collected_at,
+                    detail_fetched=self.config.fetch_details,
+                    detail_error=detail_error,
+                )
+            except ValidationError as error:
+                invalid_records.append(
+                    {
+                        "posting_id": row.posting_id,
+                        "error": str(error.errors(include_url=False))[:800],
+                    }
+                )
+                continue
+            technology_mention_count += len(record.technology_mentions)
             records.append(record)
             # Appended only after the record validated against the contract.
             # A posting that failed validation is not claimed as collected, so
             # the next run tries it again.
             cursor.collected_ids.append(row.posting_id)
-            body_status_counts[body_status.value] += 1
-            posting_status_counts[posting_status.value] += 1
+            body_status_counts[record.body_status.value] += 1
+            posting_status_counts[record.posting_status.value] += 1
 
         _notify_progress(
             progress_callback,
@@ -610,18 +595,25 @@ class JobKoreaCrawler:
             },
         )
 
-        pipeline_run_id = _pipeline_run_id(collected_at)
+        pipeline_run_id = pipeline_run_id_for(SOURCE_SITE, collected_at)
         batch = JobAnalysisInputBatch(
             schema_version=JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
-            dataset_snapshot_id=(
-                f"jobkorea-{self.config.start_date.isoformat()}"
-                f"_{self.config.end_date.isoformat()}"
+            dataset_snapshot_id=dataset_snapshot_id_for(
+                SOURCE_SITE,
+                self.config.start_date,
+                self.config.end_date,
             ),
             pipeline_run_id=pipeline_run_id,
             collector_version=COLLECTOR_VERSION,
             records=tuple(records),
         )
         manifest: dict[str, Any] = {
+            "source_site": SOURCE_SITE,
+            "collector_version": COLLECTOR_VERSION,
+            "schema_version": JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
+            "pipeline_run_id": pipeline_run_id,
+            "dataset_snapshot_id": batch.dataset_snapshot_id,
+            "collected_at": collected_at.isoformat(),
             "source": {
                 "site": "JOBKOREA",
                 "mode": "category",
@@ -690,7 +682,13 @@ class JobKoreaCrawler:
                 "detail_requests": int(stats["detail_requests"]),
                 "detail_failures": int(stats["detail_failures"]),
                 "technology_mentions": technology_mention_count,
-                "stopped_reason": stopped_reason,
+                "scan_stop_reason": scan_stop_reason,
+            },
+            "counts": {
+                "records": len(records),
+                "pages_read": int(stats["pages_scanned"]),
+                "detail_errors": len(detail_failures),
+                "invalid_records": len(invalid_records),
             },
             "ocr": {
                 "enabled": ocr_enabled,
@@ -713,8 +711,14 @@ class JobKoreaCrawler:
             "body_status_counts": dict(sorted(body_status_counts.items())),
             "posting_status_counts": dict(sorted(posting_status_counts.items())),
             "detail_failures": detail_failures,
+            "invalid_record_samples": invalid_records[:20],
             "warnings": warnings,
             "outputs": {},
+            "stopped_reason": (
+                "max_pages reached before date boundary"
+                if scan_stop_reason == "max_pages"
+                else None
+            ),
             "resume": {
                 "cursor_path": (
                     str(self.config.cursor_path) if self.config.cursor_path else None
@@ -740,27 +744,8 @@ def _notify_progress(
         callback(event)
 
 
-def _pipeline_run_id(collected_at: datetime) -> str:
-    raw = f"jobkorea-{collected_at.strftime('%Y%m%dT%H%M%S%z')}"
-    return _SAFE_RUN_ID_RE.sub("-", raw)
-
-
-def _posting_status(
-    deadline_label: str | None,
-    deadline: datetime | None,
-    collected_at: datetime,
-) -> PostingStatus:
-    normalized = (deadline_label or "").replace(" ", "")
-    if "상시채용" in normalized or "채용시마감" in normalized:
-        return PostingStatus.ACTIVE
-    if deadline is None:
-        return PostingStatus.UNKNOWN
-    return PostingStatus.CLOSED if deadline < collected_at else PostingStatus.ACTIVE
-
-
 CSV_FIELDS = [
     "source_record_id",
-    "canonical_job_id",
     "source_site",
     "source_posting_id",
     "source_url",
@@ -769,15 +754,13 @@ CSV_FIELDS = [
     "raw_job_category",
     "career_level",
     "region",
-    "description_text",
-    "raw_artifact_uri",
     "body_status",
     "posting_status",
     "posted_at",
     "deadline",
     "collected_at",
     "content_hash",
-    "technology_mentions",
+    "description_char_count",
 ]
 
 
@@ -786,37 +769,46 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
 
     run_dir = output_dir / result.batch.pipeline_run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    json_path = run_dir / "job_analysis_input_v1.json"
-    csv_path = run_dir / "jobs.csv"
+    json_path = run_dir / "job_analysis_input.json"
+    csv_path = run_dir / "postings.csv"
     manifest_path = run_dir / "manifest.json"
 
-    batch_payload = result.batch.model_dump(mode="json", by_alias=True)
-    batch_text = json.dumps(batch_payload, ensure_ascii=False, indent=2) + "\n"
+    batch_text = result.batch.model_dump_json(by_alias=True, indent=2) + "\n"
     _atomic_write(json_path, batch_text)
 
-    with csv_path.with_suffix(".csv.tmp").open(
-        "w",
-        encoding="utf-8-sig",
-        newline="",
-    ) as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        for record in result.batch.records:
-            row = record.model_dump(mode="json", by_alias=True)
-            row["technology_mentions"] = json.dumps(
-                row["technology_mentions"],
-                ensure_ascii=False,
-            )
-            writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
-    csv_path.with_suffix(".csv.tmp").replace(csv_path)
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for record in result.batch.records:
+        writer.writerow(
+            {
+                "source_record_id": record.source_record_id,
+                "source_site": record.source_site,
+                "source_posting_id": record.source_posting_id,
+                "source_url": str(record.source_url),
+                "company_name": record.company_name,
+                "title": record.title,
+                "raw_job_category": record.raw_job_category or "",
+                "career_level": record.career_level or "",
+                "region": record.region or "",
+                "body_status": record.body_status.value,
+                "posting_status": record.posting_status.value,
+                "posted_at": record.posted_at.isoformat() if record.posted_at else "",
+                "deadline": record.deadline.isoformat() if record.deadline else "",
+                "collected_at": record.collected_at.isoformat(),
+                "content_hash": record.content_hash,
+                "description_char_count": len(record.description_text or ""),
+            }
+        )
+    _atomic_write(csv_path, buffer.getvalue())
 
     manifest = dict(result.manifest)
-    # Match this writer's existing Path.write_text newline translation exactly.
-    batch_bytes = batch_text.replace("\n", os.linesep).encode("utf-8")
-    manifest["output_sha256"] = {json_path.name: sha256(batch_bytes).hexdigest()}
+    manifest["output_sha256"] = {
+        json_path.name: sha256(batch_text.encode("utf-8")).hexdigest()
+    }
     manifest["outputs"] = {
-        "job_analysis_input_v1.json": json_path.name,
-        "jobs.csv": csv_path.name,
+        "job_analysis_input.json": json_path.name,
+        "postings.csv": csv_path.name,
         "manifest.json": manifest_path.name,
     }
     _atomic_write(
@@ -837,9 +829,10 @@ def write_outputs(result: CrawlResult, output_dir: Path) -> dict[str, Path]:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    temporary_path = path.with_suffix(path.suffix + ".tmp")
-    temporary_path.write_text(content, encoding="utf-8")
-    temporary_path.replace(path)
+    temporary_path = path.with_name(path.name + ".tmp")
+    with temporary_path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(content)
+    os.replace(temporary_path, path)
 
 
 def _parse_cli_date(value: str) -> date:
@@ -866,6 +859,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="widen the range to N days before --end-date (for scheduled runs)",
+    )
+    parser.add_argument(
+        "--no-upload-raw",
+        action="store_true",
+        help="WEBHDFS_URL이 설정되어도 HDFS Raw 업로드를 생략합니다",
     )
     parser.add_argument(
         "--cursor",
@@ -953,4 +951,39 @@ def main(argv: list[str] | None = None) -> int:
             indent=2,
         )
     )
-    return 0
+
+    if not args.no_upload_raw:
+        sink = sink_from_env()
+        if sink is None:
+            print("raw=skipped (WEBHDFS_URL 미설정)", file=sys.stderr)
+        else:
+            run_dir = paths["manifest"].parent
+            upload = sink.upload_run(
+                run_dir,
+                source=SOURCE_SITE,
+                collected_at=(
+                    result.batch.records[0].collected_at
+                    if result.batch.records
+                    else datetime.now(UTC)
+                ),
+                pipeline_run_id=result.batch.pipeline_run_id,
+            )
+            write_upload_record(run_dir, upload)
+            if not upload.ok:
+                return 1
+            verification = verify_run(sink.client, run_dir)
+            if not verification.ok:
+                print(
+                    f"raw verify failed: {verification.state}",
+                    file=sys.stderr,
+                )
+                return 1
+            published = publish_from_env(
+                run_dir,
+                source=SOURCE_SITE,
+                pipeline_run_id=result.batch.pipeline_run_id,
+            )
+            if published is not None and not published.ok and not published.skipped:
+                return 1
+
+    return 0 if result.batch.records else 1

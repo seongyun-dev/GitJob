@@ -16,10 +16,10 @@ from threading import Event, Thread
 from typing import Literal
 
 import psycopg
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
-
 from job.cohort import CohortCriteria
 from job.contracts import JobAnalysisInputBatch
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+
 from worker.job_hdfs_source import JobHdfsSourceConfig
 from worker.lease import LeaseHeartbeat
 from worker.store import ComputeStore, digest
@@ -28,6 +28,8 @@ LOGGER = logging.getLogger(__name__)
 INTAKE_VERSION = "c-completed-output-intake/v1"
 MAX_JOB_SET_BYTES = 128 * 1024 * 1024
 MAX_JOB_SET_RECORDS = 50_000
+COMMON_JOB_BATCH_FILENAME = "job_analysis_input.json"
+LEGACY_JOBKOREA_BATCH_FILENAME = "job_analysis_input_v1.json"
 
 
 class PublicInputConfig(BaseModel):
@@ -152,6 +154,31 @@ def _read(path: Path, maximum: int) -> bytes:
     return raw
 
 
+def _job_batch_layout(manifest: dict[str, object]) -> tuple[str, bool]:
+    """Select the fixed batch filename and whether this is legacy JobKorea.
+
+    JobKorea V1 used a nested manifest and ``job_analysis_input_v1.json``.
+    Current JobKorea runs use the same top-level manifest and filename as the
+    other collectors. The declared fixed output, rather than the source name,
+    distinguishes the two so historical snapshots remain readable.
+    """
+
+    outputs = manifest.get("outputs")
+    source = manifest.get("source")
+    is_jobkorea = isinstance(source, dict) and source.get("site") == "JOBKOREA"
+    is_legacy = (
+        is_jobkorea
+        and isinstance(outputs, dict)
+        and outputs.get(LEGACY_JOBKOREA_BATCH_FILENAME)
+        == LEGACY_JOBKOREA_BATCH_FILENAME
+        and outputs.get(COMMON_JOB_BATCH_FILENAME) != COMMON_JOB_BATCH_FILENAME
+    )
+    return (
+        LEGACY_JOBKOREA_BATCH_FILENAME if is_legacy else COMMON_JOB_BATCH_FILENAME,
+        is_legacy,
+    )
+
+
 def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
     manifest_path = _contained(manifest_path, root)
     if manifest_path.name != "manifest.json":
@@ -172,11 +199,7 @@ def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
     ):
         if field in manifest and not isinstance(manifest[field], dict):
             raise ValueError("manifest nested metadata must be objects")
-    batch_name = (
-        "job_analysis_input_v1.json"
-        if manifest.get("source", {}).get("site") == "JOBKOREA"
-        else "job_analysis_input.json"
-    )
+    batch_name, legacy_jobkorea = _job_batch_layout(manifest)
     batch_path = _contained(manifest_path.parent / batch_name, root)
     before = manifest_before, _stamp(batch_path)
     batch_raw = _read(batch_path, 32 * 1024 * 1024)
@@ -197,7 +220,7 @@ def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
         or declared_hashes.get(batch_name) != hashlib.sha256(batch_raw).hexdigest()
     ):
         raise ValueError("completion manifest does not bind the current batch bytes")
-    if manifest.get("source", {}).get("site") == "JOBKOREA":
+    if legacy_jobkorea:
         metadata = manifest["collection"]
         count = manifest["stats"]["records_written"]
         source = "JOBKOREA"
@@ -305,6 +328,7 @@ def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
 
     from job.demand import aggregate_demand
     from job.input_union import build_input_union
+
     from worker.api import compute_versions
     from worker.jobs import job_review_records
     from worker.store import Artifact
@@ -715,6 +739,7 @@ class _PublicSource:
     def __call__(self):
         from github.artifact_reader import ReadOnlyWebHdfsReader
         from github.snapshot_input import load_published_snapshot
+
         from worker.public_intake import PublicPipelineConsumer
 
         if self.consumer is None:

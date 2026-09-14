@@ -1,7 +1,16 @@
 import json
+from dataclasses import dataclass, field
 from datetime import date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+from job.collector import analysis_input as analysis_input_module
+from job.collector.analysis_input import (
+    JobPostingAnalysisInputPublisher,
+    publish_from_env,
+    release_blockers,
+)
+from job.collector.raw_sink import JobPostingRawSink, write_upload_record
+from job.collector.raw_verify import STATE_OK, verify_run
 from JobKorea_Collector_V1 import crawler as crawler_module
 from JobKorea_Collector_V1.crawler import CrawlConfig, JobKoreaCrawler, write_outputs
 from JobKorea_Collector_V1.dates import SEOUL, parse_deadline, parse_posted_at
@@ -221,6 +230,24 @@ class FakeImageJobKoreaClient:
         return b"fake-image"
 
 
+class FakeTextJobKoreaClient:
+    def post(self, *_args: object, **_kwargs: object) -> str:
+        return LIST_HTML
+
+    def get(self, *_args: object, **_kwargs: object) -> str:
+        return """
+        <html><body>
+          <h2>자격요건</h2>
+          <p>Java 및 Spring Boot 개발 경험 필수</p>
+          <h2>우대사항</h2>
+          <p>Redis 운영 경험 우대</p>
+        </body></html>
+        """
+
+    def get_bytes(self, *_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("text posting must not request image bytes")
+
+
 def test_image_detail_runs_ocr_and_extracts_technologies(monkeypatch: object) -> None:
     class StubOcrEngine:
         def __init__(self, **_kwargs: object) -> None:
@@ -272,6 +299,52 @@ def test_image_detail_runs_ocr_and_extracts_technologies(monkeypatch: object) ->
     assert result.manifest["ocr"]["postings"][0]["status"] == "COMPLETED"
 
 
+def test_text_detail_uses_common_requirements_without_ocr() -> None:
+    config = CrawlConfig(
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        request_delay=0,
+        detail_delay=0,
+        ocr_images=False,
+        now=datetime(2026, 9, 3, 12, 0, tzinfo=SEOUL),
+    )
+
+    result = JobKoreaCrawler(config, client=FakeTextJobKoreaClient()).run()
+    record = result.batch.records[0]
+    requirements = {
+        mention.source_technology_id: mention.requirement_type.value
+        for mention in record.technology_mentions
+    }
+
+    assert record.body_status.value == "TEXT_AVAILABLE"
+    assert "Java 및 Spring Boot" in (record.description_text or "")
+    assert requirements["java"] == "REQUIRED"
+    assert requirements["spring-boot"] == "REQUIRED"
+    assert requirements["redis"] == "PREFERRED"
+    assert result.manifest["ocr"]["enabled"] is False
+
+
+def test_image_detail_keeps_source_evidence_when_ocr_is_disabled() -> None:
+    config = CrawlConfig(
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        request_delay=0,
+        detail_delay=0,
+        ocr_images=False,
+        now=datetime(2026, 9, 3, 12, 0, tzinfo=SEOUL),
+    )
+
+    result = JobKoreaCrawler(config, client=FakeImageJobKoreaClient()).run()
+    record = result.batch.records[0]
+
+    assert record.body_status.value == "IMAGE_ONLY"
+    assert record.description_text is None
+    assert record.raw_artifact_uri == (
+        "https://www.jobkorea.co.kr/Recruit/GI_Read/recruit.png"
+    )
+    assert result.manifest["ocr"]["postings"][0]["status"] == "DISABLED"
+
+
 def test_no_detail_run_writes_contract_outputs(tmp_path: Path) -> None:
     config = CrawlConfig(
         start_date=date(2026, 8, 1),
@@ -286,13 +359,20 @@ def test_no_detail_run_writes_contract_outputs(tmp_path: Path) -> None:
 
     assert len(result.batch.records) == 1
     assert result.batch.records[0].body_status.value == "MISSING"
-    assert result.batch.records[0].raw_job_category == "백엔드개발자"
+    assert result.batch.records[0].source_record_id == "JOBKOREA:49872974"
+    assert result.batch.records[0].raw_job_category == "서버관리, SI개발, 웹개발"
     assert str(result.batch.records[0].source_url) == (
         "https://www.jobkorea.co.kr/Recruit/GI_Read/49872974"
+    )
+    assert result.batch.records[0].posted_at == datetime(2026, 8, 25, tzinfo=SEOUL)
+    assert result.batch.records[0].collected_at == datetime(
+        2026, 9, 3, 12, 0, tzinfo=SEOUL
     )
     assert paths["json"].exists()
     assert paths["csv"].exists()
     assert paths["manifest"].exists()
+    assert paths["json"].name == "job_analysis_input.json"
+    assert paths["csv"].name == "postings.csv"
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
     assert manifest["ocr"]["enabled"] is False
     assert manifest["technology_extraction"]["mention_count"] == 0
@@ -318,9 +398,7 @@ def test_same_run_replay_replaces_outputs_without_duplicate_records(
     result = JobKoreaCrawler(config, client=FakeJobKoreaClient()).run()
 
     first_paths = write_outputs(result, tmp_path)
-    first_payloads = {
-        name: path.read_bytes() for name, path in first_paths.items()
-    }
+    first_payloads = {name: path.read_bytes() for name, path in first_paths.items()}
     replay_paths = write_outputs(result, tmp_path)
     replay_batch = json.loads(replay_paths["json"].read_text(encoding="utf-8"))
 
@@ -415,9 +493,7 @@ def test_no_cursor_path_collects_without_resume_state(tmp_path: Path) -> None:
 def test_a_moved_date_range_resets_the_cursor(tmp_path: Path) -> None:
     """Ids gathered under other bounds must not be trusted for a new range."""
 
-    first = JobKoreaCrawler(
-        _daily_config(tmp_path), client=FakeJobKoreaClient()
-    ).run()
+    first = JobKoreaCrawler(_daily_config(tmp_path), client=FakeJobKoreaClient()).run()
     write_outputs(first, tmp_path / "run-1")
 
     widened = _daily_config(tmp_path, start_date=date(2026, 7, 1))
@@ -462,3 +538,104 @@ def test_the_manifest_records_that_criterion_a_failed() -> None:
     assert admission["criterion_a"] == "FAIL"
     assert "서울고등법원" in admission["basis"]
     assert admission["admitted_by"] == "project owner decision, 2026-09-10"
+
+
+@dataclass
+class MemoryHdfsClient:
+    stored: dict[str, bytes] = field(default_factory=dict)
+
+    def exists(self, path: PurePosixPath) -> bool:
+        return path.as_posix() in self.stored
+
+    def store_immutable(self, path: PurePosixPath, payload: bytes) -> str:
+        key = path.as_posix()
+        current = self.stored.get(key)
+        if current is not None and current != payload:
+            raise FileExistsError(key)
+        self.stored[key] = payload
+        return key
+
+    def read(self, path: PurePosixPath) -> bytes:
+        return self.stored[path.as_posix()]
+
+    def length(self, path: PurePosixPath) -> int | None:
+        payload = self.stored.get(path.as_posix())
+        return len(payload) if payload is not None else None
+
+
+def test_offline_fixture_reaches_raw_verification_and_analysis_input(
+    tmp_path: Path,
+    monkeypatch: object,
+) -> None:
+    """Fixture -> parser/OCR -> contract -> Raw -> verified publication."""
+
+    class StubOcrEngine:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def recognize_bytes(self, _image: bytes, *, suffix: str) -> OcrResult:
+            assert suffix == ".png"
+            return OcrResult(
+                text="자격요건\nPython, FastAPI 개발 필수",
+                lines=(),
+                average_confidence=0.96,
+            )
+
+    monkeypatch.setattr(
+        "JobKorea_Collector_V1.crawler.PaddleOcrEngine",
+        StubOcrEngine,
+    )
+    config = CrawlConfig(
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        request_delay=0,
+        detail_delay=0,
+        now=datetime(2026, 9, 3, 12, 0, tzinfo=SEOUL),
+    )
+    crawl = JobKoreaCrawler(config, client=FakeImageJobKoreaClient()).run()
+    paths = write_outputs(crawl, tmp_path)
+    run_dir = paths["manifest"].parent
+
+    assert (
+        release_blockers(
+            run_dir,
+            source="JOBKOREA",
+            pipeline_run_id=crawl.batch.pipeline_run_id,
+        )
+        == ()
+    )
+
+    storage = MemoryHdfsClient()
+    raw_sink = JobPostingRawSink(client=storage)  # type: ignore[arg-type]
+    raw = raw_sink.upload_run(
+        run_dir,
+        source="JOBKOREA",
+        collected_at=crawl.batch.records[0].collected_at,
+        pipeline_run_id=crawl.batch.pipeline_run_id,
+    )
+    write_upload_record(run_dir, raw)
+
+    assert raw.ok
+    assert verify_run(storage, run_dir).state == STATE_OK  # type: ignore[arg-type]
+
+    publisher = JobPostingAnalysisInputPublisher(
+        client=storage  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        analysis_input_module,
+        "publisher_from_env",
+        lambda: publisher,
+    )
+    published = publish_from_env(
+        run_dir,
+        source="JOBKOREA",
+        pipeline_run_id=crawl.batch.pipeline_run_id,
+    )
+
+    assert published is not None and published.ok
+    assert len(published.read_back) == 3
+    assert any(
+        path.endswith("/job_analysis_input.json")
+        and "/analysis_input/jobs/jobkorea/" in path
+        for path in storage.stored
+    )
