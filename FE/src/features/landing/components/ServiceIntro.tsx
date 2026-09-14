@@ -1,355 +1,349 @@
+import { Fragment } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Link } from 'react-router'
 import { githubLoginUrl } from '@/features/auth/api/authUrls'
+import { FlowConnector, FlowNode } from '@/features/landing/components/FlowRail'
 import {
-  EVIDENCE_AXES,
-  EVIDENCE_LADDER,
-  INTRO_STEPS,
+  ArrowUpIcon,
+  BriefcaseIcon,
+  CompassIcon,
+  GithubIcon,
+  LayersIcon,
+  RepoIcon,
+  SearchIcon,
+} from '@/features/landing/landingIcons'
+import {
+  EVIDENCE_BARS,
+  MARKET_CARDS,
+  NEXT_STEPS,
+  REPO_ROWS,
 } from '@/features/landing/serviceIntroData'
 
 /**
- * 랜딩 스크롤 아래의 서비스 소개 · 티켓 S15P21E102-212.
+ * 랜딩 첫 장 아래의 소개 장들 · Landing Redesign.
  *
- * Hero 아래로 두 장이 이어지고 마지막에 시작 지점을 준다. 한 번 굴리면 한 장씩
- * 넘어가도록 각 섹션이 `lp-snap`을 갖는다(스냅 규칙은 `landing.css`).
+ * 확정 디자인 `GitJob Landing Redesign`의 장면 2~5를 옮겼다. 첫 장(Hero + 미리보기
+ * 패널)은 그대로 두고 그 아래만 이 구성으로 바꾼 것이다.
  *
- * 배경은 그리지 않는다. `LandingPage`의 스크롤 컨테이너가 그라데이션을 한 장 깔고
- * 모든 섹션이 그 위를 지나간다. 섹션마다 배경을 주면 이음매가 보인다.
+ * 한 장에 메시지 하나다. 01은 무엇을 읽는지, 02는 그것이 무엇과 만나는지, 03은 다음에
+ * 무엇을 하는지. 마지막 장이 시작 지점을 준다.
  *
- * 시각 규약은 Hero와 같다 — 유리 패널(`bg-white/12` + `backdrop-blur`), 흰 글씨,
- * `lp-rise` 등장. Final v2의 로그인 이후 화면들이 쓰는 밝은 카드 톤을 여기 가져오면
- * 랜딩 배경 위에서 대비가 무너진다.
+ * 이전 버전은 한 장에 카드 여러 개와 설명 문단을 함께 담았다. 스냅으로 한 장씩
+ * 넘기는 화면에서는 한 번에 읽히는 양이 그만큼이어야 하는데, 문단까지 있으면 장이
+ * 넘어가기 전에 다 읽지 못한다.
  *
- * 문구는 전부 화면 각주에서 왔다(`serviceIntroData` 주석의 출처 목록).
+ * 문구는 `serviceIntroData`가 갖는다.
  */
 
 /**
- * 제목 안에서 하늘색으로 칠하는 낱말.
+ * 장 하나의 골격.
  *
- * 색은 Hero가 `GitHub` 한 단어에 쓰는 `#91BDFF`와 같은 값이다. 제목마다 제품의
- * 이름(`GitHub`·`Evidence`)과 핵심어(`근거`)만 칠해서, 문장을 다 읽지 않아도 그 장이
- * 무엇에 관한 것인지 먼저 보이게 한다. 나머지는 흰색이다.
+ * `min-h-dvh`인 것은 스냅 경계와 화면 경계가 같아야 하기 때문이다. 고정 높이를 주면
+ * 창 높이에 따라 다음 장이 미리 보이거나 잘린다.
  */
-function Sky({ children }: { children: ReactNode }) {
-  return <span className="text-[#91BDFF]">{children}</span>
-}
-
-/**
- * 배경의 흐릿한 빛 덩어리 · 티켓 212.
- *
- * Hero가 이미 쓰는 장식과 같은 종류다 — 큰 원에 radial-gradient를 채우고 blur를
- * 세게 먹인 것. 윤곽이 없어서 섹션 경계에서 잘려도 단면이 보이지 않는다.
- *
- * 처음에는 Hero처럼 테두리만 남긴 가는 호를 깔았다가 걷어냈다. 매끈한 배경 위의
- * 1px 실선은 장식이 아니라 화면에 붙은 머리카락처럼 보였고, 장이 바뀔 때 잘린
- * 단면이 그대로 드러났다(2026-09-11 피드백). 자세한 근거는 `landing.css`의
- * `lp-glow-drift` 주석에 남겼다.
- */
-function Glow({
-  box,
-  tint,
-  duration,
-  delay = '0ms',
-}: {
-  box: string
-  tint: string
-  duration: string
-  delay?: string
-}) {
-  return (
-    <div className={`absolute ${box}`}>
-      <div
-        className={`lp-glow-drift h-full w-full rounded-full ${tint}`}
-        style={{ '--lp-duration': duration, '--lp-delay': delay } as CSSProperties}
-      />
-    </div>
-  )
-}
-
-/** Hero 배경에서 가져온 두 색. 파랑은 오른쪽 빛, 모래빛은 왼쪽 아래 빛이다. */
-const TINT_BLUE =
-  'bg-[radial-gradient(circle_at_42%_42%,rgba(125,155,197,.55),rgba(125,155,197,.28)_46%,transparent_72%)] blur-[46px]'
-const TINT_SAND =
-  'bg-[radial-gradient(circle,rgba(212,181,162,.42),transparent_70%)] blur-[42px]'
-
-/**
- * 장마다 다른 빛 배치.
- *
- * 자리와 주기를 어긋내 스크롤할 때 배경이 바뀐 것이 보이게 한다. 덩어리의 중심은
- * 본문에서 떨어뜨려 글자 뒤가 밝아지지 않게 뒀다.
- */
-function SectionGlow({ variant }: { variant: 1 | 2 | 3 }) {
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      {variant === 1 && (
-        <>
-          <Glow
-            box="top-[4%] right-[2%] h-[560px] w-[560px]"
-            tint={TINT_BLUE}
-            duration="5s"
-          />
-          <Glow
-            box="bottom-[2%] left-[-6%] h-[440px] w-[440px]"
-            tint={TINT_SAND}
-            duration="7s"
-            delay="-5s"
-          />
-        </>
-      )}
-
-      {variant === 2 && (
-        <>
-          <Glow
-            box="top-[-6%] left-[8%] h-[520px] w-[520px]"
-            tint={TINT_SAND}
-            duration="5.5s"
-          />
-          <Glow
-            box="right-[-4%] bottom-[-8%] h-[600px] w-[600px]"
-            tint={TINT_BLUE}
-            duration="4.5s"
-            delay="-6s"
-          />
-        </>
-      )}
-
-      {variant === 3 && (
-        <>
-          <Glow
-            box="top-[10%] left-[-8%] h-[500px] w-[500px]"
-            tint={TINT_BLUE}
-            duration="5.2s"
-          />
-          <Glow
-            box="right-[4%] bottom-[6%] h-[460px] w-[460px]"
-            tint={TINT_SAND}
-            duration="7.2s"
-            delay="-4s"
-          />
-        </>
-      )}
-    </div>
-  )
-}
-
-/** 섹션 공통 골격. 전체 높이를 채우고 가운데 정렬한다. */
-function IntroSection({
+function Scene({
   id,
+  label,
   eyebrow,
   title,
-  label,
-  lead,
-  variant,
   children,
 }: {
   id?: string
-  eyebrow: string
-  /** 강조 span을 담을 수 있어야 해서 문자열이 아니다. */
-  title: ReactNode
-  /** 스크린리더용 섹션 이름. `title`에서 마크업을 걷어낸 문장이다. */
   label: string
-  lead?: string
-  variant: 1 | 2 | 3
+  eyebrow: string
+  title: ReactNode
   children: ReactNode
 }) {
   return (
     <section
       id={id}
       aria-label={label}
-      className="lp-snap relative flex min-h-dvh w-full items-center overflow-hidden px-5 py-20 sm:px-8 lg:px-14"
+      className="lp-snap relative flex min-h-dvh w-full flex-col items-center justify-center gap-10 overflow-hidden px-5 py-16 sm:px-8 lg:gap-20 lg:px-14"
     >
-      <SectionGlow variant={variant} />
-      {/* 빛 위에 본문을 얹는다. */}
-      <div className="relative z-[1] mx-auto w-full max-w-[1180px]">
-        <p className="text-[11px] font-extrabold tracking-[0.18em] text-white/65">{eyebrow}</p>
-        {/*
-          폭을 제한하지 않는다. `max-w-[22ch]`를 두었더니 46px 제목에서 550px쯤에서
-          잘려 두 줄이 됐고, 한국어는 기본적으로 글자 단위로 접히므로 `시작합니다`가
-          `시 / 작합니다`로 갈라졌다.
-
-          `break-keep`(word-break: keep-all)으로 낱말 중간에서 접지 않게 한다. 좁은
-          화면에서 두 줄이 되더라도 낱말은 온전히 남고, `text-balance`가 두 줄의
-          길이를 비슷하게 맞춘다.
-        */}
-        <h2 className="mt-3 text-[32px] leading-[1.15] font-[750] tracking-[-0.04em] break-keep text-balance text-white sm:text-[40px] lg:text-[46px]">
+      <header className="relative z-[1] flex flex-col gap-3 text-center lg:gap-4">
+        {/* 번호는 장식이 아니라 순서다. 세 장이 한 흐름이라는 것을 이것으로 읽는다. */}
+        <p className="text-[22px] font-extrabold tracking-[0.2em] text-white/65 lg:text-[23px]">
+          {eyebrow}
+        </p>
+        <h2 className="m-0 text-[27px] leading-[1.14] font-[750] tracking-[-0.04em] break-keep text-balance text-white sm:text-[38px] lg:text-[54px]">
           {title}
         </h2>
-        {lead !== undefined && (
-          <p className="mt-5 max-w-[62ch] text-[15px] leading-[1.75] break-keep text-white/80 lg:text-base">
-            {lead}
-          </p>
-        )}
-        <div className="mt-10">{children}</div>
-      </div>
+      </header>
+      {children}
     </section>
   )
 }
 
-/** 유리 카드. Hero의 미리보기 패널과 같은 표면을 쓴다. */
-const GLASS =
-  'rounded-[22px] border border-white/35 bg-white/[0.12] p-6 backdrop-blur-[18px] shadow-[0_18px_44px_rgba(23,45,83,0.18)] lg:p-7'
-
-/**
- * @param footer 마지막 장 아래에 붙일 하단바. 아래 마지막 장 주석 참고.
- */
 export function ServiceIntro({ footer }: { footer?: ReactNode }) {
   return (
     <>
-      <IntroSection
-        id="service-intro"
-        eyebrow="HOW IT WORKS"
-        title={
-          <>
-            <Sky>GitHub</Sky>에 이미 있는 <Sky>근거</Sky>로 시작합니다
-          </>
-        }
-        label="GitHub에 이미 있는 근거로 시작합니다"
-        variant={1}
-        lead="이력서에 적은 기술 대신, 저장소에서 실제로 확인되는 근거를 씁니다. 세 단계로 이어집니다."
-      >
-        <ol className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {INTRO_STEPS.map((item, index) => (
-            <li
-              key={item.step}
-              className={`lp-rise flex flex-col ${GLASS}`}
-              style={{ '--lp-delay': `${index * 90}ms` } as CSSProperties}
-            >
-              <span
-                aria-hidden
-                className="grid size-9 place-items-center rounded-xl bg-white/85 text-[13px] font-extrabold text-[#2F5EEB]"
-              >
-                {item.step}
-              </span>
-              <h3 className="mt-5 text-[19px] leading-[1.3] font-[750] tracking-[-0.02em] text-white">
-                {item.title}
-              </h3>
-              <p className="mt-3 flex-1 text-[14px] leading-[1.7] text-white/80">{item.body}</p>
-              <Link
-                to={item.to}
-                className="mt-6 inline-flex w-fit items-center gap-1.5 rounded-xl border border-white/40 bg-white/10 px-4 py-2.5 text-[13px] font-bold text-white transition-colors hover:bg-white/20"
-              >
-                {item.linkLabel}
-                <span aria-hidden>→</span>
-              </Link>
-            </li>
-          ))}
-        </ol>
-      </IntroSection>
+      {/*
+        01 · 무엇을 읽는가.
 
-      <IntroSection
-        eyebrow="EVIDENCE"
+        `id`는 헤더 내비게이션의 `서비스 소개`가 가리키는 곳이다. 티켓 246이 그 해시를
+        `shared/config/primaryNav`의 `SERVICE_INTRO_HASH`로 옮겨 랜딩 헤더와 로그인
+        이후 헤더가 같은 값을 쓴다. 둘 중 하나만 바꾸면 그 링크가 아무 데도 가지 않는다.
+      */}
+      <Scene
+        id="service-intro"
+        label="내 GitHub를 읽는 방법"
+        eyebrow="01"
         title={
           <>
-            <Sky>Evidence</Sky>는 점수가 아니라 <Sky>근거</Sky>입니다
+            내 GitHub를 보고,
+            <br />
+            내가 해온 경험을 파악합니다
           </>
         }
-        label="Evidence는 점수가 아니라 근거입니다"
-        variant={2}
-        lead="Level은 숙련도 점수가 아니라 근거가 쌓인 상태입니다. 같은 기술이라도 저장소 기준과 본인 기여 기준을 따로 봅니다."
       >
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]">
-          {EVIDENCE_AXES.map((axis, index) => (
-            <div
-              key={axis.name}
-              className={`lp-rise ${GLASS}`}
-              style={{ '--lp-delay': `${index * 90}ms` } as CSSProperties}
-            >
-              <p className="text-[11px] font-extrabold tracking-[0.16em] text-white/65">
-                {axis.name.toUpperCase()}
-              </p>
-              <h3 className="mt-2.5 text-[19px] font-[750] tracking-[-0.02em] text-white">
-                {axis.name} Level
-              </h3>
-              <p className="mt-3 text-[14px] leading-[1.7] text-white/80">{axis.body}</p>
-            </div>
-          ))}
+        <div className="relative z-[1] grid w-full max-w-[1000px] items-center gap-9 lg:grid-cols-[minmax(0,320px)_1fr_170px_1fr_minmax(0,320px)] lg:gap-0">
+          <div className="mx-auto flex w-full max-w-[360px] flex-col gap-3 lg:mx-0 lg:max-w-none">
+            {REPO_ROWS.map((row, index) => (
+              <div
+                key={row.key}
+                className={`lp-bob flex items-center gap-3.5 rounded-[18px] border border-white/50 bg-white/[0.16] px-5 py-[18px] backdrop-blur-[18px] ${row.indent ? 'lg:ml-[26px]' : ''}`}
+                /* 카드마다 1초씩 어긋내지 않으면 세 장이 한 덩어리로 같이 떠오른다. */
+                style={{ '--lp-delay': `${index}s` } as CSSProperties}
+              >
+                <RepoIcon className="h-7 w-7 shrink-0 text-white" />
+                <span className="flex flex-1 flex-col gap-[7px]">
+                  <i className="block h-[9px] rounded-md bg-white/85" style={{ width: row.name }} />
+                  <i className="block h-[7px] rounded-md bg-white/40" style={{ width: row.meta }} />
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <FlowConnector direction="out" className="hidden lg:mx-[18px] lg:block" />
+
+          {/* 판정. 화면에서 가장 진한 덩어리라 시선이 여기서 한 번 멈춘다. */}
+          <div className="relative mx-auto grid h-[130px] w-[130px] place-items-center lg:h-[170px] lg:w-[170px]">
+            <i
+              aria-hidden="true"
+              className="lp-pulse absolute -inset-[30px] rounded-full bg-[radial-gradient(circle,rgba(91,141,255,.55),transparent_70%)] blur-[22px]"
+            />
+            {/* 링 둘을 절반씩 어긋내면 하나가 사라질 때 다음이 이미 퍼지고 있다. */}
+            <i
+              aria-hidden="true"
+              className="lp-ring absolute inset-0 rounded-full border-[1.5px] border-[rgba(145,189,255,0.6)]"
+            />
+            <i
+              aria-hidden="true"
+              className="lp-ring absolute inset-0 rounded-full border-[1.5px] border-[rgba(145,189,255,0.6)]"
+              style={{ '--lp-delay': '1300ms' } as CSSProperties}
+            />
+            <span className="relative grid h-[112px] w-[112px] place-items-center rounded-full border border-[rgba(145,189,255,0.45)] bg-[linear-gradient(160deg,#233A6B,#101A2E)] shadow-[0_26px_60px_rgba(16,26,46,0.45)] lg:h-[150px] lg:w-[150px]">
+              <SearchIcon className="h-11 w-11 text-white lg:h-[60px] lg:w-[60px]" />
+            </span>
+          </div>
+
+          <FlowConnector direction="in" delay="900ms" className="hidden lg:mx-[18px] lg:block" />
 
           {/*
-            Level 사다리. 단계 이름만 쓰고 의미 설명은 넣지 않는다. 무엇이 L2인지는
-            등급 정책(S15P21E102-127)이 정하며 아직 확정 전이다 —
-            `shared/constants/evidenceLevel.ts`가 같은 이유로 설명을 비워 두고 있다.
+            결과. 막대 길이는 값이 아니라 "기술마다 쌓인 깊이가 다르다"는 모양이다.
+            숫자를 붙이지 않는 이유는 로그인 전이라 조회한 적 없는 값이기 때문이다.
           */}
-          <div
-            className={`lp-rise ${GLASS}`}
-            style={{ '--lp-delay': '180ms' } as CSSProperties}
-          >
-            <p className="text-[11px] font-extrabold tracking-[0.16em] text-white/65">LEVEL</p>
-            <ol className="mt-4 grid gap-2.5">
-              {EVIDENCE_LADDER.map((level, index) => (
-                <li key={level} className="flex items-center gap-3">
-                  <span className="w-7 shrink-0 font-evidence text-[13px] font-bold text-white">
-                    {level}
-                  </span>
-                  <span aria-hidden className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/20">
-                    <span
-                      className="block h-full rounded-full bg-white/80"
-                      style={{ width: `${((index + 1) / EVIDENCE_LADDER.length) * 100}%` }}
-                    />
-                  </span>
-                </li>
+          <div className="mx-auto flex w-full max-w-[360px] flex-col gap-5 rounded-[26px] border border-white/90 bg-white/[0.88] px-[30px] py-7 text-[#101A2E] shadow-[0_28px_60px_rgba(23,45,83,0.2)] lg:mx-0 lg:max-w-none">
+            <span className="text-[20px] font-extrabold tracking-[-0.03em] lg:text-[24px]">
+              내가 해온 경험
+            </span>
+            <div className="flex flex-col gap-3.5">
+              {EVIDENCE_BARS.map((width) => (
+                <span key={width} className="block h-3.5 overflow-hidden rounded-lg bg-[#EAF1FF]">
+                  <i
+                    className="block h-full rounded-lg bg-[linear-gradient(90deg,#2F5EEB,#5B8DFF)]"
+                    style={{ width }}
+                  />
+                </span>
               ))}
-            </ol>
-            <p className="mt-4 text-[12.5px] leading-[1.65] text-white/70">
-              네 단계는 근거의 누적 상태입니다. 단계별 의미는 등급 정책이 확정되면 화면에
-              표시합니다.
-            </p>
+            </div>
           </div>
         </div>
-      </IntroSection>
+      </Scene>
+
+      {/* 02 · 그것이 무엇과 만나는가 */}
+      <Scene label="채용시장과의 대조" eyebrow="02" title="내 경험이 채용시장과 만납니다">
+        <div
+          aria-hidden="true"
+          className="lp-orb-drift pointer-events-none absolute top-[10%] right-[-20%] h-[360px] w-[360px] rounded-full bg-[radial-gradient(circle,rgba(125,155,197,.55),transparent_70%)] blur-[46px] lg:right-[-6%] lg:h-[560px] lg:w-[560px]"
+          style={{ '--lp-duration': '10s' } as CSSProperties}
+        />
+
+        <div className="relative z-[1] grid w-full max-w-[880px] gap-5 sm:grid-cols-2 lg:gap-10">
+          {MARKET_CARDS.map((card) => {
+            const solid = card.tone === 'solid'
+            return (
+              <div
+                key={card.key}
+                className={`flex flex-col justify-between gap-8 rounded-[30px] px-8 py-9 lg:h-[300px] lg:px-9 lg:py-10 ${
+                  solid
+                    ? 'border border-white/90 bg-white/[0.88] text-[#101A2E] shadow-[0_28px_60px_rgba(23,45,83,0.2)]'
+                    : 'border-[1.5px] border-dashed border-white/70 bg-white/[0.14] text-white backdrop-blur-[18px]'
+                }`}
+              >
+                <span
+                  className={`grid h-14 w-14 place-items-center rounded-[20px] lg:h-16 lg:w-16 ${
+                    solid
+                      ? 'bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] text-white shadow-[0_10px_24px_rgba(47,94,235,0.35)]'
+                      : 'border border-white/60 bg-white/[0.22] text-white'
+                  }`}
+                >
+                  {solid ? (
+                    <BriefcaseIcon className="h-7 w-7 lg:h-8 lg:w-8" />
+                  ) : (
+                    <ArrowUpIcon className="h-7 w-7 lg:h-8 lg:w-8" />
+                  )}
+                </span>
+                <div className="flex flex-col gap-2">
+                  {/*
+                    줄바꿈이 데이터에 들어 있다(`\n`). 카드 두 장의 제목 높이를 맞추려고
+                    디자인이 정한 자리라 여기서 임의로 흘리지 않는다.
+                  */}
+                  <span className="text-[24px] leading-[1.15] font-extrabold tracking-[-0.035em] break-keep whitespace-pre-line lg:text-[30px]">
+                    {card.title}
+                  </span>
+                  <span
+                    className={`text-[15px] break-keep lg:text-[17px] ${solid ? 'text-[#5F6F86]' : 'text-white/80'}`}
+                  >
+                    {card.body}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Scene>
+
+      {/* 03 · 다음에 무엇을 하는가 */}
+      <Scene label="다음 준비" eyebrow="03" title="다음으로 무엇을 준비할까요?">
+        <div className="relative z-[1] flex w-full max-w-[1000px] flex-wrap items-center justify-center gap-x-8 gap-y-8 lg:grid lg:grid-cols-[auto_1fr_auto_1fr_auto] lg:items-end lg:gap-0">
+          {NEXT_STEPS.map((step, index) => (
+            <Fragment key={step.key}>
+              {index > 0 ? (
+                <FlowConnector
+                  direction={index === 1 ? 'out' : 'in'}
+                  delay={`${index * 900 - 900}ms`}
+                  className="hidden lg:mx-[26px] lg:mb-[52px] lg:block lg:self-end"
+                />
+              ) : null}
+
+              {step.key === 'now' ? (
+                <FlowNode
+                  tone="solid"
+                  label={step.label}
+                  circleClassName="h-[88px] w-[88px] lg:h-[120px] lg:w-[120px]"
+                  icon={<LayersIcon className="h-8 w-8 lg:h-[46px] lg:w-[46px]" />}
+                />
+              ) : null}
+
+              {step.key === 'learn' ? (
+                <FlowNode
+                  tone="dark"
+                  label={step.label}
+                  ring
+                  circleClassName="h-[112px] w-[112px] lg:h-[160px] lg:w-[160px]"
+                  icon={<CompassIcon className="h-11 w-11 lg:h-16 lg:w-16" />}
+                />
+              ) : null}
+
+              {step.key === 'wider' ? (
+                /*
+                  마지막 단계만 크고 동심원을 겹친다. 추천이 점수가 아니라 선택지를
+                  넓히는 일이라는 것을 크기와 퍼짐으로 말한다.
+                */
+                <FlowNode
+                  tone="glass"
+                  label={step.label}
+                  circleClassName="h-[150px] w-[150px] lg:h-[220px] lg:w-[220px]"
+                  icon={<BriefcaseIcon className="h-9 w-9 text-[#2F5EEB] lg:h-[50px] lg:w-[50px]" />}
+                >
+                  <i
+                    aria-hidden="true"
+                    className="absolute inset-[16px] rounded-full border border-white/50 lg:inset-[22px]"
+                  />
+                  <i
+                    aria-hidden="true"
+                    className="absolute inset-[32px] rounded-full bg-white/[0.86] shadow-[0_12px_30px_rgba(23,45,83,0.18)] lg:inset-[46px]"
+                  />
+                </FlowNode>
+              ) : null}
+            </Fragment>
+          ))}
+        </div>
+      </Scene>
 
       {/*
-        마지막 장. 소개를 끝까지 읽은 사람에게 시작 지점을 준다.
+        마지막 장 · 시작 지점.
 
         하단바를 이 장 **안에** 넣는다. `ServiceIntro` 뒤에 따로 두면 데스크톱에서
-        읽을 수 없다 — `landing.css`가 1024px·700px 이상에서 스크롤 컨테이너에
+        읽을 수 없다 — `landing.css`가 1024px·640px 이상에서 스크롤 컨테이너에
         `scroll-snap-type: y mandatory`를 걸어 두었고, 스냅 지점이 없는 꼬리 요소는
         가장 가까운 스냅 지점(이 장의 시작)으로 되돌아가 화면에 머물지 않는다.
 
-        그래서 가로 정렬(`items-center`)을 세로(`flex-col`)로 바꾸고, CTA가 남는
-        높이를 가운데에서 차지한 뒤 하단바가 그 아래에 놓이게 했다. 스냅 지점은
-        이 장 하나 그대로다.
+        그래서 CTA가 남는 높이를 가운데에서 차지한 뒤 하단바가 그 아래에 놓이게 했다.
+        스냅 지점은 이 장 하나 그대로다.
       */}
       <section
         aria-label="시작하기"
-        className="lp-snap relative flex min-h-dvh w-full flex-col overflow-hidden px-5 pt-20 sm:px-8 lg:px-14"
+        className="lp-snap relative flex min-h-dvh w-full flex-col items-center justify-center overflow-hidden px-5 py-14 sm:px-8 lg:px-14"
       >
-        <SectionGlow variant={3} />
-        <div className="relative z-[1] mx-auto flex w-full max-w-[820px] flex-1 flex-col justify-center pb-16 text-center">
-          <p className="text-[11px] font-extrabold tracking-[0.18em] text-white/65">GET STARTED</p>
-          <h2 className="mt-3 text-[32px] leading-[1.15] font-[750] tracking-[-0.04em] break-keep text-balance text-white sm:text-[40px] lg:text-[46px]">
-            내 GitHub는 어떤 근거를 갖고 있을까요
-          </h2>
-          <p className="mx-auto mt-5 max-w-[52ch] text-[15px] leading-[1.75] break-keep text-white/80">
-            저장소를 고르면 파일 · 설정 · Commit에서 기술 사용 근거를 찾습니다. 읽기 전용이며
-            선택한 저장소만 분석합니다.
-          </p>
-          <div className="mt-9 flex flex-wrap justify-center gap-3">
-            {/*
-              Hero의 `GitHub 연동 시작`과 같은 곳으로 간다. 204가 "GitHub Login이
-              서비스 진입점"을 Production 계약으로 정했고, 소개를 끝까지 읽은 사람에게
-              다른 입구를 주면 흐름이 갈린다.
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 left-1/2 h-[300px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(ellipse,rgba(91,141,255,.32),transparent_70%)] blur-[60px] lg:h-[420px] lg:w-[900px]"
+        />
 
-              `<a>`인 것은 진입 엔드포인트가 302로 GitHub에 넘기기 때문이다. 브라우저
-              최상위 이동이어야 하므로 `<Link>`로 부르면 안 된다.
-            */}
-            <a
-              href={githubLoginUrl()}
-              className="rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-[26px] py-4 text-[15px] font-bold text-white shadow-[0_14px_30px_rgba(31,60,140,0.34)] transition-shadow hover:shadow-[0_18px_38px_rgba(31,60,140,0.42)]"
-            >
-              시작하기
-            </a>
-            <Link
-              to="/trends"
-              className="rounded-xl border border-white/35 bg-white/10 px-6 py-4 text-[15px] font-bold text-white backdrop-blur-[14px] transition-colors hover:bg-white/20"
-            >
-              기술 트렌드 먼저 보기
-            </Link>
-          </div>
+        <div className="relative z-[1] flex w-full max-w-[820px] flex-col items-center gap-7 text-center">
+          <h2 className="m-0 text-[30px] leading-[1.14] font-extrabold tracking-[-0.045em] break-keep text-balance text-white sm:text-[42px] lg:text-[60px]">
+            내 GitHub에는
+            <br />
+            어떤 가능성이 있을까요?
+          </h2>
+
+          {/*
+            `<a>`인 것은 진입 엔드포인트가 302로 GitHub에 넘기기 때문이다. 브라우저
+            최상위 이동이어야 하므로 `<Link>`로 부르면 안 된다.
+
+            Hero의 `GitHub 연동 시작`과 같은 곳으로 간다. 204가 "GitHub Login이 서비스
+            진입점"을 Production 계약으로 정했고, 소개를 끝까지 읽은 사람에게 다른
+            입구를 주면 흐름이 갈린다.
+          */}
+          <a
+            href={githubLoginUrl()}
+            className="inline-flex items-center gap-3 rounded-2xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-8 py-[18px] text-[17px] font-bold text-white shadow-[0_18px_40px_rgba(31,60,140,0.4)] transition-shadow hover:shadow-[0_22px_48px_rgba(31,60,140,0.48)] lg:px-[38px] lg:py-[22px] lg:text-[19px]"
+          >
+            <GithubIcon className="h-[22px] w-[22px] lg:h-6 lg:w-6" />
+            GitHub로 분석 시작하기
+          </a>
+
+          {/* 하지 않는 것을 마지막에 한 번 더 적는다. 권한을 넘기기 직전이라 여기가 맞다. */}
+          <span className="text-[14px] text-white/70 lg:text-[15px]">
+            읽기 전용 · 선택한 저장소만 분석합니다
+          </span>
         </div>
 
-        {/* 장식 빛(`SectionGlow`)이 절대 배치라 하단바도 z-index를 올려야 위에 온다. */}
-        {footer !== undefined && <div className="relative z-[1] w-full">{footer}</div>}
       </section>
+
+      {/*
+        하단바 장.
+
+        앞 장 안에 두었더니 CTA가 가운데에서 벗어났다. `flex-1`로 남는 높이를 먹는
+        방식이라 가운데가 **뷰포트가 아니라 "하단바를 뺀 나머지"의 가운데**가 되고,
+        하단바 높이의 절반만큼 위로 밀린다.
+
+        아래로 더 내리는 방법도 있었지만 640px 높이 화면에서 CTA와 겹친다. 장을
+        나누면 겹칠 일이 없고 앞 장이 뷰포트 정가운데를 그대로 쓴다.
+
+        스냅이 걸린 화면에서는 장마다 스냅 지점이 필요하므로 `min-h-dvh`를 준다.
+        꼬리로 붙이면 스냅 지점이 없어 가장 가까운 지점(앞 장의 시작)으로 되돌아가
+        화면에 머물지 못한다.
+      */}
+      {footer !== undefined ? (
+        <section
+          aria-label="사이트 정보"
+          className="lp-snap relative flex min-h-dvh w-full flex-col justify-center overflow-hidden px-5 sm:px-8 lg:px-14"
+        >
+          <div className="relative z-[1] w-full">{footer}</div>
+        </section>
+      ) : null}
     </>
   )
 }
