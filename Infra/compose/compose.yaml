@@ -822,6 +822,12 @@ services:
       - spark.driver.bindAddress=${SPARK_DRIVER_BIND_ADDRESS:-0.0.0.0}
       - --conf
       - spark.driver.host=${SPARK_DRIVER_HOST:-spark-c1-archiver}
+      # Keep the C1 resource ceiling identical to `_lib.sh` and the data host
+      # env contract. Do not hardcode the production values here.
+      - --conf
+      - spark.executor.cores=${SPARK_EXECUTOR_CORES}
+      - --conf
+      - spark.cores.max=${SPARK_CORES_MAX}
       - --conf
       - spark.hadoop.dfs.client.use.datanode.hostname=true
       # Mirrors spark_submit_storage_args. RF2 is the two-DataNode target.

@@ -29,10 +29,12 @@ fi
 docker compose --project-directory . --env-file .env.example \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2.yaml \
   --profile core --profile app config --quiet
+SPARK_EXECUTOR_CORES=1 SPARK_CORES_MAX=2 \
 docker compose --project-directory . --env-file .env.example \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data.yaml \
   --profile data config --quiet
 
+SPARK_EXECUTOR_CORES=1 SPARK_CORES_MAX=2 \
 docker compose --project-directory . --env-file .env.example \
   -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2-data-cluster.yaml \
   --profile data config --format json > "$data_render"
@@ -85,6 +87,20 @@ for name, ports in {
 
 assert data["services"]["spark-master"]["network_mode"] == "host"
 assert data["services"]["spark-worker"]["network_mode"] == "host"
+
+c1_command = data["services"]["spark-c1-archiver"]["command"]
+assert "spark.executor.cores=1" in c1_command
+assert "spark.cores.max=2" in c1_command
+assert c1_command[c1_command.index("--master") + 1] == "spark://spark-master:7077"
+assert c1_command[c1_command.index("--deploy-mode") + 1] == "client"
+assert c1_command[c1_command.index("--topics") + 1] == "github.events,so.raw"
+assert c1_command[c1_command.index("--parquet-root") + 1] == "hdfs:///gitjob/parquet"
+assert c1_command[c1_command.index("--checkpoint-root") + 1] == "hdfs:///gitjob/checkpoints"
+assert "spark.driver.bindAddress=0.0.0.0" in c1_command
+assert "spark.driver.host=spark-c1-archiver" in c1_command
+assert "spark.hadoop.dfs.client.use.datanode.hostname=true" in c1_command
+assert "spark.hadoop.dfs.replication=2" in c1_command
+assert "spark.hadoop.fs.defaultFS=hdfs://hdfs-namenode:8020" in c1_command
 
 expected = {"hdfs-datanode4-data-init", "hdfs-datanode4", "spark-worker2"}
 assert set(worker["services"]) == expected
