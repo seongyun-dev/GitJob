@@ -6,6 +6,13 @@
 # Phase 2 NameNode recovery point exists.
 
 services:
+  # The weekly Trend consumer belongs to the Service host. Keep the base
+  # service definition available for the dedicated weekly-host overlay, but
+  # move it out of the data profile so a data-host rollout cannot recreate the
+  # legacy bridge-network consumer (S15P21E102-265).
+  weekly-trend-consumer:
+    profiles: [weekly]
+
   collector:
     restart: unless-stopped
     build:
