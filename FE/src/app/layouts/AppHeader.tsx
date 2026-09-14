@@ -1,4 +1,6 @@
 import { Link, NavLink } from 'react-router'
+import { HeaderAuthArea } from '@/features/auth/components/HeaderAuthArea'
+import { PRIMARY_NAV, SERVICE_INTRO_HASH } from '@/shared/config/primaryNav'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
@@ -7,70 +9,77 @@ import { BrandLogo } from '@/shared/ui/BrandLogo'
  * 치수·색은 `GitJob Desktop UI Final.html`의 로그인 이후 섹션 헤더 computed style이다.
  *   height 72px · padding 0 48px
  *   background rgba(255,255,255,0.62) · border-bottom 1px solid rgba(224,231,241,0.9)
- *   로고 gap 10px · 네비게이션 14px / weight 500 / #7C8A9E / gap 32px
  *
- * 117 시점에는 네비게이션을 두지 않았다. 갈 수 있는 경로가 `/`와 저장소 선택뿐이라
- * 메뉴를 그리면 동작하지 않는 가짜 기능이 되기 때문이다. 192에서 Evidence·공고 매칭·
- * 다음 기술·트렌드·마이페이지 라우트가 실제로 생겼으므로 이제 네비게이션이 실재한다.
+ * 티켓 246: 메뉴를 랜딩과 통일한다. 이름·순서·개수·목적지는 `shared/config/primaryNav`
+ * 한곳에서 오고, 랜딩 헤더도 같은 config를 쓴다. 마이페이지는 상단에서 빼 프로필
+ * 드롭다운(`HeaderAuthArea` → `UserMenu`)으로 옮겼다.
  *
- * 마이페이지는 Final 헤더에는 없지만 추가했다. Final은 4개만 두는데 그러면
- * `/mypage`에 도달할 방법이 없어 전체 흐름 탐색이 끊긴다(192의 완료 기준).
- *
- * 오른쪽 사용자 영역은 여전히 비워 둔다. Final은 `마지막 분석 오늘 10:42`를 두지만
- * 그 값을 주는 API가 없고(`GET /analyses/{id}` 미구현), 사용자 이름도 `GET /me`가
- * 없어 얻을 수 없다. 없는 값을 demo 문자열로 채우지 않는다.
+ * 오른쪽 사용자 영역은 이제 `GET /auth/me`(246)로 실제 로그인 사용자를 그린다. 값이
+ * 없던 이전과 달리 이름·아바타·GitHub 연결 상태가 실데이터다.
  */
 
-const NAV: ReadonlyArray<{ to: string; label: string }> = [
-  { to: '/evidence', label: 'My Evidence' },
-  { to: '/jobs', label: '공고 매칭' },
-  { to: '/recommendations', label: '다음 기술' },
-  { to: '/trends', label: '트렌드' },
-  { to: '/mypage', label: '마이페이지' },
-]
-
 export function AppHeader() {
+  // 티켓 246: 순백 대신 옅은 blue-gray 불투명 배경 + 은은한 테두리·그림자로 콘텐츠와
+  // 구분한다. 강한 blur/glass 는 쓰지 않는다(거의 불투명이라 불필요). 높이는 랜딩과
+  // 공유하는 토큰(`.gj-header-bar`)에서 온다.
   return (
-    <header className="sticky top-0 z-10 border-b border-[rgba(224,231,241,0.9)] bg-white/[0.62] backdrop-blur-[20px]">
-      {/* 71px + bottom border 1px = Final의 header 총 높이 72px. */}
-      <div className="mx-auto flex h-[71px] w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
+    <header
+      className="gj-header-bar sticky top-0 z-10 border-b backdrop-blur-[10px]"
+      style={{
+        background: 'var(--gj-header-bg-inner)',
+        borderColor: 'var(--gj-header-border)',
+        // Tailwind 임의 shadow 값이 빌드에서 누락돼(backdrop-filter 와 같은 이슈) 인라인으로 준다.
+        // 흰색이 살짝 비쳐 그라데이션과 이어지되, 은은한 그림자로 콘텐츠 위에 떠 있음을 보인다.
+        boxShadow: '0 1px 6px rgba(16, 24, 40, 0.04)',
+      }}
+    >
+      <div className="mx-auto flex h-full w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
         <Link to="/" className="flex shrink-0 items-center" aria-label="GitJob 홈으로">
           {/* Final v2 앱 헤더는 로고 26px. */}
           <BrandLogo className="h-[26px]" />
         </Link>
 
         {/*
-          티켓 204. Final v2는 네비게이션을 헤더 가운데 둔다. 오른쪽 사용자 영역은
-          값을 주는 API가 없어 비어 있으므로 `justify-between`만으로는 가운데 정렬이
-          되지 않는다. nav가 남는 폭을 차지하고 그 안에서 가운데 정렬한다.
+          네비게이션은 남는 폭을 차지하고 그 안에서 가운데 정렬한다. active 메뉴는
+          `NavLink`가 현재 경로를 굵게+진하게 표시한다(밑줄 대신 굵기·색 — 기존 톤 유지).
         */}
         <nav aria-label="주요 화면" className="min-w-0 flex-1">
           <ul className="flex items-center justify-center gap-5 overflow-x-auto lg:gap-8">
-            {NAV.map((item) => (
-              <li key={item.to} className="shrink-0">
-                <NavLink
-                  to={item.to}
-                  className={({ isActive }) =>
-                    `text-[14px] whitespace-nowrap transition-colors ${
-                      isActive
-                        ? 'font-[750] text-brand-ink-soft'
-                        : 'font-medium text-brand-faint hover:text-brand-ink'
-                    }`
-                  }
-                >
-                  {item.label}
-                </NavLink>
+            {PRIMARY_NAV.map((item) => (
+              <li key={item.label} className="shrink-0">
+                {'kind' in item ? (
+                  // 서비스 소개는 랜딩의 섹션이라 내부 페이지에서는 랜딩으로 이동한다.
+                  // 전체 이동(`<a>`)이라 브라우저가 로드 후 해당 앵커로 스크롤한다.
+                  <a
+                    href={`/${SERVICE_INTRO_HASH}`}
+                    className="text-[14px] font-medium whitespace-nowrap text-brand-faint transition-colors hover:text-brand-ink"
+                  >
+                    {item.label}
+                  </a>
+                ) : (
+                  <NavLink
+                    to={item.to}
+                    className={({ isActive }) =>
+                      // active = primary blue + weight 600(과하지 않게). hover 는 기본보다
+                      // 진한 색으로만 — active 와 혼동되지 않게 background pill 은 쓰지 않는다.
+                      `text-[14px] whitespace-nowrap transition-colors ${
+                        isActive
+                          ? 'font-semibold text-brand-600'
+                          : 'font-medium text-brand-faint hover:text-brand-ink'
+                      }`
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                )}
               </li>
             ))}
           </ul>
         </nav>
 
-        {/*
-          티켓 204. Final v2 헤더 오른쪽의 `마지막 분석 …` + 아바타 자리. 값을 주는
-          API가 없어(`GET /analyses/{id}`·`GET /me` 미구현) 아무것도 렌더하지 않는다.
-          자리만 비워 두어 nav 가운데 정렬을 유지한다.
-        */}
-        <div className="hidden shrink-0 lg:block lg:w-[132px]" aria-hidden />
+        <div className="hidden shrink-0 justify-end lg:flex lg:min-w-[120px]">
+          <HeaderAuthArea tone="dark" />
+        </div>
       </div>
     </header>
   )

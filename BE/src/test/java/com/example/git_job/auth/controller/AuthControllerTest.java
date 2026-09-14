@@ -60,8 +60,11 @@ class AuthControllerTest {
                 FRONTEND_CALLBACK,
                 List.of("/onboarding/repositories", "/repos")
         );
-        AuthController controller =
-                new AuthController(githubOAuthService, properties, new CookieUtil(false));
+        AuthController controller = new AuthController(
+                githubOAuthService,
+                mock(com.example.git_job.auth.service.AuthQueryService.class),
+                properties,
+                new CookieUtil(false));
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())

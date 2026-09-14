@@ -44,25 +44,5 @@ export const HERO_HIGHLIGHTS = [
   'What-if로 다음 기술 확인',
 ] as const
 
-/**
- * Header 내비게이션 · 목적지는 티켓 212에서 붙였다.
- *
- * 191 시점에는 라벨만 두었다. 근거가 "아직 목적지 화면이 없다"였는데 192·204에서
- * 저장소 선택·공고 매칭·트렌드 라우트가 모두 생겨 조건이 풀렸다.
- *
- * `서비스 소개`만 같은 화면 안의 앵커다. 소개에 해당하는 별도 화면을 만드는 대신
- * 랜딩 아래로 소개 섹션을 이어 붙였다(`ServiceIntro`). Hero의 `서비스 둘러보기`도
- * 같은 곳으로 간다.
- *
- * `GitHub 분석`의 목적지는 결과 화면(`/evidence`)이 아니라 저장소 선택이다. 랜딩에서
- * 오는 사람은 아직 분석한 적이 없어 결과 화면에 보낼 것이 없다. 분석은 저장소를
- * 고르는 데서 시작한다.
- */
-export const LANDING_NAV = [
-  { label: '서비스 소개', hash: '#service-intro' },
-  { label: 'GitHub 분석', to: '/onboarding/repositories' },
-  { label: '채용공고 매칭', to: '/jobs' },
-  { label: '기술 트렌드', to: '/trends' },
-] as const
-
-export type LandingNavItem = (typeof LANDING_NAV)[number]
+// 헤더 내비게이션은 티켓 246에서 `shared/config/primaryNav`로 옮겨 랜딩·내부가 공유한다.
+// (이 파일의 LANDING_NAV/LandingNavItem 은 그때 제거했다.)

@@ -1,16 +1,22 @@
 package com.example.git_job.auth.controller;
 
+import com.example.git_job.auth.controller.dto.MeResponse;
+import com.example.git_job.auth.service.AuthQueryService;
 import com.example.git_job.auth.service.GithubOAuthService;
 import com.example.git_job.global.config.GithubOAuthProperties;
 import com.example.git_job.global.exceptions.ErrorCode;
+import com.example.git_job.global.response.ApiResponse;
+import com.example.git_job.global.security.AuthenticatedUser;
 import com.example.git_job.global.web.CookieUtil;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,8 +35,37 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class AuthController {
 
     private final GithubOAuthService githubOAuthService;
+    private final AuthQueryService authQueryService;
     private final GithubOAuthProperties properties;
     private final CookieUtil cookieUtil;
+
+    /**
+     * 현재 로그인 사용자 요약 · 티켓 S15P21E102-246.
+     *
+     * <p>헤더 프로필 영역이 부른다. 인증이 필요한 경로라, 세션이 없거나 만료되면
+     * SecurityConfig가 401(AUTH-401-1)로 응답한다. FE는 200이면 로그인 상태로 이름·아바타를
+     * 그리고, 401이면 로그아웃 상태로 로그인 버튼을 그린다. 즉 이 한 경로가 로그인 여부의
+     * 단일 출처다 — 세션이 HttpOnly 쿠키라 FE가 직접 읽을 수 없기 때문이다.</p>
+     */
+    @GetMapping("/me")
+    public ApiResponse<MeResponse> me(@AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.success(authQueryService.me(user));
+    }
+
+    /**
+     * 로그아웃 · 티켓 S15P21E102-246.
+     *
+     * <p>세션 쿠키를 만료시킨다. 인증 없이도 동작해야 하므로(만료된 쿠키를 든 사용자가
+     * 정리하려는 상황) SecurityConfig에서 공개한다. 서버측 blacklist는 두지 않는다 —
+     * 저장소가 없고, 쿠키를 지우면 브라우저가 더는 토큰을 싣지 않는다. 탈취된 토큰은
+     * 만료(30분)까지 유효하다는 기존 한계는 그대로다.</p>
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<ApiResponse<Void>> logout() {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, cookieUtil.expired(CookieUtil.SESSION).toString())
+                .body(ApiResponse.success());
+    }
 
     /**
      * GitHub 인증 화면으로 302한다. FE는 이 경로를 링크로 열기만 하고

@@ -48,6 +48,10 @@ public class SecurityConfig {
                                 "/api/v1/auth/github",
                                 "/api/v1/auth/github/callback"
                         ).permitAll()
+                        // 로그아웃은 인증 없이도 동작해야 한다. 만료·무효 쿠키를 든 사용자가
+                        // 쿠키를 정리하려는 상황이 정상이고, 하는 일은 SESSION 쿠키 만료뿐이다.
+                        // (/api/v1/auth/me 는 인증이 필요하므로 아래 anyRequest 규칙을 따른다.)
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/logout").permitAll()
                         // Spring MVC가 오류를 forward하는 내부 경로.
                         .requestMatchers("/error").permitAll()
                         // Docker 내부 네트워크 전용 (Nginx 비라우팅): healthcheck
