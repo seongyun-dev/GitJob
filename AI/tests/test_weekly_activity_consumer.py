@@ -1,4 +1,40 @@
+import pytest
+from common.kafka import KafkaError, consumer_from_env
 from worker.weekly_activity_intake import Outcome
+
+
+def test_kafka_offset_reset_defaults_to_earliest():
+    transport = consumer_from_env(
+        "topic", "group", {"KAFKA_BOOTSTRAP_SERVERS": "broker:9092"}
+    )
+    assert transport is not None
+    assert transport.auto_offset_reset == "earliest"
+
+
+def test_kafka_offset_reset_accepts_explicit_values():
+    for value in ("earliest", "latest"):
+        transport = consumer_from_env(
+            "topic",
+            "group",
+            {
+                "KAFKA_BOOTSTRAP_SERVERS": "broker:9092",
+                "KAFKA_AUTO_OFFSET_RESET": value,
+            },
+        )
+        assert transport is not None
+        assert transport.auto_offset_reset == value
+
+
+def test_kafka_offset_reset_rejects_invalid_value():
+    for env in (
+        {
+            "KAFKA_BOOTSTRAP_SERVERS": "broker:9092",
+            "KAFKA_AUTO_OFFSET_RESET": "middle",
+        },
+        {"KAFKA_AUTO_OFFSET_RESET": "middle"},
+    ):
+        with pytest.raises(KafkaError, match="KAFKA_AUTO_OFFSET_RESET"):
+            consumer_from_env("topic", "group", env)
 
 
 def test_retry_exits_process_without_committing(monkeypatch):

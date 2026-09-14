@@ -282,6 +282,7 @@ class KafkaPythonConsumer:
     # clone that runs to its timeout loses the partition before it can report.
     max_poll_interval_ms: int = 900_000
     session_timeout_ms: int = 45_000
+    auto_offset_reset: str = "earliest"
     _consumer: object | None = field(default=None, init=False, repr=False)
 
     def _ensure_consumer(self) -> object:
@@ -304,9 +305,7 @@ class KafkaPythonConsumer:
                 max_poll_records=1,
                 max_poll_interval_ms=self.max_poll_interval_ms,
                 session_timeout_ms=self.session_timeout_ms,
-                # An analysis request that was published while no consumer
-                # existed still has to be processed once one appears.
-                auto_offset_reset="earliest",
+                auto_offset_reset=self.auto_offset_reset,
             )
         except Exception as error:  # pragma: no cover - environment specific
             raise KafkaError(f"could not connect a consumer: {error}") from error
@@ -360,6 +359,11 @@ def consumer_from_env(
     """Build a consumer, or `None` when no broker is configured."""
 
     values = os.environ if env is None else env
+    auto_offset_reset = (
+        (values.get("KAFKA_AUTO_OFFSET_RESET") or "earliest").strip().lower()
+    )
+    if auto_offset_reset not in {"earliest", "latest"}:
+        raise KafkaError("KAFKA_AUTO_OFFSET_RESET must be earliest or latest")
     raw = (values.get("KAFKA_BOOTSTRAP_SERVERS") or "").strip()
     if not raw:
         return None
@@ -375,6 +379,7 @@ def consumer_from_env(
         max_poll_interval_ms=_positive_int(
             values.get("KAFKA_MAX_POLL_INTERVAL_MS"), 900_000
         ),
+        auto_offset_reset=auto_offset_reset,
     )
 
 
