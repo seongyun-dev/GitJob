@@ -1235,6 +1235,15 @@ C조 범위다.
 - 내용: Raw 회차 탐색·재게시 CLI, checkpoint 재개, 단계별 실행 절차와 GO gate
 - 상세: [기존 Raw → analysis_input backfill 실행 Runbook](2026-09-14-analysis-input-backfill-runbook.md)
 
+## oversized 이벤트로 인한 github.events 증폭
+
+- Jira: `S15P21E102-257`
+- 증상: 같은 hour 12회 재전송, checkpoint 12.4M vs Kafka 최소 29.7M — **최소 2.4배 증폭**. P0 디스크 고갈에 기여
+- 원인: producer `max_request_size` 미지정(기본 1 MiB) + 1.75 MiB 이벤트 실재 + 실패 시 hour checkpoint 미기록 → 다음 cron 이 hour 전체 재전송
+- 수정: 크기 계약을 `common.kafka.MAX_MESSAGE_BYTES` 하나로 통일, 초과 이벤트는 전송 전 `RejectedEvent` 로 분리, 거부가 있어도 hour 는 checkpoint
+- 주의: 브로커 `message.max.bytes`·topic `max.message.bytes`·`replica.fetch.max.bytes` 를 함께 올리지 않으면 한계 상향은 불가
+- 상세: [oversized 이벤트가 github.events 를 2.4배로 불린 경로](2026-09-14-publisher-oversize-amplification.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

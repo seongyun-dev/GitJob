@@ -40,7 +40,7 @@ class FakeTransport:
             raise KafkaError(self.error)
         self.sent.append((topic, key, value))
 
-    def send_many(self, topic: str, messages) -> int:
+    def send_many(self, topic: str, messages, **_) -> int:
         """Batched publish, added for `github.events` (S15P21E102-144).
 
         `jobs.collected` does not use it — four messages a day need no

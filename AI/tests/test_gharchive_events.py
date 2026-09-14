@@ -65,7 +65,7 @@ class FakeTransport:
     def send(self, topic: str, *, key: bytes | None, value: bytes) -> None:
         raise AssertionError("github.events must publish in batches, not per message")
 
-    def send_many(self, topic: str, messages) -> int:
+    def send_many(self, topic: str, messages, *, on_batch_acknowledged=None) -> int:
         batch: list[tuple[bytes | None, bytes]] = []
         for pair in messages:
             if self.fail_after is not None and len(batch) >= self.fail_after:
@@ -76,6 +76,8 @@ class FakeTransport:
         if self.error:
             raise KafkaError(self.error)
         self.batches.append(batch)
+        if on_batch_acknowledged is not None and batch:
+            on_batch_acknowledged(len(batch))
         return len(batch)
 
     def close(self) -> None:

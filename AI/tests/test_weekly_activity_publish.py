@@ -86,7 +86,7 @@ class FakeTransport:
             raise KafkaError("broker refused")
         self.sent.append((topic, key, json.loads(value)))
 
-    def send_many(self, topic, messages):  # pragma: no cover - unused here
+    def send_many(self, topic, messages, **_):  # pragma: no cover - unused here
         raise NotImplementedError
 
     def close(self):  # pragma: no cover - unused here

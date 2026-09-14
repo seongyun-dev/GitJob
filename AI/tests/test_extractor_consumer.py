@@ -180,7 +180,7 @@ def test_an_unusable_message_goes_to_the_dlq():
         def send(self, topic, *, key, value):
             self.sent.append((topic, value))
 
-        def send_many(self, topic, messages):  # pragma: no cover - unused
+        def send_many(self, topic, messages, **_):  # pragma: no cover - unused
             raise AssertionError
 
         def close(self):  # pragma: no cover - unused
@@ -202,7 +202,7 @@ def test_a_failing_dlq_does_not_block_the_main_topic():
         def send(self, topic, *, key, value):
             raise OSError("dlq is down")
 
-        def send_many(self, topic, messages):  # pragma: no cover - unused
+        def send_many(self, topic, messages, **_):  # pragma: no cover - unused
             raise AssertionError
 
         def close(self):  # pragma: no cover - unused
@@ -263,7 +263,7 @@ def test_a_transient_failure_never_reaches_the_dlq():
         def send(self, topic, *, key, value):
             self.sent.append(value)
 
-        def send_many(self, topic, messages):  # pragma: no cover - unused
+        def send_many(self, topic, messages, **_):  # pragma: no cover - unused
             raise AssertionError
 
         def close(self):  # pragma: no cover - unused

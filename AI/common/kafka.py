@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 __all__ = [
+    "MAX_MESSAGE_BYTES",
     "ConsumedMessage",
     "ConsumerTransport",
     "KafkaError",
@@ -38,8 +39,53 @@ __all__ = [
     "KafkaPythonTransport",
     "KafkaTransport",
     "consumer_from_env",
+    "max_message_bytes_from_env",
     "transport_from_env",
 ]
+
+# The largest record this project will hand a broker, in bytes.
+#
+# One number, read by both the producer (`max_request_size`) and by every
+# caller that decides whether a record may be sent at all. They were not the
+# same before: the producer took kafka-python's 1,048,576 default while nothing
+# checked a record's size, so a 1.75 MiB GH Archive event failed *during* the
+# send — after earlier records of the same hour were already durable. The hour
+# then went unrecorded and the next run re-sent it from the start, for ever
+# (S15P21E102-257).
+#
+# The value is the broker's, not a preference. Measured on the operational
+# broker 2026-09-14:
+#
+#     message.max.bytes        1,048,588     broker and topic
+#     replica.fetch.max.bytes  1,048,576
+#
+# A producer limit above the broker's only moves the rejection from the client
+# to the broker, so this sits at the smaller of the two. Raising it is a
+# coordinated change — `message.max.bytes`, the topic's `max.message.bytes`
+# *and* `replica.fetch.max.bytes` together, because a broker that accepts a
+# record its replicas cannot fetch stops replicating.
+MAX_MESSAGE_BYTES = 1_048_576
+
+
+def max_message_bytes_from_env(env: Mapping[str, str] | None = None) -> int:
+    """The size contract, overridable once the broker's limit is raised.
+
+    Exists so the producer and the callers that pre-check stay on one number
+    when that day comes. An unparseable or non-positive value falls back to the
+    default rather than failing the run: refusing to start over a malformed
+    environment variable loses an hour, and GH Archive hours are only
+    downloadable for a while.
+    """
+
+    values = os.environ if env is None else env
+    raw = (values.get("KAFKA_MAX_MESSAGE_BYTES") or "").strip()
+    if not raw:
+        return MAX_MESSAGE_BYTES
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return MAX_MESSAGE_BYTES
+    return parsed if parsed > 0 else MAX_MESSAGE_BYTES
 
 
 class KafkaError(RuntimeError):
@@ -57,6 +103,8 @@ class KafkaTransport(Protocol):
         self,
         topic: str,
         messages: Iterable[tuple[bytes | None, bytes]],
+        *,
+        on_batch_acknowledged: Callable[[int], None] | None = None,
     ) -> int:
         """Publish a batch, blocking once for the whole batch. Returns the count.
 
@@ -70,6 +118,11 @@ class KafkaTransport(Protocol):
         This enqueues the batch and blocks once on the flush, so durability is
         unchanged — the broker has acknowledged everything before this returns
         — while the waiting happens once instead of per message.
+
+        `on_batch_acknowledged` receives the running count of records the
+        broker has acknowledged, after each chunk and never on enqueue. It is
+        how a caller makes a mid-hour failure resumable instead of restarting
+        the hour (S15P21E102-257).
         """
 
     def close(self) -> None:
@@ -91,6 +144,11 @@ class KafkaPythonTransport:
     # How many records `send_many` enqueues before flushing. Bounds the futures
     # held in memory; an hour of `github.events` is ~117,600 records.
     batch_flush_size: int = 5_000
+    # Stated rather than left to kafka-python's default, so that callers which
+    # pre-check a record against `MAX_MESSAGE_BYTES` and the producer that
+    # sends it cannot disagree. A record this transport accepts is one the
+    # broker accepts.
+    max_message_bytes: int = MAX_MESSAGE_BYTES
     _producer: object | None = field(default=None, init=False, repr=False)
 
     def _ensure_producer(self) -> object:
@@ -110,6 +168,7 @@ class KafkaPythonTransport:
                 acks="all",
                 enable_idempotence=True,
                 request_timeout_ms=self.request_timeout_ms,
+                max_request_size=self.max_message_bytes,
             )
         except Exception as error:  # pragma: no cover - environment specific
             raise KafkaError(f"could not connect a producer: {error}") from error
@@ -130,6 +189,8 @@ class KafkaPythonTransport:
         self,
         topic: str,
         messages: Iterable[tuple[bytes | None, bytes]],
+        *,
+        on_batch_acknowledged: Callable[[int], None] | None = None,
     ) -> int:
         """Enqueue a batch, flush once, then check every acknowledgement.
 
@@ -138,14 +199,27 @@ class KafkaPythonTransport:
         memory at once. `flush()` waits for the broker, and only then is each
         future inspected — a failure anywhere raises, because a partially
         published hour must not be recorded as published.
+
+        ### `on_batch_acknowledged` is what makes a failure resumable
+
+        Called after each chunk with the number of records the broker has
+        acknowledged *so far in this call*, and never before. A caller can
+        persist that number and, after a transient failure, start again from
+        it instead of from the beginning of the hour — which is what
+        S15P21E102-257 had to do, re-sending everything already durable.
+
+        It is deliberately not called on enqueue. `producer.send` returning
+        means the record is in a buffer, not on a broker; advancing a durable
+        cursor there would skip records that never landed.
         """
 
         producer = self._ensure_producer()
         sent = 0
+        acknowledged = 0
         pending: list[object] = []
 
         def drain() -> None:
-            nonlocal pending
+            nonlocal pending, acknowledged
             if not pending:
                 return
             try:
@@ -164,7 +238,10 @@ class KafkaPythonTransport:
                     raise KafkaError(
                         f"publish to {topic}: unexpected future shape: {error}"
                     ) from error
+            acknowledged += len(pending)
             pending = []
+            if on_batch_acknowledged is not None:
+                on_batch_acknowledged(acknowledged)
 
         try:
             for key, value in messages:
@@ -213,6 +290,7 @@ def transport_from_env(
     return KafkaPythonTransport(
         bootstrap_servers=servers,
         client_id=client_id or default_client_id,
+        max_message_bytes=max_message_bytes_from_env(values),
     )
 
 
