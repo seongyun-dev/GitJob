@@ -12,7 +12,6 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
-from github.public_analysis import PublicBatchResult
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -21,6 +20,8 @@ from pydantic import (
     StringConstraints,
     model_validator,
 )
+
+from github.public_analysis import PublicBatchResult
 from trend.archive import (
     ARCHIVE_TREND_ALGORITHM_VERSION,
     ArchiveActivityMetadata,
@@ -34,8 +35,8 @@ from trend.archive_v2 import (
     HistoricalArchivePeriodInput,
     archive_historical_trend,
 )
-
 from worker.store import Artifact, digest
+from worker.trend_streams import archive_trend_stream
 
 MAX_ACTIVITY_BYTES = 32 * 1024 * 1024
 MAX_ACTIVITY_ROWS = 50_000
@@ -383,22 +384,17 @@ def build_archive_artifact(event: ArchiveTrendFields, *, registry, snapshot):
         if event.archive_version == "v2"
         else ARCHIVE_TREND_ALGORITHM_VERSION
     )
-    stream_identity = {
-        "source": (
-            "GH_ARCHIVE_HISTORICAL" if event.archive_version == "v2" else "GH_ARCHIVE"
-        ),
-        "tech_id": event.tech_id,
-        "periods": event.periods,
-        "granularity": event.granularity,
-        "include_partial": event.include_partial,
-        "registry": registry.registry_version,
-        "algorithm": algorithm,
-    }
-    if event.archive_version == "v2":
-        stream_identity["archive_version"] = "v2"
     return Artifact(
         "TREND",
         None,
         result.model_dump(mode="json"),
-        digest(stream_identity),
+        archive_trend_stream(
+            archive_version=event.archive_version,
+            tech_id=event.tech_id,
+            periods=event.periods,
+            granularity=event.granularity,
+            include_partial=event.include_partial,
+            registry_version=registry.registry_version,
+            algorithm=algorithm,
+        ),
     )

@@ -833,6 +833,39 @@ class ComputeStore:
             ).fetchone()
             return row["snapshot_id"] if row else None
 
+    def get_job_head_pair(self, stream: str) -> dict[str, str] | None:
+        """Read one coherent COHORT/DEMAND completion without split head reads."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT kind, snapshot_id, event_id FROM c_compute.head
+                   WHERE owner = '' AND stream = %s AND kind = ANY(%s)""",
+                (stream, ["COHORT", "DEMAND"]),
+            ).fetchall()
+        by_kind = {row["kind"]: row for row in rows}
+        if set(by_kind) != {"COHORT", "DEMAND"}:
+            return None
+        if by_kind["COHORT"]["event_id"] != by_kind["DEMAND"]["event_id"]:
+            return None
+        return {
+            "event_id": by_kind["COHORT"]["event_id"],
+            "cohort_snapshot_id": by_kind["COHORT"]["snapshot_id"],
+            "demand_snapshot_id": by_kind["DEMAND"]["snapshot_id"],
+        }
+
+    def get_head_snapshot(
+        self, kind: str, owner: str | None, stream: str
+    ) -> dict[str, Any] | None:
+        """Resolve a head and its immutable payload in one read transaction."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT h.snapshot_id, h.event_id, h.occurred_at, s.payload
+                   FROM c_compute.head h JOIN c_compute.snapshot s
+                     ON s.snapshot_id = h.snapshot_id
+                   WHERE h.kind = %s AND h.owner = %s AND h.stream = %s""",
+                (kind, owner or "", stream),
+            ).fetchone()
+        return dict(row) if row else None
+
     def get_head_payloads(
         self, *, kind: str, owner: str | None, streams: tuple[str, ...]
     ) -> dict[str, dict]:

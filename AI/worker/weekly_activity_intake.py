@@ -27,9 +27,9 @@ from trend.archive import (
     iter_bounded_activity_stream,
 )
 from trend.contracts import TrendStatus
-
 from worker.lease import LeaseHeartbeat
 from worker.store import Artifact, IdempotencyConflict, digest
+from worker.trend_streams import weekly_activity_trend_stream
 
 WEEKLY_COMPLETED_TOPIC = "gitjob.repo-activity-weekly.completed.v1"
 WEEKLY_SOURCE = "gharchive"
@@ -491,13 +491,10 @@ class WeeklyActivityConsumer:
             tech for tech in self.registry.technologies if tech.status.value == "ACTIVE"
         )
         streams = {
-            tech.tech_id: digest(
-                {
-                    "source": "WEEKLY_REPO_ACTIVITY",
-                    "tech_id": tech.tech_id,
-                    "registry_version": self.registry.registry_version,
-                    "include_partial": self.include_partial,
-                }
+            tech.tech_id: weekly_activity_trend_stream(
+                tech_id=tech.tech_id,
+                registry_version=self.registry.registry_version,
+                include_partial=self.include_partial,
             )
             for tech in active
         }

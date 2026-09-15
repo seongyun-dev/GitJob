@@ -38,11 +38,12 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | 내부 경로 | 입력 / 동작 |
 |---|---|
 | `POST /internal/v1/c/job-batches/completed` | -90 `batch` + `criteria`: 공고 품질·동일 cohort의 수요 계산 |
-| `POST /internal/v1/c/job-cohorts/resolve` | `CohortCriteria`로 현재 준비된 cohort ID 조회. 미준비 404. 조회이며 새 계산을 시작하지 않음 |
+| `POST /internal/v1/c/job-cohorts/resolve` | `CohortCriteria` 또는 `job-cohort-resolve-selector/v1`로 검증된 입력 합집합의 cohort·demand ID와 실제 criteria/계산 버전 조회. 처음 보는 조건은 멱등 계산·저장, 동일 입력·조건은 재사용. 미준비 404 |
 | `POST /internal/v1/c/analyses/completed` | `user_id`, `analysis_id`, `cohort_snapshot_id`, `evidence`: 자동 Gap·추천·What-if·설명 |
 | `POST /internal/v1/c/public-repositories/completed` | -157 `batch`, `include_partial=false`: COMPLETE/REUSED 우선 공개 기술 관측 |
 | `POST /internal/v1/c/trends/completed` | `tech_id`, `source`, `periods`: JOB `demand_snapshot_ids` 또는 GITHUB 공식 형식 `csv_text`·`source_uri`·`source_version` |
 | `POST /internal/v1/c/archive-trends/completed` | v1은 검증된 activity export와 저장된 PUBLIC_GITHUB ID로 current 관측을 유지한다. `archive_version=v2`는 같은 trusted root의 A 원본 snapshot path/URI/SHA-256을 추가로 받고 `C_ARCHIVE_A_SNAPSHOT_URI_ROOT`와 URI를 결속해 월별 commit lineage가 일치한 역사 관측만 저장한다. [Archive 계약](c-archive-trend.md) |
+| `POST /internal/v1/c/trends/resolve` | B가 주간 Repo Activity 또는 고정 기간 Archive v1/v2의 최신 완료 Snapshot ID를 자연 키로 조회. 서로 다른 source·Registry·algorithm·PARTIAL·기간·granularity는 섞지 않음 |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록. `user_id`, page/size, `include_conditional=false` |
@@ -59,13 +60,96 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 DEMAND는 JOB Trend에 사용하지 못한다. [월별 계약](c-public-trend.md)에 분모·기간·상태를 정의한다.
 기본 purpose는 저장 JSON에서 생략해 과거 추천 Snapshot hash/조회 형식을 보존한다.
 MONTHLY_DEMAND는 criteria와 stream에 명시적으로 포함해 활성 결과 pointer와 섞이지 않는다.
-DB migration·새 환경 변수·새 endpoint는 없으며 기존 완료 event/자동 intake 설정으로 선택한다.
+MONTHLY_DEMAND 계산 자체에는 DB migration·새 환경 변수가 없으며 기존 완료 event/자동 intake 설정으로 선택한다.
 JOB 집계 정책 버전은 Trend event의 계산 identity에도 포함하므로 구 event를 새 의미로 재사용하지 않는다.
+
+`job-cohorts/resolve` 응답의 `cohort_snapshot_id`는 기존 필드이며,
+`demand_snapshot_id`, 정규화된 실제 `criteria`, `compute_versions`가 additive로 붙는다.
+두 ID는 같은 완료 event와 stream에서 원자적으로 저장된 쌍이다. 자동 intake가 설정된
+런타임은 현재 poll에서 완전히 검증한 input union만 사용한다. 기존 전체
+`CohortCriteria` 요청도 이 입력으로 계산할 수 있고, B 화면은 시각을 보내지 않는 안정된
+`job-cohort-resolve-selector/v1`을 사용한다.
+
+selector는 `target_role`, 선택 `sources`, `regions`, `career_levels`, `min_jobs`를 받는다.
+C는 selector가 지정한 source의 검증된 `JobOutput.occurred_at` 중 최댓값을 canonical
+`as_of`로 정하고, source를 생략하면 전체 검증 입력의 최댓값을 사용해
+`purpose=ACTIVE_MATCHING`인 criteria를 만든다. 운영 config의 고정 `as_of`와 기본 criteria는
+시작 시 precompute 용도이며 selector의 현재 cutoff를 고정하지 않는다. 따라서 FE의 직무,
+지역, 경력 조건은 추천·매칭 후 B에서 숫자만 잘라내지 않고 같은 필터의 COHORT·DEMAND와
+공고 목록을 함께 계산한다.
+
+같은 선택 source의 input signature와 criteria는 메모리 cache와 deterministic event identity로 기존
+receipt를 재사용하며 Snapshot을 중복 생성하지 않는다. 새 정상 poll로 input signature나
+canonical `as_of`가 바뀌면 새 결과를 만든다. poll과 HTTP resolve는 동일 lock으로 한
+signature의 중복 계산을 막는다. Worker 재시작 후 첫 정상 poll 전, manifest
+누락·변조·불완전 입력으로 현재 묶음이 차단된 동안에는 DB의 과거 head로 fallback하지
+않고 404 `COHORT_NOT_PREPARED`를 반환한다. 과거 불변 Snapshot의 ID 직접 조회는 계속
+가능하다. 따라서 이 endpoint는 조건에 따라 `c_compute.event/snapshot/head`를 쓰며,
+공용 Trend의 `trends/resolve`만 순수 조회다.
+
+WebHDFS refresh 자체가 일시 실패한 경우는 입력 변조와 다르다. 이때는 이미 staging되어
+hash 검증을 통과한 마지막 불변 입력으로 계속 응답하며, 응답 `criteria.as_of`가 그 입력의
+실제 cutoff다. 운영자는 `/intake/status`의 `last_poll.failed`와 cutoff를 함께 보고 새 회차가
+반영되지 않은 상태를 구분한다. 새 입력을 확인하지 못했는데 DB의 더 최신 head를 추측해서
+반환하지는 않는다.
+
+```json
+{
+  "message": "C latest verified input-union cohort and demand reference",
+  "data": {
+    "cohort_snapshot_id": "c-<64 hex>",
+    "demand_snapshot_id": "c-<64 hex>",
+    "criteria": {"target_role": "BACKEND_ENGINEER", "as_of": "2026-09-15T00:00:00Z"},
+    "compute_versions": {"runtime": "...", "registry": "..."}
+  }
+}
+```
+
+```json
+{
+  "schema_version": "job-cohort-resolve-selector/v1",
+  "target_role": "BACKEND",
+  "regions": ["서울"],
+  "career_levels": ["신입"]
+}
+```
+
+공용 Trend resolve는 저장 시 사용한 source별 stream identity를 그대로 계산해 `head`를
+읽는다. `WEEKLY_REPO_ACTIVITY`는 주차를 누적하는 head이므로 `periods`와 `granularity`를
+받지 않는다. `GH_ARCHIVE`는 명시한 `periods`와 `MONTH|WEEK`,
+`GH_ARCHIVE_HISTORICAL`은 명시한 월과 `MONTH`만 받는다. 세 source 모두
+`tech_id`, 활성 Registry 버전, algorithm 버전, `include_partial`을 pointer 범위에
+포함한다. 따라서 같은 기술이라도 주간 누적·현재 Evidence Archive·역사 commit Archive는
+서로 resolve되지 않는다.
+
+```json
+{"source":"WEEKLY_REPO_ACTIVITY","tech_id":"python","include_partial":false}
+```
+
+```json
+{
+  "source":"GH_ARCHIVE_HISTORICAL",
+  "tech_id":"react",
+  "periods":["2026-03","2026-04","2026-05","2026-06","2026-07","2026-08"],
+  "granularity":"MONTH",
+  "include_partial":false
+}
+```
+
+성공 응답은 `snapshot_id`, 정규화된 `selector`, 결과의 schema/status/Registry/algorithm,
+실제 저장 기간과 head event lineage를 반환한다. 상세 수치와 입력 provenance는 반환된 ID로
+기존 `GET /snapshots/{snapshot_id}`를 호출해 읽는다. 일치하는 완료 head가 없으면 404
+`TREND_NOT_PREPARED`, source별 selector 형식이나 비활성 기술이면 422 `INVALID_INPUT`,
+DB·Registry가 준비되지 않았으면 기존 503 규약을 유지한다. resolve는 계산 event,
+Snapshot 또는 head를 생성·갱신하지 않는다. PUBLIC_GITHUB는 Trend 내부 lineage로
+결속되며 B 화면의 직접 선택 요구가 없어 별도 public resolve를 제공하지 않는다.
 
 응답은 `{message, data}`이고 오류는 `{code, message}`이다. 저장 응답은 event ID,
 상태, 결과 snapshot reference들을 반환한다. `PREPARING`(202)은 동일 event의 기존
 실행이 아직 살아 있는 경우이고 동일 ID로 재시도할 수 있다. 정상적인 대상 공고 0건과
 입력 부족은 도메인 결과 상태이며 DB 장애(503)나 계산 실패(500)와 구분한다.
+동적 공고 resolve도 동일 계산 lease가 다른 Worker에서 살아 있으면 `Retry-After: 2`와
+202 `PREPARING`을 반환하며, 같은 selector를 재시도하면 된다.
 
 동일 event/내용의 재전달은 저장된 결과를 그대로 반환한다. 같은 event ID의 내용,
 소유자 또는 종류가 바뀌면 409 `IDEMPOTENCY_CONFLICT`이다. 계산은 transaction 밖에서

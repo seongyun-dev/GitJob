@@ -148,6 +148,73 @@ def test_old_event_does_not_move_current_pointer_backwards(store):
     assert store.get_head("RECOMMENDATION", "123", stream) == new_ref["snapshot_id"]
 
 
+def test_job_head_pair_requires_both_results_from_the_same_completion(store):
+    stream = str(uuid4())
+    first = store.claim(
+        event_id=str(uuid4()),
+        kind="JOB_BATCH",
+        owner=None,
+        occurred_at=datetime.now(UTC),
+        request={"batch": "first"},
+    )
+    first_refs = store.complete(
+        first,
+        [
+            Artifact("COHORT", None, {"cohort": "first"}, stream),
+            Artifact("DEMAND", None, {"demand": "first"}, stream),
+        ],
+    )
+    assert store.get_job_head_pair(stream) == {
+        "event_id": first.event_id,
+        "cohort_snapshot_id": first_refs[0]["snapshot_id"],
+        "demand_snapshot_id": first_refs[1]["snapshot_id"],
+    }
+
+    second = store.claim(
+        event_id=str(uuid4()),
+        kind="JOB_BATCH",
+        owner=None,
+        occurred_at=datetime.now(UTC) + timedelta(seconds=1),
+        request={"batch": "second"},
+    )
+    store.complete(
+        second,
+        [
+            Artifact("COHORT", None, {"cohort": "second"}, stream),
+            Artifact("DEMAND", None, {"demand": "second"}, stream),
+        ],
+    )
+    with psycopg.connect(os.environ["C_COMPUTE_TEST_DATABASE_URL"]) as conn:
+        conn.execute(
+            """UPDATE c_compute.head SET snapshot_id = %s, event_id = %s
+               WHERE kind = 'COHORT' AND owner = '' AND stream = %s""",
+            (first_refs[0]["snapshot_id"], first.event_id, stream),
+        )
+    assert store.get_job_head_pair(stream) is None
+
+
+def test_head_snapshot_read_returns_payload_and_lineage_without_writes(store):
+    stream = str(uuid4())
+    ticket = store.claim(
+        event_id=str(uuid4()),
+        kind="TREND",
+        owner=None,
+        occurred_at=datetime.now(UTC),
+        request={"trend": "weekly"},
+    )
+    payload = {"tech_id": "python", "status": "READY"}
+    reference = store.complete(ticket, [Artifact("TREND", None, payload, stream)])[0]
+
+    before = store.get_head("TREND", None, stream)
+    resolved = store.get_head_snapshot("TREND", None, stream)
+    after = store.get_head("TREND", None, stream)
+
+    assert before == after == reference["snapshot_id"]
+    assert resolved["snapshot_id"] == reference["snapshot_id"]
+    assert resolved["event_id"] == ticket.event_id
+    assert resolved["payload"] == payload
+
+
 def test_bulk_head_payload_read_and_period_compatible_public_selection(store):
     now = datetime.now(UTC)
 

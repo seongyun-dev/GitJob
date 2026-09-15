@@ -20,8 +20,11 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictInt,
+    StrictStr,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 from common.health import create_health_app
@@ -33,6 +36,7 @@ from job.demand import JOB_DEMAND_AGGREGATION_VERSION, DemandSnapshot
 from recommendation.evidence import EvidenceAnalysis
 from registry.contracts import TechnologyRegistry, load_registry
 from registry.mapper import RegistryMapper
+from trend.archive import PeriodGranularity
 from worker.archive_input import ArchiveInputUnavailable, ArchiveTrendFields
 from worker.lease import LeaseHeartbeat
 from worker.store import (
@@ -105,6 +109,107 @@ class TrendCompleted(Event):
 
 class ArchiveTrendCompleted(Event, ArchiveTrendFields):
     """Trusted local activity references plus immutable C public snapshots."""
+
+
+class JobCohortResolveSelector(BaseModel):
+    """Stable B selector for one currently verified ACTIVE_MATCHING receipt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["job-cohort-resolve-selector/v1"]
+    target_role: StrictStr
+    sources: tuple[StrictStr, ...] | None = None
+    regions: tuple[StrictStr, ...] = ()
+    career_levels: tuple[StrictStr, ...] = ()
+    min_jobs: StrictInt | None = Field(default=None, ge=1)
+
+    @field_validator("target_role")
+    @classmethod
+    def normalize_role(cls, value: str) -> str:
+        return CohortCriteria.model_validate(
+            {"target_role": value, "as_of": "2020-01-01T00:00:00Z"}
+        ).target_role
+
+    @field_validator("sources", "regions", "career_levels")
+    @classmethod
+    def normalize_filters(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if values is None:
+            return None
+        if any(not value.strip() for value in values):
+            raise ValueError("filter values must not be blank")
+        return tuple(sorted({value.strip() for value in values}))
+
+    @field_validator("sources")
+    @classmethod
+    def normalize_sources(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return (
+            tuple(sorted({value.upper() for value in values}))
+            if values is not None
+            else None
+        )
+
+    def criteria_at(self, as_of: datetime) -> CohortCriteria:
+        return CohortCriteria(
+            target_role=self.target_role,
+            as_of=as_of,
+            sources=self.sources or (),
+            regions=self.regions,
+            career_levels=self.career_levels,
+            min_jobs=1 if self.min_jobs is None else self.min_jobs,
+        )
+
+
+class TrendResolveSelector(BaseModel):
+    """Natural keys for public Trend heads; source families never share a key."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal["WEEKLY_REPO_ACTIVITY", "GH_ARCHIVE", "GH_ARCHIVE_HISTORICAL"]
+    tech_id: Annotated[
+        str, StringConstraints(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=80)
+    ]
+    periods: tuple[str, ...] = Field(default=(), max_length=48)
+    granularity: PeriodGranularity | None = None
+    include_partial: StrictBool = False
+
+    @model_validator(mode="after")
+    def source_specific_scope(self) -> "TrendResolveSelector":
+        if self.source == "WEEKLY_REPO_ACTIVITY":
+            if self.periods or self.granularity is not None:
+                raise ValueError("weekly resolve does not accept a fixed period scope")
+            return self
+        if not self.periods or self.granularity is None:
+            raise ValueError("archive resolve requires periods and granularity")
+        if (
+            self.source == "GH_ARCHIVE_HISTORICAL"
+            and self.granularity is not PeriodGranularity.MONTH
+        ):
+            raise ValueError("historical archive resolve supports MONTH only")
+        from trend.archive import _period_index
+
+        indices = tuple(
+            _period_index(period, self.granularity) for period in self.periods
+        )
+        if indices != tuple(sorted(set(indices))):
+            raise ValueError("periods must be unique and ascending")
+        return self
+
+    def public_identity(self) -> dict[str, Any]:
+        common = {
+            "source": self.source,
+            "tech_id": self.tech_id,
+            "include_partial": self.include_partial,
+        }
+        if self.source != "WEEKLY_REPO_ACTIVITY":
+            common.update(
+                periods=list(self.periods),
+                granularity=self.granularity.value,
+            )
+        return common
 
 
 class BodyLimit:
@@ -583,30 +688,70 @@ def create_compute_app(
         }
 
     @app.post(prefix + "/job-cohorts/resolve", dependencies=auth)
-    def resolve_job_cohort(criteria: CohortCriteria):
+    def resolve_job_cohort(
+        request: CohortCriteria | JobCohortResolveSelector,
+    ):
         from worker.jobs import job_stream
 
+        selector = request if isinstance(request, JobCohortResolveSelector) else None
+        criteria = request if isinstance(request, CohortCriteria) else None
+        versions = compute_versions("JOB_BATCH", registry)
         if intake_runner and intake_runner.job_set_sink:
-            result = intake_runner.current_job_result(criteria)
+            if selector is not None:
+                selected = intake_runner.resolve_job_selector(selector)
+                criteria, result = selected if selected is not None else (None, None)
+            else:
+                result = intake_runner.resolve_job_criteria(criteria)
             if not result:
                 raise HTTPException(404, "COHORT_NOT_PREPARED")
-            return {
-                "message": "C current observed input-union cohort reference",
-                "data": {
-                    "cohort_snapshot_id": next(
-                        row["snapshot_id"]
-                        for row in result["results"]
-                        if row["kind"] == "COHORT"
-                    )
-                },
-            }
-        stream = job_stream(criteria, compute_versions("JOB_BATCH", registry))
-        snapshot_id = database().get_head("COHORT", None, stream)
-        if snapshot_id is None:
+            if result.get("status") == "PREPARING":
+                return JSONResponse(
+                    status_code=202,
+                    headers={"Retry-After": "2"},
+                    content={
+                        "message": "C cohort computation in progress",
+                        "data": {
+                            "status": "PREPARING",
+                            "criteria": criteria.model_dump(mode="json"),
+                            "compute_versions": versions,
+                        },
+                    },
+                )
+            references = result["results"]
+            message = "C latest verified input-union cohort and demand reference"
+        else:
+            if criteria is None:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            stream = job_stream(criteria, versions)
+            pair = database().get_job_head_pair(stream)
+            references = (
+                []
+                if pair is None
+                else [
+                    {"kind": "COHORT", "snapshot_id": pair["cohort_snapshot_id"]},
+                    {"kind": "DEMAND", "snapshot_id": pair["demand_snapshot_id"]},
+                ]
+            )
+            message = "C latest completed cohort and demand reference"
+        by_kind = {
+            row.get("kind"): row.get("snapshot_id")
+            for row in references
+            if isinstance(row, dict)
+        }
+        if (
+            len(references) != 2
+            or set(by_kind) != {"COHORT", "DEMAND"}
+            or not all(isinstance(value, str) for value in by_kind.values())
+        ):
             raise HTTPException(404, "COHORT_NOT_PREPARED")
         return {
-            "message": "C current cohort reference",
-            "data": {"cohort_snapshot_id": snapshot_id},
+            "message": message,
+            "data": {
+                "cohort_snapshot_id": by_kind["COHORT"],
+                "demand_snapshot_id": by_kind["DEMAND"],
+                "criteria": criteria.model_dump(mode="json"),
+                "compute_versions": versions,
+            },
         }
 
     @app.get(prefix + "/registry", dependencies=auth)
@@ -629,11 +774,13 @@ def create_compute_app(
                 model.__name__: model.model_json_schema()
                 for model in (
                     CohortCriteria,
+                    JobCohortResolveSelector,
                     JobCompleted,
                     AnalysisCompleted,
                     PublicReposCompleted,
                     TrendCompleted,
                     ArchiveTrendCompleted,
+                    TrendResolveSelector,
                 )
             },
         }
@@ -963,6 +1110,100 @@ def create_compute_app(
                 build_archive_artifact(event, registry=registry, snapshot=snapshot)
             ],
         )
+
+    @app.post(prefix + "/trends/resolve", dependencies=auth)
+    def resolve_trend(selector: TrendResolveSelector):
+        from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION, ArchiveTrendResult
+        from trend.archive_v2 import (
+            HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION,
+            HistoricalArchiveTrendResult,
+        )
+        from worker.trend_streams import (
+            archive_trend_stream,
+            weekly_activity_trend_stream,
+        )
+
+        active = any(
+            technology.tech_id == selector.tech_id
+            and technology.status.value == "ACTIVE"
+            for technology in registry.technologies
+        )
+        if not active:
+            raise ValueError("tech_id must reference an active Registry technology")
+        if selector.source == "WEEKLY_REPO_ACTIVITY":
+            algorithm = ARCHIVE_TREND_ALGORITHM_VERSION
+            stream = weekly_activity_trend_stream(
+                tech_id=selector.tech_id,
+                registry_version=registry.registry_version,
+                include_partial=selector.include_partial,
+            )
+        else:
+            historical = selector.source == "GH_ARCHIVE_HISTORICAL"
+            archive_version = "v2" if historical else "v1"
+            algorithm = (
+                HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION
+                if historical
+                else ARCHIVE_TREND_ALGORITHM_VERSION
+            )
+            stream = archive_trend_stream(
+                archive_version=archive_version,
+                tech_id=selector.tech_id,
+                periods=selector.periods,
+                granularity=selector.granularity.value,
+                include_partial=selector.include_partial,
+                registry_version=registry.registry_version,
+                algorithm=algorithm,
+            )
+        resolved = database().get_head_snapshot("TREND", None, stream)
+        if resolved is None:
+            raise HTTPException(404, "TREND_NOT_PREPARED")
+        payload = resolved.get("payload")
+        if not isinstance(payload, dict):
+            raise TypeError("resolved Trend payload is invalid")
+        try:
+            result = (
+                HistoricalArchiveTrendResult.model_validate(payload)
+                if selector.source == "GH_ARCHIVE_HISTORICAL"
+                else ArchiveTrendResult.model_validate(payload)
+            )
+        except ValueError as exc:
+            raise RuntimeError("resolved Trend payload is invalid") from exc
+        periods = [point.period for point in result.points]
+        expected_granularity = (
+            PeriodGranularity.WEEK
+            if selector.source == "WEEKLY_REPO_ACTIVITY"
+            else selector.granularity
+        )
+        if (
+            result.tech_id != selector.tech_id
+            or result.registry_version != registry.registry_version
+            or result.algorithm_version != algorithm
+            or result.granularity is not expected_granularity
+            or result.include_partial is not selector.include_partial
+            or (
+                selector.source != "WEEKLY_REPO_ACTIVITY"
+                and periods != list(selector.periods)
+            )
+        ):
+            raise RuntimeError("resolved Trend scope is inconsistent")
+        return {
+            "message": "C current public Trend reference",
+            "data": {
+                "snapshot_id": resolved["snapshot_id"],
+                "selector": selector.public_identity(),
+                "schema_version": result.schema_version,
+                "status": result.status.value,
+                "registry_version": result.registry_version,
+                "algorithm_version": result.algorithm_version,
+                "granularity": result.granularity.value,
+                "periods": periods,
+                "include_partial": result.include_partial,
+                "lineage": {
+                    "event_id": resolved["event_id"],
+                    "occurred_at": resolved["occurred_at"],
+                },
+            },
+        }
 
     @app.post(prefix + "/trends/completed", dependencies=auth)
     def trend_completed(event: TrendCompleted):

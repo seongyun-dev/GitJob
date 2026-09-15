@@ -69,6 +69,13 @@ def test_completed_batch_to_automatic_recommendation_database_and_exact_new_jobs
     job_response = client.post(PREFIX + "/job-batches/completed", json=request)
     cohort_id = snapshot_ref(job_response, "COHORT")
     demand_id = snapshot_ref(job_response, "DEMAND")
+    resolved = client.post(
+        PREFIX + "/job-cohorts/resolve", json=criteria().model_dump(mode="json")
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["data"]["cohort_snapshot_id"] == cohort_id
+    assert resolved.json()["data"]["demand_snapshot_id"] == demand_id
+    assert resolved.json()["data"]["criteria"] == criteria().model_dump(mode="json")
     demand = client.get(PREFIX + f"/snapshots/{demand_id}").json()["data"]["payload"]
     assert demand["denominator"] == 4
     repeated = client.post(

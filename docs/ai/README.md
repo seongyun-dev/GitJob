@@ -99,7 +99,7 @@ B 레벨, 검증 상태, 기술 관측, 참여, SELF 귀속을 따로 보존한�
 1. [AI 개발 환경](../../AI/README.md)으로 Python 3.12와 저장소의 requirements를 준비한다.
 2. [런타임](c-compute-runtime.md)에 따라 public Flyway V3, C migration 003까지와 내부 token을 준비하고, [Registry를 DB에 import·활성화](../data/technology-registry-db.md)한다. `/health`는 생존 확인이고 인증된 `/ready`는 실행 Registry와 DB migration 준비 확인이다.
 3. 공고 자동화는 `C_INTAKE_CONFIG`와 보존된 완료 입력 디렉터리를 설정한다. 공개 분석은 허용한 고정 HDFS root와 별도 checkpoint를 사용한다.
-4. `GET /internal/v1/c/intake/status`로 처리 상태를 보고, `POST /internal/v1/c/job-cohorts/resolve`로 현재 기준의 코호트 ID를 얻는다. resolve는 조회이며 계산 요청이 아니다.
+4. `GET /internal/v1/c/intake/status`로 처리 상태를 보고, `POST /internal/v1/c/job-cohorts/resolve`로 검증된 입력 합집합에서 화면 조건에 맞는 코호트·수요 ID를 얻는다. 처음 보는 조건은 C가 멱등 계산·저장하고 같은 입력과 조건은 기존 결과를 재사용한다.
 5. B에서 `POST /internal/v1/c/analyses/completed`로 실제 Evidence와 코호트 ID를 보낸다. 반환된 저장 Snapshot ID로 결과와 공고 목록을 조회한다. 실패 재전달은 [클라이언트 규칙](c-compute-client.md)을 따른다.
 
 운영 준비 현황과 B 연동에 남은 일은 [B ↔ C compute 연동](c-compute-backend-integration.md)에 있다. 그 문서의 2026-09-09 스키마·token 기록은 이전 배포 기준이며, 새 V3/003·DB Registry를 적용했다는 뜻은 아니다.

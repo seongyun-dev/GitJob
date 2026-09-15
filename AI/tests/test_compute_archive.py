@@ -70,6 +70,9 @@ def archive_request(tmp_path, monkeypatch):
 
 def historical_archive_request(tmp_path, monkeypatch, *, sha_source="MONTH_EVENT_SHA"):
     request = archive_request(tmp_path, monkeypatch)
+    monkeypatch.setenv(
+        "C_ARCHIVE_A_SNAPSHOT_URI_ROOT", "hdfs:///gitjob/repo_snapshot/2026-08"
+    )
     commit_sha = "1".rjust(40, "0")
     a_snapshot = {
         "schema_version": "github-repo-snapshot/v1",
@@ -130,7 +133,7 @@ def historical_archive_request(tmp_path, monkeypatch, *, sha_source="MONTH_EVENT
     request["inputs"][0].update(
         {
             "a_snapshot_path": "a-snapshot.json",
-            "a_snapshot_uri": "hdfs:///gitjob/repo_snapshot/2026-08/snapshot.json",
+            "a_snapshot_uri": "hdfs:///gitjob/repo_snapshot/2026-08/a-snapshot.json",
             "a_snapshot_sha256": hashlib.sha256(a_snapshot_bytes).hexdigest(),
         }
     )
@@ -153,6 +156,18 @@ def test_archive_completed_stores_trend_with_original_public_reference(
         client.post(PREFIX + "/archive-trends/completed", json=request).json()
         == response.json()
     )
+    resolved = client.post(
+        PREFIX + "/trends/resolve",
+        json={
+            "source": "GH_ARCHIVE",
+            "tech_id": request["tech_id"],
+            "periods": request["periods"],
+            "granularity": request["granularity"],
+            "include_partial": request.get("include_partial", False),
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["data"]["snapshot_id"] == sid
 
 
 def test_historical_archive_v2_api_stores_monthly_head_payload(
@@ -171,6 +186,18 @@ def test_historical_archive_v2_api_stores_monthly_head_payload(
         client.post(PREFIX + "/archive-trends/completed", json=request).json()
         == response.json()
     )
+    resolved = client.post(
+        PREFIX + "/trends/resolve",
+        json={
+            "source": "GH_ARCHIVE_HISTORICAL",
+            "tech_id": request["tech_id"],
+            "periods": request["periods"],
+            "granularity": request["granularity"],
+            "include_partial": request.get("include_partial", False),
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["data"]["snapshot_id"] == sid
 
 
 def test_historical_archive_v2_api_rejects_a_snapshot_tampering(

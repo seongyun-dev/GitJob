@@ -12,14 +12,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from typing import Literal
 
 import psycopg
-from job.cohort import CohortCriteria
-from job.contracts import JobAnalysisInputBatch
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
+from job.cohort import CohortCriteria
+from job.contracts import JobAnalysisInputBatch
 from worker.job_hdfs_source import JobHdfsSourceConfig
 from worker.lease import LeaseHeartbeat
 from worker.store import ComputeStore, digest
@@ -328,7 +328,6 @@ def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
 
     from job.demand import aggregate_demand
     from job.input_union import build_input_union
-
     from worker.api import compute_versions
     from worker.jobs import job_review_records
     from worker.store import Artifact
@@ -431,6 +430,9 @@ class IntakeRunner:
         self._job_roots = tuple(config.job_roots)
         self._current_jobs = {}
         self._job_set_cache = {}
+        self._verified_job_outputs = ()
+        self._verified_job_signature = None
+        self._job_set_lock = RLock()
         self._known_manifests = {}
         self.public_reports = [{} for _ in public_sinks]
         self._public_completed = set()
@@ -444,53 +446,91 @@ class IntakeRunner:
         return bool(self._thread and self._thread.is_alive())
 
     def current_job_result(self, criteria):
-        return self._current_jobs.get(digest(criteria.model_dump(mode="json")))
+        with self._job_set_lock:
+            return self._current_jobs.get(digest(criteria.model_dump(mode="json")))
+
+    def _resolve_verified_job_locked(self, criteria):
+        outputs = self._verified_job_outputs
+        if not outputs or self._verified_job_signature is None:
+            return None, False
+        relevant = tuple(
+            value
+            for value in outputs
+            if not criteria.sources or value.source_site in criteria.sources
+        )
+        if not relevant or (
+            any(value.mixed_date_semantics for value in relevant)
+            and (criteria.posted_from or criteria.posted_to)
+        ):
+            return None, False
+        signature = digest(
+            sorted({(value.batch_sha256, value.manifest_sha256) for value in relevant})
+        )
+        key = digest(criteria.model_dump(mode="json"))
+        cached = self._job_set_cache.get(key)
+        if cached and cached[0] == signature:
+            return cached[1], False
+        result = self.job_set_sink(relevant, criteria)
+        if result["status"] == "COMPLETED":
+            self._job_set_cache[key] = (signature, result)
+        return result, True
+
+    def resolve_job_criteria(self, criteria):
+        """Compute one requested cohort from the latest verified immutable input set."""
+        with self._job_set_lock:
+            result, _ = self._resolve_verified_job_locked(criteria)
+            return result
+
+    def resolve_job_selector(self, selector):
+        """Bind B's stable filters to the verified input union observation cutoff."""
+        with self._job_set_lock:
+            if not self._verified_job_outputs or self._verified_job_signature is None:
+                return None
+            relevant = tuple(
+                output
+                for output in self._verified_job_outputs
+                if not selector.sources or output.source_site in selector.sources
+            )
+            if not relevant:
+                return None
+            criteria = selector.criteria_at(
+                max(output.occurred_at for output in relevant)
+            )
+            result, _ = self._resolve_verified_job_locked(criteria)
+            return (criteria, result) if result is not None else None
 
     def _publish_input_set(self, outputs, report):
         signature = digest(
             sorted({(value.batch_sha256, value.manifest_sha256) for value in outputs})
         )
-        current = {}
-        for criteria in self.config.criteria:
-            if self._stop.is_set():
-                return
-            key = digest(criteria.model_dump(mode="json"))
-            relevant = [
-                value
-                for value in outputs
-                if not criteria.sources or value.source_site in criteria.sources
-            ]
-            if not relevant:
-                report["pending"] += 1
-                continue
-            if any(value.mixed_date_semantics for value in relevant) and (
-                criteria.posted_from or criteria.posted_to
-            ):
-                report["blocked"] += 1
-                continue
-            try:
-                cached = self._job_set_cache.get(key)
-                if cached and cached[0] == signature:
-                    current[key] = cached[1]
-                    continue
-                result = self.job_set_sink(tuple(relevant), criteria)
-                if result["status"] == "COMPLETED":
-                    self._job_set_cache[key] = (signature, result)
-                    current[key] = result
-                    report["completed"] += 1
-                else:
-                    report["pending"] += 1
-            except (
-                ValueError,
-                OSError,
-                RuntimeError,
-                KeyError,
-                TypeError,
-                psycopg.Error,
-            ) as exc:
-                report["failed"] += 1
-                LOGGER.warning("C input union failed error_type=%s", type(exc).__name__)
-        self._current_jobs = current
+        with self._job_set_lock:
+            self._verified_job_outputs = tuple(outputs)
+            self._verified_job_signature = signature
+            current = {}
+            for criteria in self.config.criteria:
+                if self._stop.is_set():
+                    return
+                key = digest(criteria.model_dump(mode="json"))
+                try:
+                    result, computed = self._resolve_verified_job_locked(criteria)
+                    if result and result["status"] == "COMPLETED":
+                        current[key] = result
+                        report["completed"] += int(computed)
+                    else:
+                        report["pending"] += 1
+                except (
+                    ValueError,
+                    OSError,
+                    RuntimeError,
+                    KeyError,
+                    TypeError,
+                    psycopg.Error,
+                ) as exc:
+                    report["failed"] += 1
+                    LOGGER.warning(
+                        "C input union failed error_type=%s", type(exc).__name__
+                    )
+            self._current_jobs = current
 
     def _refresh_job_sources(self, report):
         """Stage published HDFS runs before discovery, if any are configured.
@@ -625,11 +665,17 @@ class IntakeRunner:
                 )
         if self.job_set_sink and not self._stop.is_set():
             if invalid_set:
-                self._current_jobs = {}
+                with self._job_set_lock:
+                    self._current_jobs = {}
+                    self._verified_job_outputs = ()
+                    self._verified_job_signature = None
             elif outputs:
                 self._publish_input_set(outputs, report)
             else:
-                self._current_jobs = {}
+                with self._job_set_lock:
+                    self._current_jobs = {}
+                    self._verified_job_outputs = ()
+                    self._verified_job_signature = None
                 report["pending"] += len(self.config.criteria)
         self.last_report = report
         for index, sink in enumerate(self.public_sinks):
@@ -672,7 +718,10 @@ class IntakeRunner:
                 psycopg.Error,
             ) as exc:
                 if self.job_set_sink:
-                    self._current_jobs = {}
+                    with self._job_set_lock:
+                        self._current_jobs = {}
+                        self._verified_job_outputs = ()
+                        self._verified_job_signature = None
                 self.last_report = {
                     "completed": 0,
                     "failed": 1,
@@ -739,7 +788,6 @@ class _PublicSource:
     def __call__(self):
         from github.artifact_reader import ReadOnlyWebHdfsReader
         from github.snapshot_input import load_published_snapshot
-
         from worker.public_intake import PublicPipelineConsumer
 
         if self.consumer is None:

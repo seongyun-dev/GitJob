@@ -1,18 +1,22 @@
 """Completed producer output is consumed automatically, safely and repeatably."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+from threading import Lock
 
 import pytest
 from test_job_cohort import batch, criteria, posting
 
+from worker.api import JobCohortResolveSelector
 from worker.intake import IntakeConfig, IntakeRunner, load_job_output
 
 
-def output(root, *, name="run-1", mutate=None):
+def output(root, *, name="run-1", mutate=None, collected_at=None):
     folder = root / name
     folder.mkdir(parents=True, exist_ok=True)
-    value = batch(posting("one")).model_copy(
+    changes = {"collected_at": collected_at} if collected_at is not None else {}
+    value = batch(posting("one", **changes)).model_copy(
         update={"pipeline_run_id": name, "dataset_snapshot_id": name}
     )
     manifest = {
@@ -122,6 +126,107 @@ class Sink:
         if self.fail:
             raise ConnectionError("test unavailable")
         return {"status": "COMPLETED", "results": []}
+
+
+def test_dynamic_selector_reuses_the_verified_input_set_and_cached_result(tmp_path):
+    _, value, _ = output(tmp_path, collected_at="2026-09-14T00:00:00Z")
+    calls = []
+
+    def sink(loaded, selected):
+        calls.append((tuple(row.batch_sha256 for row in loaded), selected))
+        return {"status": "COMPLETED", "results": []}
+
+    runner = IntakeRunner(config(tmp_path), job_sink=sink, job_set_sink=sink)
+    assert runner.poll_once()["completed"] == 1
+    selector = JobCohortResolveSelector(
+        schema_version="job-cohort-resolve-selector/v1",
+        target_role="FRONTEND",
+        regions=("서울",),
+    )
+
+    first_criteria, first = runner.resolve_job_selector(selector)
+    second_criteria, second = runner.resolve_job_selector(selector)
+
+    assert first == second
+    assert first_criteria == second_criteria
+    assert first_criteria.as_of == value.records[0].collected_at
+    assert first_criteria.as_of > config(tmp_path).criteria[0].as_of
+    assert first_criteria.target_role == "FRONTEND"
+    assert first_criteria.regions == ("서울",)
+    assert len(calls) == 2  # one configured cohort plus one dynamic selector
+
+
+def test_concurrent_dynamic_selector_computes_one_result_for_one_input_signature(
+    tmp_path,
+):
+    output(tmp_path)
+    calls = []
+    calls_lock = Lock()
+
+    def sink(loaded, selected):
+        with calls_lock:
+            calls.append((tuple(row.batch_sha256 for row in loaded), selected))
+        return {"status": "COMPLETED", "results": []}
+
+    runner = IntakeRunner(config(tmp_path), job_sink=sink, job_set_sink=sink)
+    runner.poll_once()
+    selector = JobCohortResolveSelector(
+        schema_version="job-cohort-resolve-selector/v1",
+        target_role="FRONTEND",
+    )
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(
+            pool.map(lambda _: runner.resolve_job_selector(selector), range(8))
+        )
+
+    assert all(result == results[0] for result in results)
+    assert (
+        len(calls) == 2
+    )  # configured calculation plus one serialized dynamic calculation
+
+
+def test_dynamic_selector_preserves_retryable_preparing_receipt(tmp_path):
+    output(tmp_path)
+    calls = 0
+
+    def sink(_loaded, selected):
+        nonlocal calls
+        calls += 1
+        status = "COMPLETED" if selected.target_role == "BACKEND" else "PREPARING"
+        return {"status": status, "results": []}
+
+    runner = IntakeRunner(config(tmp_path), job_sink=sink, job_set_sink=sink)
+    runner.poll_once()
+    selector = JobCohortResolveSelector(
+        schema_version="job-cohort-resolve-selector/v1",
+        target_role="FRONTEND",
+    )
+
+    selected, receipt = runner.resolve_job_selector(selector)
+
+    assert selected.target_role == "FRONTEND"
+    assert receipt == {"status": "PREPARING", "results": []}
+    assert calls == 2
+
+
+def test_invalid_poll_clears_dynamic_selector_inputs_instead_of_serving_stale(tmp_path):
+    folder, _, manifest = output(tmp_path)
+
+    def sink(_loaded, _selected):
+        return {"status": "COMPLETED", "results": []}
+
+    runner = IntakeRunner(config(tmp_path), job_sink=sink, job_set_sink=sink)
+    runner.poll_once()
+    selector = JobCohortResolveSelector(
+        schema_version="job-cohort-resolve-selector/v1",
+        target_role="FRONTEND",
+    )
+    assert runner.resolve_job_selector(selector) is not None
+
+    manifest["counts"]["detail_errors"] = 1
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert runner.poll_once()["blocked"] == 1
+    assert runner.resolve_job_selector(selector) is None
 
 
 def test_poll_skips_unfinished_and_consumes_newly_completed_output(tmp_path):
@@ -332,6 +437,11 @@ def test_actual_app_startup_consumes_to_postgres_and_restart_deduplicates(
                 ref["snapshot_id"]
                 for ref in results[-1]["results"]
                 if ref["kind"] == "COHORT"
+            )
+            assert resolved.json()["data"]["demand_snapshot_id"] == next(
+                ref["snapshot_id"]
+                for ref in results[-1]["results"]
+                if ref["kind"] == "DEMAND"
             )
             for ref in results[-1]["results"]:
                 saved = store.get_snapshot(ref["snapshot_id"], owner=None)

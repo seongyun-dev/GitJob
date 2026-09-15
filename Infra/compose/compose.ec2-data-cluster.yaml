@@ -47,6 +47,11 @@ services:
     environment:
       HDFS_URI: hdfs://${DATA_TS_IP}:8020
       SPARK_MASTER_URL: spark://${DATA_TS_IP}:7077
+    # B runs on the service host, so Compose `expose` is insufficient: the two
+    # projects do not share a Docker network. Publish the internal C API only
+    # on the data host's Tailscale address, never on every host interface.
+    ports:
+      - "${DATA_TS_IP:?DATA_TS_IP must be set}:${C_COMPUTE_PORT:-8080}:8080"
 
   hdfs-namenode:
     environment:

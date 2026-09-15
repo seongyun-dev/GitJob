@@ -76,8 +76,14 @@ def resolve(client, query):
         "/internal/v1/c/job-cohorts/resolve", json=query.model_dump(mode="json")
     )
     assert response.status_code == 200, response.text
-    identifier = response.json()["data"]["cohort_snapshot_id"]
+    resolved = response.json()["data"]
+    identifier = resolved["cohort_snapshot_id"]
     value = client.get("/internal/v1/c/snapshots/" + identifier).json()["data"]
+    demand = client.get(
+        "/internal/v1/c/snapshots/" + resolved["demand_snapshot_id"]
+    ).json()["data"]
+    assert demand["kind"] == "DEMAND"
+    assert demand["payload"]["cohort_id"] == value["payload"]["cohort_id"]
     return identifier, value["payload"]
 
 
@@ -225,6 +231,73 @@ def test_configured_union_combines_sources_and_source_filter_cannot_be_masked(ru
         assert resolve(client, selected)[0] == first
 
 
+def test_stable_selector_builds_and_reuses_a_filtered_pair_from_verified_inputs(
+    runtime,
+):
+    root, _, open_runtime = runtime
+    completed(root, "SARAMIN", "seoul", region="서울")
+    completed(root, "WORKNET", "busan", at="2026-09-07T01:00:00Z", region="부산")
+    request = {
+        "schema_version": "job-cohort-resolve-selector/v1",
+        "target_role": "BACKEND",
+        "regions": ["서울"],
+    }
+    with open_runtime()[0] as client:
+        runner = client.app.state.intake_runner
+        runner.poll_once()
+        first = client.post("/internal/v1/c/job-cohorts/resolve", json=request)
+        repeated = client.post("/internal/v1/c/job-cohorts/resolve", json=request)
+        assert first.status_code == 200, first.text
+        assert repeated.json() == first.json()
+        data = first.json()["data"]
+        assert data["criteria"]["as_of"] == "2026-09-07T01:00:00Z"
+        assert data["criteria"]["regions"] == ["서울"]
+        cohort = client.get(
+            "/internal/v1/c/snapshots/" + data["cohort_snapshot_id"]
+        ).json()["data"]
+        demand = client.get(
+            "/internal/v1/c/snapshots/" + data["demand_snapshot_id"]
+        ).json()["data"]
+        assert [job["region"] for job in cohort["payload"]["jobs"]] == ["서울"]
+        assert demand["payload"]["cohort_id"] == cohort["payload"]["cohort_id"]
+
+        completed(
+            root, "SARAMIN", "seoul-new", at="2026-09-07T02:00:00Z", region="서울"
+        )
+        runner.poll_once()
+        refreshed = client.post("/internal/v1/c/job-cohorts/resolve", json=request)
+        assert refreshed.status_code == 200, refreshed.text
+        assert refreshed.json()["data"]["criteria"]["as_of"] == "2026-09-07T02:00:00Z"
+        assert (
+            refreshed.json()["data"]["cohort_snapshot_id"] != data["cohort_snapshot_id"]
+        )
+
+
+def test_source_selector_ignores_unselected_source_updates(runtime):
+    root, _, open_runtime = runtime
+    completed(root, "SARAMIN", "selected", at="2026-09-07T01:00:00Z")
+    completed(root, "WORKNET", "other", at="2026-09-07T03:00:00Z")
+    request = {
+        "schema_version": "job-cohort-resolve-selector/v1",
+        "target_role": "BACKEND",
+        "sources": ["saramin"],
+    }
+    with open_runtime()[0] as client:
+        runner = client.app.state.intake_runner
+        runner.poll_once()
+        first = client.post("/internal/v1/c/job-cohorts/resolve", json=request)
+        assert first.status_code == 200, first.text
+        first_data = first.json()["data"]
+        assert first_data["criteria"]["as_of"] == "2026-09-07T01:00:00Z"
+        assert first_data["criteria"]["sources"] == ["SARAMIN"]
+
+        completed(root, "WORKNET", "other-new", at="2026-09-07T04:00:00Z")
+        runner.poll_once()
+        repeated = client.post("/internal/v1/c/job-cohorts/resolve", json=request)
+        assert repeated.status_code == 200, repeated.text
+        assert repeated.json() == first.json()
+
+
 def test_late_older_input_changes_current_union_and_restart_keeps_exact_result(runtime):
     root, query, open_runtime = runtime
     completed(root, "SARAMIN", "newer", at="2026-09-07T03:00:00Z")
@@ -239,6 +312,22 @@ def test_late_older_input_changes_current_union_and_restart_keeps_exact_result(r
     with open_runtime()[0] as client:
         client.app.state.intake_runner.poll_once()
         assert resolve(client, query)[0] == second
+
+
+def test_restart_does_not_resolve_a_durable_head_before_the_first_valid_poll(runtime):
+    root, query, open_runtime = runtime
+    completed(root, "SARAMIN", "one")
+    with open_runtime()[0] as client:
+        client.app.state.intake_runner.poll_once()
+        old_id, _ = resolve(client, query)
+    with open_runtime()[0] as client:
+        response = client.post(
+            "/internal/v1/c/job-cohorts/resolve", json=query.model_dump(mode="json")
+        )
+        assert response.status_code == 404
+        assert client.get("/internal/v1/c/snapshots/" + old_id).status_code == 200
+        client.app.state.intake_runner.poll_once()
+        assert resolve(client, query)[0] == old_id
 
 
 def test_new_closed_observation_does_not_revive_old_active_job(runtime):

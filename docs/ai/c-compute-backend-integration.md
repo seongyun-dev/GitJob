@@ -1,80 +1,192 @@
-# B ↔ C compute 연동 (미착수)
+# B ↔ C Compute 연결 인수
 
-> 아래 운영 상태는 2026-09-09 관측 기록이다. 2026-09-10 -199/-88 변경은 로컬에서만
-> 검증했으며, 새 버전은 public Registry V3와 C Compute 003까지 필요하다. 과거의
-> `schema_version=1` 또는 `/ready=200` 기록을 새 코드의 배포 인수로 사용하지 않는다.
-> 현재 실행 설정은 [런타임](c-compute-runtime.md), [DB Registry](../data/technology-registry-db.md),
-> [검토 큐](c-registry-review.md)를 따른다. 실제 서버 상태는 배포 시 다시 확인해야 한다.
+> 2026-09-15 코드 기준: Jira `S15P21E102-269` 로컬 구현·회귀 검증 중
+> 아직 하지 않은 것: commit, push, MR, 운영 배포, 실제 B callback, 로그인 FE E2E
 
-C compute 런타임은 운영에서 준비를 마쳤다. 계산을 실제로 돌리려면 입력을 넣어 주는 쪽이
-필요한데 그것이 아직 없다. 이 문서는 무엇이 되어 있고 무엇이 남았는지 남긴다.
+C는 공고 모집단·수요·매칭·추천·What-if·Trend를 계산한다. B는 로그인 사용자의
+소유권을 확인하고 C 내부 API를 호출한 뒤 FE DTO로 변환한다. B나 FE가 C 계산을 다시
+구현하거나 C DB를 직접 읽지 않는다.
 
-계약 자체는 [C 계산 실행·저장 계약](c-compute-runtime.md)이 원본이다. 여기서는 연동에
-필요한 것만 다룬다.
+원본 계약은 [C 계산 실행·저장 계약](c-compute-runtime.md)이다. 이 문서는 B가 실제로
+연결할 순서와 운영 인수 조건만 요약한다.
 
-## 현재 준비된 것 (2026-09-09)
+## 1. 현재 확인된 운영 상태
 
-| | 상태 |
-| --- | --- |
-| `c_compute` 스키마 | 적용됨. `event`·`snapshot`·`head`·`schema_version`, `schema_version=1` |
-| `C_COMPUTE_TOKEN` | 서비스·데이터 호스트에 **같은 값**으로 설정됨 (48자) |
-| `GET /ready` | `200 READY`, `registry_version=registry-20260908.1` |
-| `verify-deployment.sh` | `worker-ready OK` |
+2026-09-15 읽기 전용 실사 결과는 다음과 같다.
 
-`/internal/v1/c/*`는 이제 503을 반환하지 않는다. 다만 **호출하는 쪽이 없어 아무 계산도
-일어나지 않는다.**
+- 데이터 서버의 C Worker는 컨테이너 내부에서 `/ready=200`이지만 8080이 호스트에 게시되지
+  않아 서비스 서버에서 접근할 수 없다.
+- 서비스 서버 `.env.service`에는 `C_COMPUTE_URL`이 아직 없다. token 값은 두 호스트에
+  설정되어 있지만 값 자체를 문서나 로그에 남기지 않는다.
+- 운영 Worker와 DB alias는 `registry-20260911.1` 47개를 사용한다. 승인 코드 기준은
+  `registry-20260911.4` 44개와 Rule Pack 44개/145규칙이다.
+- C DB에는 COHORT·DEMAND 각 10개가 있고 PUBLIC_GITHUB·TREND·RECOMMENDATION은 없다.
+- 공고 자동 intake는 Worknet·Saramin·Career·GameJob을 읽는다. JobKorea는 데이터가 있어도
+  `S15P21E102-230` 결정에 따라 MVP 분석 입력에서 제외한다.
+- 월별 Repo Snapshot은 6~8월만 완료 marker까지 확인됐다. 5월은 Artifact만 있고 완료
+  marker가 없어 소비하면 안 된다.
 
-## 남은 것
+따라서 현재 B가 코드를 작성하는 것은 가능하지만 운영 URL을 호출하는 인수는 아직 불가능하다.
 
-입력 경로가 두 가지인데 둘 다 연결되어 있지 않다.
+## 2. 운영 연결 전 C 체크리스트
 
-### 경로 1: B 백엔드가 C 를 호출한다 (미구현)
+1. `S15P21E102-269` 변경을 검토·병합한 뒤 데이터 서버를 최신 develop로 배포한다.
+2. `compose.ec2-data-cluster.yaml`의 Worker 8080을 데이터 서버 Tailscale 주소에만 게시한다.
+   공인망이나 `0.0.0.0`에 열지 않는다.
+3. 기존 Registry import 절차로 `.4`를 import·activate하고 Worker를 재시작한다.
+4. 서비스 서버에서 인증 포함 `/ready`, `/registry`, `/contracts`, `/intake/status`를 호출한다.
+5. `/ready`와 `/registry`가 승인된 `.4` version/hash를 반환하는지 확인한다.
+6. B 서버 설정에 `C_COMPUTE_URL=http://100.70.66.38:8080`과 동일한
+   `C_COMPUTE_TOKEN`을 전달한다. 현재 base Compose의 backend environment에는 두 변수가
+   아직 없으므로 B 구현에서 명시적으로 전달한다. token은 브라우저에 전달하지 않는다.
 
-`docs/ai/c-compute-runtime.md`가 정의한 역할 분담은 이렇다. B는 사용자 인증과 소유권을
-확인하고, C의 결과를 서비스 API로 전달한다. **B는 계산을 다시 구현하지 않는다.**
+서비스 서버의 nginx 파일에는 별도 도메인·인증서 미커밋 변경이 있다. C 배포를 이유로
+reset하거나 덮어쓰지 않는다.
 
-현재 BE에는 C 클라이언트 코드가 없다. `C_COMPUTE_URL`과 `C_COMPUTE_TOKEN`을 참조하는
-것은 `AI/worker` 내부 클라이언트뿐이다.
+## 3. B가 호출할 순서
 
-붙일 때 필요한 것:
+### 3.1 공고 모집단과 수요 선택
 
-- BE에서 worker로의 HTTP 클라이언트. 모든 요청에 `Authorization: Bearer <C_COMPUTE_TOKEN>`
-- `compose.yaml`의 backend 서비스에 `C_COMPUTE_TOKEN`과 `C_COMPUTE_URL` 전달.
-  **지금은 backend에 전달되지 않는다.** 토큰은 이미 `.env.service`에 있으므로 compose
-  매핑만 추가하면 된다
-- 서비스 호스트와 데이터 호스트의 `C_COMPUTE_TOKEN`이 **같은 값이어야 한다.** 어긋나면
-  worker가 `401 INTERNAL_AUTH_REQUIRED`를 반환한다
-- `C_COMPUTE_URL`은 호스트가 갈려 있다는 점에 주의한다. worker는 데이터 호스트에 있고
-  backend는 서비스 호스트에 있으므로, `.env.example`의 기본값 `http://worker:8080`은
-  같은 Compose 네트워크를 전제한 로컬 값이다. 운영에서는 데이터 호스트 주소여야 한다
+B는 사용자가 선택한 직무·지역·경력 조건으로 아래 endpoint를 호출한다.
 
-개인 결과 조회에는 `user_id`가 필요하며, 그 값은 **B가 인증한 사용자**여야 한다.
-브라우저가 지정하는 값이 아니다.
-
-### 경로 2: 완료 manifest 자동 감시 (미설정)
-
-`C_INTAKE_CONFIG`가 비어 있어 intake 러너가 뜨지 않는다. 이 경로는 HTTP가 아니므로
-토큰과 무관하게 동작한다.
-
-켜려면 `c-intake-config/v1` JSON 경로와 mount가 필요하다.
-[c-compute-runtime.md](c-compute-runtime.md)의 "Compose에서 반드시 추가할 mount"와
-"입력 설정 예"를 따른다. 신뢰된 입력·설정은 read-only로, 공개 checkpoint는 쓰기 가능하게
-mount한다.
-
-## 어느 쪽을 먼저 붙일지
-
-경로 2가 먼저다. B 연동 없이도 공고 완료 입력만으로 cohort와 수요 Snapshot이 쌓이기
-시작하고, 그러면 B가 붙을 때 조회할 결과가 이미 있다. 반대 순서면 B를 붙여도 읽을
-Snapshot이 없다.
-
-## 확인 방법
-
-연동 후에는 `verify-deployment.sh`의 `worker-ready`가 아니라 실제 결과로 확인한다.
-`worker-ready`는 스키마와 토큰 준비까지만 본다.
-
-```
-GET /internal/v1/c/intake/status   # 자동 감시의 활성/실행 여부, 최근 poll 결과
-GET /internal/v1/c/registry        # 실행 중인 Registry Snapshot
+```http
+POST /internal/v1/c/job-cohorts/resolve
+Authorization: Bearer <server-only token>
+Content-Type: application/json
 ```
 
-`docs/ai/c-compute-runtime.md`의 "상태 확인과 복구 순서"를 따른다.
+```json
+{
+  "schema_version": "job-cohort-resolve-selector/v1",
+  "target_role": "BACKEND",
+  "regions": ["서울"],
+  "career_levels": ["신입"]
+}
+```
+
+C는 마지막으로 검증된 A 입력 중 선택한 source의 완료 시각을 `as_of`로 고정하고, 같은
+입력·조건이면 기존 계산을 재사용한다. 응답의 COHORT와 DEMAND는 같은 event/stream에서
+저장된 쌍이다.
+
+```json
+{
+  "data": {
+    "cohort_snapshot_id": "c-...",
+    "demand_snapshot_id": "c-...",
+    "criteria": {
+      "target_role": "BACKEND_ENGINEER",
+      "as_of": "2026-09-15T01:30:00Z",
+      "regions": ["서울"],
+      "career_levels": ["신입"]
+    },
+    "compute_versions": {}
+  }
+}
+```
+
+- 200: 두 Snapshot 준비 완료
+- 202 `PREPARING`: 같은 selector로 재시도하며 `Retry-After`를 따른다
+- 404 `COHORT_NOT_PREPARED`: Worker 첫 정상 poll 전이거나 현재 입력이 차단됨
+- 422 `INVALID_INPUT`: 지원하지 않는 직무·필터 형식
+- 503: DB·Registry·C 런타임 일시 장애
+
+지역·경력 필터를 B에서 목록만 잘라내는 방식으로 처리하면 추천 수치와 공고 목록의 분모가
+달라진다. 필터가 바뀔 때마다 이 endpoint로 같은 조건의 COHORT·DEMAND를 받아야 한다.
+
+### 3.2 사용자 분석 완료 전달
+
+GitHub 사용자 분석이 최종 성공 또는 계약상 허용된 부분 성공 상태가 되면 B가
+`POST /internal/v1/c/analyses/completed`를 호출한다.
+
+- `event_id`는 `userId + analysisId + cohortSnapshotId + Evidence version`에서 B가 한 번
+  만들고 재시도에도 같은 값을 쓴다.
+- `user_id`는 브라우저 입력이 아니라 로그인 사용자에서 정한다.
+- `cohort_snapshot_id`는 바로 앞 resolve 응답을 쓴다.
+- Evidence v4의 개인 종합은 top-level `personal_assessments`에 둔다.
+- repository 기술마다 `personal_level`을 중복해서 넣지 않는다.
+- `assessment_ceiling`, `attribution_status`, `missing_scope`를 보존한다.
+
+정확한 필드와 enum은 운영 C의 `GET /internal/v1/c/contracts`에서 생성된 schema를 사용한다.
+
+완료 응답의 `results`에서 `kind=RECOMMENDATION`인 `snapshot_id`를
+`userId + analysisId + cohortSnapshotId`에 저장한다. B 재시작이나 같은 완료 이벤트 재전달로
+중복 계산을 만들지 않는다.
+
+### 3.3 개인 결과 조회
+
+B는 저장한 RECOMMENDATION Snapshot ID와 인증한 사용자 ID로 다음 C API를 호출한다.
+
+- `GET /internal/v1/c/snapshots/{snapshotId}?user_id={authenticatedUserId}`
+- `GET /internal/v1/c/recommendations/{snapshotId}/job-postings`
+- `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-postings`
+- `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-posting`
+
+다른 사용자의 개인 Snapshot은 존재 여부를 노출하지 않도록 404로 처리한다. B는 C의 추천
+점수, 충족 여부, Skill Gap, What-if 증가 수를 재계산하지 않는다.
+
+### 3.4 공용 Trend 선택
+
+```http
+POST /internal/v1/c/trends/resolve
+Authorization: Bearer <server-only token>
+```
+
+주간 증분 Trend:
+
+```json
+{"source":"WEEKLY_REPO_ACTIVITY","tech_id":"python","include_partial":false}
+```
+
+고정 월별 historical Trend:
+
+```json
+{
+  "source":"GH_ARCHIVE_HISTORICAL",
+  "tech_id":"react",
+  "periods":["2026-06","2026-07","2026-08"],
+  "granularity":"MONTH",
+  "include_partial":false
+}
+```
+
+세 source `WEEKLY_REPO_ACTIVITY`, `GH_ARCHIVE`, `GH_ARCHIVE_HISTORICAL`은 서로 다른
+series다. B/FE가 하나의 합성 점수로 섞지 않는다. resolve 응답의 `snapshot_id`로 기존
+snapshot 조회 API를 호출한다. 미완료 월을 0으로 채우지 않는다.
+
+## 4. B·FE 공개 API 경계
+
+B가 제공할 공개 API의 URI와 DTO는 FE조와 고정하되 역할은 다음으로 제한한다.
+
+- 로그인·소유권 확인
+- 사용자별 최신 analysis/cohort/recommendation 선택
+- C 응답을 FE DTO로 변환
+- 페이징과 C 오류를 분석 전·계산 중·데이터 부족·일시 장애로 변환
+
+FE는 C token이나 C Snapshot ID를 임의로 만들지 않는다. Fixture는 운영 빌드에서 제거하고,
+`UNKNOWN`·부분 분석·미해석 요구를 기술 미보유로 표시하지 않는다.
+
+## 5. 공동 완료 기준
+
+아래가 실제 로그인 사용자 한 명으로 이어져야 완료다.
+
+```text
+GitHub 로그인
+→ 저장소 선택·분석
+→ Evidence와 personalLevel 생성
+→ B가 공고 selector resolve
+→ B가 analyses/completed 호출
+→ C가 매칭·Gap·추천·What-if 저장
+→ B 공개 API 조회
+→ FE 실제 화면 표시
+```
+
+추가로 다음을 확인한다.
+
+- 매칭 건수와 목록이 같은 COHORT를 사용함
+- What-if 증가 건수와 신규 부합 공고 목록이 일치함
+- 다른 사용자 Snapshot을 읽을 수 없음
+- 같은 event 재전달과 Worker 재시작 후 중복 Snapshot이 생기지 않음
+- 공고·Trend 입력 부족을 0이나 기술 미사용으로 바꾸지 않음
+- C 장애를 무조건 500으로 뭉개지 않고 202·404·409·422·503 의미를 보존함
+
+이 문서의 코드 계약 완료는 운영 배포나 로그인 FE E2E 완료를 뜻하지 않는다.
