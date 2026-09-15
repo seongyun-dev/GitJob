@@ -51,7 +51,11 @@ C에서 만든다. A에 새로운 통합 batch 를 요구하지 않는다"로 �
 | `COLLECTOR_STOPPED_EARLY` | `stopped_reason`이 있다 |
 | `DETAIL_COLLECTION_FAILED` | `counts.detail_errors > 0` |
 | `INVALID_SOURCE_RECORDS` | `counts.invalid_records > 0` |
-| `EMPTY_RUN` | `counts.records <= 0` (`RunOutcome.EMPTY`는 SUCCESS가 아니다) |
+| `EMPTY_RUN` | `counts.records <= 0` (SUCCESS_EMPTY여도 analysis_input에는 게시하지 않는다) |
+
+정상 empty run은 collector/scheduler 관점에서는 SUCCESS_EMPTY이다. 다만 C가 계산할
+입력은 하나 이상의 검증된 공고 record를 전제로 하므로, analysis_input의 EMPTY_RUN은
+collector 장애가 아니라 0-row publish를 막는 별도의 release blocker로 유지한다.
 
 이 목록은 `AI/worker/intake.py`의 `load_job_output`이 거부하는 것과 같은 규칙이다. C가 거절할
 회차를 A가 `analysis_input`에 올려 두면, 그 경로가 하는 유일한 약속이 그 자리에서 깨진다.

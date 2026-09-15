@@ -227,7 +227,8 @@ def release_blockers(
     if _count(manifest, "invalid_records"):
         blockers.append("INVALID_SOURCE_RECORDS")
     if _count(manifest, "records") <= 0:
-        # `RunOutcome.EMPTY` is deliberately not `SUCCESS` in the scheduler.
+        # SUCCESS_EMPTY is a collector success, but a zero-row analysis input
+        # is still intentionally blocked from the C-facing publish path.
         blockers.append("EMPTY_RUN")
 
     return tuple(sorted(set(blockers)))

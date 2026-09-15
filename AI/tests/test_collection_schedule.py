@@ -220,16 +220,40 @@ def test_a_failed_run_does_not_reset_the_clock():
     assert detect_gap(history, site="WORKNET", now=NOW) is not None
 
 
-def test_an_empty_run_does_not_reset_the_clock():
+def test_a_valid_empty_run_resets_the_clock():
+    history = [
+        _record(finished_at=(NOW - timedelta(hours=20)).isoformat()),
+        _record(
+            finished_at=(NOW - timedelta(hours=1)).isoformat(),
+            status=RunOutcome.SUCCESS_EMPTY,
+            records=0,
+            exit_code=0,
+        ),
+    ]
+    assert detect_gap(history, site="WORKNET", now=NOW) is None
+
+
+def test_a_legacy_empty_run_does_not_reset_the_clock():
     history = [
         _record(finished_at=(NOW - timedelta(hours=20)).isoformat()),
         _record(
             finished_at=(NOW - timedelta(hours=1)).isoformat(),
             status=RunOutcome.EMPTY,
             records=0,
+            exit_code=1,
         ),
     ]
     assert detect_gap(history, site="WORKNET", now=NOW) is not None
+
+
+def test_legacy_success_history_resets_the_clock():
+    history = [
+        _record(
+            finished_at=(NOW - timedelta(hours=1)).isoformat(),
+            status="SUCCESS",
+        )
+    ]
+    assert detect_gap(history, site="WORKNET", now=NOW) is None
 
 
 def test_no_history_at_all_is_reported_as_a_gap():
@@ -293,25 +317,105 @@ def _execute_code(code: str, tmp_path: Path, **kwargs: object) -> RunRecord:
 
 def test_a_run_reports_the_record_count_from_the_manifest(tmp_path: Path):
     (tmp_path / "m.json").write_text(
-        json.dumps({"counts": {"records": 7}, "pipeline_run_id": "WORKNET-X"}),
+        json.dumps(
+            {
+                "source_site": "WORKNET",
+                "counts": {
+                    "records": 7,
+                    "detail_errors": 0,
+                    "invalid_records": 0,
+                    "rows_seen": 9,
+                },
+                "pipeline_run_id": "WORKNET-X",
+            }
+        ),
         encoding="utf-8",
     )
     record = _execute_code('print("manifest=m.json")', tmp_path)
 
-    assert record.status == RunOutcome.SUCCESS
+    assert record.status == RunOutcome.SUCCESS_WITH_DATA
     assert record.records == 7
     assert record.pipeline_run_id == "WORKNET-X"
     assert record.error is None
+    assert record.filter_counts == {
+        "records": 7,
+        "detail_errors": 0,
+        "invalid_records": 0,
+        "rows_seen": 9,
+    }
 
 
-def test_a_zero_record_run_is_empty_not_success(tmp_path: Path):
-    """A broken selector looks exactly like a quiet day; do not conflate them."""
+def test_a_valid_zero_record_run_is_success_empty(tmp_path: Path):
+    """A clean filtered run is distinct from a broken selector."""
 
     (tmp_path / "m.json").write_text(
-        json.dumps({"counts": {"records": 0}}), encoding="utf-8"
+        json.dumps(
+            {
+                "source_site": "WORKNET",
+                "pipeline_run_id": "WORKNET-EMPTY",
+                "stopped_reason": None,
+                "counts": {
+                    "records": 0,
+                    "detail_errors": 0,
+                    "invalid_records": 0,
+                    "rows_seen": 12,
+                    "skipped_out_of_range": 12,
+                },
+            }
+        ),
+        encoding="utf-8",
     )
     record = _execute_code('print("manifest=m.json")', tmp_path)
-    assert record.status == RunOutcome.EMPTY
+    assert record.status == RunOutcome.SUCCESS_EMPTY
+    assert record.exit_code == 0
+    assert record.filter_counts["skipped_out_of_range"] == 12
+
+
+def test_a_zero_record_run_with_detail_errors_is_failed(tmp_path: Path):
+    (tmp_path / "m.json").write_text(
+        json.dumps(
+            {
+                "source_site": "WORKNET",
+                "pipeline_run_id": "WORKNET-BAD-EMPTY",
+                "stopped_reason": None,
+                "counts": {
+                    "records": 0,
+                    "detail_errors": 1,
+                    "invalid_records": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = _execute_code('print("manifest=m.json")', tmp_path)
+    assert record.status == RunOutcome.FAILED
+    assert record.error is not None and "DETAIL_COLLECTION_FAILED" in record.error
+
+
+def test_a_nonzero_empty_child_is_failed_even_with_a_clean_manifest(
+    tmp_path: Path,
+):
+    (tmp_path / "m.json").write_text(
+        json.dumps(
+            {
+                "source_site": "WORKNET",
+                "pipeline_run_id": "WORKNET-RAW-FAIL",
+                "stopped_reason": None,
+                "counts": {
+                    "records": 0,
+                    "detail_errors": 0,
+                    "invalid_records": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = _execute_code(
+        'import sys; print("manifest=m.json"); sys.exit(1)',
+        tmp_path,
+    )
+    assert record.status == RunOutcome.FAILED
+    assert record.exit_code == 1
 
 
 def test_a_crashing_collector_is_recorded_not_raised(tmp_path: Path):
@@ -350,21 +454,46 @@ def test_a_timeout_is_recorded_as_a_failure(tmp_path: Path):
 
 def test_an_unreadable_manifest_does_not_crash_the_run(tmp_path: Path):
     record = _execute_code('print("manifest=absent.json")', tmp_path)
-    assert record.status == RunOutcome.EMPTY
+    assert record.status == RunOutcome.FAILED
     assert record.records == 0
+    assert record.error is not None and "manifest unreadable" in record.error
 
 
 def test_a_nonzero_exit_that_still_collected_is_not_a_failure(tmp_path: Path):
     """A blocked later page keeps the postings the run already validated."""
 
     (tmp_path / "m.json").write_text(
-        json.dumps({"counts": {"records": 4}}), encoding="utf-8"
+        json.dumps(
+            {
+                "counts": {"records": 4},
+                "stopped_reason": "blocked: refused with HTTP 403",
+            }
+        ),
+        encoding="utf-8",
     )
     record = _execute_code(
         'import sys; print("manifest=m.json"); sys.exit(1)',
         tmp_path,
     )
-    assert record.status == RunOutcome.SUCCESS
+    assert record.status == RunOutcome.SUCCESS_WITH_DATA
+    assert record.records == 4
+
+
+def test_a_nonzero_exit_with_data_without_a_stop_reason_is_failed(
+    tmp_path: Path,
+):
+    """Raw or analysis_input upload failure must not be hidden by local rows."""
+
+    (tmp_path / "m.json").write_text(
+        json.dumps({"counts": {"records": 4}, "stopped_reason": None}),
+        encoding="utf-8",
+    )
+    record = _execute_code(
+        'import sys; print("manifest=m.json"); sys.exit(1)',
+        tmp_path,
+    )
+
+    assert record.status == RunOutcome.FAILED
     assert record.records == 4
 
 
@@ -561,6 +690,31 @@ def test_check_still_reports_an_enabled_site(
     assert code == 1
 
 
+def test_success_empty_run_does_not_alert_or_report_a_gap(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from job.collector import __main__ as cli
+
+    config_path = _write_schedule(tmp_path)
+    record = _record(
+        finished_at=datetime.now(UTC).isoformat(),
+        status=RunOutcome.SUCCESS_EMPTY,
+        records=0,
+        exit_code=0,
+    )
+    monkeypatch.setattr(cli, "execute_run", lambda *args, **kwargs: record)
+
+    code = cli.main(["--run", "worknet-morning", "--config", str(config_path)])
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+
+    assert code == 0
+    assert "SUCCESS_EMPTY" in combined
+    assert "ALERT" not in combined
+
+
 def test_every_repo_run_filters_by_job_category():
     """An unfiltered run collects 요양보호사 and 카지노 공채, not developers.
 
@@ -627,14 +781,14 @@ def test_a_block_after_collecting_records_is_still_counted_as_a_block():
     """The case the run status hides.
 
     A run blocked on a later page keeps the postings it already validated, so
-    it is recorded SUCCESS — postings did accumulate. But "7일 연속 수집 중
+    it is recorded SUCCESS_WITH_DATA — postings did accumulate. But "7일 연속 수집 중
     차단 0회" counts blocks, not failures, so the block has to survive in the
     history independently of the status.
     """
 
     history = [
         _record(
-            status=RunOutcome.SUCCESS,
+            status=RunOutcome.SUCCESS_WITH_DATA,
             records=40,
             stopped_reason="blocked: refused with HTTP 403",
         ),
@@ -642,7 +796,7 @@ def test_a_block_after_collecting_records_is_still_counted_as_a_block():
     blocked = count_blocked_runs(history)
 
     assert len(blocked) == 1
-    assert blocked[0].status == RunOutcome.SUCCESS
+    assert blocked[0].status == RunOutcome.SUCCESS_WITH_DATA
 
 
 def test_a_clean_run_is_not_counted_as_a_block():
@@ -706,6 +860,6 @@ def test_execute_run_carries_the_collectors_stopped_reason(tmp_path: Path):
     )
     record = _execute_code('print("manifest=m.json")', tmp_path)
 
-    assert record.status == RunOutcome.SUCCESS
+    assert record.status == RunOutcome.SUCCESS_WITH_DATA
     assert record.stopped_reason == "blocked: refused with HTTP 403"
     assert count_blocked_runs([record])

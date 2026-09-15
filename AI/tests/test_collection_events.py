@@ -234,20 +234,20 @@ def test_run_without_pipeline_run_id_publishes_nothing(tmp_path: Path) -> None:
     assert reason == "run has no pipeline_run_id"
 
 
-def test_empty_round_is_still_announced(tmp_path: Path) -> None:
+def test_success_empty_round_is_still_announced(tmp_path: Path) -> None:
     """Zero postings is a fact. A silent round is indistinguishable from a gap."""
 
     run_dir = _make_run(
         tmp_path, upload=_default_upload(), manifest=_default_manifest()
     )
     envelope, reason = build_collection_event(
-        FakeRecord(status="EMPTY", records=0), run_dir=run_dir
+        FakeRecord(status="SUCCESS_EMPTY", records=0), run_dir=run_dir
     )
 
     assert reason is None
     assert envelope is not None
     assert envelope.payload["record_count"] == 0
-    assert envelope.payload["status"] == "EMPTY"
+    assert envelope.payload["status"] == "SUCCESS_EMPTY"
 
 
 # --- publishing ---------------------------------------------------------

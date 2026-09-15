@@ -27,13 +27,15 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import tomllib
+
+from job.collector.outcome import empty_run_blockers, is_valid_empty_run
 
 __all__ = [
     "DEFAULT_MAX_INTERVAL_HOURS",
@@ -91,9 +93,21 @@ class ScheduleConfig:
 
 
 class RunOutcome:
+    # New explicit operational states.
+    SUCCESS_WITH_DATA = "SUCCESS_WITH_DATA"
+    SUCCESS_EMPTY = "SUCCESS_EMPTY"
+
+    # History written before S15P21E102-273 is append-only. Keep these values
+    # readable; do not rewrite old lines on disk.
     SUCCESS = "SUCCESS"
     EMPTY = "EMPTY"
     FAILED = "FAILED"
+
+    SUCCESS_STATUSES = frozenset({SUCCESS, SUCCESS_WITH_DATA, SUCCESS_EMPTY})
+
+    @classmethod
+    def is_success(cls, status: str) -> bool:
+        return status in cls.SUCCESS_STATUSES
 
 
 @dataclass(frozen=True)
@@ -115,6 +129,9 @@ class RunRecord:
     stopped_reason: str | None = None
     pipeline_run_id: str | None = None
     manifest_path: str | None = None
+    # Preserve the manifest diagnostic/filter counters in append-only history.
+    # Older records deserialize with the empty default.
+    filter_counts: dict[str, int] = field(default_factory=dict)
 
     def to_json(self) -> str:
         return json.dumps(self.__dict__, ensure_ascii=False)
@@ -163,14 +180,13 @@ def execute_run(
 ) -> RunRecord:
     """Run one collection and describe what happened.
 
-    A non-zero exit, a crash, a timeout and a zero-record run are all recorded
-    rather than raised: the caller has to write history and alert for every one
-    of them, and an exception here would skip both.
+    A non-zero exit, a crash and a timeout are all recorded rather than raised:
+    the caller has to write history and alert for every one of them, and an
+    exception here would skip both.
 
-    Zero records is `EMPTY`, not `SUCCESS`. A filtered collection legitimately
-    returns nothing on a quiet day, but it is also exactly what a silently
-    broken selector looks like, so it is surfaced as its own state instead of
-    being averaged into a healthy run.
+    A zero-record child that exits cleanly is SUCCESS_EMPTY only when its
+    manifest proves that request/parser processing completed without quality
+    or source-fatal blockers.
     """
 
     started = now or datetime.now(UTC)
@@ -209,14 +225,23 @@ def execute_run(
         )
 
     manifest_path = _tagged_value(completed.stdout, "manifest")
-    counts = _read_manifest_counts(manifest_path, cwd)
+    counts = _read_manifest_counts(manifest_path, cwd, source_site=run.site)
 
-    if completed.returncode != 0 and counts["records"] == 0:
-        status = RunOutcome.FAILED
+    if completed.returncode != 0:
+        # A collector may deliberately stop after retaining records because a
+        # later page was blocked. Preserve that existing partial-data outcome.
+        # Other non-zero exits, including Raw/analysis_input upload failures,
+        # are actual failures even when local records exist.
+        if counts["records"] > 0 and counts["stopped_reason"]:
+            status = RunOutcome.SUCCESS_WITH_DATA
+        else:
+            status = RunOutcome.FAILED
+    elif counts["records"] == 0 and counts["empty_valid"]:
+        status = RunOutcome.SUCCESS_EMPTY
     elif counts["records"] == 0:
-        status = RunOutcome.EMPTY
+        status = RunOutcome.FAILED
     else:
-        status = RunOutcome.SUCCESS
+        status = RunOutcome.SUCCESS_WITH_DATA
 
     return RunRecord(
         run_name=run.name,
@@ -226,10 +251,15 @@ def execute_run(
         status=status,
         records=counts["records"],
         exit_code=completed.returncode,
-        error=_error_summary(completed, status),
+        error=_error_summary(
+            completed,
+            status,
+            manifest_error=counts["manifest_error"],
+        ),
         stopped_reason=counts["stopped_reason"],
         pipeline_run_id=counts["pipeline_run_id"],
         manifest_path=manifest_path,
+        filter_counts=counts["filter_counts"],
     )
 
 
@@ -246,13 +276,19 @@ def _tagged_value(stdout: str, key: str) -> str | None:
 def _read_manifest_counts(
     manifest_path: str | None,
     cwd: Path | None,
+    *,
+    source_site: str | None = None,
 ) -> dict[str, Any]:
     empty: dict[str, Any] = {
         "records": 0,
         "pipeline_run_id": None,
         "stopped_reason": None,
+        "filter_counts": {},
+        "empty_valid": False,
+        "manifest_error": None,
     }
     if not manifest_path:
+        empty["manifest_error"] = "collector did not report a manifest"
         return empty
     path = Path(manifest_path)
     if not path.is_absolute() and cwd is not None:
@@ -260,24 +296,58 @@ def _read_manifest_counts(
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        empty["manifest_error"] = f"manifest unreadable: {path}"
         return empty
+    if not isinstance(manifest, Mapping):
+        empty["manifest_error"] = "manifest is not a JSON object"
+        return empty
+    raw_counts = manifest.get("counts")
+    if not isinstance(raw_counts, Mapping):
+        empty["manifest_error"] = "manifest counts are missing"
+        return empty
+    filter_counts = {
+        str(key): value
+        for key, value in raw_counts.items()
+        if type(value) is int
+    }
+    records = raw_counts.get("records")
+    if type(records) is not int:
+        empty["manifest_error"] = "manifest records count is missing"
+        records = 0
+    blockers = empty_run_blockers(manifest, source_site=source_site)
     return {
-        "records": int(manifest.get("counts", {}).get("records", 0)),
+        "records": records,
         "pipeline_run_id": manifest.get("pipeline_run_id"),
         "stopped_reason": manifest.get("stopped_reason"),
+        "filter_counts": filter_counts,
+        "empty_valid": records == 0 and not blockers and is_valid_empty_run(
+            manifest, source_site=source_site
+        ),
+        "manifest_error": (
+            empty["manifest_error"]
+            or (
+                f"invalid empty run manifest: {', '.join(blockers)}"
+                if records == 0 and blockers
+                else None
+            )
+        ),
     }
 
 
 def _error_summary(
     completed: subprocess.CompletedProcess[str],
     status: str,
+    *,
+    manifest_error: str | None = None,
 ) -> str | None:
-    if status == RunOutcome.SUCCESS:
+    if RunOutcome.is_success(status):
         return None
     stderr = (completed.stderr or "").strip()
     if stderr:
         # Last lines carry the failure; the head is progress output.
         return "\n".join(stderr.splitlines()[-8:])[:1200]
+    if manifest_error:
+        return manifest_error
     if status == RunOutcome.FAILED:
         return f"exited {completed.returncode} with no stderr"
     return None
@@ -324,15 +394,15 @@ def detect_gap(
 ) -> str | None:
     """Report a collection gap for one site, or None when it is on schedule.
 
-    "결번" is measured from the last run that actually collected something.
-    A run that failed, or returned nothing, does not reset the clock — the
-    postings from that window are what went missing.
+    "결번" is measured from the last successful scheduled run. SUCCESS_EMPTY
+    is a successful request/parser round and resets the clock; FAILED and the
+    legacy EMPTY state do not.
     """
 
     successes = [
         record
         for record in history
-        if record.site == site and record.status == RunOutcome.SUCCESS
+        if record.site == site and RunOutcome.is_success(record.status)
     ]
     if not successes:
         return f"{site}: 성공한 수집 이력이 없습니다"

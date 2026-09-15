@@ -83,6 +83,7 @@ from job.collector import (
     pipeline_run_id_for,
 )
 from job.collector.analysis_input import publish_from_env
+from job.collector.outcome import collector_exit_code
 from job.collector.http import BlockedError, HttpError, PoliteHttpClient
 from job.collector.identity import (
     Decision,
@@ -958,5 +959,4 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.manifest["stopped_reason"]:
         print(f"stopped: {result.manifest['stopped_reason']}", file=sys.stderr)
-        return 1 if counts["records"] == 0 else 0
-    return 0 if counts["records"] else 1
+    return collector_exit_code(result.manifest, source_site=SOURCE_SITE)

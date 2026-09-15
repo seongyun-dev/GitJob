@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         for record in history[-args.history_limit :]:
             print(
-                f"{record.finished_at}  {record.site:<10} {record.status:<8} "
+                f"{record.finished_at}  {record.site:<10} {record.status:<16} "
                 f"{record.records:>4}건  {record.run_name}"
                 + (f"  {record.stopped_reason[:50]}" if record.stopped_reason else "")
                 + (f"  {record.error.splitlines()[-1][:60]}" if record.error else "")
@@ -286,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _announce(record, cwd=config_path.parent)
 
-    if record.status != RunOutcome.SUCCESS:
+    if record.status == RunOutcome.FAILED:
         detail = f" - {record.error.splitlines()[-1][:160]}" if record.error else ""
         _alert(
             config,
@@ -303,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     if gap:
         _alert(config, f"[GitJob] 수집 결번 - {gap}")
 
-    return 0 if record.status == RunOutcome.SUCCESS else 1
+    return 0 if RunOutcome.is_success(record.status) else 1
 
 
 if __name__ == "__main__":
