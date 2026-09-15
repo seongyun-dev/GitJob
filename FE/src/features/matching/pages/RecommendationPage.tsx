@@ -1,6 +1,8 @@
 import { Link } from 'react-router'
 import { NextSkillCard } from '@/features/matching/components/NextSkillCard'
 import { RecommendationChain } from '@/features/matching/components/RecommendationChain'
+import { useRecommendations } from '@/features/matching/hooks/useMatching'
+import { toNextSkillViews } from '@/features/matching/lib/nextSkillView'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { NEXT_SKILLS, WHAT_IF_DISCLAIMER } from '@/mocks/fixtures/nextSkill'
@@ -25,7 +27,11 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 값으로 채운 모습이다.
  */
 export function RecommendationPage() {
-  const skills = withDesignFixture<readonly NextSkillFixture[]>([], () => NEXT_SKILLS)
+  const query = useRecommendations()
+  const skills = withDesignFixture<readonly NextSkillFixture[]>(
+    toNextSkillViews(query.data?.skills),
+    () => NEXT_SKILLS,
+  )
   const first = skills[0]
   const rest = skills.slice(1)
 

@@ -3,9 +3,11 @@ import type {
   AnalysisRequestBody,
   AnalysisStatus,
   BranchSummary,
+  RepositorySelection,
+  RepositorySelectionInput,
   RepositorySummary,
 } from '@/features/analysis/api/types'
-import { get, post } from '@/shared/api/client'
+import { get, post, put } from '@/shared/api/client'
 import type { PageParams, PageResponse } from '@/shared/types/api'
 
 /**
@@ -56,4 +58,28 @@ export function requestAnalysis(body: AnalysisRequestBody): Promise<AnalysisAcce
 /** 진행 상황. 종료 상태가 될 때까지 화면이 되풀이해 부른다. */
 export function fetchAnalysisStatus(analysisId: string): Promise<AnalysisStatus> {
   return get<AnalysisStatus>(`/analyses/${encodeURIComponent(analysisId)}`)
+}
+
+/**
+ * 분석 대상 저장소 선택 조회·저장 · 명세 B-FN-003 (티켓 S15P21E102-281).
+ *
+ * **BE에 아직 없다**(명세 상태 `시작 전`). 지금 부르면 `HTTP-404`가 온다.
+ *
+ * 위의 `fetchRepositories`와 다른 것이다. 저쪽은 GitHub이 주는 저장소 **목록**이고
+ * 이쪽은 그중 무엇을 분석할지에 대한 **사용자의 선택**이다. 목록은 매번 GitHub에서
+ * 새로 오지만 선택은 서버가 들고 있어야 새로고침을 견딘다.
+ *
+ * 파서를 쓰지 않고 `get<T>`로 받는 이유는 `features/analysis/api`가 처음부터 그
+ * 방식이기 때문이다(티켓 117). 이 파일 안에서 두 방식을 섞으면 다음 사람이 어느
+ * 쪽이 규칙인지 알 수 없다. 이 계열 전체를 파서로 옮기는 것은 별도 정리다.
+ */
+export function fetchRepositorySelection(): Promise<RepositorySelection> {
+  return get<RepositorySelection>('/me/repositories/selection')
+}
+
+/** 명세가 PUT 전량 교체로 정했다. 부분 갱신이 아니므로 화면은 전체 목록을 보낸다. */
+export function updateRepositorySelection(
+  body: RepositorySelectionInput,
+): Promise<RepositorySelection> {
+  return put<RepositorySelection>('/me/repositories/selection', body)
 }

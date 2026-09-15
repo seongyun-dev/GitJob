@@ -58,4 +58,44 @@ export const queryKeys = {
     ['matching', analysisId, target, 'skill-gap'] as const,
   matchingPostings: (analysisId: string, target: unknown) =>
     ['matching', analysisId, target, 'postings'] as const,
+
+  /*
+   * 매칭·트렌드 조회 키 · 티켓 S15P21E102-281.
+   *
+   * **위의 `matching*` 세 키와 왜 따로 두는가.** 저 키들은 설계 4-1이 정한 규약을
+   * `analysisId` 기준으로 옮긴 것인데, 명세 v0.1이 확정한 실제 엔드포인트는
+   * `GET /me/skill-gap`처럼 **경로에 analysisId가 없다.** 목표 직무는 서버가 들고
+   * 있고(`/me/target`), 기준 분석도 서버가 최신 것으로 정한다. 키에 넣을 수 없는 값을
+   * 키에 넣으면 호출부가 빈 문자열 같은 자리표시자를 만들게 된다.
+   *
+   * 설계 4-1의 요점("매칭은 목표 직무가 키의 일부라 직무가 바뀌면 키가 달라져 자동
+   * 무효화된다")은 그대로 지킨다 — `roleId`를 키에 넣는다. 직무를 바꾸면 `/me/target`
+   * 하나만 무효화해도 아래 키들이 전부 새 키가 되어 다시 조회된다.
+   *
+   * **`['me']` 를 통째로 무효화하지 않는다.** 그러면 증거 계열(`['me','technologies']`)
+   * 까지 함께 날아가는데, 설계 4-1은 증거가 목표 직무 변경에도 살아 있어야 한다고
+   * 정했다. 접두를 공유할 뿐 무효화 범위는 공유하지 않는다.
+   *
+   * 로그인 사용자 조회는 여기 없다 — 티켓 246이 `features/auth/hooks/useMe.ts`에
+   * `['auth','me']`로 이미 두었고, 그쪽이 BE에 구현된 유일한 `me` 조회다.
+   */
+  jobRoles: () => ['job-roles'] as const,
+  myTarget: () => ['me', 'target'] as const,
+  /** 필터가 키의 일부다 — 서버가 거르므로 필터마다 다른 응답이다. */
+  jobPostings: (params: unknown) => ['job-postings', params] as const,
+  jobDemands: (roleId: string | null) => ['job-demands', roleId] as const,
+  mySkillGap: (roleId: string | null) => ['me', 'skill-gap', roleId] as const,
+  myRecommendations: (roleId: string | null) => ['me', 'recommendations', roleId] as const,
+  myLearningTarget: () => ['me', 'learning-target'] as const,
+  /** 분석 이력. 분석이 하나 더 끝나면 달라지므로 기본 staleTime이다. */
+  myAnalyses: (params: unknown) => ['me', 'analyses', params] as const,
+
+  // 트렌드 계열 — 사용자와 무관한 공개 집계라 `me` 접두를 쓰지 않는다.
+  trends: () => ['trends'] as const,
+  technologyTrends: (techId: string) => ['technologies', techId, 'trends'] as const,
+
+  // 학습 지원 — 기술 단위 정적 자료. 사람이 검수해 발행하므로 자주 바뀌지 않는다.
+  projectTemplates: (techId: string) => ['technologies', techId, 'project-templates'] as const,
+  technologyFaqs: (techId: string) => ['technologies', techId, 'faqs'] as const,
+  technologyPainTopics: (techId: string) => ['technologies', techId, 'pain-topics'] as const,
 } as const

@@ -196,6 +196,14 @@ eggs/
 .eggs/
 lib/
 lib64/
+
+# 위 `lib/`는 setuptools 빌드 산출물(`./lib`)을 잡으려는 규칙인데 경로가 고정돼 있지
+# 않아 **FE 소스의 `lib/` 폴더까지 삼킨다.** 실제로 티켓 S15P21E102-281에서
+# `FE/src/features/matching/lib/`가 커밋되지 않을 뻔했다 — 빌드는 로컬에서만 통과하고
+# 받는 사람 쪽에서 모듈을 못 찾는 형태라 알아채기 어렵다. FE 소스만 되살린다.
+!FE/src/**/lib/
+!FE/src/**/lib/**
+
 parts/
 sdist/
 var/

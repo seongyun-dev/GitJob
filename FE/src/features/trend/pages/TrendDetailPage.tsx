@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router'
 import { GrowthStageCard } from '@/features/trend/components/GrowthStageCard'
 import { TrendBarChart } from '@/features/trend/components/TrendBarChart'
+import { useTechnologyTrend } from '@/features/trend/hooks/useTrends'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { findGrowthStage } from '@/mocks/fixtures/growthStage'
@@ -32,10 +33,20 @@ import { StateCard } from '@/shared/ui/StateCard'
 export function TrendDetailPage() {
   const { techId } = useParams()
 
+  const query = useTechnologyTrend(techId)
+
+  /*
+   * 성장 단계(S6)에는 조회 API가 **없다** · 티켓 S15P21E102-281.
+   *
+   * 명세 v0.1의 트렌드 엔드포인트는 개요(`/trends`)·출처별 추세
+   * (`/technologies/{techId}/trends`)·후보 비교(`/trends/compare`) 셋뿐이고, 세 축을
+   * 묶어 단계를 정하는 규칙 자체가 아직 제품 결정이 아니다. 계약을 지어내지 않고
+   * fixture로 남긴다 — 계약 문서 미결에 올렸다. 첫 인수가 계속 `null`인 이유다.
+   */
   const stage = withDesignFixture<GrowthStageFixture | null>(null, () =>
     techId === undefined ? null : (findGrowthStage(techId) ?? null),
   )
-  const trend = withDesignFixture<TechTrendFixture | undefined>(undefined, () =>
+  const trend = withDesignFixture<TechTrendFixture | undefined>(query.data, () =>
     techId === undefined ? undefined : findTechTrend(techId),
   )
 

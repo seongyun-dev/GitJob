@@ -1,4 +1,6 @@
 import { Link, useParams, useSearchParams } from 'react-router'
+import { useRecommendations } from '@/features/matching/hooks/useMatching'
+import { toNextSkillViews } from '@/features/matching/lib/nextSkillView'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { NEXT_SKILLS } from '@/mocks/fixtures/nextSkill'
@@ -97,9 +99,26 @@ export function TechnologyDetailPage() {
   const { techId } = useParams()
   const [params, setParams] = useSearchParams()
 
-  const skill = withDesignFixture<NextSkillFixture | undefined>(undefined, () =>
-    NEXT_SKILLS.find((item) => item.techId === techId),
+  /*
+   * 추천 화면과 **같은 훅**을 쓴다 · 티켓 S15P21E102-281. 네 화면이 한 응답을 보므로
+   * 같은 기술의 수가 화면마다 어긋나지 않는다(`lib/nextSkillView.ts`).
+   */
+  const query = useRecommendations()
+  const skill = withDesignFixture<NextSkillFixture | undefined>(
+    toNextSkillViews(query.data?.skills).find((item) => item.techId === techId),
+    () => NEXT_SKILLS.find((item) => item.techId === techId),
   )
+
+  /*
+   * 탭 네 개는 아직 fixture다.
+   *
+   * `무엇을 만들어 볼까`·`자주 막히는 지점` 둘은 붙일 곳이 생겼고
+   * (`hooks/useTechnologyGuides.ts`의 `useProjectTemplates`·`useTechnologyFaqs`),
+   * `왜 필요한가`·`Level 기준` 둘은 대응하는 엔드포인트가 명세 v0.1에 **없다.**
+   * 탭 하나만 실제 값으로 바꾸면 같은 화면에서 어느 탭이 사실인지 구분되지 않으므로,
+   * 네 탭의 내용 교체는 각 탭의 조회가 모두 준비된 뒤에 한 번에 한다. 이 티켓의 범위는
+   * 붙일 자리를 만드는 데까지다.
+   */
   const detail = withDesignFixture<boolean>(false, () => skill?.techId === 'kafka')
 
   const requestedTab = params.get('tab')

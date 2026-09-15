@@ -129,3 +129,29 @@ export interface AnalysisStatus {
     errorCode: string | null
   }[]
 }
+
+/**
+ * 분석 대상 저장소 선택 · 명세 B-FN-003 (티켓 S15P21E102-281).
+ *
+ * BE 미구현이라 명세가 기준이다. 선택은 **서버에 저장되는 값**이다 — 화면이
+ * `useState`로만 들고 있으면 새로고침이나 다른 기기에서 다시 고르게 된다.
+ *
+ * 저장소마다 브랜치를 함께 고른다. 같은 저장소라도 브랜치가 다르면 다른 코드라
+ * 분석 결과가 달라지므로, 저장소 이름만 저장하면 무엇을 분석했는지 특정할 수 없다.
+ */
+export interface RepositorySelectionEntry {
+  /** `owner/repo`. 조회 응답의 `fullName`과 같은 값이다. */
+  fullName: string
+  branchName: string
+}
+
+export interface RepositorySelection {
+  items: RepositorySelectionEntry[]
+  /** 한 번도 저장한 적이 없으면 null. 빈 선택을 저장한 것과 구분된다. */
+  updatedAt: string | null
+}
+
+/** `PUT /me/repositories/selection` 요청 본문. 명세가 PUT 전량 교체로 정했다. */
+export interface RepositorySelectionInput {
+  items: RepositorySelectionEntry[]
+}

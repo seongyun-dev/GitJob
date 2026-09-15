@@ -1,5 +1,7 @@
 import { Link, useSearchParams } from 'react-router'
 import { RequirementChipList } from '@/features/matching/components/RequirementChip'
+import { useRecommendations } from '@/features/matching/hooks/useMatching'
+import { toNextSkillViews } from '@/features/matching/lib/nextSkillView'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { NEXT_SKILLS, WHAT_IF_DISCLAIMER } from '@/mocks/fixtures/nextSkill'
@@ -29,7 +31,11 @@ import { StateCard } from '@/shared/ui/StateCard'
  */
 export function WhatIfPage() {
   const [params, setParams] = useSearchParams()
-  const skills = withDesignFixture<readonly NextSkillFixture[]>([], () => NEXT_SKILLS)
+  const query = useRecommendations()
+  const skills = withDesignFixture<readonly NextSkillFixture[]>(
+    toNextSkillViews(query.data?.skills),
+    () => NEXT_SKILLS,
+  )
 
   const requested = params.get('tech')
   const selected = skills.find((skill) => skill.techId === requested) ?? skills[0]

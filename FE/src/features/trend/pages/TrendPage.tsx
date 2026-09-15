@@ -1,4 +1,5 @@
 import { TrendSourceCard } from '@/features/trend/components/TrendSourceCard'
+import { useTrendOverview } from '@/features/trend/hooks/useTrends'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { TREND_FOOTNOTE, TREND_SOURCES } from '@/mocks/fixtures/trend'
@@ -23,7 +24,11 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 그려 두면 그 전제 위에 화면이 완성된다.
  */
 export function TrendPage() {
-  const sources = withDesignFixture<readonly TrendSourceFixture[]>([], () => TREND_SOURCES)
+  const query = useTrendOverview()
+  const sources = withDesignFixture<readonly TrendSourceFixture[]>(
+    query.data?.sources ?? [],
+    () => TREND_SOURCES,
+  )
 
   return (
     <div>

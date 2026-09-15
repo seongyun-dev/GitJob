@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
+import type { JobRole } from '@/features/matching/api/types'
 import { TargetRoleCard } from '@/features/matching/components/TargetRoleCard'
+import { useJobRoles } from '@/features/matching/hooks/useMatching'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { TARGET_ROLES, TARGET_ROLE_EVIDENCE_TEXT } from '@/mocks/fixtures/targetRole'
@@ -26,10 +28,35 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 넘길 비교 기준이고, 저장 API도 없다. 실제로는 라우트 쿼리나 전역 상태로 옮겨야
  * 하지만 그 결정은 매칭 API 계약과 함께 정해진다.
  */
+/**
+ * 응답을 카드가 받는 모양으로 옮긴다 · 티켓 S15P21E102-281.
+ *
+ * `kicker`(`ROLE 01`)만 여기서 만든다. 순번은 판정이 아니라 **목록에서 몇 번째인가**일
+ * 뿐이고 배열 순서에서 곧바로 나오는 표시 환산이다. 서버가 보내면 배열 순서와 어긋날
+ * 수 있는 값이 하나 늘어난다 — 그래서 계약(`api/types.ts`)에 두지 않았다.
+ *
+ * 나머지 필드는 손대지 않는다. 공고 수·충족 수·요구 기술 대조는 전부 서버가 센 값이다.
+ */
+function toRoleView(role: JobRole, index: number): TargetRoleFixture {
+  return { ...role, kicker: `ROLE ${String(index + 1).padStart(2, '0')}` }
+}
+
 export function TargetRolePage() {
-  const roles = withDesignFixture<readonly TargetRoleFixture[]>([], () => TARGET_ROLES)
-  const [selectedId, setSelectedId] = useState(roles[0]?.id)
-  const selected = roles.find((role) => role.id === selectedId)
+  const query = useJobRoles()
+  const roles = withDesignFixture<readonly TargetRoleFixture[]>(
+    query.data?.roles.map(toRoleView) ?? [],
+    () => TARGET_ROLES,
+  )
+  /*
+   * 선택을 초기값이 아니라 파생값으로 둔다 · 티켓 S15P21E102-281.
+   *
+   * 전에는 `useState(roles[0]?.id)`였다. fixture는 첫 렌더에 이미 값이 있어 동작했지만,
+   * 조회 응답은 나중에 도착하므로 초기값이 `undefined`로 굳어 카드가 하나도 선택되지
+   * 않은 채 남는다. 고른 적이 없으면 첫 직무를 보여주고, 고르는 순간부터 그 선택을
+   * 따른다.
+   */
+  const [pickedId, setPickedId] = useState<string | undefined>(undefined)
+  const selected = roles.find((role) => role.id === pickedId) ?? roles[0]
 
   return (
     <div>
@@ -86,8 +113,8 @@ export function TargetRolePage() {
             <TargetRoleCard
               key={role.id}
               role={role}
-              selected={role.id === selectedId}
-              onSelect={() => setSelectedId(role.id)}
+              selected={role.id === selected?.id}
+              onSelect={() => setPickedId(role.id)}
             />
           ))
         )}

@@ -1,4 +1,6 @@
 import { Link } from 'react-router'
+import { useAnalysisHistory } from '@/features/mypage/hooks/useAnalysisHistory'
+import type { AnalysisHistory, AnalysisHistoryStatus } from '@/features/mypage/api/types'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import {
@@ -39,14 +41,88 @@ const CONNECTIONS = [
   { name: 'GitHub', description: '읽기 전용 · 분석 대상 Repository 접근' },
 ] as const
 
-/** 이력 상태 배지. `JobStatus`를 쓰지 않는 이유는 `PARTIAL`이 그 enum에 없기 때문이다. */
-const HISTORY_STATUS_CLASS: Readonly<Record<AnalysisHistoryFixture['status'], string>> = {
+/**
+ * 이력 한 줄의 표시 모양 · 티켓 S15P21E102-281.
+ *
+ * `status`가 계약의 7종과 fixture의 `PARTIAL`을 함께 받는다. 명세 v0.1은 부분 성공을
+ * `PARTIAL_SUCCEEDED`로 적고 fixture는 `PARTIAL`로 적어 두 어휘가 공존한다 — 어느
+ * 쪽으로 맞출지는 BE 구현이 정하며 계약 문서 미결에 올렸다. 지금 한쪽을 지우면 다른
+ * 쪽 값이 배지 없이 그려진다.
+ */
+type HistoryStatus = AnalysisHistoryStatus | 'PARTIAL'
+
+interface HistoryRow {
+  id: string
+  at: string
+  repositories: string
+  resultText: string
+  status: HistoryStatus
+}
+
+/**
+ * 이력 상태 배지. `JobStatus`를 쓰지 않는 이유는 부분 성공이 그 enum에 없기 때문이다.
+ *
+ * 진행 중 상태(`QUEUED`·`RUNNING`·`RATE_LIMITED`)도 둔다. 이력을 보는 동안 다른 탭에서
+ * 분석을 걸어 두면 종료 전 행이 표에 올라온다 — 빠뜨리면 그 행만 배지 없이 그려진다.
+ */
+const HISTORY_STATUS_CLASS: Readonly<Record<HistoryStatus, string>> = {
+  QUEUED: 'bg-tone-neutral-bg text-tone-neutral',
+  RUNNING: 'bg-tone-neutral-bg text-tone-neutral',
+  RATE_LIMITED: 'bg-tone-caution-bg text-tone-caution',
   SUCCEEDED: 'bg-tone-success-bg text-tone-success',
+  PARTIAL_SUCCEEDED: 'bg-tone-caution-bg text-tone-caution',
   PARTIAL: 'bg-tone-caution-bg text-tone-caution',
   FAILED: 'bg-tone-danger-bg text-tone-danger',
+  CANCELED: 'bg-tone-neutral-bg text-tone-neutral',
+}
+
+/**
+ * 분석 시각 표기.
+ *
+ * 서버는 UTC ISO-8601을 보낸다(명세 공통 규약). 상대 표기("오늘 10:42")는 보는 시점에
+ * 따라 달라져 서버가 만들 수 없으므로 화면이 환산한다 — 표시 환산이지 판정이 아니다.
+ */
+function formatAnalyzedAt(iso: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) {
+    return iso
+  }
+  return at.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function toHistoryRows(history: AnalysisHistory | undefined): HistoryRow[] {
+  return (history?.items ?? []).map((item) => ({
+    id: item.analysisId,
+    at: formatAnalyzedAt(item.analyzedAt),
+    repositories: item.repositories.join(' · '),
+    resultText: item.resultText,
+    status: item.status,
+  }))
 }
 
 export function MyPage() {
+  /*
+   * 계정·연결 카드와 최근 분석 요약은 아직 붙이지 않았다 · 티켓 S15P21E102-281.
+   *
+   * 값이 **모자라서**이지 엔드포인트가 없어서가 아니다.
+   *
+   *   - 계정·연결: `GET /auth/me`(티켓 246, BE 구현됨)가 주는 것은 `displayName`·
+   *     `avatarUrl`·`githubConnected`·`role` 넷이다. 이 카드는 소속(`SSAFY 12기 ·
+   *     백엔드`)과 연결 상세(`@handle · 읽기 전용 · Repository 4개 접근`)를 함께
+   *     그리는데 그 값을 주는 조회가 없다.
+   *   - 최근 분석 요약: 저장소 수·기술 수·L2 이상 수는 `GET /me/profile`의 `summary`가
+   *     주지만 `snapshotDate`에 해당하는 값이 없다.
+   *
+   * 있는 값만으로 채우고 나머지를 지어내면 화면이 사실이 아닌 것을 주장한다. 두 카드는
+   * 값이 없으면 `StateCard`를 그리도록 되어 있어 지금 상태가 정확하다. 모자란 필드는
+   * 계약 문서 미결에 올렸다.
+   */
   const account = withDesignFixture<typeof ACCOUNT_CONNECTIONS | null>(
     null,
     () => ACCOUNT_CONNECTIONS,
@@ -55,7 +131,10 @@ export function MyPage() {
     null,
     () => LATEST_ANALYSIS_SUMMARY,
   )
-  const history = withDesignFixture<readonly AnalysisHistoryFixture[]>([], () => ANALYSIS_HISTORY)
+  const historyQuery = useAnalysisHistory()
+  const history = withDesignFixture<readonly HistoryRow[]>(toHistoryRows(historyQuery.data), () =>
+    ANALYSIS_HISTORY.map((item: AnalysisHistoryFixture, index) => ({ ...item, id: `fixture-${index}` })),
+  )
 
   return (
     <div>
@@ -246,7 +325,7 @@ export function MyPage() {
                   <div className="divide-y divide-[#F1F4F9]">
                     {history.map((item) => (
                       <div
-                        key={item.at}
+                        key={item.id}
                         className="grid items-center gap-4 px-1.5 py-3 max-lg:grid-cols-1"
                         style={{ gridTemplateColumns: HISTORY_TEMPLATE }}
                       >

@@ -85,12 +85,23 @@ fixture는 화면에 그대로 꽂히지 않는다. 대부분 한 번 **다시 �
 모든 화면이 같은 모양으로 fixture를 받는다.
 
 ```ts
-const data = withDesignFixture<T | null>(null, () => FIXTURE)
+const data = withDesignFixture<T | null>(query.data ?? null, () => FIXTURE)
 ```
 
-첫 인수가 **실제 값의 자리**이고 지금은 `null`이다. 화면은 `data === null`이면 기존
-`StateCard`를, 아니면 채워진 본문을 그린다. 조회 API가 붙으면 첫 인수를
-`useQuery(...).data`로 바꾸고 fixture 인수만 지운다 — 본문 코드는 건드리지 않는다.
+첫 인수가 **실제 값의 자리**다. 화면은 값이 없으면 기존 `StateCard`를, 있으면 채워진
+본문을 그린다. 각 화면의 조회 API가 실제로 응답하기 시작하면 fixture 인수만 지운다 —
+본문 코드는 건드리지 않는다.
+
+**티켓 281에서 첫 인수가 대부분 채워졌다.** 매칭·트렌드·마이페이지·기술 상세의 훅과
+계약이 `features/*/api/`·`features/*/hooks/`에 생겼고 페이지가 그것을 부른다. 다만
+엔드포인트가 BE에 아직 없어 지금은 `HTTP-404`로 끝나고 값이 오지 않는다 — 그래서
+`VITE_DESIGN_FIXTURES=on`이면 여전히 fixture가 보이고, 꺼져 있으면 지금까지처럼
+`StateCard`가 보인다. **표시는 281 전후가 같다.**
+
+첫 인수가 아직 `null`로 남은 자리 셋은 대응 엔드포인트가 명세에 없어서다 — 화면 13의
+성장 단계, 화면 11의 `왜 필요한가`·`Level 기준` 탭, 화면 14의 계정·연결 카드와 최근
+분석 요약. 각 자리에 이유를 주석으로 남겼고 `docs/fe/shared-api-contract.md` 1-7과
+미결 12에 적었다.
 
 예외가 하나 있다. `RepositorySelectionPage`는 `DESIGN_FIXTURES_ENABLED`로 직접 분기한다.
 그 화면은 대체 대상이 값 하나가 아니라 조회 상태 전체(로딩·오류·페이지네이션)여서다.
@@ -136,5 +147,12 @@ const data = withDesignFixture<T | null>(null, () => FIXTURE)
 
 ## 지울 때
 
-각 화면의 조회 API가 붙으면 해당 fixture 파일을 지운다. 마지막 fixture가 사라지면
-`designFixtures.ts` · `types.ts` · `DesignMockBadge.tsx`와 이 폴더도 함께 지운다.
+각 화면의 조회 API가 **실제로 응답하기 시작하면** 해당 fixture 파일을 지운다. 훅이
+생긴 것만으로는 지우지 않는다 — 281 시점에 훅은 있지만 BE 엔드포인트가 없어 화면이
+아직 fixture로 그려진다. 마지막 fixture가 사라지면 `designFixtures.ts` · `types.ts` ·
+`DesignMockBadge.tsx`와 이 폴더도 함께 지운다.
+
+지울 때 함께 볼 곳이 하나 있다. `mocks/types.ts` 머리말이 "BE 응답이 오면 그때 각
+feature의 `api/types.ts`에 명세를 근거로 다시 정의하고, 이 파일은 지운다"고 적는데,
+그 `api/types.ts`는 281이 이미 만들었다. 두 파일이 같은 것을 두 번 말하고 있으므로
+fixture를 지울 때 화면이 보는 타입을 `api/types.ts` 쪽으로 옮긴다.

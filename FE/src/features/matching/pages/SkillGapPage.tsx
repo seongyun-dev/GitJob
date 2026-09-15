@@ -1,5 +1,7 @@
 import { Link } from 'react-router'
 import { SkillGapRows, SKILL_GAP_TEMPLATE } from '@/features/matching/components/SkillGapRows'
+import { useRecommendations, useSkillGap } from '@/features/matching/hooks/useMatching'
+import { toNextSkillViews } from '@/features/matching/lib/nextSkillView'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { NEXT_SKILLS } from '@/mocks/fixtures/nextSkill'
@@ -9,7 +11,11 @@ import {
   SKILL_GAP_LEGEND,
   SKILL_GAP_SUMMARY,
 } from '@/mocks/fixtures/skillGap'
-import type { SkillGapGroupFixture, SkillGapSummaryFixture } from '@/mocks/types'
+import type {
+  NextSkillFixture,
+  SkillGapGroupFixture,
+  SkillGapSummaryFixture,
+} from '@/mocks/types'
 import { PageFootnote } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StatStrip } from '@/shared/ui/StatStrip'
@@ -70,8 +76,29 @@ function toStats(summary: SkillGapSummaryFixture | null): readonly StatItem[] {
 }
 
 export function SkillGapPage() {
-  const groups = withDesignFixture<readonly SkillGapGroupFixture[]>([], () => SKILL_GAP_GROUPS)
-  const summary = withDesignFixture<SkillGapSummaryFixture | null>(null, () => SKILL_GAP_SUMMARY)
+  const query = useSkillGap()
+  const groups = withDesignFixture<readonly SkillGapGroupFixture[]>(
+    query.data?.groups ?? [],
+    () => SKILL_GAP_GROUPS,
+  )
+  const summary = withDesignFixture<SkillGapSummaryFixture | null>(
+    query.data?.summary ?? null,
+    () => SKILL_GAP_SUMMARY,
+  )
+
+  /*
+   * 하단 "무엇을 먼저 배울까요" 목록 · 티켓 S15P21E102-281.
+   *
+   * 추천 화면과 **같은 훅**을 쓴다. react-query가 키로 요청을 합치므로 두 화면이
+   * 같은 응답을 본다 — 따로 부르면 그 사이 서버 값이 바뀌었을 때 두 화면의 숫자가
+   * 어긋난다. 전에 `NEXT_SKILLS`를 직접 import하던 자리이고, 그 직접 import는
+   * `src/mocks/README.md`가 금지한 형태였다(반드시 `withDesignFixture`를 거친다).
+   */
+  const recommendations = useRecommendations()
+  const nextSkills = withDesignFixture<readonly NextSkillFixture[]>(
+    toNextSkillViews(recommendations.data?.skills),
+    () => NEXT_SKILLS,
+  )
 
   return (
     <div>
@@ -186,9 +213,9 @@ export function SkillGapPage() {
               기준으로 정렬하는지는 미리 밝힌다. 값을 추천 화면과 같은 fixture에서
               가져오는 이유는 두 화면의 숫자가 어긋나지 않게 하려는 것이다.
             */}
-            {groups.length > 0 && (
+            {groups.length > 0 && nextSkills.length > 0 && (
               <ol className="mt-4 grid gap-2">
-                {NEXT_SKILLS.map((skill, index) => (
+                {nextSkills.map((skill, index) => (
                   <li
                     key={skill.techId}
                     className="flex items-center gap-3 rounded-[12px] border border-brand-line bg-white/70 px-3.5 py-2.5"

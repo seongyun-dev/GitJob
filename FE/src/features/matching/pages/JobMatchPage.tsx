@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
+import type { JobPostingList } from '@/features/matching/api/types'
 import { JobFilterRail } from '@/features/matching/components/JobFilterRail'
 import { JobPostingCard } from '@/features/matching/components/JobPostingCard'
 import { JobRequirementDrawer } from '@/features/matching/components/JobRequirementDrawer'
+import { useJobPostings, useTargetRole } from '@/features/matching/hooks/useMatching'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import {
@@ -32,7 +34,39 @@ import { StateCard } from '@/shared/ui/StateCard'
  * **기술요건 충족만 보여준다.** 합격 가능성이나 지원 가능 여부를 판정하지 않는다.
  */
 
-/** 화면이 필터로 시나리오를 고른다. 실제로는 이 자리가 조회 요청이 된다. */
+/** 필터의 "전체"는 조건 없음이다. 서버에 빈 값을 보내지 않는다. */
+const ANY_REGION = '지역 전체'
+const ANY_CAREER = '경력 전체'
+
+function filterValue(value: string, anyValue: string): string | undefined {
+  return value === anyValue ? undefined : value
+}
+
+/**
+ * 응답을 화면이 받는 모양으로 옮긴다 · 티켓 S15P21E102-281.
+ *
+ * `moreText`("87건 중 12건 표시")만 여기서 만든다. 서버가 준 `totalCount`와 실제 받은
+ * 항목 수를 잇는 **표시 환산**이고, 두 수를 모두 서버가 셌다. 화면이 세는 것은 받은
+ * 배열의 길이뿐이며 그것은 이 페이지가 몇 건을 그리는지에 대한 사실이다.
+ *
+ * 시나리오 태그(`id`)는 만들지 않는다. fixture가 `ALL`·`FILTERED`·`EMPTY`를 가진 것은
+ * 필터 조합마다 다른 fixture를 고르기 위한 장치였고, 실제로는 서버가 거른 결과 하나만
+ * 온다. 화면은 이 값을 읽지 않는다.
+ */
+function toScenario(list: JobPostingList): JobMatchScenarioFixture {
+  const shown = list.items.length
+  return {
+    id: 'FILTERED',
+    headline: list.headline,
+    kpi: list.kpi,
+    gapTitle: list.gapTitle,
+    gaps: list.gaps,
+    moreText: shown < list.totalCount ? `${list.totalCount}건 중 ${shown}건 표시` : '',
+    postings: list.items,
+  }
+}
+
+/** 화면이 필터로 시나리오를 고른다. fixture 전용 경로다. */
 function pickScenario(region: string, career: string): JobMatchScenarioFixture {
   if (region === '지역 전체' && career === '경력 전체') {
     return JOB_MATCH_ALL
@@ -66,12 +100,28 @@ function toStats(scenario: JobMatchScenarioFixture | null): readonly StatItem[] 
 }
 
 export function JobMatchPage() {
-  const [region, setRegion] = useState('지역 전체')
-  const [career, setCareer] = useState('경력 전체')
+  const [region, setRegion] = useState(ANY_REGION)
+  const [career, setCareer] = useState(ANY_CAREER)
   const [openPosting, setOpenPosting] = useState<JobPostingFixture | null>(null)
 
-  const scenario = withDesignFixture<JobMatchScenarioFixture | null>(null, () =>
-    pickScenario(region, career),
+  /*
+   * 필터를 **서버에** 넘긴다. 화면이 받은 배열을 거르지 않는 이유는
+   * `matchingApi.fetchJobPostings`에 적었다 — 한 페이지만 받은 상태에서 거르면
+   * KPI의 분모가 그 페이지 안의 수가 되어 사실과 달라진다.
+   *
+   * 목표 직무는 서버가 들고 있지만 공고 조회는 공개 엔드포인트라 `roleId`를 명시적으로
+   * 넘긴다(명세 B-FN-015). 아직 고르지 않았으면 서버가 기본 집합을 정한다.
+   */
+  const target = useTargetRole()
+  const query = useJobPostings({
+    roleId: target.data?.roleId ?? undefined,
+    region: filterValue(region, ANY_REGION),
+    career: filterValue(career, ANY_CAREER),
+  })
+
+  const scenario = withDesignFixture<JobMatchScenarioFixture | null>(
+    query.data === undefined ? null : toScenario(query.data),
+    () => pickScenario(region, career),
   )
 
   return (
