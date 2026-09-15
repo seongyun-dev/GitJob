@@ -39,6 +39,11 @@ public class GithubOAuthClient {
                 .queryParam("redirect_uri", properties.getRedirectUri())
                 .queryParam("scope", REQUIRED_SCOPE)
                 .queryParam("state", state)
+                // 계정 선택 화면을 강제한다. 없으면 github.com 세션이 살아 있고 앱이 이미
+                // 인가된 사용자는 authorize가 화면 없이 즉시 콜백으로 튕겨, 로그아웃 직후
+                // 다시 로그인하면 "자동 로그인"된 것처럼 보인다. GitHub이 2024-06부터
+                // 지원하는 표준 파라미터로, 매번 계정 선택을 거치게 해 이 즉시 인가를 끊는다.
+                .queryParam("prompt", "select_account")
                 .build()
                 .encode()
                 .toUriString();

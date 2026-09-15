@@ -52,6 +52,9 @@ public class SecurityConfig {
                         // 쿠키를 정리하려는 상황이 정상이고, 하는 일은 SESSION 쿠키 만료뿐이다.
                         // (/api/v1/auth/me 는 인증이 필요하므로 아래 anyRequest 규칙을 따른다.)
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/logout").permitAll()
+                        // 관리자 ID/PW 로그인도 세션 발급 이전 단계라 공개한다. 성공 시에만
+                        // 관리자 세션을 심고, 실패는 401로 접는다(AdminLoginService).
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/admin-login").permitAll()
                         // Spring MVC가 오류를 forward하는 내부 경로.
                         .requestMatchers("/error").permitAll()
                         // Docker 내부 네트워크 전용 (Nginx 비라우팅): healthcheck

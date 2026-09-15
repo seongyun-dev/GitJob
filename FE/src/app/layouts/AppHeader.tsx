@@ -1,6 +1,6 @@
 import { Link, NavLink } from 'react-router'
 import { HeaderAuthArea } from '@/features/auth/components/HeaderAuthArea'
-import { PRIMARY_NAV, SERVICE_INTRO_HASH } from '@/shared/config/primaryNav'
+import { PRIMARY_NAV } from '@/shared/config/primaryNav'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
@@ -24,7 +24,7 @@ export function AppHeader() {
   // 공유하는 토큰(`.gj-header-bar`)에서 온다.
   return (
     <header
-      className="gj-header-bar sticky top-0 z-10 border-b backdrop-blur-[10px]"
+      className="gj-header-bar sticky top-0 z-10 border-b backdrop-blur-[10px] select-none"
       style={{
         background: 'var(--gj-header-bg-inner)',
         borderColor: 'var(--gj-header-border)',
@@ -36,7 +36,7 @@ export function AppHeader() {
       <div className="mx-auto flex h-full w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
         <Link to="/" className="flex shrink-0 items-center" aria-label="GitJob 홈으로">
           {/* Final v2 앱 헤더는 로고 26px. */}
-          <BrandLogo className="h-[26px]" />
+          <BrandLogo className="h-[30px] lg:h-9" />
         </Link>
 
         {/*
@@ -48,21 +48,21 @@ export function AppHeader() {
             {PRIMARY_NAV.map((item) => (
               <li key={item.label} className="shrink-0">
                 {'kind' in item ? (
-                  // 서비스 소개는 랜딩의 섹션이라 내부 페이지에서는 랜딩으로 이동한다.
-                  // 전체 이동(`<a>`)이라 브라우저가 로드 후 해당 앵커로 스크롤한다.
-                  <a
-                    href={`/${SERVICE_INTRO_HASH}`}
-                    className="text-[14px] font-medium whitespace-nowrap text-brand-faint transition-colors hover:text-brand-ink"
+                  // 서비스 소개는 메인(랜딩) 화면 자체다. 내부 페이지에서는 랜딩으로 이동하고,
+                  // 새로 마운트되므로 맨 위(히어로)부터 보인다.
+                  <Link
+                    to="/"
+                    className="text-[15px] font-medium whitespace-nowrap text-brand-faint transition-colors hover:text-brand-ink"
                   >
                     {item.label}
-                  </a>
+                  </Link>
                 ) : (
                   <NavLink
                     to={item.to}
                     className={({ isActive }) =>
                       // active = primary blue + weight 600(과하지 않게). hover 는 기본보다
                       // 진한 색으로만 — active 와 혼동되지 않게 background pill 은 쓰지 않는다.
-                      `text-[14px] whitespace-nowrap transition-colors ${
+                      `text-[15px] whitespace-nowrap transition-colors ${
                         isActive
                           ? 'font-semibold text-brand-600'
                           : 'font-medium text-brand-faint hover:text-brand-ink'

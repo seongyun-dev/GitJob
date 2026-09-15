@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.example.git_job.auth.controller.dto.MeResponse;
+import com.example.git_job.auth.domain.Role;
 import com.example.git_job.auth.domain.User;
 import com.example.git_job.auth.repository.UserRepository;
 import com.example.git_job.global.exceptions.CustomException;
@@ -46,6 +47,18 @@ class AuthQueryServiceTest {
         assertThat(me.displayName()).isEqualTo("윤서");
         assertThat(me.avatarUrl()).isEqualTo("http://a/x.png");
         assertThat(me.githubConnected()).isTrue();
+        // 가입 기본값은 USER. 헤더는 이 값으로 관리자 링크 노출 여부를 정한다.
+        assertThat(me.role()).isEqualTo("USER");
+    }
+
+    @Test
+    void adminRoleIsReported() {
+        // role 은 DB 에서만 바뀐다(운영자 UPDATE). ADMIN 이면 그대로 내려간다.
+        User admin = user("윤서", "yoonseo-aa", null, "gho_token");
+        ReflectionTestUtils.setField(admin, "role", Role.ADMIN);
+        when(userRepository.findById(42L)).thenReturn(Optional.of(admin));
+
+        assertThat(service.me(principal("42")).role()).isEqualTo("ADMIN");
     }
 
     @Test

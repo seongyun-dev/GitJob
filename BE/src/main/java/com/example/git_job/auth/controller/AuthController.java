@@ -1,6 +1,8 @@
 package com.example.git_job.auth.controller;
 
+import com.example.git_job.auth.controller.dto.AdminLoginRequest;
 import com.example.git_job.auth.controller.dto.MeResponse;
+import com.example.git_job.auth.service.AdminLoginService;
 import com.example.git_job.auth.service.AuthQueryService;
 import com.example.git_job.auth.service.GithubOAuthService;
 import com.example.git_job.global.config.GithubOAuthProperties;
@@ -17,6 +19,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +39,7 @@ public class AuthController {
 
     private final GithubOAuthService githubOAuthService;
     private final AuthQueryService authQueryService;
+    private final AdminLoginService adminLoginService;
     private final GithubOAuthProperties properties;
     private final CookieUtil cookieUtil;
 
@@ -64,6 +68,26 @@ public class AuthController {
     public ResponseEntity<ApiResponse<Void>> logout() {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookieUtil.expired(CookieUtil.SESSION).toString())
+                .body(ApiResponse.success());
+    }
+
+    /**
+     * 관리자 전용 ID/PW 로그인. GitHub OAuth 없이 관리자 화면에 들어가기 위한 진입점이다.
+     *
+     * <p>세션 발급 이전 단계라 인증이 필요 없고 SecurityConfig에서 공개한다. 성공하면
+     * OAuth 콜백과 동일하게 SESSION 쿠키를 심는다 — 이후 요청은 GitHub 로그인과 구분 없이
+     * 그 세션으로 동작한다. 실패는 원인을 구분하지 않고 401(AUTH-401-1)로 접는다.</p>
+     */
+    @PostMapping("/admin-login")
+    public ResponseEntity<ApiResponse<Void>> adminLogin(@RequestBody AdminLoginRequest request) {
+        AdminLoginService.LoginSession session =
+                adminLoginService.login(request.id(), request.password());
+
+        return ResponseEntity.ok()
+                .header(
+                        HttpHeaders.SET_COOKIE,
+                        cookieUtil.session(session.sessionToken(), session.maxAge()).toString()
+                )
                 .body(ApiResponse.success());
     }
 

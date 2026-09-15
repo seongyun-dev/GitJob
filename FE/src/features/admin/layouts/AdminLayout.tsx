@@ -41,7 +41,7 @@ function AdminHeader() {
       <div className="mx-auto flex h-[71px] w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
         <div className="flex shrink-0 items-center gap-3.5">
           <Link to="/" className="flex items-center" aria-label="GitJob 홈으로">
-            <BrandLogo className="h-[26px]" />
+            <BrandLogo className="h-[30px] lg:h-9" />
           </Link>
           <span className="rounded-[6px] border border-brand-line bg-[#F5F7FA] px-2 py-1 text-[11px] font-extrabold tracking-[0.1em] text-brand-muted">
             ADMIN

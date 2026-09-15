@@ -78,3 +78,37 @@ export function handleHashLinkClick(event: MouseEvent<HTMLAnchorElement>): void 
   container.scrollTo({ top, behavior: 'instant' })
   container.style.scrollSnapType = previousSnapType
 }
+
+/**
+ * 랜딩 맨 위(히어로)로 이동. "서비스 소개"는 특정 섹션이 아니라 메인 화면을 처음부터
+ * 보여준다. `.lp-scroll` 컨테이너를 0으로 옮기되, 위 함수와 같은 이유로 스냅을 잠깐 끄고
+ * 즉시 옮긴다. `href="/"`는 그대로 둬 스크립트가 없거나 새 탭으로 열 때 랜딩을 새로 연다.
+ */
+export function handleLandingTopClick(event: MouseEvent<HTMLAnchorElement>): void {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return
+  }
+
+  event.preventDefault()
+  // 기본 이동을 막으면 링크가 포커스를 쥔 채 남아 일부 브라우저에서 글자에 텍스트
+  // 캐럿(깜박이는 |)이 보인다. 스크롤만 하는 동작이라 포커스를 놓아도 문제없다.
+  event.currentTarget.blur()
+
+  const container = document.querySelector('.lp-scroll')
+  if (!(container instanceof HTMLElement)) {
+    window.scrollTo({ top: 0, behavior: 'instant' })
+    return
+  }
+
+  const previousSnapType = container.style.scrollSnapType
+  container.style.scrollSnapType = 'none'
+  container.scrollTo({ top: 0, behavior: 'instant' })
+  container.style.scrollSnapType = previousSnapType
+}

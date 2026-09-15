@@ -15,6 +15,11 @@ export interface Me {
   avatarUrl: string | null
   /** 저장된 access token 유무. 실제 데이터라 "GitHub 연결됨" 표기의 근거가 된다. */
   githubConnected: boolean
+  /**
+   * 권한. 헤더 프로필이 ADMIN에게만 관리자 페이지 진입 링크를 보이는 데 쓴다.
+   * 라우트 보호가 아니라 진입점 노출용 — 실제 접근 제한은 BE `/api/v1/admin/**`가 한다.
+   */
+  role: 'USER' | 'ADMIN'
 }
 
 /**

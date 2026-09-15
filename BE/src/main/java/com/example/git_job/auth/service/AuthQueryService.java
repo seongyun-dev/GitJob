@@ -36,7 +36,8 @@ public class AuthQueryService {
         String accessToken = user.getAccessToken();
         boolean githubConnected = accessToken != null && !accessToken.isBlank();
 
-        return new MeResponse(displayName, user.getAvatarUrl(), githubConnected);
+        return new MeResponse(displayName, user.getAvatarUrl(), githubConnected,
+                user.getRole().name());
     }
 
     private long userIdOf(AuthenticatedUser principal) {

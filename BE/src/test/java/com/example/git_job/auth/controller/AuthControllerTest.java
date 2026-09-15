@@ -63,6 +63,7 @@ class AuthControllerTest {
         AuthController controller = new AuthController(
                 githubOAuthService,
                 mock(com.example.git_job.auth.service.AuthQueryService.class),
+                mock(com.example.git_job.auth.service.AdminLoginService.class),
                 properties,
                 new CookieUtil(false));
 

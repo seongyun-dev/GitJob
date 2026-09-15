@@ -131,7 +131,15 @@ github:
     frontend-callback-url: ${FRONTEND_CALLBACK_URL:http://localhost:8080/auth/callback}
     # redirectTo는 사용자 입력이므로 허용 목록과 정확히 일치할 때만 통과시킨다.
     # 목록의 첫 항목이 redirectTo 미지정 시 기본 목적지가 된다.
-    allowed-redirect-paths: ${OAUTH_ALLOWED_REDIRECT_PATHS:/onboarding/repositories,/repos,/}
+    allowed-redirect-paths: ${OAUTH_ALLOWED_REDIRECT_PATHS:/onboarding/repositories,/repos,/admin,/}
+
+# 관리자 전용 ID/PW 로그인. GitHub 없이 관리자 화면에 들어가기 위한 진입점이다.
+# 값은 코드가 아니라 환경변수로만 주입한다(비밀번호를 산출물에 박지 않는다). 둘 중
+# 하나라도 비어 있으면 관리자 로그인 엔드포인트는 항상 실패한다(기능 비활성).
+admin:
+  login:
+    id: ${ADMIN_LOGIN_ID:}
+    password: ${ADMIN_LOGIN_PASSWORD:}
 
 cookie:
   # 로컬 http에서는 false. 운영은 COOKIE_SECURE=true로 주입한다.

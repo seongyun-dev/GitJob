@@ -182,6 +182,10 @@ export function UserMenu({ me, tone = 'dark' }: { me: Me; tone?: 'light' | 'dark
 
           <div className="border-t border-brand-line" />
 
+          {/*
+            관리자 페이지 진입은 드롭다운이 아니라 헤더의 별도 "관리자" 버튼으로 뺐다
+            (HeaderAuthArea). ADMIN이 한 번에 이동하게 하려는 것 — 여기엔 두지 않는다.
+          */}
           <Link
             to="/mypage"
             role="menuitem"

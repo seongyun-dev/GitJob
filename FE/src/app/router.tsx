@@ -9,8 +9,10 @@ import { SystemMonitoringPage } from '@/features/admin/monitoring/pages/SystemMo
 import { TechnologyCandidatePage } from '@/features/admin/pages/TechnologyCandidatePage'
 import { AnalysisProgressPage } from '@/features/analysis/pages/AnalysisProgressPage'
 import { RepositorySelectionPage } from '@/features/analysis/pages/RepositorySelectionPage'
+import { AdminLoginPage } from '@/features/auth/pages/AdminLoginPage'
 import { AuthCallbackPage } from '@/features/auth/pages/AuthCallbackPage'
 import { GithubConnectPage } from '@/features/auth/pages/GithubConnectPage'
+import { LoginPage } from '@/features/auth/pages/LoginPage'
 import { EvidenceDetailPage } from '@/features/evidence/pages/EvidenceDetailPage'
 import { EvidenceOverviewPage } from '@/features/evidence/pages/EvidenceOverviewPage'
 import { LandingPage } from '@/features/landing/pages/LandingPage'
@@ -64,6 +66,12 @@ export const router = createBrowserRouter([
       // S1 Landing · 티켓 191. 배경이 화면 전체를 덮어야 해서 AppLayout 밖에 둔다.
       // 정적 경로가 splat보다 먼저 매칭되므로 아래 `*`가 `/`를 가로채지 않는다.
       { path: '/', element: <LandingPage /> },
+      // 로그인 전용 화면. 헤더 "로그인"이 곧바로 GitHub으로 302하던 것을, 이 화면을
+      // 거쳐 GitHub 진입점을 여는 흐름으로 바꾼다. 로그인 전 화면이라 AppLayout 밖에 둔다.
+      { path: '/login', element: <LoginPage /> },
+      // 관리자 전용 ID/PW 로그인. `/admin`(AdminLayout) 하위가 아니라 독립 화면이라
+      // 별도 최상위 경로로 둔다 — 정적 전체 경로가 아래 `/admin` 브랜치보다 먼저 매칭된다.
+      { path: '/admin/login', element: <AdminLoginPage /> },
       // 티켓 156. GitHub 토큰이 폐기·만료됐을 때 `providers.tsx` 전역 가드가 보내는 곳.
       // Final v2 `#connect`가 앱 내비게이션 없는 독립 화면이라 AppLayout 밖에 둔다.
       { path: '/onboarding/github', element: <GithubConnectPage /> },

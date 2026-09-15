@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
@@ -46,8 +46,10 @@ export function GithubConnectPage() {
   return (
     <section className="relative min-h-dvh overflow-hidden bg-[radial-gradient(780px_560px_at_92%_0%,rgba(158,184,221,.38),transparent_62%),radial-gradient(620px_460px_at_2%_100%,rgba(186,170,159,.3),transparent_62%),linear-gradient(118deg,#F1EEEB_0%,#EEEDEE_50%,#E7EDF7_100%)]">
       <header className="relative z-[5] flex h-20 items-center justify-between px-6 lg:px-14">
-        {/* Final v2 연결 화면 헤더는 로고 30px. */}
-        <BrandLogo className="h-[30px]" />
+        {/* 로고 크기는 다른 화면과 26px로 통일한다. */}
+        <Link to="/" aria-label="GitJob 홈으로" className="flex items-center">
+          <BrandLogo className="h-[30px] lg:h-9" />
+        </Link>
         {/* 도움말 화면이 없어 링크로 만들지 않는다. Final v2도 `← 이전`을 함께 두지만
             그 목적지는 이전 온보딩 단계다. 여기는 분석이 끊긴 지점에서 온 화면이라
             되돌아가도 같은 실패를 다시 만난다. */}

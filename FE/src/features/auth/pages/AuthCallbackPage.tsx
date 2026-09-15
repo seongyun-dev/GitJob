@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
+import { DEFAULT_REDIRECT, githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
+import { useMe } from '@/features/auth/hooks/useMe'
 import { PageHero } from '@/shared/ui/PageHero'
 
 /**
@@ -24,6 +25,9 @@ import { PageHero } from '@/shared/ui/PageHero'
 export function AuthCallbackPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
+  // 콜백 302에 세션 쿠키가 이미 실려 있으므로, 여기서 `/me`를 조회하면 방금 로그인한
+  // 사용자의 역할을 알 수 있다. 역할로 목적지를 가른다(관리자 → 관리자 화면).
+  const { data: me } = useMe()
 
   const status = params.get('status')
   const code = params.get('code')
@@ -34,9 +38,19 @@ export function AuthCallbackPage() {
     if (!succeeded) {
       return
     }
+    if (me === undefined) {
+      // 아직 /me 확인 중. 역할을 알아야 목적지를 정하므로 결과를 기다린다.
+      return
+    }
+    // 관리자 계정은 목적지와 무관하게 곧바로 관리자 화면으로 보낸다.
     // replace가 아니면 뒤로 가기가 이 콜백 URL로 돌아온다. 쿼리는 1회용이다.
-    navigate(target, { replace: true })
-  }, [succeeded, target, navigate])
+    if (me?.role === 'ADMIN') {
+      navigate('/admin', { replace: true })
+      return
+    }
+    // 관리자가 아니면 `/admin`으로 보내지 않는다(관리자 로그인 링크로 들어온 일반 계정 방지).
+    navigate(target === '/admin' ? DEFAULT_REDIRECT : target, { replace: true })
+  }, [succeeded, me, target, navigate])
 
   if (succeeded) {
     return (
