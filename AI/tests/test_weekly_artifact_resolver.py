@@ -196,6 +196,21 @@ def weekly_set(tmp_path: Path):
     return load_weekly_candidates(path, limit=10)
 
 
+def weekly_candidate_set(repo_ids: tuple[int, ...]) -> WeeklyCandidateSet:
+    return WeeklyCandidateSet(
+        input_root="hdfs:///weekly",
+        week_start=date(2026, 9, 7),
+        candidates=tuple(
+            candidate(
+                repo_id=repo_id,
+                name=f"octo/repo-{repo_id}",
+                rank=rank,
+            )
+            for rank, repo_id in enumerate(repo_ids, start=1)
+        ),
+    )
+
+
 def test_weekly_candidate_uses_current_head_not_month_event_sha(tmp_path: Path) -> None:
     loaded = weekly_set(tmp_path)
     item = loaded.candidates[0]
@@ -419,11 +434,16 @@ def test_terminal_not_found_empty_complete_and_partial_are_valid_snapshot(
             tmp_path,
             ScriptedTransport(
                 [
+                    # One control probe per orchestrator cycle: the Weekly
+                    # runner examines candidates one at a time so the valid
+                    # quota can stop the pool the moment it is reached.
                     rate_control(),
                     metadata(1, "octo/repo-1"),
                     branch_head(),
                     empty_tree(),
+                    rate_control(),
                     response({}, status=404),
+                    rate_control(),
                     metadata(3, "octo/repo-3"),
                     branch_head(),
                     empty_tree(truncated=True),
@@ -457,6 +477,107 @@ def test_terminal_not_found_empty_complete_and_partial_are_valid_snapshot(
         "status"
     ] == "NOT_FOUND"
     assert (tmp_path / "snapshot.json").exists()
+    assert result.summary["candidate_pool_exhausted"] is True
+    assert result.summary["quota_reached"] is False
+    assert result.summary["valid_artifact_count"] == 0
+
+
+def test_weekly_candidate_pool_refills_until_valid_quota_and_stops_without_extra_calls(
+    tmp_path: Path,
+) -> None:
+    candidates = weekly_candidate_set((1, 2, 3, 4, 5, 6))
+    transport = ScriptedTransport(
+        [
+            rate_control(),
+            response({}, status=404),
+            rate_control(),
+            metadata(repo_id=2, name="octo/repo-2"),
+            branch_head(),
+            empty_tree(),
+            rate_control(),
+            metadata(repo_id=3, name="octo/repo-3"),
+            branch_head(),
+            empty_tree(truncated=True),
+            rate_control(),
+            metadata(repo_id=4, name="octo/repo-4"),
+            branch_head(),
+            tree(),
+            response(b"{}"),
+            rate_control(),
+            metadata(repo_id=5, name="octo/repo-5"),
+            branch_head(),
+            tree(),
+            response(b"{}"),
+        ]
+    )
+    result = WeeklyArtifactResolver(make_orchestrator(tmp_path, transport)).resolve(
+        candidates,
+        output=tmp_path / "snapshot.json",
+        summary_output=tmp_path / "run-summary.json",
+        failure_output=tmp_path / "failures.json",
+        state_output=tmp_path / "state.json",
+        candidate_pool_limit=6,
+        valid_artifact_quota=2,
+    )
+
+    assert result.summary["candidate_pool_limit"] == 6
+    assert result.summary["candidates_examined"] == 5
+    assert result.summary["valid_artifact_count"] == 2
+    assert result.summary["artifact_ready_complete"] == 2
+    assert result.summary["artifact_ready_reused"] == 0
+    assert result.summary["not_found_count"] == 1
+    assert result.summary["empty_artifact_count"] == 1
+    assert result.summary["partial_count"] == 1
+    assert result.summary["failed_count"] == 0
+    assert result.summary["quota_reached"] is True
+    assert result.summary["candidate_pool_exhausted"] is False
+    assert not any("repo-6" in url for url in transport.calls)
+    assert len(result.run.batch.records) == 4
+
+
+def test_weekly_reused_artifact_counts_and_identity_mismatch_stays_failed(
+    tmp_path: Path,
+) -> None:
+    make_orchestrator(
+        tmp_path,
+        ScriptedTransport(
+            [rate_control(), metadata(repo_id=1), branch_head(), tree(), response(b"seed")]
+        ),
+        dataset="seed",
+    ).run([candidate()])
+    transport = ScriptedTransport(
+        [
+            rate_control(),
+            metadata(repo_id=1),
+            branch_head(),
+            rate_control(),
+            metadata(repo_id=999, name="octo/repo-2"),
+            rate_control(),
+            metadata(repo_id=3, name="octo/repo-3"),
+            branch_head(),
+            tree(),
+            response(b"new"),
+        ]
+    )
+    result = WeeklyArtifactResolver(
+        make_orchestrator(tmp_path, transport, dataset="weekly-quota")
+    ).resolve(
+        weekly_candidate_set((1, 2, 3)),
+        output=tmp_path / "snapshot.json",
+        summary_output=tmp_path / "run-summary.json",
+        failure_output=tmp_path / "failures.json",
+        state_output=tmp_path / "state.json",
+        candidate_pool_limit=3,
+        valid_artifact_quota=2,
+    )
+
+    assert result.summary["valid_artifact_count"] == 2
+    assert result.summary["artifact_ready_reused"] == 1
+    assert result.summary["artifact_ready_complete"] == 1
+    assert result.summary["failed_count"] == 1
+    assert 2 not in {record.github_repo_id for record in result.run.batch.records}
+    failures = json.loads((tmp_path / "failures.json").read_text())
+    assert [row["status"] for row in failures["repos"]] == ["FAILED"]
 
 
 def test_weekly_repo_id_mismatch_failed_is_fail_closed(tmp_path: Path) -> None:
@@ -468,14 +589,16 @@ def test_weekly_repo_id_mismatch_failed_is_fail_closed(tmp_path: Path) -> None:
         )
     )
 
-    with pytest.raises(
-        WeeklyArtifactResolutionError,
-        match=r"hard failures: 1:FAILED",
-    ):
-        resolver.resolve(
-            candidate_set,
-            output=tmp_path / "snapshot.json",
-            summary_output=tmp_path / "run-summary.json",
-            failure_output=tmp_path / "failures.json",
-            state_output=tmp_path / "state.json",
-        )
+    result = resolver.resolve(
+        candidate_set,
+        output=tmp_path / "snapshot.json",
+        summary_output=tmp_path / "run-summary.json",
+        failure_output=tmp_path / "failures.json",
+        state_output=tmp_path / "state.json",
+        candidate_pool_limit=1,
+        valid_artifact_quota=1,
+    )
+    assert result.summary["valid_artifact_count"] == 0
+    assert result.summary["failed_count"] == 1
+    assert result.summary["quota_reached"] is False
+    assert not result.run.batch.records

@@ -72,6 +72,11 @@ class BootstrapBatchRunner:
         sleep: Callable[[float], None] = time.sleep,
         epoch: Callable[[], float] = time.time,
         monotonic: Callable[[], float] = time.monotonic,
+        candidate_batch_size: int | None = None,
+        stop_when: Callable[[RepoFetchRun], bool] | None = None,
+        summary_extra: (
+            Callable[[RepoFetchRun, Mapping[str, Any]], Mapping[str, Any]] | None
+        ) = None,
     ) -> None:
         if reset_buffer_seconds < 0:
             raise ValueError("reset_buffer_seconds cannot be negative")
@@ -79,6 +84,8 @@ class BootstrapBatchRunner:
             raise ValueError("max_wait_seconds must be positive")
         if estimated_core_calls <= 0 or estimated_runtime_seconds <= 0:
             raise ValueError("estimates must be positive")
+        if candidate_batch_size is not None and candidate_batch_size < 1:
+            raise ValueError("candidate_batch_size must be positive")
         if (publisher is None) != (publish_root is None):
             raise ValueError("publisher and publish_root must be provided together")
         self.orchestrator = orchestrator
@@ -98,6 +105,9 @@ class BootstrapBatchRunner:
         self.sleep = sleep
         self.epoch = epoch
         self.monotonic = monotonic
+        self.candidate_batch_size = candidate_batch_size
+        self.stop_when = stop_when
+        self.summary_extra = summary_extra
         self._state: dict[str, Any] | None = None
         self._status_by_repo: dict[int, str] = {}
         self._cycle_started = 0.0
@@ -112,10 +122,13 @@ class BootstrapBatchRunner:
             int(row["repo_id"]): str(row["status"]) for row in checkpoint_rows
         }
         self._resume_pending_wait(state)
+        cycle_candidates = self._next_candidates(checkpoint)
+        if not cycle_candidates:
+            raise RuntimeError("bootstrap has no pending candidates")
         while True:
             self._cycle_started = self.monotonic()
             cycle = self.orchestrator.run(
-                self.candidates,
+                cycle_candidates,
                 prior_active_seconds=float(state["active_runtime_seconds"]),
                 prior_control_core_calls=int(state["control_core_calls"]),
             )
@@ -152,7 +165,13 @@ class BootstrapBatchRunner:
 
             if cycle.stopped_reason is not None:
                 return self._incomplete(cycle, state, cycle.stopped_reason)
-            return self._publish(cycle, state)
+            if self.stop_when is not None and self.stop_when(cycle):
+                return self._publish(cycle, state)
+            if self.candidate_batch_size is None:
+                return self._publish(cycle, state)
+            cycle_candidates = self._next_candidates(checkpoint)
+            if not cycle_candidates:
+                return self._publish(cycle, state)
 
     def _publish(
         self,
@@ -267,7 +286,24 @@ class BootstrapBatchRunner:
                     active - self.estimated_runtime_seconds
                 ),
             },
+            **(
+                dict(self.summary_extra(cycle, state))
+                if self.summary_extra is not None
+                else {}
+            ),
         }
+
+    def _next_candidates(self, checkpoint: Any) -> tuple[RepoActivityCandidate, ...]:
+        if self.candidate_batch_size is None:
+            return tuple(self.candidates)
+        if checkpoint is None:
+            return tuple(self.candidates[: self.candidate_batch_size])
+        pending = [
+            candidate
+            for candidate in self.candidates
+            if checkpoint.status(candidate.repo_id) not in TERMINAL_STATUSES
+        ]
+        return tuple(pending[: self.candidate_batch_size])
 
     def _load_state(self) -> dict[str, Any]:
         default = {

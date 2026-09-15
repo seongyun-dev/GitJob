@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -37,6 +38,13 @@ from github.repo_snapshot_bootstrap import (
 WEEKLY_CANDIDATE_SCHEMA = "repo-activity-weekly-candidates/v1"
 WEEKLY_ACTIVITY_METRIC = "repo_activity_weekly_event_count"
 WEEKLY_REFERENCE_SOURCE = "CURRENT_DEFAULT_HEAD"
+DEFAULT_WEEKLY_CANDIDATE_POOL_LIMIT = 1_500
+DEFAULT_WEEKLY_VALID_ARTIFACT_QUOTA = 100
+# One candidate per orchestrator cycle keeps the valid quota exact: the run
+# stops on the repository that reaches it rather than after the batch that
+# contains it. Each cycle costs one rate-control round trip, so this is the
+# knob to raise once a runtime measurement says the trade is worth it.
+DEFAULT_WEEKLY_CANDIDATE_BATCH_SIZE = 1
 
 
 class WeeklyArtifactResolutionError(ValueError):
@@ -84,12 +92,7 @@ class WeeklyArtifactResolution:
 
     @property
     def artifact_ready_count(self) -> int:
-        return sum(
-            record.collection_status
-            in {RepoCollectionStatus.COMPLETE, RepoCollectionStatus.REUSED}
-            and bool(record.artifacts)
-            for record in self.run.batch.records
-        )
+        return _valid_artifact_count(self.run.batch.records)
 
 
 def load_weekly_candidates(path: Path, *, limit: int) -> WeeklyCandidateSet:
@@ -240,9 +243,40 @@ class WeeklyArtifactResolver:
         state_output: Path,
         publisher: Any | None = None,
         publish_root: str | None = None,
+        candidate_pool_limit: int | None = None,
+        valid_artifact_quota: int = DEFAULT_WEEKLY_VALID_ARTIFACT_QUOTA,
+        candidate_batch_size: int = DEFAULT_WEEKLY_CANDIDATE_BATCH_SIZE,
     ) -> WeeklyArtifactResolution:
+        if not candidate_set.candidates:
+            raise ValueError("Weekly candidate pool must not be empty")
+        pool_limit = (
+            len(candidate_set.candidates)
+            if candidate_pool_limit is None
+            else candidate_pool_limit
+        )
+        if pool_limit < len(candidate_set.candidates):
+            raise ValueError(
+                "candidate_pool_limit cannot be smaller than the loaded candidate pool"
+            )
+        if valid_artifact_quota < 1:
+            raise ValueError("valid_artifact_quota must be positive")
+        if candidate_batch_size < 1:
+            raise ValueError("candidate_batch_size must be positive")
         for candidate in candidate_set.candidates:
             _assert_weekly_candidate(candidate, candidate_set.week_start)
+
+        def summary_extra(
+            cycle: RepoFetchRun, state: Mapping[str, Any]
+        ) -> Mapping[str, Any]:
+            return _weekly_metrics(
+                cycle,
+                state=state,
+                candidate_pool_limit=pool_limit,
+                candidate_pool_size=len(candidate_set.candidates),
+                valid_artifact_quota=valid_artifact_quota,
+                candidate_batch_size=candidate_batch_size,
+            )
+
         bootstrap = BootstrapBatchRunner(
             orchestrator=self.orchestrator,
             candidates=candidate_set.candidates,
@@ -252,15 +286,28 @@ class WeeklyArtifactResolver:
             state_output=state_output,
             publisher=publisher,
             publish_root=publish_root,
+            candidate_batch_size=candidate_batch_size,
+            stop_when=lambda cycle: (
+                _valid_artifact_count(cycle.batch.records) >= valid_artifact_quota
+            ),
+            summary_extra=summary_extra,
         ).run()
         if bootstrap.exit_code != 0:
             raise WeeklyArtifactResolutionError(
                 f"Weekly Artifact resolution incomplete: "
                 f"{bootstrap.summary.get('stopped_reason')}"
             )
+        examined = tuple(
+            candidate
+            for candidate in candidate_set.candidates
+            if any(
+                int(row["repo_id"]) == candidate.repo_id
+                for row in bootstrap.run.checkpoint_rows
+            )
+        )
         _assert_weekly_batch(
             bootstrap.run.batch,
-            candidate_set.candidates,
+            examined,
             candidate_set.week_start,
             checkpoint_rows=bootstrap.run.checkpoint_rows,
         )
@@ -309,7 +356,6 @@ def _assert_weekly_batch(
             "Weekly Artifact checkpoint does not contain every candidate"
         )
 
-    hard_failures: list[str] = []
     for repo_id in expected:
         row = rows_by_id[repo_id]
         status = str(row.get("status"))
@@ -317,17 +363,13 @@ def _assert_weekly_batch(
             raise WeeklyArtifactResolutionError(
                 f"Weekly Artifact candidate is not terminal: {repo_id} ({status})"
             )
-        if status in {"FAILED", "HISTORICAL_HEAD_UNAVAILABLE"}:
-            hard_failures.append(f"{repo_id}:{status}")
-
-    if hard_failures:
-        raise WeeklyArtifactResolutionError(
-            "Weekly Artifact batch contains hard failures: "
-            + ", ".join(sorted(hard_failures))
-        )
+        if status == "HISTORICAL_HEAD_UNAVAILABLE":
+            raise WeeklyArtifactResolutionError(
+                "Weekly Artifact cannot use Historical head semantics"
+            )
 
     records_by_id = {record.github_repo_id: record for record in batch.records}
-    expected_record_statuses = {"COMPLETE", "PARTIAL", "REUSED"}
+    expected_record_statuses = {"COMPLETE", "PARTIAL", "REUSED", "FAILED"}
     if set(records_by_id) - set(expected):
         unexpected = sorted(set(records_by_id) - set(expected))
         raise WeeklyArtifactResolutionError(
@@ -364,6 +406,7 @@ def _assert_weekly_batch(
             RepoCollectionStatus.COMPLETE,
             RepoCollectionStatus.PARTIAL,
             RepoCollectionStatus.REUSED,
+            RepoCollectionStatus.FAILED,
         }:
             raise WeeklyArtifactResolutionError(
                 "Weekly Artifact batch contains an incomplete record"
@@ -371,7 +414,7 @@ def _assert_weekly_batch(
 
     for repo_id, row in rows_by_id.items():
         status = str(row.get("status"))
-        if status in expected_record_statuses and repo_id not in records_by_id:
+        if status in {"COMPLETE", "PARTIAL", "REUSED"} and repo_id not in records_by_id:
             raise WeeklyArtifactResolutionError(
                 f"Weekly Artifact batch is missing terminal record: {repo_id}"
             )
@@ -382,6 +425,86 @@ def _assert_weekly_batch(
                 f"Weekly Artifact status mismatch for {repo_id}: "
                 f"checkpoint={status}, record={record.collection_status.value}"
             )
+
+
+def _valid_artifact_count(records: Sequence[Any]) -> int:
+    return sum(
+        record.collection_status
+        in {RepoCollectionStatus.COMPLETE, RepoCollectionStatus.REUSED}
+        and bool(record.artifacts)
+        for record in records
+    )
+
+
+def _weekly_metrics(
+    cycle: RepoFetchRun,
+    *,
+    state: Mapping[str, Any],
+    candidate_pool_limit: int,
+    candidate_pool_size: int,
+    valid_artifact_quota: int,
+    candidate_batch_size: int,
+) -> Mapping[str, Any]:
+    records_by_id = {
+        record.github_repo_id: record for record in cycle.batch.records
+    }
+    rows = cycle.checkpoint_rows
+    status_counts = Counter(str(row.get("status")) for row in rows)
+    complete_ready = sum(
+        str(row.get("status")) == "COMPLETE"
+        and bool(records_by_id.get(int(row["repo_id"]), None))
+        and bool(records_by_id[int(row["repo_id"])].artifacts)
+        for row in rows
+    )
+    reused_ready = sum(
+        str(row.get("status")) == "REUSED"
+        and bool(records_by_id.get(int(row["repo_id"]), None))
+        and bool(records_by_id[int(row["repo_id"])].artifacts)
+        for row in rows
+    )
+    empty_artifacts = sum(
+        str(row.get("status")) in {"COMPLETE", "REUSED"}
+        and not bool(
+            records_by_id.get(int(row["repo_id"]), None)
+            and records_by_id[int(row["repo_id"])].artifacts
+        )
+        for row in rows
+    )
+    valid = complete_ready + reused_ready
+    elapsed = float(state["active_runtime_seconds"]) + float(
+        state["rate_limit_wait_seconds"]
+    )
+    examined = len(rows)
+    return {
+        "candidate_pool_limit": candidate_pool_limit,
+        "candidate_pool_size": candidate_pool_size,
+        "valid_artifact_quota": valid_artifact_quota,
+        "candidate_batch_size": candidate_batch_size,
+        "candidates_examined": examined,
+        "valid_artifact_count": valid,
+        "artifact_ready_complete": complete_ready,
+        "artifact_ready_reused": reused_ready,
+        "not_found_count": status_counts.get("NOT_FOUND", 0),
+        "empty_artifact_count": empty_artifacts,
+        "partial_count": status_counts.get("PARTIAL", 0),
+        "failed_count": status_counts.get("FAILED", 0),
+        "quota_shortfall": max(0, valid_artifact_quota - valid),
+        "quota_reached": valid >= valid_artifact_quota,
+        "candidate_pool_exhausted": examined >= candidate_pool_size,
+        "candidates_remaining": max(0, candidate_pool_size - examined),
+        "github_api_calls": int(cycle.summary()["repo_api_calls"])
+        + int(state["control_core_calls"]),
+        "artifact_write_count": sum(
+            len(record.artifacts)
+            for record in cycle.batch.records
+            if record.collection_status is RepoCollectionStatus.COMPLETE
+        ),
+        "retry_count": sum(
+            max(0, int(row.get("attempts", 0)) - 1) for row in rows
+        ),
+        "elapsed_seconds": elapsed,
+        "repos_per_second": examined / elapsed if elapsed > 0 else 0.0,
+    }
 
 
 def _monday(value: object) -> date:
@@ -426,6 +549,36 @@ def build_parser() -> argparse.ArgumentParser:
             action.required = True
         elif action.dest == "activity_metric":
             action.default = WEEKLY_ACTIVITY_METRIC
+        elif action.dest == "limit":
+            action.default = _positive_env(
+                "WEEKLY_CANDIDATE_POOL_LIMIT",
+                DEFAULT_WEEKLY_CANDIDATE_POOL_LIMIT,
+            )
+    parser.add_argument(
+        "--candidate-pool-limit",
+        type=_positive_int,
+        default=None,
+        help="Maximum rank-ordered Weekly candidate pool to examine.",
+    )
+    parser.add_argument(
+        "--valid-artifact-quota",
+        type=_positive_int,
+        default=_positive_env(
+            "WEEKLY_VALID_ARTIFACT_QUOTA", DEFAULT_WEEKLY_VALID_ARTIFACT_QUOTA
+        ),
+        help="Number of artifact-bearing COMPLETE/REUSED repos required.",
+    )
+    parser.add_argument(
+        "--candidate-batch-size",
+        type=_positive_int,
+        default=_positive_env(
+            "WEEKLY_CANDIDATE_BATCH_SIZE", DEFAULT_WEEKLY_CANDIDATE_BATCH_SIZE
+        ),
+        help=(
+            "Candidates per orchestrator cycle. 1 stops exactly on the "
+            "repository that reaches the quota."
+        ),
+    )
     return parser
 
 
@@ -434,7 +587,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     token = os.environ.get(arguments.token_env)
     if not token:
         raise SystemExit(f"GitHub token environment is missing: {arguments.token_env}")
-    candidate_set = load_weekly_candidates(arguments.candidates, limit=arguments.limit)
+    pool_limit = arguments.candidate_pool_limit or arguments.limit
+    arguments.limit = pool_limit
+    candidate_set = load_weekly_candidates(arguments.candidates, limit=pool_limit)
     # create_orchestrator is the existing extractor wiring.  The explicit
     # false value is intentional: Weekly must never opt into Historical mode.
     arguments.require_historical_head = False
@@ -456,6 +611,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         state_output=arguments.state_output,
         publisher=publisher,
         publish_root=arguments.publish_root,
+        candidate_pool_limit=pool_limit,
+        valid_artifact_quota=arguments.valid_artifact_quota,
+        candidate_batch_size=arguments.candidate_batch_size,
     )
     print(
         json.dumps(
@@ -467,12 +625,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "extracted_count": resolution.extracted_count,
                 "artifact_ready_count": resolution.artifact_ready_count,
                 "published_uris": dict(resolution.published_uris),
+                **dict(resolution.summary),
             },
             ensure_ascii=False,
             indent=2,
         )
     )
     return resolution.bootstrap.exit_code
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise ValueError("value must be positive")
+    return parsed
+
+
+def _positive_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    return default if raw is None else _positive_int(raw)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI delegation
