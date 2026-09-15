@@ -282,19 +282,19 @@ PROFILES=core,app \
 
 현재 EC2 override는 Nginx HTTP 80/HTTPS 443과 split 배포에 필요한 core의
 private binding을 제공한다. 서비스 서버에는
-`/etc/letsencrypt/live/j15e102.p.ssafy.io/fullchain.pem`과
+`/etc/letsencrypt/live/gitjob.shop/fullchain.pem`과
 `privkey.pem`이 있어야 하며, 인증서가 없을 때는 Nginx app을 재기동하지
 않는다. HTTP는 ACME challenge와 health endpoint만 유지하고 나머지는 HTTPS로
 redirect한다.
 
 서비스 서버에서 최초 인증서를 발급할 때는 DNS가
-`j15e102.p.ssafy.io`를 서비스 EC2로 가리키고 80/tcp가 외부에서 도달 가능해야
+`gitjob.shop`을 서비스 EC2로 가리키고 80/tcp가 외부에서 도달 가능해야
 한다. 인증서 발급 후 다음 명령으로 app을 재기동한다.
 
 ```bash
 sudo apt-get update
 sudo apt-get install --yes certbot
-sudo certbot certonly --standalone --preferred-challenges http --cert-name j15e102.p.ssafy.io -d j15e102.p.ssafy.io
+sudo certbot certonly --standalone --preferred-challenges http --cert-name gitjob.shop -d gitjob.shop
 ENV_FILE=.env.service COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml PROFILES=core,app ./Infra/scripts/up.sh
 ```
 
