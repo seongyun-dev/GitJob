@@ -20,6 +20,7 @@ from github.weekly_artifact_resolver import (
     WEEKLY_CANDIDATE_SCHEMA,
     WeeklyArtifactResolutionError,
     WeeklyArtifactResolver,
+    WeeklyCandidateSet,
     build_weekly_candidates,
     load_weekly_candidates,
 )
@@ -100,6 +101,16 @@ def tree(tree_sha: str = TREE_A) -> HttpResponse:
     )
 
 
+def empty_tree(*, truncated: bool = False, tree_sha: str = TREE_A) -> HttpResponse:
+    return response(
+        {
+            "sha": tree_sha,
+            "truncated": truncated,
+            "tree": [],
+        }
+    )
+
+
 def policy() -> RepoFetchPolicy:
     return RepoFetchPolicy(
         policy_version="repo-fetch-policy/weekly-test-v1",
@@ -122,13 +133,15 @@ def candidate(
     *,
     repo_id: int = 1,
     name: str = "octo/repo",
+    rank: int = 1,
+    activity_count: int = 10,
     monthly_sha: str | None = None,
 ) -> RepoActivityCandidate:
     return RepoActivityCandidate(
         repo_id=repo_id,
         repo_name=name,
-        activity_count=10,
-        activity_rank=1,
+        activity_count=activity_count,
+        activity_rank=rank,
         activity_metric="repo_activity_weekly_event_count",
         activity_period_start=date(2026, 9, 7),
         activity_period_end=date(2026, 9, 13),
@@ -387,3 +400,82 @@ def test_weekly_resolver_publishes_existing_snapshot_contract(
     assert result.run.batch.records[0].sha_fallback_reason == (
         "MONTH_EVENT_SHA_NOT_AVAILABLE"
     )
+
+
+def test_terminal_not_found_empty_complete_and_partial_are_valid_snapshot(
+    tmp_path: Path,
+) -> None:
+    candidates = tuple(
+        candidate(repo_id=repo_id, name=f"octo/repo-{repo_id}", rank=repo_id)
+        for repo_id in (1, 2, 3)
+    )
+    candidate_set = WeeklyCandidateSet(
+        input_root="hdfs:///weekly",
+        week_start=date(2026, 9, 7),
+        candidates=candidates,
+    )
+    resolver = WeeklyArtifactResolver(
+        make_orchestrator(
+            tmp_path,
+            ScriptedTransport(
+                [
+                    rate_control(),
+                    metadata(1, "octo/repo-1"),
+                    branch_head(),
+                    empty_tree(),
+                    response({}, status=404),
+                    metadata(3, "octo/repo-3"),
+                    branch_head(),
+                    empty_tree(truncated=True),
+                ]
+            ),
+        )
+    )
+
+    result = resolver.resolve(
+        candidate_set,
+        output=tmp_path / "snapshot.json",
+        summary_output=tmp_path / "run-summary.json",
+        failure_output=tmp_path / "failures.json",
+        state_output=tmp_path / "state.json",
+    )
+
+    assert result.summary["status_counts"] == {
+        "COMPLETE": 1,
+        "NOT_FOUND": 1,
+        "PARTIAL": 1,
+    }
+    assert [row["status"] for row in result.run.checkpoint_rows] == [
+        "COMPLETE",
+        "NOT_FOUND",
+        "PARTIAL",
+    ]
+    assert len(result.run.batch.records) == 2
+    assert result.run.batch.records[0].artifacts == ()
+    assert result.run.batch.records[1].collection_status.value == "PARTIAL"
+    assert json.loads((tmp_path / "failures.json").read_text())["repos"][0][
+        "status"
+    ] == "NOT_FOUND"
+    assert (tmp_path / "snapshot.json").exists()
+
+
+def test_weekly_repo_id_mismatch_failed_is_fail_closed(tmp_path: Path) -> None:
+    candidate_set = weekly_set(tmp_path)
+    resolver = WeeklyArtifactResolver(
+        make_orchestrator(
+            tmp_path,
+            ScriptedTransport([rate_control(), metadata(repo_id=999)]),
+        )
+    )
+
+    with pytest.raises(
+        WeeklyArtifactResolutionError,
+        match=r"hard failures: 1:FAILED",
+    ):
+        resolver.resolve(
+            candidate_set,
+            output=tmp_path / "snapshot.json",
+            summary_output=tmp_path / "run-summary.json",
+            failure_output=tmp_path / "failures.json",
+            state_output=tmp_path / "state.json",
+        )

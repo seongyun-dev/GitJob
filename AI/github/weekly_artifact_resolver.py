@@ -25,6 +25,7 @@ from github.repo_fetch_orchestrator import (
     RepoActivityCandidate,
     RepoFetchOrchestrator,
     RepoFetchRun,
+    TERMINAL_STATUSES,
     create_orchestrator,
 )
 from github.repo_snapshot_bootstrap import (
@@ -261,6 +262,7 @@ class WeeklyArtifactResolver:
             bootstrap.run.batch,
             candidate_set.candidates,
             candidate_set.week_start,
+            checkpoint_rows=bootstrap.run.checkpoint_rows,
         )
         return WeeklyArtifactResolution(
             week_start=candidate_set.week_start,
@@ -288,12 +290,50 @@ def _assert_weekly_batch(
     batch: GitHubRepoSnapshotBatch,
     candidates: Sequence[RepoActivityCandidate],
     week_start: date,
+    *,
+    checkpoint_rows: Sequence[Mapping[str, Any]],
 ) -> None:
+    """Validate terminal coverage without requiring every source row in batch.
+
+    The common snapshot batch intentionally contains contract records only.
+    ``NOT_FOUND`` and hard failures live in the summary/failures artifacts, while
+    ``PARTIAL`` remains a contract record.  Weekly must validate the complete
+    candidate disposition from the checkpoint rather than treating the absent
+    ``NOT_FOUND`` records as missing candidates.
+    """
+
     expected = {candidate.repo_id: candidate for candidate in candidates}
-    if len(batch.records) != len(expected):
+    rows_by_id = {int(row["repo_id"]): row for row in checkpoint_rows}
+    if set(rows_by_id) != set(expected):
         raise WeeklyArtifactResolutionError(
-            "Weekly Artifact batch does not contain every candidate"
+            "Weekly Artifact checkpoint does not contain every candidate"
         )
+
+    hard_failures: list[str] = []
+    for repo_id in expected:
+        row = rows_by_id[repo_id]
+        status = str(row.get("status"))
+        if status not in TERMINAL_STATUSES:
+            raise WeeklyArtifactResolutionError(
+                f"Weekly Artifact candidate is not terminal: {repo_id} ({status})"
+            )
+        if status in {"FAILED", "HISTORICAL_HEAD_UNAVAILABLE"}:
+            hard_failures.append(f"{repo_id}:{status}")
+
+    if hard_failures:
+        raise WeeklyArtifactResolutionError(
+            "Weekly Artifact batch contains hard failures: "
+            + ", ".join(sorted(hard_failures))
+        )
+
+    records_by_id = {record.github_repo_id: record for record in batch.records}
+    expected_record_statuses = {"COMPLETE", "PARTIAL", "REUSED"}
+    if set(records_by_id) - set(expected):
+        unexpected = sorted(set(records_by_id) - set(expected))
+        raise WeeklyArtifactResolutionError(
+            f"unexpected repo_id in Weekly Artifact batch: {unexpected}"
+        )
+
     for record in batch.records:
         candidate = expected.get(record.github_repo_id)
         if candidate is None:
@@ -322,14 +362,25 @@ def _assert_weekly_batch(
             )
         if record.collection_status not in {
             RepoCollectionStatus.COMPLETE,
+            RepoCollectionStatus.PARTIAL,
             RepoCollectionStatus.REUSED,
         }:
             raise WeeklyArtifactResolutionError(
                 "Weekly Artifact batch contains an incomplete record"
             )
-        if not record.artifacts:
+
+    for repo_id, row in rows_by_id.items():
+        status = str(row.get("status"))
+        if status in expected_record_statuses and repo_id not in records_by_id:
             raise WeeklyArtifactResolutionError(
-                f"Weekly Artifact record has no artifacts: {record.github_repo_id}"
+                f"Weekly Artifact batch is missing terminal record: {repo_id}"
+            )
+
+        record = records_by_id.get(repo_id)
+        if record is not None and record.collection_status.value != status:
+            raise WeeklyArtifactResolutionError(
+                f"Weekly Artifact status mismatch for {repo_id}: "
+                f"checkpoint={status}, record={record.collection_status.value}"
             )
 
 
