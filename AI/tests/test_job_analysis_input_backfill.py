@@ -198,7 +198,7 @@ def test_a_source_that_never_collected_is_not_an_error():
 
 
 def test_jobkorea_is_not_discovered():
-    """`-230` keeps JobKorea in Raw and out of any analysis input."""
+    """JobKorea publishes through its own writer, not the generic backfill."""
 
     hdfs = FakeHdfs()
     hdfs.seed_run("jobkorea", "dt=2026-09-09", "JOBKOREA-A")
@@ -274,9 +274,10 @@ def test_published_bytes_are_the_raw_bytes():
     _run(hdfs)
 
     for name in ("job_analysis_input.json", "postings.csv", "manifest.json"):
-        assert hdfs.stored[f"{published_prefix}/{name}"] == hdfs.stored[
-            f"{raw_prefix}/{name}"
-        ]
+        assert (
+            hdfs.stored[f"{published_prefix}/{name}"]
+            == hdfs.stored[f"{raw_prefix}/{name}"]
+        )
 
 
 @pytest.mark.parametrize(

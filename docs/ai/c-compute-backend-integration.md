@@ -1,7 +1,8 @@
 # B ↔ C Compute 연결 인수
 
-> 2026-09-15 코드 기준: Jira `S15P21E102-269` 로컬 구현·회귀 검증 중
-> 아직 하지 않은 것: commit, push, MR, 운영 배포, 실제 B callback, 로그인 FE E2E
+> 2026-09-15 운영 기준: Jira `S15P21E102-269` 병합·C Worker 배포 완료,
+> `S15P21E102-272`로 JobKorea C 분석 소비 적용
+> 아직 하지 않은 것: 실제 B callback과 로그인 FE E2E
 
 C는 공고 모집단·수요·매칭·추천·What-if·Trend를 계산한다. B는 로그인 사용자의
 소유권을 확인하고 C 내부 API를 호출한 뒤 FE DTO로 변환한다. B나 FE가 C 계산을 다시
@@ -14,19 +15,18 @@ C는 공고 모집단·수요·매칭·추천·What-if·Trend를 계산한다. B
 
 2026-09-15 읽기 전용 실사 결과는 다음과 같다.
 
-- 데이터 서버의 C Worker는 컨테이너 내부에서 `/ready=200`이지만 8080이 호스트에 게시되지
-  않아 서비스 서버에서 접근할 수 없다.
+- 데이터 서버의 C Worker 8080은 Tailscale 주소에만 게시되며 서비스 서버에서
+  `/health=200`으로 접근된다.
 - 서비스 서버 `.env.service`에는 `C_COMPUTE_URL`이 아직 없다. token 값은 두 호스트에
   설정되어 있지만 값 자체를 문서나 로그에 남기지 않는다.
-- 운영 Worker와 DB alias는 `registry-20260911.1` 47개를 사용한다. 승인 코드 기준은
-  `registry-20260911.4` 44개와 Rule Pack 44개/145규칙이다.
-- C DB에는 COHORT·DEMAND 각 10개가 있고 PUBLIC_GITHUB·TREND·RECOMMENDATION은 없다.
-- 공고 자동 intake는 Worknet·Saramin·Career·GameJob을 읽는다. JobKorea는 데이터가 있어도
-  `S15P21E102-230` 결정에 따라 MVP 분석 입력에서 제외한다.
+- 운영 Worker와 DB alias는 승인된 `registry-20260911.4` 44개와 Rule Pack
+  44개/145규칙을 사용한다.
+- 공고 자동 intake는 Worknet·Saramin·Career·GameJob·JobKorea를 읽는다. JobKorea는
+  `S15P21E102-272` 소유자 결정에 따라 2026-09-15부터 C 분석 입력에 포함한다.
 - 월별 Repo Snapshot은 6~8월만 완료 marker까지 확인됐다. 5월은 Artifact만 있고 완료
   marker가 없어 소비하면 안 된다.
 
-따라서 현재 B가 코드를 작성하는 것은 가능하지만 운영 URL을 호출하는 인수는 아직 불가능하다.
+따라서 C 운영 URL과 계산 결과는 준비됐고, B callback과 로그인 사용자 E2E가 남았다.
 
 ## 2. 운영 연결 전 C 체크리스트
 

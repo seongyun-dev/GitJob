@@ -256,7 +256,7 @@ service-node DN4의 9864 origin을 사용했다. 운영 적용 전 각 advertise
     "namenode_base_url": "http://hdfs-namenode:9870/webhdfs/v1",
     "datanode_routes": {"http://hdfs-datanode:9864": "http://hdfs-datanode:9864"},
     "staging_dir": "/state/c-jobs",
-    "sources": ["worknet", "saramin", "career", "gamejob"],
+    "sources": ["worknet", "saramin", "career", "gamejob", "jobkorea"],
     "max_runs_per_source": 200
   }],
   "criteria": [{

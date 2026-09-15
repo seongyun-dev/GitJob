@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -937,7 +937,7 @@ def _public_payload_covers_week(result: dict, requested_week) -> bool:
             end = datetime.fromisoformat(str(record["activity_period_end"])).date()
         except (KeyError, ValueError):
             return False
-        if not start <= requested_week <= end:
+        if not _period_overlaps_week(start, end, requested_week):
             return False
     return True
 
@@ -946,8 +946,12 @@ def _target_period_covers_week(value: object, requested_week: date) -> bool:
     """Accept the current A date range and the legacy monthly shorthand."""
     if not isinstance(value, str):
         return False
-    if value == requested_week.strftime("%Y-%m"):
-        return True
+    week_end = requested_week + timedelta(days=6)
+    if len(value) == 7:
+        return value in {
+            requested_week.strftime("%Y-%m"),
+            week_end.strftime("%Y-%m"),
+        }
     parts = value.split("/")
     if len(parts) != 2:
         return False
@@ -955,4 +959,9 @@ def _target_period_covers_week(value: object, requested_week: date) -> bool:
         start, end = (date.fromisoformat(part) for part in parts)
     except ValueError:
         return False
-    return start <= requested_week <= end
+    return _period_overlaps_week(start, end, requested_week)
+
+
+def _period_overlaps_week(start: date, end: date, requested_week: date) -> bool:
+    week_end = requested_week + timedelta(days=6)
+    return start <= week_end and requested_week <= end

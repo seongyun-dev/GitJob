@@ -87,15 +87,14 @@ compose exec -T hdfs-namenode hdfs dfs -ls /gitjob
 
 - **상태**: 코드 있음 / **crontab 미등록**
 - **실행 위치**: Data Server (현재는 수동)
-- **구성**: [AI/schedule.toml](../../AI/schedule.toml) — **4개 source**
-  (`WORKNET`, `SARAMIN`, `GAMEJOB`, `CAREER`), 각 morning/evening 2회,
-  총 **8개 run 블록**
-- **JOBKOREA는 MVP 대상이 아니다** — `-230`(2026-09-13)이 `-196`을 부분 철회해
-  `enabled = false`로 두었다. 선언과 수집기(`AI/JobKorea_Collector_V1/`)와 테스트는
-  그대로 있으므로 `schedule.toml`의 run 블록은 10개이고 그중 8개가 enabled다.
-  근거와 재검토 조건은
-  [잡코리아 제외 결정](2026-08-31-jobkorea-retention-decision.md)에 있다.
-  `python -m job.collector --render cron`은 **8줄**을 낸다
+- **구성**: [AI/schedule.toml](../../AI/schedule.toml) — **5개 source**
+  (`WORKNET`, `SARAMIN`, `GAMEJOB`, `CAREER`, `JOBKOREA`), 각 morning/evening 2회,
+  총 **10개 enabled run 블록**
+- **JOBKOREA는 MVP 수집·C 분석 대상이다** — `-272`(2026-09-15) 최종 소유자
+  결정에 따라 정기 run과 검증된 완료 입력 소비를 모두 활성화했다. Collector는 `-270`
+  PaddleOCR CPU 이미지를 사용하며, `python -m job.collector --render cron`은 **10줄**을
+  낸다. 결정 이력과 남아 있는 법적 근거는
+  [잡코리아 결정 기록](2026-08-31-jobkorea-retention-decision.md)에 있다
 - **주의**: `compose`의 `collector` 컨테이너는 `python -m collector`를 실행하는데
   이 엔트리포인트는 **health 서버만 띄운다**([AI/collector/__main__.py](../../AI/collector/__main__.py)).
   수집을 돌리는 것은 스케줄러이고, 그 스케줄러가 아직 운영에 등록되지 않았다
@@ -113,7 +112,7 @@ compose exec -T hdfs-namenode hdfs dfs -ls /gitjob
 
 - **상태**: **배선됨** — 별도 단계가 아니라 **수집 회차의 일부**다
 - **모듈**: [AI/job/collector/analysis_input.py](../../AI/job/collector/analysis_input.py) (`-220`)
-- **호출 지점**: 네 수집기가 회차 끝에서 `publish_from_env`를 직접 부른다.
+- **호출 지점**: 다섯 수집기가 회차 끝에서 `publish_from_env`를 직접 부른다.
   운영자가 따로 실행할 것이 없다
 
   | 수집기 | 호출 |
@@ -122,9 +121,7 @@ compose exec -T hdfs-namenode hdfs dfs -ls /gitjob
   | `AI/Saramin_Collector_V1/crawler.py` | `:764` |
   | `AI/GameJob_Collector_V1/crawler.py` | `:935` |
   | `AI/Career_Collector_V1/crawler.py` | `:903` |
-
-  `JobKorea_Collector_V1`에는 이 호출이 없다. `-230`으로 비활성이라 MVP에 영향이
-  없지만, 되살릴 때는 게시 경로도 함께 붙여야 한다
+  | `AI/JobKorea_Collector_V1/crawler.py` | `:981` |
 - **입력**: B-1의 회차 디렉터리 (`manifest.json` + batch)
 - **출력**: `hdfs:///gitjob/analysis_input/jobs/{source}/{RUN_ID}/`
 - **PASS**: 게시된 3개 파일과 `analysis_input_publish.json` 기록.
@@ -341,7 +338,7 @@ PROFILES=core,app ./Infra/scripts/verify-deployment.sh
 아래 **일곱 개가 동시에** 참이어야 MVP 정상화로 본다.
 
 1. **HDFS** — Live DataNode 2, `fsck HEALTHY`, under-replicated 0, host `df` 여유 확보
-2. **채용공고** — 4개 source 중 최소 1회차가 Raw → `analysis_input` → C intake까지 도달
+2. **채용공고** — 5개 source 중 최소 1회차가 Raw → `analysis_input` → C intake까지 도달
 3. **Historical** — 6개월 Raw에서 Repo Activity와 Weekly가 생성되고 read-back 통과
 4. **Realtime** — `github.events` offset이 **0이 아니고 증가 중**이며 C1 checkpoint가 전진
 5. **Weekly Snapshot** — 주차 디렉터리에 `_SUCCESS.json`이 있고 `row_digest` 검증 통과
@@ -353,7 +350,7 @@ PROFILES=core,app ./Infra/scripts/verify-deployment.sh
 | 조건 | 상태 | 남은 것 |
 |---|---|---|
 | 1 HDFS | RF2 convergence 진행 중 | 완료 확인 |
-| 2 채용공고 | 실행 경로 있음 | **crontab 등록** (8줄) |
+| 2 채용공고 | 실행 경로 있음 | **crontab 등록** (10줄) |
 | 3 Historical | **운영 검증됨** | — |
 | 4 Realtime | 실행 경로 있음 | **토픽 생성** + **crontab 등록**(2줄) + **C1 기동** |
 | 5 Weekly Snapshot | 실행 경로 있음 | 4 이후 |

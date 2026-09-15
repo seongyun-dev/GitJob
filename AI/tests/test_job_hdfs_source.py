@@ -29,12 +29,13 @@ from worker.job_hdfs_source import (
 
 ROOT_URI = "hdfs:///gitjob/analysis_input/jobs"
 NAMENODE = "http://hdfs-namenode:9870/webhdfs/v1"
-SOURCES = ("worknet", "saramin", "career", "gamejob")
+SOURCES = ("worknet", "saramin", "career", "gamejob", "jobkorea")
 SITE = {
     "worknet": "WORKNET",
     "saramin": "SARAMIN",
     "career": "CAREER",
     "gamejob": "GAMEJOB",
+    "jobkorea": "JOBKOREA",
 }
 
 
@@ -120,7 +121,7 @@ def source_config(tmp_path: Path, *, sources=SOURCES) -> JobHdfsSourceConfig:
 
 @pytest.fixture
 def published(tmp_path):
-    """Four sources, one run each, as A would have published them."""
+    """Five analysis sources, one run each, as A would have published them."""
 
     origin = tmp_path / "origin"
     reader = FakeReader()
@@ -347,7 +348,7 @@ def test_runner_keeps_local_roots_alongside_hdfs_sources(tmp_path, published):
 
     runner.poll_once()
 
-    # Four staged sources plus the local run.
+    # Five staged sources plus the local run.
     assert len(loaded) == len(SOURCES) + 1
 
 

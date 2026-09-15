@@ -56,14 +56,14 @@ C가 그 경로를 읽는 배선은 아직 열려 있으며 같은 문서 7장�
 | Saramin | 승인된 채용공고 | 일 단위 수집 초안 | `jobs.raw` |
 | GameJob | 목록·상세 채용공고 (게임업계) | **기준 A 미통과 · 소유자 판단으로 수집** (2026-09-10) | `jobs.collected` |
 | Career | 목록·상세 채용공고 | **기준 A 미통과 · 소유자 판단으로 수집** (2026-09-10) | `jobs.collected` |
-| JobKorea | 목록·상세 채용공고 | **기준 A 미통과 · MVP 제외** (2026-09-13, `-230`) — 수집기와 테스트는 유지 | — |
+| JobKorea | 목록·상세 채용공고 | **기준 A 미통과 · 소유자 판단으로 MVP 수집·C 분석 포함** (2026-09-15, `-272`) | `jobs.collected` |
 | GitHub | 사용자가 권한을 부여한 public/private 저장소 개발 활동·저장소 기술 신호 | 일 단위, API quota 내 최대 5,000/hour 기준 | `repos.raw` |
 
 ### 기준 A 미통과 source 3종을 소유자 판단으로 수집한다 (2026-09-10, `-196`)
 
-게임잡·커리어·잡코리아는 [기준 A](2026-08-31-jobkorea-retention-decision.md#4-판단-기준)를 통과하지 못한다. 세 사이트 모두 2026-09-10에 **소유자가 위험을 감수하기로 결정**해 스케줄을 켰고, **2026-09-13에 잡코리아만 MVP 수집 대상에서 다시 제외했다**(`-230`). 게임잡·커리어는 켠 상태를 유지한다. 잡코리아 수집기와 테스트는 지우지 않았고 `enabled = false`일 뿐이다 — [제외 결정](2026-08-31-jobkorea-retention-decision.md).
+게임잡·커리어·잡코리아는 [기준 A](2026-08-31-jobkorea-retention-decision.md#4-판단-기준)를 통과하지 못한다. 세 사이트 모두 2026-09-10에 **소유자가 위험을 감수하기로 결정**해 스케줄을 켰고, **2026-09-13에 잡코리아만 MVP 수집 대상에서 다시 제외했다**(`-230`). 2026-09-15 소유자가 JobKorea를 MVP에 반드시 포함하기로 최종 결정해 정기 수집과 검증된 HDFS 완료 입력의 C 분석을 다시 활성화했다(`-272`). 법적 근거는 바뀌지 않았고, Collector는 PaddleOCR CPU 런타임(`-270`)으로 배포한다 — [결정 기록](2026-08-31-jobkorea-retention-decision.md).
 
-**MVP crawler source는 WORKNET / SARAMIN / GAMEJOB / CAREER 4개, 하루 8회차다.**
+**MVP 수집·C 분석 source는 WORKNET / SARAMIN / GAMEJOB / CAREER / JOBKOREA 5개다.** 정기 crawler는 source별 오전·저녁, 하루 10회차다.
 
 **탈락 근거는 없어지지 않았다.** 켠 것은 근거가 바뀌었기 때문이 아니다. 근거의 세기가 셋 다 다르므로 그대로 적어 둔다.
 
@@ -1097,7 +1097,7 @@ C조 범위다.
 
 - Jira: S15P21E102-226
 - 목적: MVP 정상화 판정 → 데이터량 단계 증가 → 병목 측정 → 발표 자료까지의 문서 기반
-- [MVP 데이터 파이프라인 E2E Runbook](2026-09-12-mvp-e2e-runbook.md) — HDFS / 채용공고 / Historical / Realtime / C handoff / API / FE 단계별 실행·PASS·gate. "코드 있음" / "운영 검증됨" / "실행 경로 있음·미등록" / "배선 없음"을 구분한다. 채용공고는 **4 source / 8 run**(`-230` 이후)
+- [MVP 데이터 파이프라인 E2E Runbook](2026-09-12-mvp-e2e-runbook.md) — HDFS / 채용공고 / Historical / Realtime / C handoff / API / FE 단계별 실행·PASS·gate. "코드 있음" / "운영 검증됨" / "실행 경로 있음·미등록" / "배선 없음"을 구분한다. 수집과 C 분석은 **5 source / 10 run**이다(`-272`)
 - [부하 테스트 계획](2026-09-12-load-test-plan.md) — Baseline(2026-08, 744h) → 123% → 152% → 187% → 232%. 기간만 넓히므로 신규 수집 0건. 측정 지표와 기록 표
 - [병목 판정 기준 · 튜닝 후보 · 발표 템플릿](2026-09-12-bottleneck-analysis-template.md) — 증가배수 R 기준, 원인별 조절 지점, "문제 발견 → 원인 → 개선 → 결과" 한 장 템플릿
 - 측정 제약: HDFS·Spark 지표는 Prometheus exporter가 없어 CLI·Spark UI 수동 수집이다(`docs/be/admin-monitoring-api.md` §7). Spark job이 stdout에 내는 summary JSON이 1차 데이터다

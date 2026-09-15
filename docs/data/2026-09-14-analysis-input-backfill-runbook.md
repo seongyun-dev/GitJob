@@ -170,5 +170,7 @@ docker exec gitjob-data-collector-1 python -m job.collector.backfill_cli <옵션
 
 - 기존 Raw 회차 수정·삭제 — Raw 는 불변이고 `-190` 검증이 파일 수를 센다
 - 통합본(current/upsert) 생성 — `build_input_union` 이 C 쪽에서 한다
-- JobKorea 게시 — `-230` 결정에 따라 Raw 에만 남긴다. backfill 의 source 목록에 없다
+- JobKorea를 generic backfill에 추가 — JobKorea는 정기 수집 회차의 자체 writer가
+  `analysis_input`을 게시한다. 기존 전용 Raw를 재처리하려면 별도 JobKorea 실행으로
+  새 불변 run을 만들며, 이 도구의 source 목록을 억지로 확장하지 않는다
 - COHORT / DEMAND snapshot 생성 — C 조 범위

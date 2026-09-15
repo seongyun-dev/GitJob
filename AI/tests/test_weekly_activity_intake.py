@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+
 from common.events import EventEnvelope
 from common.kafka import ConsumedMessage
 from registry.contracts import TechnologyRegistry
@@ -616,18 +617,35 @@ def test_public_snapshot_period_must_cover_requested_week():
         "records": [
             {
                 "included_in_denominator": True,
+                "target_period": "2026-08-01/2026-08-31",
                 "activity_period_start": "2026-08-01",
                 "activity_period_end": "2026-08-31",
             }
         ]
     }
+    assert _public_payload_covers_week(result, date(2026, 7, 27))
     assert _public_payload_covers_week(result, date(2026, 8, 24))
     assert not _public_payload_covers_week(result, date(2026, 9, 7))
 
 
+def test_public_snapshot_legacy_month_covers_overlapping_partial_week():
+    result = {
+        "records": [
+            {
+                "included_in_denominator": True,
+                "target_period": "2026-08",
+                "activity_period_start": "2026-08-01",
+                "activity_period_end": "2026-08-31",
+            }
+        ]
+    }
+    assert _public_payload_covers_week(result, date(2026, 7, 27))
+
+
 def test_postgres_weekly_results_survive_restart_and_accumulate():
-    from github.weekly_activity_publish import WeeklySnapshotWeek, build_manifest
     from test_trend_archive import _public, _record
+
+    from github.weekly_activity_publish import WeeklySnapshotWeek, build_manifest
 
     dsn = os.environ.get("C_COMPUTE_TEST_DATABASE_URL")
     if not dsn:

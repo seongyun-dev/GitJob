@@ -66,7 +66,8 @@ cgroup OOM으로 종료됐고, 모바일 모델 적용 후에는 같은 제한�
 카나리는 `--no-upload-raw`와 전용 볼륨을 사용했으므로 운영 cursor와 HDFS에는
 영향을 주지 않았다.
 
-## 범위 밖
+## 남은 운영 인수
 
-JobKorea 오전·저녁 schedule 활성화, OS crontab 등록, 과거 OCR 미적용 데이터의
-재수집은 별도 작업으로 관리한다.
+JobKorea 오전·저녁 schedule은 `S15P21E102-272`에서 활성화한다. OS crontab 등록,
+OCR 포함 Collector 이미지의 실제 배포, 첫 OCR 성공 회차 검증과 과거 OCR 미적용
+데이터의 재수집은 별도 운영 인수로 관리한다.
