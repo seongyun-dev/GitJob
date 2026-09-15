@@ -1,0 +1,342 @@
+[
+  {
+    "name": "spring-security MOSTLY_MINE",
+    "why": "본인 API_CALL 이 있는 기본 경로",
+    "fact_pack": {
+      "schema_version": "technology-summary-request/v1",
+      "locale": "ko-KR",
+      "technology": {
+        "tech_id": "spring-security",
+        "display_name": "Spring Security",
+        "repository_level": "L2",
+        "personal_level": "L2",
+        "registry_version": "registry-20260910.2"
+      },
+      "authorship": "MOSTLY_MINE",
+      "levels": [
+        {
+          "level": "L2",
+          "rules": [
+            "인증 필터 체인 구성"
+          ],
+          "mine": true
+        },
+        {
+          "level": "L1",
+          "rules": [
+            "Spring Security import"
+          ],
+          "mine": true
+        }
+      ],
+      "next_level": {
+        "level": "L3",
+        "rule": "메서드 보안 활성화",
+        "missing": [
+          "@EnableMethodSecurity",
+          "@PreAuthorize"
+        ]
+      },
+      "highlights": [
+        {
+          "index": 0,
+          "fact_type": "API_CALL",
+          "value": "SecurityFilterChain",
+          "file": "config/SecurityConfig.java",
+          "mine": true
+        },
+        {
+          "index": 1,
+          "fact_type": "API_CALL",
+          "value": "authorizeHttpRequests",
+          "file": "config/SecurityConfig.java",
+          "mine": true
+        },
+        {
+          "index": 2,
+          "fact_type": "API_CALL",
+          "value": "passwordEncoder",
+          "file": "config/SecurityConfig.java",
+          "mine": true
+        },
+        {
+          "index": 3,
+          "fact_type": "IMPORT",
+          "value": "org.springframework.security.web",
+          "file": "filter/JwtAuthenticationFilter.java",
+          "mine": true
+        },
+        {
+          "index": 4,
+          "fact_type": "IMPORT",
+          "value": "org.springframework.security.core",
+          "file": "service/UserDetailsServiceImpl.java",
+          "mine": false
+        }
+      ],
+      "repositories": [
+        {
+          "full_name": "gitjob-example/card-service-backend",
+          "mine": true
+        }
+      ],
+      "period": {
+        "first": "2025-08-11",
+        "last": "2025-08-19",
+        "months": 1
+      }
+    }
+  },
+  {
+    "name": "lombok MOSTLY_OTHERS",
+    "why": "모델이 남의 기여를 본인 공으로 쓰는 경우",
+    "fact_pack": {
+      "schema_version": "technology-summary-request/v1",
+      "locale": "ko-KR",
+      "technology": {
+        "tech_id": "lombok",
+        "display_name": "Lombok",
+        "repository_level": "L1",
+        "personal_level": "L0",
+        "registry_version": "registry-20260910.2"
+      },
+      "authorship": "MOSTLY_OTHERS",
+      "levels": [
+        {
+          "level": "L0",
+          "rules": [
+            "빌드 의존성 선언"
+          ],
+          "mine": true
+        }
+      ],
+      "next_level": {
+        "level": "L1",
+        "rule": "Lombok import",
+        "missing": [
+          "lombok.* import"
+        ]
+      },
+      "highlights": [
+        {
+          "index": 0,
+          "fact_type": "DEPENDENCY",
+          "value": "org.projectlombok:lombok",
+          "file": "build.gradle",
+          "mine": true
+        },
+        {
+          "index": 1,
+          "fact_type": "IMPORT",
+          "value": "lombok.Getter",
+          "file": "domain/Card.java",
+          "mine": false
+        }
+      ],
+      "repositories": [
+        {
+          "full_name": "gitjob-example/card-service-backend",
+          "mine": true
+        }
+      ],
+      "period": null
+    }
+  },
+  {
+    "name": "spring-security NOT_VERIFIED",
+    "why": "작성자를 단정하면 안 되는 경우",
+    "fact_pack": {
+      "schema_version": "technology-summary-request/v1",
+      "locale": "ko-KR",
+      "technology": {
+        "tech_id": "spring-security",
+        "display_name": "Spring Security",
+        "repository_level": "L2",
+        "personal_level": "L2",
+        "registry_version": "registry-20260910.2"
+      },
+      "authorship": "NOT_VERIFIED",
+      "levels": [
+        {
+          "level": "L2",
+          "rules": [
+            "인증 필터 체인 구성"
+          ],
+          "mine": false
+        }
+      ],
+      "next_level": {
+        "level": "L3",
+        "rule": "메서드 보안 활성화",
+        "missing": [
+          "@EnableMethodSecurity",
+          "@PreAuthorize"
+        ]
+      },
+      "highlights": [
+        {
+          "index": 0,
+          "fact_type": "API_CALL",
+          "value": "SecurityFilterChain",
+          "file": "config/SecurityConfig.java",
+          "mine": false
+        },
+        {
+          "index": 1,
+          "fact_type": "API_CALL",
+          "value": "authorizeHttpRequests",
+          "file": "config/SecurityConfig.java",
+          "mine": false
+        },
+        {
+          "index": 2,
+          "fact_type": "API_CALL",
+          "value": "passwordEncoder",
+          "file": "config/SecurityConfig.java",
+          "mine": false
+        },
+        {
+          "index": 3,
+          "fact_type": "IMPORT",
+          "value": "org.springframework.security.web",
+          "file": "filter/JwtAuthenticationFilter.java",
+          "mine": false
+        },
+        {
+          "index": 4,
+          "fact_type": "IMPORT",
+          "value": "org.springframework.security.core",
+          "file": "service/UserDetailsServiceImpl.java",
+          "mine": false
+        }
+      ],
+      "repositories": [
+        {
+          "full_name": "gitjob-example/card-service-backend",
+          "mine": true
+        }
+      ],
+      "period": null
+    }
+  },
+  {
+    "name": "spring-security 최고 레벨",
+    "why": "next_level 이 null 이라 gap 도 null 이어야 하는 경우",
+    "fact_pack": {
+      "schema_version": "technology-summary-request/v1",
+      "locale": "ko-KR",
+      "technology": {
+        "tech_id": "spring-security",
+        "display_name": "Spring Security",
+        "repository_level": "L3",
+        "personal_level": "L3",
+        "registry_version": "registry-20260910.2"
+      },
+      "authorship": "MOSTLY_MINE",
+      "levels": [
+        {
+          "level": "L3",
+          "rules": [
+            "메서드 보안 활성화"
+          ],
+          "mine": true
+        },
+        {
+          "level": "L2",
+          "rules": [
+            "인증 필터 체인 구성"
+          ],
+          "mine": true
+        },
+        {
+          "level": "L1",
+          "rules": [
+            "Spring Security import"
+          ],
+          "mine": true
+        }
+      ],
+      "next_level": null,
+      "highlights": [
+        {
+          "index": 0,
+          "fact_type": "API_CALL",
+          "value": "SecurityFilterChain",
+          "file": "config/SecurityConfig.java",
+          "mine": true
+        },
+        {
+          "index": 1,
+          "fact_type": "API_CALL",
+          "value": "authorizeHttpRequests",
+          "file": "config/SecurityConfig.java",
+          "mine": true
+        },
+        {
+          "index": 2,
+          "fact_type": "API_CALL",
+          "value": "passwordEncoder",
+          "file": "config/SecurityConfig.java",
+          "mine": true
+        },
+        {
+          "index": 3,
+          "fact_type": "IMPORT",
+          "value": "org.springframework.security.web",
+          "file": "filter/JwtAuthenticationFilter.java",
+          "mine": true
+        },
+        {
+          "index": 4,
+          "fact_type": "IMPORT",
+          "value": "org.springframework.security.core",
+          "file": "service/UserDetailsServiceImpl.java",
+          "mine": false
+        }
+      ],
+      "repositories": [
+        {
+          "full_name": "gitjob-example/card-service-backend",
+          "mine": true
+        }
+      ],
+      "period": {
+        "first": "2025-08-11",
+        "last": "2025-08-19",
+        "months": 1
+      }
+    }
+  },
+  {
+    "name": "redis 근거 없음",
+    "why": "highlights 가 비어 LOW 로 떨어지는 경우",
+    "fact_pack": {
+      "schema_version": "technology-summary-request/v1",
+      "locale": "ko-KR",
+      "technology": {
+        "tech_id": "redis",
+        "display_name": "Redis",
+        "repository_level": "L0",
+        "personal_level": "L0",
+        "registry_version": "registry-20260910.2"
+      },
+      "authorship": "NOT_VERIFIED",
+      "levels": [],
+      "next_level": {
+        "level": "L1",
+        "rule": "Redis 클라이언트 import",
+        "missing": [
+          "redis client import"
+        ]
+      },
+      "highlights": [],
+      "repositories": [
+        {
+          "full_name": "gitjob-example/card-service-backend",
+          "mine": false
+        }
+      ],
+      "period": null
+    }
+  }
+]

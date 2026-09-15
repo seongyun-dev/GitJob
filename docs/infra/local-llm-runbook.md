@@ -17,8 +17,9 @@
 - 외부 공개: 없음. LAN에 열기 위해 `0.0.0.0` binding으로 바꾸지 않는다.
 - 기본 이미지: 이 노트북에서 검증한 Ollama 0.33.2 digest로 고정
 
-현재 `AI/llm`은 인터페이스 표지만 있고 실제 모델 호출기는 아직 구현되지
-않았다. Worker 연동 전까지는 Ollama API를 독립적으로 검증한다.
+`AI/llm`에는 기술 요약 생성기가 구현돼 있다(`S15P21E102-256`). 호출기·프롬프트
+·검증·폴백은 `AI/README.md`의 "Technology summary generation"을 본다. 이 문서는
+그 아래에서 모델을 어떻게 띄우는지만 다룬다.
 
 ## 2. 사전 검증
 
@@ -74,6 +75,218 @@ docker compose \
 
 `down --volumes` 또는 `docker volume rm gitjob-ollama-models`는 모델 캐시를
 삭제하므로 명시적인 정리 작업에서만 사용한다.
+
+## 3.1 WSL 네이티브 실행 (AI 서버 호스트 기본 경로)
+
+> 추가일: 2026-09-14 / `S15P21E102-256`
+
+이 저장소가 놓인 WSL 배포판이 곧 AI 서버 환경이 됐다. 이 호스트에는 Docker
+Desktop 데몬이 떠 있지 않고 WSL integration 도 꺼져 있으며 `sudo` 에 암호가
+걸려 있어, 3장의 컨테이너 경로가 그대로 동작하지 않는다. 그래서 Ollama 를
+사용자 홈에 직접 설치해 쓴다. root 가 필요한 단계는 없다.
+
+3장의 Docker 경로를 폐기하는 것이 아니다. Docker Desktop 이 떠 있는 노트북에서는
+그쪽이 여전히 유효하고, 두 경로는 **같은 Ollama 0.33.2** 를 실행한다 —
+`compose.llm.yaml` 이 이미지 digest 로 고정한 것과 설치 스크립트가 받는 릴리스
+태그가 같은 버전이다.
+
+```bash
+bash Infra/scripts/llm-install-wsl.sh   # 최초 1회. 약 1.4GiB 내려받아 ~/.local/ollama 에 푼다
+bash Infra/scripts/llm-serve-wsl.sh     # 기동 + 모델 확인. 이미 떠 있으면 확인만 한다
+```
+
+`llm-serve-wsl.sh` 는 멱등이다. 이미 서빙 중이면 모델 존재만 다시 확인하고
+끝나므로, 모델이 필요한 작업 앞에 무조건 한 번 부르면 된다.
+
+| 환경변수 | 기본값 | |
+|---|---|---|
+| `OLLAMA_HOME` | `~/.local/ollama` | 바이너리·번들 CUDA 라이브러리 |
+| `OLLAMA_HOST` | `127.0.0.1:11434` | loopback 고정. LAN 에 열지 않는다 |
+| `OLLAMA_KEEP_ALIVE` | `-1` | 가중치 상주 |
+| `LLM_MODEL` | `qwen3.5:4b` | |
+| `OLLAMA_LOG_FILE` | `~/.ollama/serve.log` | |
+
+모델 캐시는 `~/.ollama/models` 다. 컨테이너 경로의 `gitjob-ollama-models`
+볼륨과 별개이므로, 두 경로를 오가면 3.4GB 를 각각 한 번씩 받는다.
+
+### 왜 릴리스 자산을 직접 푸는가
+
+공식 `install.sh` 는 `/usr/local` 에 쓰기 위해 root 를 요구한다. 이 호스트에서는
+쓸 수 없다. 릴리스 자산은 `.tar.zst` 인데 `zstd` 바이너리도 설치돼 있지 않고
+(설치에 다시 root 가 필요하다) GNU tar 의 `--zstd` 는 그 바이너리를 호출한다.
+설치 스크립트는 `zstd` 가 있으면 쓰고, 없으면 임시 디렉터리에 Python
+`zstandard` 를 받아 푼다. 저장소나 `.venv` 에는 아무것도 남기지 않는다.
+
+### 이 호스트에서 실측한 값
+
+```text
+GPU        NVIDIA GeForce RTX 4050 Laptop GPU, 6.0 GiB (가용 5.0 GiB)
+추론       CUDA0, libdirs=ollama,cuda_v13, driver 13.1
+cold       첫 요약 요청 56초 (모델 적재 포함)
+warm       기술 1개당 3~8초 (num_ctx 8192, num_predict 300)
+```
+
+`inference compute ... library=CUDA` 줄이 로그에 없으면 CPU 로 떨어진 것이다.
+오류로 뜨지는 않고 몇 배 느려지기만 하므로, `llm-serve-wsl.sh` 가 그 줄을
+마지막에 출력한다.
+
+Ollama 가 VRAM 기준으로 잡는 기본 `num_ctx` 는 4096 이다. 기술 요약 경로는
+계약대로 8192 를 명시적으로 넘긴다.
+
+## 3.2 EC2 서비스에서 노트북 모델을 부르는 경로
+
+> 추가일: 2026-09-14 / `S15P21E102-256`
+
+### 왜 이 모양인가
+
+추론은 노트북에 남는다. `j15e102`(EC2)에는 **GPU 가 없고** 가용 메모리도
+8GiB 남짓이라 4B 모델을 옮길 수 없다. 그래서 호출 방향이 EC2 → 노트북이다.
+
+노트북은 NAT 뒤라 EC2 가 직접 못 들어온다. 두 대는 이미 Tailscale 로 묶여
+있고 tailnet ACL 이 전 대역·전 포트를 허용하므로(`tailscale debug netmap` 의
+PacketFilter 확인) 그 위로 부르면 된다. **역방향 SSH 터널도 sshd 설정 변경도
+필요 없다.**
+
+```text
+gitjob-service-backend-1 (EC2, 172.18.0.5)
+        │  http://100.90.250.31:18080
+        ▼
+Tailscale  (j15e102 100.71.215.74 → desktop-ub20p0o-2 100.90.250.31)
+        │
+Windows bridge  llm-tailscale-bridge.ps1   100.90.250.31:18080
+        │
+        ▼
+WSL  python -m llm  0.0.0.0:18080  →  Ollama 127.0.0.1:11434  →  GPU
+```
+
+### 왜 브리지가 따로 필요한가
+
+Tailscale 은 **Windows** 에 붙어 있고 요약 서버는 **WSL** 안에 있다. Windows
+의 Tailscale 주소는 WSL NAT 안으로 들어가지 않으므로, 그 주소에서 듣는 무언가가
+있어야 한다.
+
+원래 의도된 장치는 `netsh interface portproxy` 이고 규칙도 이미 있다.
+
+```text
+100.90.250.31   18080   →   172.27.30.232   18080
+127.0.0.1       18080   →   172.27.30.232   18080
+```
+
+그런데 **Tailscale 주소 쪽 규칙은 바인딩되지 않는다.** `netstat -ano` 에
+`127.0.0.1:18080` 만 LISTENING 으로 보인다. `iphlpsvc` 가 시작할 때 Tailscale
+어댑터가 아직 그 주소를 갖고 있지 않으면 그 규칙만 조용히 비어 있게 되고,
+다시 붙이려면 관리자 셸에서 `Restart-Service iphlpsvc` 를 해야 한다. 부팅할
+때마다 같은 순서 문제가 재현된다.
+
+브리지 스크립트는 관리자 권한이 필요 없다. 높은 포트를 특정 주소에 바인딩하는
+것은 특권 동작이 아니고, 인바운드 방화벽 규칙
+(`GitJob LLM test FastAPI (Tailscale)`, TCP 18080, LocalIP `100.90.250.31/32`,
+RemoteIP `100.64.0.0/10`)은 이미 있다.
+
+### 상주 구성 (최초 1회)
+
+이 노트북은 AI 연산 전용 GPU 서버로 상주한다. 손으로 띄우는 프로세스로 두면
+재부팅 한 번에 EC2 쪽 호출이 조용히 타임아웃나기 시작하고, 서버 로그에는 왜
+그런지 설명할 것이 남지 않는다. 그래서 세 조각 모두 서비스로 등록한다.
+
+WSL 에서 — Ollama 와 요약 FastAPI 를 systemd **사용자** 유닛으로 등록한다.
+root 가 필요 없다.
+
+```bash
+bash Infra/scripts/llm-install-wsl.sh          # Ollama 최초 설치
+bash Infra/scripts/llm-install-services-wsl.sh # 두 서비스 등록·기동
+```
+
+| 유닛 | 하는 일 |
+|---|---|
+| `gitjob-ollama.service` | `127.0.0.1:11434` 추론 런타임 |
+| `gitjob-llm-summary.service` | `0.0.0.0:18080` 요약 FastAPI |
+
+요약 서버는 Ollama 를 `Wants` 로만 건다. 모델이 없으면 `FALLBACK` 요약을
+돌려주면 되고, 그걸 `Requires` 로 막으면 degraded 기능이 죽은 엔드포인트가
+된다.
+
+Windows 에서 — 브리지를 로그온 작업으로 등록한다. 현재 사용자 작업이라
+관리자 권한이 필요 없다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  \\wsl.localhost\Ubuntu-24.04\home\ssafy\workspace\S15P21E102\Infra\scripts\llm-bridge-install-task.ps1
+```
+
+작업 이름은 `GitJob LLM Tailscale Bridge`. 브리지는 로그온 시점에 WSL 이 아직
+없을 것을 전제하고 직접 깨워 최대 5분 기다리며, WSL 주소가 바뀌면 다시 읽는다.
+
+### 남은 수동 작업 하나 — lingering
+
+```bash
+sudo loginctl enable-linger ssafy
+```
+
+이것만 root 가 필요해서 자동화하지 못했다. **켜지 않으면 마지막 WSL 세션이
+닫힐 때 두 서비스가 함께 내려간다.** 로그온 작업이 WSL 을 깨우기는 하지만,
+lingering 없이는 그 세션이 끝나는 순간 사용자 systemd 관리자가 같이 종료된다.
+
+현재 상태 확인:
+
+```bash
+loginctl show-user ssafy --property=Linger
+```
+
+### 손으로 띄울 때
+
+```bash
+bash Infra/scripts/llm-summary-serve-wsl.sh   # 서비스를 안 쓸 때만
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  \\wsl.localhost\Ubuntu-24.04\home\ssafy\workspace\S15P21E102\Infra\scripts\llm-tailscale-bridge.ps1
+```
+
+### 확인
+
+```bash
+ssh J15E102T 'curl -s http://100.90.250.31:18080/health'
+ssh J15E102T 'docker exec gitjob-service-backend-1 \
+    curl -s http://100.90.250.31:18080/health'
+```
+
+상태 확인:
+
+```bash
+systemctl --user status gitjob-ollama gitjob-llm-summary
+journalctl --user -u gitjob-llm-summary -n 50
+```
+
+2026-09-14 실측: 서비스 호스트와 `gitjob-service-backend-1` 컨테이너 양쪽에서
+`/health` 200, 컨테이너에서 보낸 `POST /technology-summary` 가 `llm_status: OK`
+와 요약 한 건을 받아 왔다. systemd 유닛과 로그온 작업으로 바꾼 뒤에도 같은
+경로로 다시 확인했다.
+
+2026-09-15 재검증: `gitjob-ollama.service`와
+`gitjob-llm-summary.service`는 user unit으로 `enabled/active`, Windows의
+`GitJob LLM Tailscale Bridge` 로그온 작업은 `Running`이었다. 서비스 재시작 후
+`127.0.0.1:18080`과 `100.90.250.31:18080` 모두 `/health` 200 및
+`prompt_version=tech-summary/2026-09-15.1`을 반환했다. 이 WSL 사용자는
+`Linger=no`이므로 로그인 전 상주를 보장하지 않으며, Windows 로그인 시 예약
+작업이 WSL을 기동하는 현재 경로를 사용한다. 실제 노트북 재부팅 시험은 수행하지
+않았다.
+
+`tailscale ping` 이 되는데 TCP 가 안 되면 ACL 을 의심하지 말 것 —
+`tailscale ping` 은 ACL 을 거치지 않는다. 리스너가 있는지부터 본다.
+
+### BE 가 쓸 환경변수
+
+`.env.example` 에 자리를 만들어 뒀다. 호출부는 아직 없다.
+
+```dotenv
+LLM_SUMMARY_BASE_URL=http://100.90.250.31:18080
+LLM_SUMMARY_TIMEOUT_SECONDS=120
+```
+
+비워 두면 호출하지 않는 쪽이 기본이어야 한다. 요약은 이미 완성된 카드 위에
+얹는 것이라 없을 때 화면이 깨지면 안 된다.
 
 ## 4. 모델 도입 순서
 
@@ -140,6 +353,22 @@ AI는 Registry/Evidence가 확정한 Fact Pack만 설명하며, 기술 레벨·S
 `INSUFFICIENT_EVIDENCE`로 종료한다.
 
 ## 6. 점검 항목
+
+WSL 네이티브 경로(3.1장):
+
+```bash
+bash Infra/scripts/llm-serve-wsl.sh
+nvidia-smi
+tail -n 20 ~/.ollama/serve.log
+```
+
+기술 요약 경로까지 한 번에 확인하려면 `AI/`에서:
+
+```bash
+../.venv/bin/python -m llm.smoke
+```
+
+컨테이너 경로(3장):
 
 ```bash
 curl --fail http://127.0.0.1:11434/api/version

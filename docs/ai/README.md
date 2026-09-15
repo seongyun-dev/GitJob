@@ -124,4 +124,11 @@ B 레벨, 검증 상태, 기술 관측, 참여, SELF 귀속을 따로 보존한�
 - [노트북 LLM 별도 런북](../infra/local-llm-runbook.md)
 - [이전 Registry·분류 작업 기록](2026-09-07-registry-job-review-implementation.md)
 
+기술 요약 생성만은 그 초기 설계에서 살아남아 현행 계약으로 대체됐다 —
+[기술 요약 LLM 입출력 계약](technology-summary-contract.md)(`S15P21E102-256`).
+부르는 쪽은 [호출 레퍼런스](technology-summary-api.md)를 본다.
+LLM 은 여전히 수준을 판정하지 않고 이미 정해진 판정을 문장으로 쓸 뿐이다.
+구현은 `AI/llm/`, 실행은 [AI/README.md](../../AI/README.md) 의
+"Technology summary generation" 을 본다.
+
 Notion 출처와 정확한 정책/기능 ID는 각 상세 계약에 연결되어 있다. 이 문서는 C 구현 안내이며 다른 조의 미게시 로컬 코드나 전체 서비스 완료를 확인한 보고서가 아니다.

@@ -9,6 +9,10 @@ observations, and separate JOB/GITHUB trends are implemented locally.
 Stack Overflow and project recommendations are outside the current MVP.
 Private repository Evidence attribution remains the B-team boundary.
 
+`llm/` generates the per-technology summaries described under "Technology
+summary generation" below. It explains levels the rules engine already decided;
+it does not decide them.
+
 Start with the Korean [C-team implementation guide](../docs/ai/README.md)
 for the feature map, ownership, Evidence decisions, and integration order.
 [Verification and remaining acceptance](../docs/ai/c-mvp-verification.md)
@@ -343,6 +347,268 @@ and per-image errors are recorded in `manifest.json`; the normalized mentions
 are present in both the JSON contract and the `technology_mentions` CSV column.
 If PaddleOCR is unavailable, the crawler records a warning and preserves the
 image-only record for later reprocessing.
+
+## Technology summary generation
+
+Issue `S15P21E102-256` implements the contract in
+`docs/ai/technology-summary-contract.md`. The rules engine has already decided
+L0~L3 before anything here runs; the local model only writes the Korean
+sentence explaining why that level, and the level on screen always comes from
+SQL. Handing the judgment back to the model would put two answers on one card
+with no way to say which is right.
+
+| | |
+|---|---|
+| Model | `qwen3.5:4b` on local Ollama |
+| Context | 8,192 tokens |
+| Request version | `technology-summary-request/v1` |
+| Prompt version | `tech-summary/2026-09-15.1` |
+| Unit | one user x one technology, one request |
+
+```text
+[BE] rule decision -> L0~L3
+        v
+[BE] Fact Pack
+        v
+[llm.service] Ollama -> validate -> retry at 0 -> template fallback
+        v
+[BE] store against cache_key
+```
+
+### Modules
+
+| Module | What it owns |
+|---|---|
+| `llm/contracts.py` | Fact Pack and summary models, and the Ollama `format` schema |
+| `llm/facts.py` | evidence rows -> at most eight deduplicated highlights |
+| `llm/prompt.py` | system prompt, the one few-shot pair, the data-only envelope |
+| `llm/validation.py` | the chapter 5 content checks and the template fallback |
+| `llm/cache.py` | the key a stored summary is filed under |
+| `llm/client.py` | the Ollama HTTP call |
+| `llm/service.py` | ask, check, retry once, else fall back |
+| `llm/server.py` | `POST /technology-summary` |
+| `llm/smoke.py` | the hard cases, run against the real model |
+
+`llm/test_server.py` stays as it is: it is the free-prompt smoke test for the
+model itself, not part of this path.
+
+### What the model is not given
+
+Code snippets, commit SHAs, e-mail addresses, GitHub logins, evidence counts,
+and other contributors' names. Counts are the important omission -- given
+`SOLE_AUTHOR 32 / UNVERIFIED 12` the model writes "about 73%", and the
+wireframe forbids ratios. `authorship` is therefore a band
+(`MOSTLY_MINE`, `MIXED`, `MOSTLY_OTHERS`, `NOT_VERIFIED`), not a number.
+`NOT_VERIFIED` means the commit could not be tied to the account, not that the
+person did not write the code, and both the prompt and the validator keep the
+summary from asserting otherwise.
+
+`user_id` is passed to the service, never into the prompt: it is needed to
+separate two people's cache entries, and a value that points at a person has no
+business in a summary.
+
+### Fact types
+
+`llm/contracts.py` mirrors `FactTypeV3` in `analysis/results.py` -- all seven
+types the rules engine emits -- and a test asserts the two stay equal. The
+contract document names three (`API_CALL`, `IMPORT`, `DEPENDENCY`), which is one
+type short of usable: in `analysis/data/rule_pack_20260911_4.json`, L3 rules are
+built from `API_CALL`, `ANNOTATION`, `SYNTAX_NODE` and `CONFIG_KEY`, so three
+types would drop most L3 evidence -- including the `@EnableMethodSecurity` the
+contract's own example asks about, which is an `ANNOTATION` fact.
+
+`CONFIG_KEY` highlights carry `KEY` and never `VALUE`. A config value is
+whatever the file says, which can be a connection string or a password, and
+neither a prompt nor a card sentence is a place for one.
+
+### Two fields the model does not get to decide
+
+`confidence` is a function of the Fact Pack -- whether the person's own
+evidence held an API call -- so it is computed in `derive_confidence` and the
+model's value is overwritten. This is a deliberate deviation from the contract,
+which has the model emit it: measured on `qwen3.5:4b`, a dependency-only input
+comes back `HIGH`, which would put a band on the card that the evidence below
+it contradicts. The model's own value is reported as `model_confidence` when the
+two disagree, so the drift stays visible in the backend's logs.
+
+`gap` is still written by the model, but its presence is now checked: null with
+a non-null `next_level` is rejected, and vice versa. The contract implies this;
+it is not in the chapter 5 table because the behaviour only shows up against a
+real model. Measured: the model folds the gap wording into `summary` and leaves
+the field null, which drops the one sentence that makes the card actionable.
+
+### Validation and fallback
+
+Ollama's `format` makes the reply syntactically valid JSON. It does not make it
+true, so `validate_summary` runs every check in chapter 5 and any one failure
+discards the response. The check that matters is the last one: every English
+identifier in the prose must already appear in the Fact Pack. Beyond the
+contract's list, the allowed set also includes `highlights.file` -- the
+contract's own worked example names `SecurityConfig` and `build.gradle`, which
+exist only as file paths.
+
+```text
+reject -> retry once at temperature 0
+reject -> template sentence, llm_status = FALLBACK
+```
+
+The template names the levels, as chapter 5 writes it, which is the one place a
+level string is allowed in prose. A failed generation never empties the card:
+the level, the evidence and the permalinks are on screen without the model.
+
+### Run locally
+
+Start Ollama first. On the AI server host that means the WSL-native path --
+`bash Infra/scripts/llm-serve-wsl.sh` from the repository root, which is
+idempotent and also pulls the model if it is missing. See
+`docs/infra/local-llm-runbook.md` ch3.1 for the one-time install and why the
+container path does not apply there. Then:
+
+On the WSL host, from `AI/`:
+
+```bash
+APP_PORT=8082 ../.venv/bin/python -m llm
+```
+
+On the Windows notebook, from `AI/`:
+
+```powershell
+$python = "..\.venv\Scripts\python.exe"
+$env:APP_PORT = "8082"
+& $python -m llm
+Remove-Item Env:APP_PORT
+```
+
+`OLLAMA_BASE_URL`, `LLM_MODEL` and `OLLAMA_TIMEOUT_SECONDS` are the same
+variables the test server reads. WSL-native Ollama is at
+`http://127.0.0.1:11434`, which is the default; from inside a container it is
+`http://host.docker.internal:11434`.
+
+```bash
+curl -s http://127.0.0.1:8082/health
+
+# jq is not installed on this host, so the venv's Python builds the body.
+../.venv/bin/python -c 'import json,sys;
+print(json.dumps({"user_id": "user-1", "fact_pack": json.load(open(
+  "llm/fixtures/technology_summary_request_v1.json"))}))' \
+  | curl -s -X POST http://127.0.0.1:8082/technology-summary \
+      -H 'Content-Type: application/json' --data @-
+```
+
+The endpoint always answers 200. A model that is down, slow, or ungrounded
+comes back as `llm_status: FALLBACK` with the rejected attempts listed by
+failure code, because the caller is rendering a card that is already complete
+without it.
+
+Run only this suite with:
+
+```powershell
+& $python -m pytest tests/test_llm_contracts.py tests/test_llm_facts.py `
+  tests/test_llm_prompt.py tests/test_llm_validation.py `
+  tests/test_llm_cache.py tests/test_llm_service.py tests/test_llm_server.py -q
+```
+
+### Reaching it from the deployed stack
+
+The EC2 service host has no GPU, so the generator stays on the notebook and the
+call goes EC2 -> notebook. The two are on the same tailnet, so no SSH tunnel is
+involved; what is needed is a listener on the Windows Tailscale address, because
+the server itself runs inside WSL. This notebook is the GPU host and stays up as one, so all three pieces are
+services rather than windows someone has to remember to open:
+
+```bash
+bash Infra/scripts/llm-install-services-wsl.sh   # WSL: systemd user units, once
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  \\wsl.localhost\Ubuntu-24.04\home\ssafy\workspace\S15P21E102\Infra\scripts\llm-bridge-install-task.ps1
+```
+
+| | |
+|---|---|
+| `gitjob-ollama.service` | inference runtime on `127.0.0.1:11434` |
+| `gitjob-llm-summary.service` | this FastAPI app on `0.0.0.0:18080` |
+| `GitJob LLM Tailscale Bridge` | Windows logon task publishing 18080 on the tailnet |
+
+One step still needs root and is not automated:
+`sudo loginctl enable-linger ssafy`. Without it both units stop when the last
+WSL session closes.
+
+`docs/infra/local-llm-runbook.md` ch3.2 has the diagram, the reason the existing
+`netsh portproxy` rule does not bind on its own, and the verification commands.
+Verified on 2026-09-14: `gitjob-service-backend-1` on EC2 posted a Fact Pack and
+got `llm_status: OK` back.
+
+`LLM_SUMMARY_BASE_URL` and `LLM_SUMMARY_TIMEOUT_SECONDS` are in `.env.example`
+for the backend call that does not exist yet. Empty has to mean "do not call":
+the card is complete without a summary.
+
+### Checking it against the real model
+
+The unit tests use a fake client. They prove the code is right and say nothing
+about whether a 4B model can satisfy the contract, so there is a second runner
+that asks the real one:
+
+```bash
+../.venv/bin/python -m llm.smoke
+```
+
+Its five cases are all ones the model got wrong at least once; the `why` line in
+`llm/fixtures/technology_summary_smoke_cases.json` says what each is for. A
+fallback is a working outcome, not a crash, so the run never fails -- the count
+is the signal. On this host, three consecutive runs each gave **4 OK / 1
+FALLBACK**, warm, at 3-8 seconds per technology.
+
+The one that keeps falling back is `NOT_VERIFIED`: the model writes the summary
+correctly but then puts "본인이 직접 작성한 코드에서 …" in the `gap`, which
+presupposes it knows whose code it is. Three prompt revisions did not remove it,
+so it is left to the fallback rather than tuned further. `GRADE_WORD` is the
+other recurring rejection, and the temperature-0 retry clears it most times.
+Raising that count after a prompt edit means the edit made things worse.
+
+### Picking this up
+
+The AI server host is this WSL distro. Ollama runs natively there, not in
+Docker: the daemon is not running, WSL integration is off, and `sudo` wants a
+password, so `Infra/scripts/llm-up.sh` does not apply. Use
+`Infra/scripts/llm-serve-wsl.sh` (idempotent; safe to run before anything that
+needs the model) and read `docs/infra/local-llm-runbook.md` ch3.1 for the
+one-time install and the measured GPU numbers.
+
+Order to read the code in: `contracts.py` (what crosses the boundary) ->
+`facts.py` (how evidence becomes highlights) -> `prompt.py` -> `validation.py`
+(where responses die) -> `service.py` (the loop that ties them together).
+`docs/ai/technology-summary-contract.md` is the handed-over contract; its ch9
+lists every place the implementation deviates and why, so read that before
+"fixing" something back to the contract's letter.
+
+Three tests in the wider suite fail on this branch and on its base commit
+alike, unrelated to this work: `test_analysis_parse.py::test_report_summarises_what_it_read`,
+`test_analysis_personal_consumer.py::test_consumer_publishes_v4_without_identity_in_the_request_event`,
+and `test_worknet.py::test_period_deadline_makes_the_posting_active`.
+
+Pushing needs a GitLab token; `git fetch` fails without one. Pass it as a
+one-shot credential helper rather than writing it into `.git/config` or a
+remote URL:
+
+```bash
+git -c credential.helper= \
+    -c credential.helper='!f() { echo username=oauth2; echo "password=$(cat /path/to/token)"; }; f' \
+    push origin <branch>
+```
+
+`.git/refs/remotes/origin/infra/` is owned by root from an earlier run, so
+fetching `infra/*` branches prints "cannot lock ref". Every other branch
+fetches; fixing it needs `sudo chown`.
+
+### Still owned by the backend
+
+Assembling the Fact Pack: the `authorship` band, `next_level.missing`, the
+personal-commit `period`, and reading `value` out of `fact_payload`.
+`llm/facts.py` provides the last two steps of that -- the per-`fact_type` key
+order and the deduplication -- but the queries themselves are backend work, as
+is storing the summary against `cache_key`. Chapter 7 of the contract lists
+what is missing.
 
 ## Run locally
 

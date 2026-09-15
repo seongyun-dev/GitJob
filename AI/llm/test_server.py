@@ -13,10 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip(
-    "/"
-)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.5:4b")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
 
@@ -108,8 +105,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         raise HTTPException(
             status_code=504,
             detail=(
-                "Ollama inference timed out after "
-                f"{OLLAMA_TIMEOUT_SECONDS:g} seconds"
+                f"Ollama inference timed out after {OLLAMA_TIMEOUT_SECONDS:g} seconds"
             ),
         ) from exc
     except URLError as exc:
@@ -147,25 +143,34 @@ def _stream_ollama(request: ChatRequest) -> Iterator[bytes]:
                     yield line
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:500]
-        yield json.dumps(
-            {"error": f"Ollama returned HTTP {exc.code}: {detail}"},
-            ensure_ascii=False,
-        ).encode("utf-8") + b"\n"
+        yield (
+            json.dumps(
+                {"error": f"Ollama returned HTTP {exc.code}: {detail}"},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
     except TimeoutError:
-        yield json.dumps(
-            {
-                "error": (
-                    "Ollama inference timed out after "
-                    f"{OLLAMA_TIMEOUT_SECONDS:g} seconds"
-                )
-            },
-            ensure_ascii=False,
-        ).encode("utf-8") + b"\n"
+        yield (
+            json.dumps(
+                {
+                    "error": (
+                        "Ollama inference timed out after "
+                        f"{OLLAMA_TIMEOUT_SECONDS:g} seconds"
+                    )
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
     except URLError as exc:
-        yield json.dumps(
-            {"error": f"Cannot reach Ollama at {OLLAMA_BASE_URL}: {exc}"},
-            ensure_ascii=False,
-        ).encode("utf-8") + b"\n"
+        yield (
+            json.dumps(
+                {"error": f"Cannot reach Ollama at {OLLAMA_BASE_URL}: {exc}"},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
 
 
 @app.post("/chat/stream")

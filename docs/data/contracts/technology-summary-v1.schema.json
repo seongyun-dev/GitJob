@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gitjob.local/contracts/technology-summary-v1.schema.json",
   "title": "TechnologySummary",
-  "description": "Local LLM -> backend. One object per (user, technology). This schema is passed to Ollama as `format`, so it must stay inside the subset Ollama's grammar compiler accepts: no $ref, no allOf/anyOf/oneOf, no pattern, no conditional keywords. It constrains syntax only -- a structurally valid object can still name an API the user never called, so the backend must run the content checks in docs/ai/technology-summary-contract.md ch5 before showing anything.",
+  "description": "Local LLM -> backend. One object per (user, technology). This schema is passed to Ollama as `format`, so it must stay inside the subset Ollama's grammar compiler accepts: no $ref, no allOf/anyOf/oneOf, no pattern, no conditional keywords. It constrains syntax only -- a structurally valid object can still name an API the user never called, so the AI service must run the content checks in docs/ai/technology-summary-contract.md ch5 before returning anything.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,7 +18,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 80,
-      "description": "Echo of the requested tech_id. The backend rejects the response when it differs -- a 4B model does substitute a neighbouring technology, and an unchecked swap would file Spring Security's summary under Spring Boot."
+      "description": "Echo of the requested tech_id. The AI service rejects the response when it differs -- a 4B model does substitute a neighbouring technology, and an unchecked swap would file Spring Security's summary under Spring Boot."
     },
     "headline": {
       "type": "string",
@@ -43,7 +43,7 @@
     "used_highlights": {
       "type": "array",
       "maxItems": 8,
-      "description": "Indexes of the highlights the summary leaned on. Indexes rather than evidence ids because a 4B model reproduces small integers reliably and 40-character ids it does not. The backend checks every entry is in range; an out-of-range index means the model invented a fact and the whole response is discarded.",
+      "description": "Indexes of the highlights the summary leaned on. Indexes rather than evidence ids because a 4B model reproduces small integers reliably and 40-character ids it does not. The AI service checks every entry is in range; an out-of-range index means the model invented a fact and the whole response is discarded.",
       "items": {
         "type": "integer",
         "minimum": 0,

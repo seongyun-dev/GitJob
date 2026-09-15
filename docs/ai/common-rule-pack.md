@@ -62,6 +62,23 @@ Registry, Rule Pack 원본, 기술별 지원 범위, 실행용 normalized rule �
 규칙 삽입 실패는 Registry 삽입도 rollback한다. 발행만으로 B의 `CURRENT`나 C family alias를
 변경하지 않는다. B 요청은 검증한 구체 버전을 명시해야 한다.
 
+### 2026-09-15 서비스 DB 발행 기록
+
+`J15E102T`의 서비스 PostgreSQL에 검증된 commit
+`9ee2fd40e08b9804f0ca7d4d93542b66faf9da19`를 provenance로 사용해 `.4` 쌍을
+원자적으로 발행하고 read-back했다.
+
+- Registry: `registry-20260911.4`, 기술 44개, 상태 `RETIRED`
+- Rule Pack: `rule-pack-20260911.4`, 실행 규칙 145개
+- Registry canonical SHA-256:
+  `da5ae094c58c613c28ffbe8017c0630a1097430584cf700c21672e9525fdee66`
+- Rule Pack canonical SHA-256:
+  `832e427affc6c29929e62d5cc77eecb6aae962d3a7a91c8006cdbb99ddac5886`
+
+B의 `registry-20260910.2 CURRENT`는 변경하지 않았고 C alias도 활성화하지 않았다.
+따라서 발행된 `.4`는 명시적으로 선택할 수 있는 immutable 실행본이며, 신규 B
+분석의 기본 버전을 바꾸는 작업은 별도 승인·전환 절차로 남는다.
+
 `analysis.rules.RegistryStore`가 새 버전을 읽으면 Registry hash, Rule Pack hash,
 기술별 지원 범위 및 실제 predicate 행까지 대조한 뒤 같은 Judge 실행 모델을 반환한다.
 알 수 없는 버전이나 손상된 발행 데이터는 빈 verdict나 이전 버전으로 대체하지 않고 실패한다.
