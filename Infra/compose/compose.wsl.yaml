@@ -53,6 +53,8 @@ services:
     build:
       context: .
       dockerfile: Infra/docker/worker/Dockerfile
+      args:
+        JOBKOREA_OCR_ENABLED: "true"
 
   worker:
     depends_on:

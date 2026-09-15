@@ -21,6 +21,8 @@ services:
     build:
       context: .
       dockerfile: Infra/docker/worker/Dockerfile
+      args:
+        JOBKOREA_OCR_ENABLED: "true"
     environment:
       WEBHDFS_URL: http://${DATA_TS_IP:?DATA_TS_IP must be set}:9870/webhdfs/v1
       WEBHDFS_DATANODE_HOSTS: >-

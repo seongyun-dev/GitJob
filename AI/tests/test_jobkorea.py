@@ -1,7 +1,9 @@
 import json
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 from job.collector import analysis_input as analysis_input_module
 from job.collector.analysis_input import (
@@ -14,7 +16,14 @@ from job.collector.raw_verify import STATE_OK, verify_run
 from JobKorea_Collector_V1 import crawler as crawler_module
 from JobKorea_Collector_V1.crawler import CrawlConfig, JobKoreaCrawler, write_outputs
 from JobKorea_Collector_V1.dates import SEOUL, parse_deadline, parse_posted_at
-from JobKorea_Collector_V1.ocr import OcrLine, OcrResult, _extract_lines, image_suffix
+from JobKorea_Collector_V1.ocr import (
+    OcrLine,
+    OcrResult,
+    PaddleOcrEngine,
+    _create_engine,
+    _extract_lines,
+    image_suffix,
+)
 from JobKorea_Collector_V1.parser import parse_detail, parse_job_list
 from JobKorea_Collector_V1.technology import extract_technology_mentions
 
@@ -123,6 +132,60 @@ def test_image_only_detail_is_observable() -> None:
     assert detail.description_text is None
     assert detail.has_images is True
     assert detail.image_sources == ("recruit.png",)
+
+
+def test_paddle_ocr_uses_memory_bounded_korean_mobile_models() -> None:
+    captured: dict[str, object] = {}
+
+    class StubPaddleOcr:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    _create_engine(StubPaddleOcr, "cpu", "korean", cpu_threads=2)
+
+    assert captured["device"] == "cpu"
+    assert "lang" not in captured
+    assert captured["text_detection_model_name"] == "PP-OCRv5_mobile_det"
+    assert captured["text_recognition_model_name"] == "korean_PP-OCRv5_mobile_rec"
+    assert captured["text_recognition_batch_size"] == 1
+    assert captured["text_det_limit_side_len"] == 2048
+    assert captured["text_det_limit_type"] == "max"
+    assert captured["cpu_threads"] == 2
+
+
+def test_paddle_ocr_engine_passes_configured_cpu_threads(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubPaddleOcr:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setenv("PADDLE_PDX_CPU_NUM_THREADS", "2")
+    monkeypatch.setitem(
+        sys.modules,
+        "paddleocr",
+        SimpleNamespace(PaddleOCR=StubPaddleOcr),
+    )
+
+    PaddleOcrEngine()
+
+    assert captured["cpu_threads"] == 2
+
+
+def test_paddle_ocr_keeps_language_selection_for_non_korean_models() -> None:
+    captured: dict[str, object] = {}
+
+    class StubPaddleOcr:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    _create_engine(StubPaddleOcr, "cpu", "en", cpu_threads=2)
+
+    assert captured["lang"] == "en"
+    assert "text_detection_model_name" not in captured
+    assert "text_recognition_model_name" not in captured
 
 
 def test_detail_collects_lazy_and_css_image_sources() -> None:

@@ -299,6 +299,10 @@ services:
     image: ${COLLECTOR_IMAGE:-gitjob/collector:local}
     profiles: [data]
     restart: unless-stopped
+    # OCR shares this cgroup with the collector health process. Keep enough
+    # headroom for HDFS/Spark on the 4-vCPU, 15-GiB data host.
+    cpus: "${COLLECTOR_CPUS:-2.0}"
+    mem_limit: "${COLLECTOR_MEMORY_LIMIT:-4g}"
     command: ["python", "-m", "collector"]
     environment:
       APP_ENV: ${APP_ENV:-docker}
@@ -319,6 +323,11 @@ services:
       # S15P21E102-220. Verified runs are published here for C after the
       # Raw upload succeeds; unset falls back to the same default.
       ANALYSIS_INPUT_JOBS_ROOT: ${ANALYSIS_INPUT_JOBS_ROOT:-hdfs:///gitjob/analysis_input/jobs}
+      # PaddleOCR downloads its Korean models on first use. Store them beside
+      # the collector cursor in the existing persistent volume so a redeploy
+      # does not download them again.
+      PADDLE_PDX_CACHE_HOME: ${PADDLE_PDX_CACHE_HOME:-/data/.paddlex}
+      PADDLE_PDX_CPU_NUM_THREADS: ${PADDLE_PDX_CPU_NUM_THREADS:-2}
     volumes:
       # Collector resume state. The schedule passes
       # `--cursor ../data/<site>/cursor.json` and WORKDIR is /app, so both the

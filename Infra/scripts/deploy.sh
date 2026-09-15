@@ -275,7 +275,10 @@ build_data_images() {
   remote_exec "$data_host" "$data_user" \
     "set -Eeuo pipefail
      cd ${quoted_path}
-     docker build --tag ${quoted_collector_image} --tag ${quoted_worker_image} \\
+     docker build --tag ${quoted_worker_image} \\
+       --file Infra/docker/worker/Dockerfile .
+     docker build --tag ${quoted_collector_image} \\
+       --build-arg JOBKOREA_OCR_ENABLED=true \\
        --file Infra/docker/worker/Dockerfile .
      docker build --tag ${quoted_spark_image} \\
        --file Infra/docker/spark/Dockerfile ."

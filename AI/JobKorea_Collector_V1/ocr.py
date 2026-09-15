@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -55,7 +56,13 @@ class PaddleOcrEngine:
         self.language = language
         self.min_confidence = min_confidence
         try:
-            self._engine = _create_engine(PaddleOCR, device, language)
+            self.cpu_threads = _configured_cpu_threads()
+            self._engine = _create_engine(
+                PaddleOCR,
+                device,
+                language,
+                cpu_threads=self.cpu_threads,
+            )
         except Exception as error:  # pragma: no cover - backend-dependent setup
             raise OcrUnavailableError(
                 "PaddleOCR could not be initialized; check PaddlePaddle and "
@@ -107,18 +114,51 @@ class PaddleOcrEngine:
         raise OcrRecognitionError("unsupported PaddleOCR API: predict/ocr not found")
 
 
-def _create_engine(paddle_ocr: Any, device: str, language: str) -> Any:
+def _configured_cpu_threads() -> int:
+    raw_value = os.getenv("PADDLE_PDX_CPU_NUM_THREADS", "2")
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError("PADDLE_PDX_CPU_NUM_THREADS must be an integer") from error
+    if value < 1:
+        raise ValueError("PADDLE_PDX_CPU_NUM_THREADS must be at least 1")
+    return value
+
+
+def _create_engine(
+    paddle_ocr: Any,
+    device: str,
+    language: str,
+    *,
+    cpu_threads: int,
+) -> Any:
     """Support the current 3.x constructor and the older 2.x fallback."""
 
     try:
-        return paddle_ocr(
-            lang=language,
-            device=device,
-            engine="paddle",
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-        )
+        current_options: dict[str, Any] = {
+            "device": device,
+            "engine": "paddle",
+            "cpu_threads": cpu_threads,
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+        }
+        if language == "korean":
+            # PaddleOCR 3.x otherwise selects the much larger server detector.
+            # Supplying lang together with explicit model names only emits a
+            # warning and is ignored, so keep the model pair authoritative.
+            current_options.update(
+                {
+                    "text_detection_model_name": "PP-OCRv5_mobile_det",
+                    "text_recognition_model_name": "korean_PP-OCRv5_mobile_rec",
+                    "text_recognition_batch_size": 1,
+                    "text_det_limit_side_len": 2048,
+                    "text_det_limit_type": "max",
+                }
+            )
+        else:
+            current_options["lang"] = language
+        return paddle_ocr(**current_options)
     except TypeError:
         return paddle_ocr(
             lang=language,

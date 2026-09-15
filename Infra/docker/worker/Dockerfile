@@ -18,6 +18,22 @@ RUN apt-get update \
 WORKDIR /app
 COPY AI/requirements.txt /tmp/requirements.txt
 RUN pip install --requirement /tmp/requirements.txt
+ARG JOBKOREA_OCR_ENABLED=false
+COPY AI/requirements-ocr.txt /tmp/requirements-ocr.txt
+# PaddleOCR is intentionally opt-in. The data-host deployment builds the
+# collector and worker tags separately so only the collector pays the image
+# size and runtime dependency cost. PaddlePaddle's CPU wheel uses its official
+# package index; the OCR front-end and its remaining dependencies use PyPI.
+RUN if [ "${JOBKOREA_OCR_ENABLED}" = "true" ]; then \
+      apt-get update \
+      && apt-get install --no-install-recommends --yes \
+        libgl1 libglib2.0-0 libgomp1 \
+      && rm -rf /var/lib/apt/lists/* \
+      && python -m pip install paddlepaddle==3.2.0 \
+        --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
+      && python -m pip install --requirement /tmp/requirements-ocr.txt \
+      && python -c "import paddle, paddleocr; print('PaddleOCR CPU runtime:', paddle.__version__, paddleocr.__version__)"; \
+    fi
 COPY AI/ ./
 
 # Keep the existing /app module layout used by A's collectors. Package only
