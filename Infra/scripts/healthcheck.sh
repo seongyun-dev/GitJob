@@ -21,6 +21,9 @@ if profile_enabled data; then
   # up command, and invoke this full check only after both new nodes are up.
   services+=(hdfs-namenode hdfs-datanode hdfs-datanode2 hdfs-datanode3 spark-master spark-worker worker analysis-worker collector)
 fi
+if profile_enabled weekly; then
+  services+=(weekly-trend-consumer)
+fi
 if profile_enabled ci; then
   services+=(jenkins)
 fi

@@ -24,12 +24,13 @@ def _service_block(path: Path, service: str) -> str:
 
 def test_data_cluster_overlay_quarantines_weekly_consumer_from_data_profile():
     block = _service_block(COMPOSE_DATA_CLUSTER, "weekly-trend-consumer")
-    assert "profiles: [weekly]" in block
+    assert "profiles: !override [weekly]" in block
     assert "network_mode" not in block
 
 
 def test_service_weekly_overlay_keeps_consumer_definition_and_host_network():
     block = _service_block(COMPOSE_WEEKLY_HOST, "weekly-trend-consumer")
+    assert "profiles: !override [weekly]" in block
     assert "network_mode: host" in block
     assert "WEEKLY_CONSUMER_GROUP" in block
     assert "WEEKLY_CONSUMER_DATANODE_HOSTS" in block

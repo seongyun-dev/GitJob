@@ -7,6 +7,9 @@
 
 services:
   weekly-trend-consumer:
+    # Keep this service out of the base data profile even when this override is
+    # combined with compose.yaml for a Service-host deployment.
+    profiles: !override [weekly]
     network_mode: host
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${WEEKLY_CONSUMER_KAFKA_BOOTSTRAP:?WEEKLY_CONSUMER_KAFKA_BOOTSTRAP must be set}

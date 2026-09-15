@@ -12,7 +12,8 @@ export DATA_TS_IP SERVICE_TS_IP SERVICE_DN_REGISTRATION_IP CLUSTER_WORKER_PROJEC
 
 data_render="$(mktemp)"
 worker_render="$(mktemp)"
-trap 'rm -f "$data_render" "$worker_render"' EXIT
+weekly_render="$(mktemp)"
+trap 'rm -f "$data_render" "$worker_render" "$weekly_render"' EXIT
 
 cd "$REPO_ROOT"
 
@@ -42,6 +43,15 @@ docker compose --project-directory . --env-file .env.example \
   --project-name "$CLUSTER_WORKER_PROJECT_NAME" \
   -f Infra/compose/compose.ec2-cluster-worker.yaml \
   --profile hdfs-worker --profile spark-worker config --format json > "$worker_render"
+WEEKLY_CONSUMER_KAFKA_BOOTSTRAP="$SERVICE_TS_IP:9094" \
+WEEKLY_CONSUMER_GROUP=gitjob-weekly-trend-prod-v1 \
+WEEKLY_CONSUMER_WEBHDFS_URL="http://$DATA_TS_IP:9870/webhdfs/v1" \
+WEEKLY_CONSUMER_DATANODE_HOSTS="$DATA_TS_IP:9864=$DATA_TS_IP:9864,$SERVICE_TS_IP:9864=$SERVICE_TS_IP:9864" \
+WEEKLY_CONSUMER_POSTGRES_HOST="$SERVICE_TS_IP" \
+docker compose --project-directory . --env-file .env.example \
+  -f Infra/compose/compose.yaml -f Infra/compose/compose.ec2.yaml \
+  -f Infra/compose/compose.weekly-host.yaml \
+  --profile weekly config --format json > "$weekly_render"
 
 # An option-less operational invocation must remain scoped to Phase 4. Spark
 # Worker-2 is enabled only by an explicit Phase 7 profile selection.
@@ -57,14 +67,22 @@ grep -Fq 'CLUSTER_WORKER_PROFILES="${CLUSTER_WORKER_PROFILES:-hdfs-worker}"' \
 diff -u - <(printf '%s\n' hdfs-datanode4-data-init hdfs-datanode4) \
   <<< "$default_worker_services"
 
-python3 - "$data_render" "$worker_render" "$DATA_TS_IP" "$SERVICE_TS_IP" \
+python3 - "$data_render" "$worker_render" "$weekly_render" "$DATA_TS_IP" "$SERVICE_TS_IP" \
   "$SERVICE_DN_REGISTRATION_IP" <<'PY'
 import json
 import sys
 
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 worker = json.load(open(sys.argv[2], encoding="utf-8"))
-data_ip, service_ip, service_registration_ip = sys.argv[3:6]
+weekly = json.load(open(sys.argv[3], encoding="utf-8"))
+data_ip, service_ip, service_registration_ip = sys.argv[4:7]
+
+assert "weekly-trend-consumer" not in data["services"]
+weekly_consumer = weekly["services"]["weekly-trend-consumer"]
+assert weekly_consumer["profiles"] == ["weekly"]
+assert weekly_consumer["network_mode"] == "host"
+assert weekly_consumer["environment"]["WEEKLY_ACTIVITY_CONSUMER_GROUP"] == "gitjob-weekly-trend-prod-v1"
+assert weekly_consumer["environment"]["WEBHDFS_URL"] == f"http://{data_ip}:9870/webhdfs/v1"
 
 namenode_env = data["services"]["hdfs-namenode"]["environment"]
 assert namenode_env["HDFS-SITE.XML_dfs.client.use.datanode.hostname"] == "true"
@@ -125,7 +143,7 @@ PY
 
 # The split Jenkins path must preserve the active two-host overlay through
 # preflight, start, healthcheck, and final verification.
-[[ "$(grep -c 'compose\.ec2-data-cluster\.yaml' Infra/scripts/deploy.sh)" -eq 4 ]]
+[[ "$(grep -c 'compose\.ec2-data-cluster\.yaml' Infra/scripts/deploy.sh)" -eq 5 ]]
 if grep -qE 'compose\.ec2-data\.yaml([^.-]|$)' Infra/scripts/deploy.sh; then
   echo "split deploy still references the legacy data overlay" >&2
   exit 1
@@ -137,6 +155,10 @@ grep -Fq 'PROFILES=core bash Infra/scripts/repo-analysis-migrate.sh' Infra/scrip
 grep -Fq 'PROFILES=core bash Infra/scripts/kafka-topics.sh' Infra/scripts/deploy.sh
 grep -Fq 'spark-worker worker analysis-worker collector' Infra/scripts/healthcheck.sh
 grep -Fq 'analysis-worker-ready' Infra/scripts/verify-deployment.sh
+grep -Fq 'profiles: !override [weekly]' Infra/compose/compose.ec2-data-cluster.yaml
+grep -Fq 'remove_legacy_data_weekly_consumer' Infra/scripts/deploy.sh
+grep -Fq 'start_service_weekly_consumer' Infra/scripts/deploy.sh
+grep -Fq 'weekly-consumer-placement' Infra/scripts/verify-deployment.sh
 for topic in requests results dlq; do
   grep -Fq "gitjob.repository-analysis.${topic}.v1:3" Infra/scripts/kafka-topics.sh
 done

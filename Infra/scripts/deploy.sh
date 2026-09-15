@@ -57,14 +57,17 @@ quote_for_remote() {
 compose_command() {
   local deploy_path="$1"
   local env_file_name="$2"
-  local override_file="$3"
+  shift 2
+  local override_file
   local -a command=(
     docker compose
     --project-directory "$deploy_path"
     --env-file "$deploy_path/$env_file_name"
     -f "$deploy_path/Infra/compose/compose.yaml"
-    -f "$deploy_path/Infra/compose/$override_file"
   )
+  for override_file in "$@"; do
+    command+=(-f "$deploy_path/Infra/compose/$override_file")
+  done
   printf '%q ' "${command[@]}"
 }
 
@@ -141,10 +144,13 @@ remote_exec() {
 # the compose files this deployment will actually use, taken from the Jenkins
 # workspace at the commit being deployed.
 required_compose_vars() {
-  local override_file="$1"
+  local override_file
+  local -a compose_files=("$REPO_ROOT/Infra/compose/compose.yaml")
+  for override_file in "$@"; do
+    compose_files+=("$REPO_ROOT/Infra/compose/$override_file")
+  done
   grep -hv '^[[:space:]]*#' \
-    "$REPO_ROOT/Infra/compose/compose.yaml" \
-    "$REPO_ROOT/Infra/compose/$override_file" \
+    "${compose_files[@]}" \
     | grep -ohE '\$\{[A-Za-z_][A-Za-z0-9_]*:\?' \
     | sed -E 's/^\$\{//; s/:\?$//' \
     | sort -u
@@ -159,15 +165,16 @@ preflight_remote_env() {
   local user="$2"
   local deploy_path="$3"
   local env_file_name="$4"
-  local override_file="$5"
+  shift 4
+  local -a override_files=("$@")
   local -a required=()
   local key
   local keys_arg=""
   local quoted_env
 
-  mapfile -t required < <(required_compose_vars "$override_file")
+  mapfile -t required < <(required_compose_vars "${override_files[@]}")
   if [[ ${#required[@]} -eq 0 ]]; then
-    die "no required Compose variables found; expected at least one in $override_file"
+    die "no required Compose variables found; expected at least one in ${override_files[*]}"
   fi
   for key in "${required[@]}"; do
     keys_arg+=" $(quote_for_remote "$key")"
@@ -235,9 +242,11 @@ build_service_images() {
   local quoted_path
   local quoted_backend_image
   local quoted_frontend_image
+  local quoted_worker_image
   quoted_path="$(quote_for_remote "$service_path")"
   quoted_backend_image="$(quote_for_remote "$local_backend_image")"
   quoted_frontend_image="$(quote_for_remote "$local_frontend_image")"
+  quoted_worker_image="$(quote_for_remote "$local_worker_image")"
 
   echo "Building service images on ${service_user}@${service_host}..."
   remote_exec "$service_host" "$service_user" \
@@ -247,7 +256,9 @@ build_service_images() {
      docker build --tag ${quoted_frontend_image} \\
        --build-arg VITE_API_BASE_URL=/api \\
        --build-arg VITE_WS_URL=/ws \\
-       --file Infra/docker/frontend/Dockerfile ."
+       --file Infra/docker/frontend/Dockerfile .
+     docker build --tag ${quoted_worker_image} \\
+       --file Infra/docker/worker/Dockerfile ."
 }
 
 build_data_images() {
@@ -274,7 +285,8 @@ service_compose_environment() {
   printf '%q ' \
     "COMPOSE_PROFILES=$1" \
     "BACKEND_IMAGE=$local_backend_image" \
-    "FRONTEND_IMAGE=$local_frontend_image"
+    "FRONTEND_IMAGE=$local_frontend_image" \
+    "WORKER_IMAGE=$local_worker_image"
 }
 
 data_compose_environment() {
@@ -352,6 +364,35 @@ start_service_app() {
      ENV_FILE=$(quote_for_remote "$service_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2.yaml) PROFILES=core,app HEALTHCHECK_TIMEOUT_SECONDS=240 bash Infra/scripts/healthcheck.sh"
 }
 
+start_service_weekly_consumer() {
+  local compose
+  local compose_environment
+  compose="$(compose_command "$service_path" "$service_env_file" \
+    compose.ec2.yaml compose.weekly-host.yaml)"
+  compose_environment="$(service_compose_environment weekly)"
+
+  echo "Starting weekly Trend consumer on ${service_user}@${service_host}..."
+  remote_exec "$service_host" "$service_user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$service_path")
+     ${compose_environment}${compose} --profile weekly config --quiet
+     ${compose_environment}${compose} --profile weekly up -d --no-deps --force-recreate --no-build weekly-trend-consumer
+     ENV_FILE=$(quote_for_remote "$service_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.weekly-host.yaml) PROFILES=weekly HEALTHCHECK_TIMEOUT_SECONDS=120 bash Infra/scripts/healthcheck.sh"
+}
+
+remove_legacy_data_weekly_consumer() {
+  local compose
+  local compose_environment
+  compose="$(compose_command "$data_path" "$data_env_file" compose.ec2-data-cluster.yaml)"
+  compose_environment="$(data_compose_environment)"
+
+  echo "Removing legacy weekly Trend consumer from ${data_user}@${data_host}..."
+  remote_exec "$data_host" "$data_user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$data_path")
+     ${compose_environment}${compose} --profile weekly rm --stop --force weekly-trend-consumer"
+}
+
 start_data_app() {
   local compose
   local compose_environment
@@ -372,7 +413,8 @@ start_data_app() {
 # missing key instead of stopping at the first host.
 preflight_failures=0
 preflight_remote_env "$service_host" "$service_user" "$service_path" \
-  "$service_env_file" compose.ec2.yaml || preflight_failures=$((preflight_failures + 1))
+  "$service_env_file" compose.ec2.yaml compose.weekly-host.yaml \
+  || preflight_failures=$((preflight_failures + 1))
 preflight_remote_env "$data_host" "$data_user" "$data_path" \
   "$data_env_file" compose.ec2-data-cluster.yaml || preflight_failures=$((preflight_failures + 1))
 [[ "$preflight_failures" -eq 0 ]] \
@@ -407,8 +449,10 @@ prepare_kafka_topics
 prepare_repository_analysis_schema
 build_service_images
 start_service_app
+start_service_weekly_consumer
 
 refresh_checkout "$data_host" "$data_user" "$data_path" "$deploy_ref"
+remove_legacy_data_weekly_consumer
 build_data_images
 start_data_app
 
@@ -417,6 +461,8 @@ echo "Split source-pull/build deployment completed for ${deploy_ref}."
 verify_failures=0
 verify_deployment "$service_host" "$service_user" "$service_path" \
   "$service_env_file" compose.ec2.yaml core,app || verify_failures=$((verify_failures + 1))
+verify_deployment "$service_host" "$service_user" "$service_path" \
+  "$service_env_file" compose.weekly-host.yaml weekly || verify_failures=$((verify_failures + 1))
 verify_deployment "$data_host" "$data_user" "$data_path" \
   "$data_env_file" compose.ec2-data-cluster.yaml data || verify_failures=$((verify_failures + 1))
 [[ "$verify_failures" -eq 0 ]] \

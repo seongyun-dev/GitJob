@@ -9,6 +9,7 @@
 
 | 문서 | 내용 |
 |---|---|
+| [Weekly Trend Consumer 배치 복구](2026-09-15-weekly-consumer-placement-recovery.md) | S15P21E102-267 데이터 서버 재시작 루프 원인, 서비스 서버 단독 배치와 Jenkins 정리·검증 계약 |
 | [HDFS·Spark 2-Host 분리 계획](2026-09-10-hdfs-spark-two-host-split-plan.md) | S15P21E102-207 Tailscale 기반 DataNode·Spark Worker 확장, 단계별 gate와 롤백 계획 |
 | [HDFS·Spark Phase 0 사전점검](2026-09-10-hdfs-spark-two-host-phase0-preflight.md) | 양쪽 EC2의 Tailscale·자원·서비스·HDFS·Spark 기준선과 운영 checkout blocker |
 | [HDFS·Spark Phase 1 구현·정적 검증](2026-09-10-hdfs-spark-two-host-phase1-static-implementation.md) | Tailscale cluster Compose, 독립 worker project, rack mapping, Spark 공통 설정과 회귀 검증 |
@@ -58,6 +59,7 @@ Kafka → Collector·Worker → HDFS/Parquet·Spark
 | `core` | PostgreSQL, Redis, Kafka KRaft | 기본 상태 저장·메시징 |
 | `app` | Backend, Frontend, Nginx | 사용자 서비스 |
 | `data` | Collector, Worker, HDFS NameNode/DataNode, Spark master/worker | 수집·분석·대용량 처리 |
+| `weekly` | Service-host Weekly Trend Consumer | 주간 완료 이벤트 검증·Trend 반영 |
 | `ci` | Jenkins controller/agent | 빌드·테스트·배포 |
 | `observability` | Kafka UI, Redis Insight, monitoring overlay의 Prometheus/Grafana/node-exporter/Kafka exporter | 내부 운영 확인 및 시계열 지표 |
 
@@ -70,6 +72,7 @@ Kafka → Collector·Worker → HDFS/Parquet·Spark
 | `Infra/compose/compose.ec2-data.yaml` | Hadoop/Spark data EC2, 저장소 image build, remote core endpoint |
 | `Infra/compose/compose.ec2-data-cluster.yaml` | 기존 data volume을 유지한 Tailscale HDFS/Spark 전환 overlay |
 | `Infra/compose/compose.ec2-cluster-worker.yaml` | service EC2의 독립 DataNode-4·Spark Worker-2 project |
+| `Infra/compose/compose.weekly-host.yaml` | service EC2의 Weekly Trend Consumer host-network 배치 |
 | `Infra/compose/compose.ec2-ha.yaml` | EC2-A/B에서 `app`만 실행, 외부 HA state 사용 |
 
 현재 2대 구성에서는 `J15E102`에 `core + app`과 Jenkins를, `J15E102A`에

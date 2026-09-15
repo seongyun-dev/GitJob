@@ -429,6 +429,40 @@ repo_analysis.event_claim 누락이면 service 호스트에서 실행한다.
       fi
     fi
   fi
+
+  # --- Weekly Trend consumer placement --------------------------------------
+  # The base service historically belonged to the data profile. The production
+  # topology now runs it only on the Service host, where host networking can
+  # follow every WebHDFS DataNode redirect. Check both the positive placement
+  # and absence of the legacy data-host container.
+  weekly_consumer_id="$(compose ps -a -q weekly-trend-consumer 2>/dev/null | head -n 1)"
+  if profile_enabled weekly; then
+    if [[ -z "$weekly_consumer_id" ]]; then
+      needs_action weekly-consumer-ready "서비스 서버의 weekly-trend-consumer 컨테이너가 없다" \
+        "weekly-host overlay로 Consumer를 배포한다. Jenkins 배포는 이 단계를 자동 수행한다."
+    else
+      weekly_consumer_status="$(docker inspect --format '{{.State.Status}}' "$weekly_consumer_id" 2>/dev/null || true)"
+      weekly_consumer_restarts="$(docker inspect --format '{{.RestartCount}}' "$weekly_consumer_id" 2>/dev/null || true)"
+      if [[ "$weekly_consumer_status" == "running" ]]; then
+        ok weekly-consumer-ready "서비스 서버 Consumer 실행 중 (restarts=${weekly_consumer_restarts:-unknown})"
+      else
+        needs_action weekly-consumer-ready \
+          "상태=${weekly_consumer_status:-unknown}, restarts=${weekly_consumer_restarts:-unknown}" \
+          "Consumer 로그와 Kafka·WebHDFS·PUBLIC_GITHUB/export 준비 상태를 확인한다."
+      fi
+    fi
+  elif profile_enabled data; then
+    if [[ -n "$weekly_consumer_id" ]]; then
+      weekly_consumer_status="$(docker inspect --format '{{.State.Status}}' "$weekly_consumer_id" 2>/dev/null || true)"
+      needs_action weekly-consumer-placement \
+        "데이터 서버에 구형 weekly-trend-consumer가 남아 있다 (상태=${weekly_consumer_status:-unknown})" \
+        "최신 deploy.sh를 실행해 데이터 서버의 구형 Consumer를 제거한다."
+    else
+      ok weekly-consumer-placement "데이터 서버에서 제외됨"
+    fi
+  else
+    skip weekly-consumer-ready "weekly/data 프로필이 이 호스트에 없다"
+  fi
 }
 
 timeout_seconds="${VERIFY_TIMEOUT_SECONDS:-0}"

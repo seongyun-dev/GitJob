@@ -11,7 +11,10 @@ services:
   # move it out of the data profile so a data-host rollout cannot recreate the
   # legacy bridge-network consumer (S15P21E102-265).
   weekly-trend-consumer:
-    profiles: [weekly]
+    # Compose merges sequence values across files. A plain [weekly] therefore
+    # became [data, weekly] with compose.yaml and recreated the consumer during
+    # every data deploy. Replace the inherited profile instead (S15P21E102-267).
+    profiles: !override [weekly]
 
   collector:
     restart: unless-stopped
