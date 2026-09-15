@@ -62,9 +62,35 @@ non-Historical cache/checkpoint contract를 사용하며 Historical required-hea
 
 ## 실행 경계
 
-실제 Weekly Parquet read-back 행은 `build_weekly_candidates()`에 넣어
-deterministic event-count descending / repo-id tie-break top-N 후보로 만든다.
-후보 JSON을 직접 사용할 때는 `repo-activity-weekly-candidates/v1`를 사용한다.
+### 1단계 — candidate 생성 (S15P21E102-276)
+
+후보 JSON은 손으로 만들지 않는다. Weekly Parquet을 직접 읽는 것은 Spark가 하고,
+`repo-activity-weekly-candidates/v1` 계약은 `build_weekly_candidates()` 한 곳에서만
+적용된다. Spark 이미지는 `Infra/spark`만 담고 있어 `github` 패키지를 import할 수
+없기 때문에 두 단계로 나뉜다.
+
+한 주가 수백만 행이므로 select/sort/limit은 Spark 안에서 끝나고 driver로는
+`--limit` 만큼만 내려온다.
+
+```bash
+# (1) bounded Top-N read-back — Spark
+compose exec -T spark-worker /opt/spark/bin/spark-submit   /opt/gitjob/spark/jobs/weekly_candidate_export.py   --input  hdfs:///gitjob/parquet/github/repo_activity_weekly/period={YYYY-MM}/snapshot={snapshot-id}/repo_activity_weekly   --week   {YYYY-MM-DD}   --limit  1500   --output /tmp/weekly-candidate-rows.json
+
+# (2) 계약 적용 — AI
+PYTHONPATH=AI python -m github.weekly_candidate_export_cli   --rows   .local/weekly-artifact/weekly-candidate-rows-{YYYY-MM-DD}.json   --output .local/weekly-artifact/weekly-candidates-{YYYY-MM-DD}.json   --candidate-pool-limit 1500   --manifest-uri hdfs:///gitjob/parquet/github/repo_activity_weekly/period={YYYY-MM}/snapshot={snapshot-id}/repo_activity_weekly/week={YYYY-MM-DD}/_SUCCESS.json   --webhdfs-url {WEBHDFS_URL}
+```
+
+`--manifest-uri`는 기본적으로 필수다. `_SUCCESS.json`이 그 주가 끝났다고 말하는
+유일한 근거이고, 이것을 건너뛰면 절반만 쓰인 snapshot에서 후보 pool이 만들어져도
+resolver는 알아차릴 방법이 없다. 이미 다른 경로로 검증한 주에만
+`--skip-manifest-check`를 쓴다.
+
+`--candidate-pool-limit`은 `WEEKLY_CANDIDATE_POOL_LIMIT`으로도 준다. 1500은
+`S15P21E102-274`의 pool 기본값과 같은 값이며, resolver는 그 pool 안에서 valid 100을
+채운다. 후보 생성기는 NOT_FOUND나 artifact 유무를 판단하지 않는다 — 그것은
+resolver의 몫이다.
+
+### 2단계 — resolver 실행
 
 ```powershell
 $env:PYTHONPATH='AI'
