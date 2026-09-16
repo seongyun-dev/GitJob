@@ -1,12 +1,11 @@
 import { Link, useParams } from 'react-router'
 import type { EvidenceLevelGroup } from '@/features/evidence/api/technologiesApi'
+import { EvidenceLevelGroups } from '@/features/evidence/components/EvidenceLevelGroups'
 import {
   profileErrorMessage,
   useTechnologyEvidence,
 } from '@/features/evidence/hooks/useTechnologyProfile'
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
-import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
-import { EvidenceRow } from '@/shared/ui/EvidenceRow'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
@@ -28,9 +27,6 @@ import { StateCard } from '@/shared/ui/StateCard'
  *
  * 이 화면의 기능 ownership은 S15P21E102-138(이윤서)에 있다. 시각 적용까지만 한다.
  */
-const PROOF_COLUMNS = ['유형', '파일 · 위치', 'LEVEL 기여', '기여자', ''] as const
-const PROOF_TEMPLATE = '52px minmax(0,436fr) 150px 130px 70px'
-
 export function EvidenceDetailPage() {
   const { techId } = useParams()
   const evidence = useTechnologyEvidence(techId)
@@ -74,16 +70,14 @@ export function EvidenceDetailPage() {
 
       <div className="gj-split mt-4">
         <div className="overflow-hidden rounded-[18px] border border-brand-line bg-white shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
-          <div
-            className="hidden gap-4 border-b border-brand-line px-[22px] py-3 text-[10.5px] font-extrabold tracking-[0.12em] text-brand-faint lg:grid"
-            style={{ gridTemplateColumns: PROOF_TEMPLATE }}
-          >
-            {PROOF_COLUMNS.map((label, index) => (
-              <span key={label === '' ? `col-${index}` : label} className="truncate">
-                {label}
-              </span>
-            ))}
-          </div>
+          {/*
+            컬럼 헤더를 뺐다 · 티켓 S15P21E102-252.
+
+            `유형 · 파일·위치 · LEVEL 기여 · 기여자` 다섯 열을 알리는 줄이었는데, 본문이
+            Level → 저장소 → 파일 로 접히는 구조가 되면서 **그런 열이 더는 없다.** 없는
+            열을 가리키는 머리글은 안내가 아니라 오독의 원인이다. 각 값이 무엇인지는
+            배지와 묶음 제목이 자기 자리에서 말한다.
+          */}
           <div className="p-4">
             <LevelGroups
               loading={evidence.isPending}
@@ -172,54 +166,5 @@ function LevelGroups({
     )
   }
 
-  return (
-    <div className="grid gap-5">
-      {levels.map((group) => (
-        <section key={group.level}>
-          <header className="flex flex-wrap items-baseline gap-2">
-            <EvidenceLevel level={group.level} />
-            <span className="text-[12.5px] text-brand-faint">{group.rules.join(' · ')}</span>
-            <span className="ml-auto text-[12px] text-brand-faint">
-              근거 {group.evidenceCount.toLocaleString('ko-KR')}건 · 파일 {group.files.length}개
-            </span>
-          </header>
-
-          <ul className="mt-2 grid gap-1.5">
-            {group.files.map((file) => {
-              const firstLine = file.lines.at(0)
-              return (
-                <li key={`${file.repository}:${file.filePath}`}>
-                  {/*
-                    permalink 가 없으면 EvidenceRow 가 null 을 반환한다. V13 이전
-                    분석은 저장소 이름을 안 남겨 링크를 만들 수 없다. 그때는 경로만
-                    보여준다 -- 근거가 없는 것과 링크가 없는 것은 다르다.
-                  */}
-                  {file.permalink === null || firstLine === undefined ? (
-                    <span className="font-evidence text-xs text-brand-faint">{file.filePath}</span>
-                  ) : (
-                    <EvidenceRow
-                      repo={file.repository ?? ''}
-                      filePath={file.filePath}
-                      lineStart={firstLine.startLine}
-                      permalink={file.permalink}
-                    />
-                  )}
-                  <span className="ml-1 text-[11px] text-brand-faint">
-                    {file.lines.map((line) => `${line.factType} L${line.startLine}`).join(' · ')}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-
-          {group.truncated && (
-            <p className="mt-1.5 text-[11px] text-tone-caution">
-              근거가 많아 상위 {group.shownCount}건만 표시합니다. 판정에는 전부 반영되어
-              있습니다.
-            </p>
-          )}
-        </section>
-      ))}
-    </div>
-  )
+  return <EvidenceLevelGroups levels={levels} />
 }
