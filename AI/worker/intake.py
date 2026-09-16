@@ -69,7 +69,13 @@ class IntakeConfig(BaseModel):
     schema_version: Literal["c-intake-config/v1"]
     job_roots: tuple[Path, ...] = Field(default=(), max_length=32)
     criteria: tuple[CohortCriteria, ...] = Field(default=(), max_length=32)
-    public_sources: tuple[PublicInputConfig, ...] = Field(default=(), max_length=4)
+    # One entry is one immutable publication, and each holds its own loaded
+    # snapshot and checkpoint, so the bound exists to keep a poll cycle's cost
+    # predictable rather than to cap how many pipelines may publish. Four was
+    # exactly the number of Historical months in flight, which left no room for
+    # the Weekly publication: a fifth entry failed validation and took the
+    # whole worker down with it, Historical polling included (S15P21E102-286).
+    public_sources: tuple[PublicInputConfig, ...] = Field(default=(), max_length=8)
     # Published job runs on HDFS (S15P21E102-220). Staged to local directories
     # before each poll and then read by the same loader as `job_roots`; see
     # `worker.job_hdfs_source`. Configuring these is an alternative to naming

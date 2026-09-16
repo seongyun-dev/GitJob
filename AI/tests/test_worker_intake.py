@@ -501,6 +501,104 @@ def test_public_configuration_is_explicit_and_offline(tmp_path):
         IntakeConfig.model_validate(raw)
 
 
+def _public_source(tmp_path, index):
+    """One sanitised publication entry; never a copy of a Production config."""
+
+    return {
+        "root_uri": f"hdfs:///gitjob/snapshot/pub-{index}",
+        "artifact_root_uris": [f"hdfs:///gitjob/snapshot/pub-{index}/artifacts"],
+        "namenode_base_url": "http://hdfs-namenode:9870/webhdfs/v1",
+        "checkpoint_dir": str(tmp_path / f"checkpoint-{index}"),
+    }
+
+
+def _public_config(tmp_path, count):
+    return IntakeConfig.model_validate(
+        {
+            "schema_version": "c-intake-config/v1",
+            "public_sources": [_public_source(tmp_path, i) for i in range(count)],
+        }
+    )
+
+
+def test_public_source_capacity_covers_historical_months_plus_weekly(tmp_path):
+    """Four Historical months no longer use up the whole allowance.
+
+    A fifth entry used to fail validation, which meant the worker could not
+    start at all and Historical polling went down with it (S15P21E102-286).
+    """
+
+    for count in (1, 4, 5, 8):
+        value = _public_config(tmp_path / str(count), count)
+
+        assert len(value.public_sources) == count
+        # Each publication keeps its own checkpoint; nothing is shared or
+        # indexed by position, so entries past the fourth behave like the rest.
+        assert len({source.checkpoint_dir for source in value.public_sources}) == count
+
+
+def test_public_source_capacity_is_still_bounded(tmp_path):
+    with pytest.raises(ValueError):
+        _public_config(tmp_path, 9)
+
+
+def test_public_sources_still_require_their_own_checkpoint(tmp_path):
+    raw = [_public_source(tmp_path, i) for i in range(5)]
+    raw[4]["checkpoint_dir"] = raw[0]["checkpoint_dir"]
+    with pytest.raises(ValueError, match="checkpoint"):
+        IntakeConfig.model_validate(
+            {"schema_version": "c-intake-config/v1", "public_sources": raw}
+        )
+
+
+def test_fifth_source_is_rejected_when_malformed_like_any_other(tmp_path):
+    raw = [_public_source(tmp_path, i) for i in range(5)]
+    raw[4]["root_uri"] = "hdfs:///gitjob/../escape"
+    with pytest.raises(ValueError):
+        IntakeConfig.model_validate(
+            {"schema_version": "c-intake-config/v1", "public_sources": raw}
+        )
+    raw = [_public_source(tmp_path, i) for i in range(5)]
+    raw[4]["artifact_root_uris"] = ["hdfs://other/gitjob/artifacts"]
+    with pytest.raises(ValueError, match="configured authority"):
+        IntakeConfig.model_validate(
+            {"schema_version": "c-intake-config/v1", "public_sources": raw}
+        )
+
+
+def test_every_configured_public_source_is_polled_independently(tmp_path):
+    """Five sinks, five reports: no position past the fourth is dropped."""
+
+    calls = []
+
+    def sink(index):
+        def poll():
+            calls.append(index)
+            return {"status": "COMPLETED" if index == 4 else "IN_PROGRESS"}
+
+        return poll
+
+    runner = IntakeRunner(
+        _public_config(tmp_path, 5),
+        job_sink=Sink(),
+        public_sinks=tuple(sink(i) for i in range(5)),
+    )
+    runner.poll_once()
+
+    assert sorted(calls) == [0, 1, 2, 3, 4]
+    assert [report["status"] for report in runner.public_reports] == [
+        "IN_PROGRESS",
+        "IN_PROGRESS",
+        "IN_PROGRESS",
+        "IN_PROGRESS",
+        "COMPLETED",
+    ]
+
+    runner.poll_once()
+    # The completed one is not polled again; the other four still are.
+    assert sorted(calls) == [0, 0, 1, 1, 2, 2, 3, 3, 4]
+
+
 def test_job_discovery_failure_does_not_block_independent_public_source(
     tmp_path, monkeypatch
 ):
