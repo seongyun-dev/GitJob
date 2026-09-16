@@ -97,6 +97,55 @@ def test_atomic_completion_replay_and_owner_scope(store):
     assert store.get_snapshot(references[0]["snapshot_id"], owner=None) is None
 
 
+def test_unsettled_ticket_is_reclaimed_when_its_request_content_changes(store):
+    """A FAILED ticket has published nothing, so new content may re-run it.
+
+    This is the recovery path for the weekly TREND ticket that a registry
+    rollout stranded: it had been FAILED for twelve attempts and every later
+    claim computed a different request_hash, so it could never be picked up
+    again (S15P21E102-283). No row is deleted and no hash is edited by hand.
+    """
+
+    ticket = claim(store, body={"analysis_id": "a1"})
+    store.fail(ticket, "SOMETHING_TRANSIENT")
+
+    reclaimed = claim(store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "moved"})
+    assert reclaimed.token is not None
+    assert reclaimed.attempt == ticket.attempt + 1
+
+    # The stored hash follows the content that actually ran, so the next
+    # attempt with the same content is an ordinary retry rather than a repeat
+    # of the same conflict.
+    store.fail(reclaimed, "AGAIN")
+    again = claim(store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "moved"})
+    assert again.token is not None
+    assert again.attempt == reclaimed.attempt + 1
+
+
+def test_completed_ticket_still_conflicts_when_content_changes(store):
+    """The guarantee that matters is kept: no caller is handed foreign results."""
+
+    ticket = claim(store, body={"analysis_id": "a1"})
+    store.complete(ticket, [artifact()])
+    with pytest.raises(IdempotencyConflict):
+        claim(store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "other"})
+
+
+def test_scope_change_conflicts_even_on_an_unsettled_ticket(store):
+    """Relaxing content never relaxes identity: kind and owner still bind."""
+
+    ticket = claim(store, body={"analysis_id": "a1"})
+    store.fail(ticket, "SOMETHING_TRANSIENT")
+    with pytest.raises(IdempotencyConflict):
+        store.claim(
+            event_id=ticket.event_id,
+            kind="ANALYSIS",
+            owner="456",
+            occurred_at=ticket.occurred_at,
+            request={"analysis_id": "a1"},
+        )
+
+
 def test_reused_event_different_content_or_owner_conflicts(store):
     ticket = claim(store)
     for owner, body in [

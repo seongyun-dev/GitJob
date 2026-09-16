@@ -18,7 +18,6 @@ from common.kafka import ConsumedMessage, ConsumerTransport
 from common.webhdfs import WebHdfsError
 from github.public_analysis import PublicBatchResult
 from trend.archive import (
-    ARCHIVE_TREND_ALGORITHM_VERSION,
     ArchiveActivityMetadata,
     ArchivePeriodInput,
     ArchiveTrendResult,
@@ -381,13 +380,20 @@ class WeeklyActivityConsumer:
                 kind="TREND",
                 owner=None,
                 occurred_at=envelope.occurred_at.astimezone(UTC),
+                # Only what A published: the week, and the bytes it published
+                # for that week. `registry_version` used to be in here, but it
+                # is resolved from whichever registry row is CURRENT at
+                # processing time, so a registry change turned the same Kafka
+                # record into a different request and the ticket could never be
+                # claimed again (S15P21E102-283). `include_partial` and
+                # `algorithm_version` are the same kind of value — how C
+                # computes, not what A sent — and they are already recorded
+                # where they belong, in the artifact stream key and the
+                # archived Trend result.
                 request={
                     **identity,
                     "manifest_uri": payload["manifest_uri"],
                     "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                    "include_partial": self.include_partial,
-                    "registry_version": self.registry.registry_version,
-                    "algorithm_version": ARCHIVE_TREND_ALGORITHM_VERSION,
                 },
             )
             if ticket.status == "COMPLETED":
@@ -437,7 +443,16 @@ class WeeklyActivityConsumer:
             if not self._fail_owned(ticket, "WEEKLY_ACTIVITY_RETRY"):
                 return self._count(Outcome.RETRY)
             return self._count(Outcome.RETRY)
-        except (ValueError, TypeError, KeyError, IdempotencyConflict):
+        # Must precede the ValueError clause: IdempotencyConflict subclasses it.
+        # A conflict means the store refused to hand us the ticket, so nothing
+        # was computed — REJECTED would commit the offset and drop the event
+        # silently, which is how the 2026-03-02 week was lost. RETRY leaves the
+        # record uncommitted and exits, so the failure is loud and the event
+        # survives (S15P21E102-283).
+        except IdempotencyConflict:
+            self._fail_owned(ticket, "WEEKLY_ACTIVITY_IDEMPOTENCY_CONFLICT")
+            return self._count(Outcome.RETRY)
+        except (ValueError, TypeError, KeyError):
             if not self._fail_owned(ticket, "WEEKLY_ACTIVITY_INVALID_INPUT"):
                 return self._count(Outcome.RETRY)
             return self._count(Outcome.REJECTED)

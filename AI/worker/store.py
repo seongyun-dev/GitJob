@@ -253,27 +253,37 @@ class ComputeStore:
                 "FROM c_compute.event WHERE event_id = %s FOR UPDATE",
                 (event_id,),
             ).fetchone()
-            if (
-                row["request_hash"] != request_hash
-                or row["owner"] != (owner or "")
-                or row["kind"] != kind
-            ):
+            if row["owner"] != (owner or "") or row["kind"] != kind:
+                raise IdempotencyConflict("event ID already has a different scope")
+            settled = row["state"] == "COMPLETED" or (
+                row["state"] == "RUNNING" and row["lease_alive"]
+            )
+            # A request_hash mismatch only misleads a caller that is about to be
+            # handed an outcome it did not ask for: a COMPLETED ticket returns
+            # its `results` as the answer to *this* request, and a live RUNNING
+            # attempt is already producing them. Those stay conflicts.
+            #
+            # An unsettled ticket — FAILED, or RUNNING whose lease has expired —
+            # has published nothing, so re-running it under the new content is
+            # the correct outcome rather than an error. Refusing it instead
+            # strands the event permanently: the row can never be reclaimed and
+            # the only way out is deleting it by hand (S15P21E102-283).
+            if settled and row["request_hash"] != request_hash:
                 raise IdempotencyConflict(
                     "event ID already has different content or scope"
                 )
             if inserted:
                 ticket_token = str(token)
-            elif row["state"] == "COMPLETED" or (
-                row["state"] == "RUNNING" and row["lease_alive"]
-            ):
+            elif settled:
                 ticket_token = None
             else:
                 row = conn.execute(
                     """UPDATE c_compute.event SET state = 'RUNNING', lease_token = %s,
                        lease_until = clock_timestamp() + %s * interval '1 second',
-                       attempt = attempt + 1, error_code = NULL, updated_at = clock_timestamp()
+                       attempt = attempt + 1, error_code = NULL, request_hash = %s,
+                       updated_at = clock_timestamp()
                        WHERE event_id = %s RETURNING *""",
-                    (token, self.lease_seconds, event_id),
+                    (token, self.lease_seconds, request_hash, event_id),
                 ).fetchone()
                 ticket_token = str(token)
             return Ticket(

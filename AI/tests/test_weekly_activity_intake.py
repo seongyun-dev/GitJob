@@ -20,6 +20,7 @@ from trend.contracts import TrendStatus
 from worker.store import (
     Artifact,
     ComputeStore,
+    IdempotencyConflict,
     _public_payload_covers_week,
     apply_migration,
     digest,
@@ -270,7 +271,15 @@ def test_normal_completion_stores_one_trend_per_active_technology(monkeypatch):
     assert value.run_once() == (Outcome.COMPLETED,)
     assert len(store.artifacts) == 1
     assert "public_snapshot_id" not in store.request
-    assert store.request["registry_version"] == "registry"
+    # The claimed request is A's event and nothing else. Anything resolved at
+    # processing time is deliberately absent, or the same Kafka record stops
+    # being the same request when C's configuration moves (S15P21E102-283).
+    assert set(store.request) == {
+        "dataset_snapshot_id",
+        "week_start",
+        "manifest_uri",
+        "manifest_sha256",
+    }
     assert value.transport.commits == 1
 
 
@@ -893,3 +902,62 @@ def test_postgres_late_week_advances_head_without_changing_event_identity():
         "2026-08-24",
     ]
     assert payload["status"] == TrendStatus.READY.value
+
+
+def test_registry_change_leaves_the_claimed_request_identical(monkeypatch):
+    """The whole bug in one assertion: same event, two registries, one request.
+
+    `registry_version` used to travel in the claim request, so a registry
+    rollout gave the 2026-03-02 record a different request_hash than the
+    ticket it had already created, and the store refused it forever.
+    """
+
+    first, first_store = _working(monkeypatch)
+    assert first.run_once() == (Outcome.COMPLETED,)
+
+    second, second_store = _working(monkeypatch)
+    second.registry = SimpleNamespace(
+        registry_version="registry-rolled-forward",
+        technologies=second.registry.technologies,
+    )
+    second.run_once()
+
+    # What the run does after the claim is a separate question — the public
+    # snapshot is still bound to the old registry here, so it is allowed to
+    # disagree. What must not change is the identity the ticket was claimed
+    # under.
+    assert first_store.request == second_store.request
+
+
+def test_idempotency_conflict_retries_instead_of_committing_the_offset(monkeypatch):
+    """A conflict means we never owned the ticket, so nothing was computed.
+
+    Committing here is what silently dropped the week: REJECTED advances the
+    offset, and the record is then unreachable without an offset reset.
+    """
+
+    value, store = _working(monkeypatch)
+
+    def conflicted(**kwargs):
+        raise IdempotencyConflict("event ID already has different content or scope")
+
+    store.claim = conflicted
+    assert value.run_once() == (Outcome.RETRY,)
+    assert value.transport.commits == 0
+    assert not hasattr(store, "artifacts")
+    # No ticket was owned, so there is nothing to mark failed either.
+    assert store.failed == []
+
+
+def test_conflict_is_not_swallowed_by_the_permanent_reject_clause(monkeypatch):
+    """IdempotencyConflict subclasses ValueError; clause order is the fix."""
+
+    import inspect
+
+    from worker.weekly_activity_intake import WeeklyActivityConsumer as _Consumer
+
+    source = inspect.getsource(_Consumer.handle)
+    assert source.index("except IdempotencyConflict:") < source.index(
+        "except (ValueError, TypeError, KeyError):"
+    )
+    assert "IdempotencyConflict)" not in source
