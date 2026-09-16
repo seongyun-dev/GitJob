@@ -31,6 +31,24 @@ export interface TechnologyCandidate {
   lastSeenAt: string
 }
 
+/** 후보 하나의 관찰 기록. 합계가 어느 저장소에서 나왔는지 되짚는 근거다. */
+export interface CandidateObservation {
+  /** GitHub 저장소 식별자. 저장소 이름은 이 응답에 없다(표시는 화면이 판단한다). */
+  repositoryId: string
+  scope: string | null
+  occurrenceCount: number
+  observedAt: string
+}
+
+/** 목록 항목에 결정 이력과 관찰을 더한 것. */
+export interface TechnologyCandidateDetail extends TechnologyCandidate {
+  /** 승격된 경우에만 값이 있다. */
+  promotedTechId: string | null
+  decidedAt: string | null
+  decisionNote: string | null
+  observations: CandidateObservation[]
+}
+
 /** 지금 판정에 쓰이는 버전과, 승격이 쌓이고 있는 초안 버전. */
 export interface RegistryStatus {
   current: string | null
@@ -43,6 +61,12 @@ export interface PromotionResult {
   registry: RegistryStatus
 }
 
+/** 레지스트리에 이미 있는 기술 하나. 승격 화면의 선택지다. */
+export interface TechnologyOption {
+  techId: string
+  displayName: string
+}
+
 export interface PromoteInput {
   candidateId: number
   techId?: string
@@ -51,8 +75,40 @@ export interface PromoteInput {
   note?: string
 }
 
-export function fetchTechnologyCandidates(limit: number): Promise<TechnologyCandidate[]> {
-  return get<TechnologyCandidate[]>(`${BASE}?limit=${limit}`)
+/**
+ * 목록이 보여 줄 묶음. BE `CandidateFilter` 와 같은 이름이다.
+ *
+ * 기본이 `UNDECIDED` 인 이유는 이 화면이 처리할 일이 쌓이는 큐이기 때문이다.
+ * 결정이 끝난 것도 사용자 수로 정렬되므로, 섞어 두면 가장 많이 쓰이는 기술이
+ * 맨 위에 영구히 박혀 정작 볼 일이 아래로 밀린다.
+ */
+export type CandidateFilter = 'UNDECIDED' | 'PROMOTED' | 'REJECTED' | 'ALL'
+
+export function fetchTechnologyCandidates(
+  limit: number,
+  status: CandidateFilter,
+): Promise<TechnologyCandidate[]> {
+  return get<TechnologyCandidate[]>(`${BASE}?limit=${limit}&status=${status}`)
+}
+
+/**
+ * 한 후보의 결정 이력과 근거 관찰 (티켓 141).
+ *
+ * 목록이 주는 합계(사용자·저장소·선언)가 어디서 나온 값인지 되짚는 자리다.
+ * 관찰은 최근 것부터 오며 서버가 개수를 제한한다.
+ */
+export function fetchCandidateDetail(candidateId: number): Promise<TechnologyCandidateDetail> {
+  return get<TechnologyCandidateDetail>(`${BASE}/${candidateId}`)
+}
+
+/**
+ * 승격할 때 붙일 수 있는 기술 목록.
+ *
+ * 초안이 열려 있으면 초안을, 없으면 CURRENT를 읽는다. 한 검토 세션에서 방금 새로
+ * 등록한 기술에도 바로 좌표를 더 붙일 수 있어야 하기 때문이다.
+ */
+export function fetchTechnologyOptions(): Promise<TechnologyOption[]> {
+  return get<TechnologyOption[]>(`${BASE}/registry/technologies`)
 }
 
 export function fetchRegistryStatus(): Promise<RegistryStatus> {

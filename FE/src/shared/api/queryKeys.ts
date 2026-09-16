@@ -43,7 +43,11 @@ export const queryKeys = {
 
   // 관리자 — 후보 목록과 레지스트리 상태. 승격·거절이 둘 다 바꾸므로
   // 한 뮤테이션이 두 키를 모두 무효화한다.
-  technologyCandidates: (limit: number) => ['admin', 'technology-candidates', limit] as const,
+  technologyCandidates: (limit: number, status: string) =>
+    ['admin', 'technology-candidates', limit, status] as const,
+  technologyCandidateDetail: (candidateId: number) =>
+    ['admin', 'technology-candidates', 'detail', candidateId] as const,
+  technologyOptions: () => ['admin', 'technologies'] as const,
   registryStatus: () => ['admin', 'registry'] as const,
 
   // 관리자 모니터링 — 티켓 210. `admin` 접두를 공유하므로 후보 검토의 뮤테이션이

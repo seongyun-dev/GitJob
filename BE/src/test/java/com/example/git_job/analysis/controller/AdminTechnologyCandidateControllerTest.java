@@ -16,6 +16,8 @@ import com.example.git_job.analysis.store.TechnologyCandidateStore.Detail;
 import com.example.git_job.analysis.store.TechnologyCandidateStore.Observation;
 import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService;
+import com.example.git_job.analysis.service.TechnologyCandidateAdminService.CandidateFilter;
+import com.example.git_job.analysis.store.RegistryDraftStore;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService.CandidateDetail;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService.RegistryStatus;
 import com.example.git_job.auth.domain.Role;
@@ -70,7 +72,7 @@ class AdminTechnologyCandidateControllerTest {
     @Test
     @DisplayName("목록은 후보의 판단 근거를 그대로 내려준다")
     void theListCarriesTheNumbersTheDecisionTurnsOn() throws Exception {
-        when(admin.list(50)).thenReturn(List.of(new Ranked(
+        when(admin.list(50, CandidateFilter.UNDECIDED)).thenReturn(List.of(new Ranked(
                 7L, "MAVEN", "com.h2database:h2", "TEST", "NEW", 9, 12, 30, SEEN, SEEN)));
 
         mockMvc.perform(get(BASE))
@@ -183,6 +185,21 @@ class AdminTechnologyCandidateControllerTest {
         mockMvc.perform(post(BASE + "/registry/publish"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ADMIN-409-2"));
+    }
+
+    @Test
+    @DisplayName("승격 화면이 고를 기술 목록은 레지스트리 하위 경로로 나간다")
+    void theTechnologyOptionsAreServedUnderTheRegistry() throws Exception {
+        // 경로를 여기서 붙잡아 둔다. 클래스 매핑이 /technology-candidates 라
+        // 메서드에 `/technologies` 만 적으면 후보 하위로 붙고, 보안이 라우팅보다
+        // 먼저 막는 탓에 인증 없이 부르면 404 가 401 로 보여 눈치채기 어렵다.
+        when(admin.technologyOptions()).thenReturn(List.of(
+                new RegistryDraftStore.TechnologyOption("vuejs", "Vue.js")));
+
+        mockMvc.perform(get(BASE + "/registry/technologies"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].techId").value("vuejs"))
+                .andExpect(jsonPath("$.data[0].displayName").value("Vue.js"));
     }
 
     @Test

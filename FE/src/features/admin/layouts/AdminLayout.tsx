@@ -1,4 +1,5 @@
-import { NavLink, Outlet, Link } from 'react-router'
+import { NavLink, Outlet, Link, Navigate } from 'react-router'
+import { useMe } from '@/features/auth/hooks/useMe'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
@@ -12,10 +13,12 @@ import { BrandLogo } from '@/shared/ui/BrandLogo'
  * 이 레이아웃이 그 헤더를 갖는다. Monitoring이 기본 진입 화면이고 Technology Registry는
  * 서브 관리자 화면이며, 둘이 서로 오갈 수 있어야 한다는 것이 이 티켓의 요구다.
  *
- * 접근 제어는 하지 않는다. 라우트를 숨겨도 보호가 되지 않고, 실제 제한은 BE가
- * `/api/v1/admin/**`를 ADMIN으로 막아서 한다(`SecurityConfig`). 권한이 없으면 화면이
- * 데이터를 못 받고 그 사실을 표시한다 — 기존 `admin/technology-candidates` 라우트가
- * 세운 판단을 그대로 따른다.
+ * **보호는 여전히 BE가 한다.** 라우트를 숨겨도 보호가 되지 않고, 실제 제한은
+ * `SecurityConfig`가 `/api/v1/admin/**`를 ADMIN으로 막아서 한다. 여기서 세션을 보는 것은
+ * 안내를 위해서다 — 세션이 없거나 만료된 채로 들어오면 운영 화면이 통째로 그려진 뒤
+ * 조회가 401이 되어 "세션이 없거나 만료되었습니다"만 남는다. 무엇을 해야 하는지가 없는
+ * 화면이다. 그래서 세션이 없으면 관리자 로그인으로 보내고, 로그인했지만 권한이 없으면
+ * 그 사실을 말한다. 이 판단은 안내일 뿐이라 우회해도 데이터는 나오지 않는다.
  *
  * 배경과 셸 치수는 `AppLayout`과 같은 값을 쓴다. 관리자 화면이라고 다른 제품처럼 보일
  * 이유는 없다.
@@ -82,13 +85,54 @@ function AdminHeader() {
 }
 
 export function AdminLayout() {
+  const { data: me } = useMe()
+
+  // 확인 중에는 판단하지 않는다. 여기서 로그인으로 보내면 새로고침마다 관리자가
+  // 로그인 화면을 한 번씩 스쳐 지나간다.
+  if (me === undefined) {
+    return (
+      <AdminShell>
+        <p className="py-24 text-center text-[13.5px] text-brand-faint">확인하는 중…</p>
+      </AdminShell>
+    )
+  }
+
+  if (me === null) {
+    return <Navigate to="/admin/login" replace />
+  }
+
+  if (me.role !== 'ADMIN') {
+    return (
+      <AdminShell>
+        <div className="py-24 text-center">
+          <p className="text-[17px] font-[750] text-brand-ink">관리자 화면입니다</p>
+          <p className="mt-2 text-[13.5px] text-brand-muted">
+            이 계정에는 권한이 없습니다. 관리자 계정으로 로그인해 주세요.
+          </p>
+          <Link
+            to="/admin/login"
+            className="mt-5 inline-block rounded-xl bg-linear-to-br from-brand-600 to-brand-400 px-5 py-2.5 text-[13.5px] font-bold text-white"
+          >
+            관리자 로그인
+          </Link>
+        </div>
+      </AdminShell>
+    )
+  }
+
+  return (
+    <AdminShell>
+      <Outlet />
+    </AdminShell>
+  )
+}
+
+function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-full text-brand-ink" style={{ background: ADMIN_BACKDROP }}>
       <AdminHeader />
       {/* 앱 셸(1520)이 아니라 관리자 디자인의 1328. 이유는 `index.css` `.gj-shell-admin`. */}
-      <main className="gj-shell-admin">
-        <Outlet />
-      </main>
+      <main className="gj-shell-admin">{children}</main>
     </div>
   )
 }

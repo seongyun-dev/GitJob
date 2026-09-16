@@ -209,9 +209,14 @@ class TechnologyCandidateStoreTest {
                 List.of(candidate("org.example:rejected", null, 1)), SEEN);
 
         assertEquals(2, users("org.example:rejected"));
-        assertTrue(store.topCandidates(100).stream()
+        assertTrue(store.topCandidates(100, List.of("NEW", "REVIEWING")).stream()
                         .noneMatch(c -> c.coordinate().equals("org.example:rejected")),
-                "거부한 후보가 기본 목록에 남아 있다");
+                "거부한 후보가 미결정 목록에 남아 있다");
+        // 빠지는 것이지 사라지는 것이 아니다. 거부 사유를 다시 읽을 수 없으면
+        // 다음 사람이 같은 판단을 아무것도 없이 처음부터 다시 한다.
+        assertTrue(store.topCandidates(100, List.of("REJECTED")).stream()
+                        .anyMatch(c -> c.coordinate().equals("org.example:rejected")),
+                "거부한 후보를 따로 골라도 볼 수 없다");
     }
 
     @Test
@@ -238,8 +243,8 @@ class TechnologyCandidateStoreTest {
     }
 
     @Test
-    @DisplayName("기본 목록은 사용자 수 내림차순이다")
-    void theDefaultListIsRankedByPeopleAffected() {
+    @DisplayName("같은 날 관찰된 후보끼리는 사용자 수 내림차순이다")
+    void candidatesSeenOnTheSameDayAreRankedByPeopleAffected() {
         givenJob("an_rank1", 801L, "repo_rank1");
         givenJob("an_rank2", 802L, "repo_rank2");
         givenJob("an_rank3", 803L, "repo_rank3");
@@ -250,13 +255,37 @@ class TechnologyCandidateStoreTest {
         store.record("an_rank1", 801L, "repo_rank1",
                 List.of(candidate("org.example:rare", null, 99)), SEEN);
 
-        var ranked = store.topCandidates(100).stream()
+        var ranked = store.topCandidates(100, List.of("NEW", "REVIEWING")).stream()
                 .filter(c -> c.coordinate().startsWith("org.example:pop")
                         || c.coordinate().startsWith("org.example:rare"))
                 .toList();
 
         assertEquals("org.example:popular", ranked.get(0).coordinate());
         assertEquals(3, ranked.get(0).distinctUserCount());
+    }
+
+    @Test
+    @DisplayName("목록은 최근 관찰이 먼저다")
+    void theListPutsTheMostRecentlySeenFirst() {
+        // 사용자 수만으로 줄 세우면 오래전에 한 번 크게 번진 좌표가 계속 위에
+        // 남는다. 관리자가 지금 판단할 수 있는 것은 이번 주에 올라온 쪽이다.
+        givenJob("an_old", 901L, "repo_old");
+        givenJob("an_new", 902L, "repo_new");
+        givenJob("an_old2", 903L, "repo_old2");
+        store.record("an_old", 901L, "repo_old",
+                List.of(candidate("org.example:long-ago", null, 1)), SEEN);
+        store.record("an_old2", 903L, "repo_old2",
+                List.of(candidate("org.example:long-ago", null, 1)), SEEN);
+        store.record("an_new", 902L, "repo_new",
+                List.of(candidate("org.example:just-now", null, 1)), SEEN.plusSeconds(86400));
+
+        var ranked = store.topCandidates(100, List.of("NEW", "REVIEWING")).stream()
+                .map(c -> c.coordinate())
+                .filter(c -> c.startsWith("org.example:long-ago") || c.startsWith("org.example:just-now"))
+                .toList();
+
+        // 사용자 수는 long-ago 가 둘, just-now 가 하나다. 그런데도 최근 것이 앞이다.
+        assertEquals(List.of("org.example:just-now", "org.example:long-ago"), ranked);
     }
 
     @Test

@@ -6,7 +6,9 @@ import com.example.git_job.analysis.controller.dto.PromotionResponse;
 import com.example.git_job.analysis.controller.dto.TechnologyCandidateDetailResponse;
 import com.example.git_job.analysis.controller.dto.TechnologyCandidateResponse;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService;
+import com.example.git_job.analysis.service.TechnologyCandidateAdminService.CandidateFilter;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService.RegistryStatus;
+import com.example.git_job.analysis.store.RegistryDraftStore;
 import com.example.git_job.global.response.ApiResponse;
 import com.example.git_job.global.security.AuthenticatedUser;
 import java.util.List;
@@ -43,12 +45,20 @@ public class AdminTechnologyCandidateController {
 
     private final TechnologyCandidateAdminService admin;
 
-    /** Ranked by how many distinct users a candidate would serve. Rejected ones are hidden. */
+    /**
+     * Ranked by how many distinct users a candidate would serve.
+     *
+     * <p>Undecided by default: the screen is a queue, and rows that were already
+     * decided rank by the same user count and would sit on top of it forever. The
+     * other filters make those reachable -- a rejection carries the reason it was
+     * rejected, and that has to be readable when the coordinate comes back.</p>
+     */
     @GetMapping
     public ResponseEntity<ApiResponse<List<TechnologyCandidateResponse>>> list(
-            @RequestParam(defaultValue = "50") int limit
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "UNDECIDED") CandidateFilter status
     ) {
-        List<TechnologyCandidateResponse> rows = admin.list(limit).stream()
+        List<TechnologyCandidateResponse> rows = admin.list(limit, status).stream()
                 .map(TechnologyCandidateResponse::from)
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(rows));
@@ -66,6 +76,22 @@ public class AdminTechnologyCandidateController {
     ) {
         return ResponseEntity.ok(ApiResponse.success(
                 TechnologyCandidateDetailResponse.from(admin.detail(candidateId))));
+    }
+
+    /**
+     * Technologies a coordinate can be attached to (the promotion picker).
+     *
+     * <p>Most promotions are not a new technology. `@vue/tsconfig` and `vue-tsc` are both
+     * Vue.js, which is already registered, so the screen has to show what exists before
+     * it offers to create something new -- otherwise a typo silently registers a
+     * duplicate technology.</p>
+     */
+    // 레지스트리 하위에 둔다. 후보가 아니라 레지스트리가 가진 것이고, 이 컨트롤러의
+    // 클래스 매핑이 /technology-candidates 라 `/technologies` 로 두면 후보의 하위
+    // 자원처럼 읽힌다.
+    @GetMapping("/registry/technologies")
+    public ResponseEntity<ApiResponse<List<RegistryDraftStore.TechnologyOption>>> technologies() {
+        return ResponseEntity.ok(ApiResponse.success(admin.technologyOptions()));
     }
 
     /** Which version analyses use now, and which one promotions are accumulating in. */

@@ -78,6 +78,8 @@ public enum ErrorCode {
     // 읽으면 누가 어떻게 처리했는지 그대로 보인다.
     TECHNOLOGY_CANDIDATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ADMIN-404-1", "기술 후보를 찾을 수 없습니다."),
     TECHNOLOGY_CANDIDATE_ALREADY_DECIDED(HttpStatus.CONFLICT, "ADMIN-409-1", "이미 처리된 기술 후보입니다."),
+    TECHNOLOGY_COORDINATE_ALREADY_MAPPED(HttpStatus.CONFLICT, "ADMIN-409-3",
+            "이 좌표는 이미 다른 기술에 연결되어 있습니다. 후보를 거절해 주세요."),
     REGISTRY_DRAFT_EMPTY(HttpStatus.CONFLICT, "ADMIN-409-2", "발행할 레지스트리 초안이 없습니다."),
     INVALID_TECHNOLOGY_ID(HttpStatus.BAD_REQUEST, "ADMIN-400-1", "기술 식별자 형식이 올바르지 않습니다."),
 

@@ -1,17 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { UseMutationResult } from '@tanstack/react-query'
 import {
+  fetchCandidateDetail,
   fetchRegistryStatus,
   fetchTechnologyCandidates,
+  fetchTechnologyOptions,
   promoteCandidate,
   publishRegistryDraft,
   rejectCandidate,
 } from '@/features/admin/api/technologyCandidates'
 import type {
+  CandidateFilter,
+  CandidateObservation,
   PromoteInput,
   PromotionResult,
   RegistryStatus,
   TechnologyCandidate,
+  TechnologyCandidateDetail,
+  TechnologyOption,
 } from '@/features/admin/api/technologyCandidates'
 import { ApiError } from '@/shared/api/client'
 import { queryKeys } from '@/shared/api/queryKeys'
@@ -20,10 +26,35 @@ import { queryKeys } from '@/shared/api/queryKeys'
  * 후보 목록은 분석이 끝날 때마다 늘어나므로 캐시를 오래 잡지 않는다.
  * 증거 계열의 무한 staleTime과 다른 이유가 여기에 있다.
  */
-export function useTechnologyCandidates(limit: number) {
+export function useTechnologyCandidates(limit: number, status: CandidateFilter) {
   return useQuery({
-    queryKey: queryKeys.technologyCandidates(limit),
-    queryFn: () => fetchTechnologyCandidates(limit),
+    queryKey: queryKeys.technologyCandidates(limit, status),
+    queryFn: () => fetchTechnologyCandidates(limit, status),
+  })
+}
+
+/**
+ * 승격 폼의 기술 선택지. 드로어가 열려 있는 동안만 필요하지만 후보마다 같은 목록이라
+ * 키에 후보를 넣지 않는다 — 여러 건을 연속으로 검토할 때 매번 다시 받지 않는다.
+ * 승격이 초안에 기술을 더할 수 있으므로 `['admin']` 무효화 범위 안에 둔다.
+ */
+export function useTechnologyOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.technologyOptions(),
+    queryFn: fetchTechnologyOptions,
+    enabled,
+  })
+}
+
+/**
+ * 드로어가 열린 후보의 상세. 닫혀 있으면 부르지 않는다(`enabled`).
+ * 목록이 이미 준 합계를 다시 그리지 않고, 그 합계의 근거만 여기서 읽는다.
+ */
+export function useCandidateDetail(candidateId: number | null) {
+  return useQuery({
+    queryKey: queryKeys.technologyCandidateDetail(candidateId ?? 0),
+    queryFn: () => fetchCandidateDetail(candidateId as number),
+    enabled: candidateId !== null,
   })
 }
 
@@ -83,4 +114,12 @@ export function decisionMessage(error: unknown): string {
   return '처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
 }
 
-export type { PromotionResult, RegistryStatus, TechnologyCandidate }
+export type {
+  CandidateFilter,
+  CandidateObservation,
+  PromotionResult,
+  RegistryStatus,
+  TechnologyCandidate,
+  TechnologyCandidateDetail,
+  TechnologyOption,
+}

@@ -74,6 +74,69 @@ public class RegistryDraftStore {
         return draft;
     }
 
+    /**
+     * Whether the draft already carries this technology.
+     *
+     * <p>A draft is a copy of the current registry, so every published technology is
+     * already in it. Promoting a candidate onto one of them must not insert the
+     * technology again -- the primary key is (tech_id, registry_version), so the second
+     * promotion used to fail with a constraint violation surfaced as a 500.</p>
+     */
+    public boolean hasTechnology(String draft, String techId) {
+        Integer found = jdbc.queryForObject("""
+                SELECT count(*) FROM technology
+                 WHERE registry_version = ? AND tech_id = ?
+                """, Integer.class, draft, techId);
+        return found != null && found > 0;
+    }
+
+    /** Whether this coordinate is already mapped in the draft, to whatever technology. */
+    public boolean hasMapping(String draft, String ecosystem, String value) {
+        Integer found = jdbc.queryForObject("""
+                SELECT count(*) FROM technology_mapping
+                 WHERE registry_version = ? AND ecosystem = ? AND value = ?
+                """, Integer.class, draft, ecosystem, value);
+        return found != null && found > 0;
+    }
+
+    /**
+     * Attaches one coordinate to a technology that is already in the draft.
+     *
+     * <p>Only the mapping is written. Display name, job domains and the L0 rule belong
+     * to the technology and were decided when it was registered; re-deciding them from
+     * a coordinate would let the newest candidate rename an established technology.</p>
+     *
+     * <p>This is what makes many coordinates resolve to one technology, which is the
+     * shape the data model already had -- technology_mapping carries its own key and
+     * points at a technology.</p>
+     */
+    public void addMapping(String draft, String techId, String mappingType,
+            String ecosystem, String value, String matchMode) {
+        jdbc.update("""
+                INSERT INTO technology_mapping
+                    (registry_version, tech_id, mapping_type, ecosystem, value, match_mode, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
+                """, draft, techId, mappingType, ecosystem, value, matchMode);
+    }
+
+    /** Technologies a promotion can attach a coordinate to: the draft if one is open, else current. */
+    public List<TechnologyOption> options() {
+        String version = draftVersion().or(this::currentVersion).orElse(null);
+        if (version == null) {
+            return List.of();
+        }
+        return jdbc.query("""
+                SELECT tech_id, display_name FROM technology
+                 WHERE registry_version = ? AND status = 'ACTIVE'
+                 ORDER BY display_name
+                """, (rs, row) -> new TechnologyOption(rs.getString("tech_id"),
+                        rs.getString("display_name")), version);
+    }
+
+    /** One choice in the promotion screen's technology picker. */
+    public record TechnologyOption(String techId, String displayName) {
+    }
+
     /** Adds one technology and the mapping that recognises it, to the draft only. */
     public void addTechnology(String draft, String techId, String displayName,
             List<String> jobDomains, String mappingType, String ecosystem,

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.example.git_job.analysis.service.TechnologyCandidateAdminService.CandidateFilter;
 import com.example.git_job.analysis.store.RegistryDraftStore;
 import com.example.git_job.analysis.store.TechnologyCandidateStore;
 import com.example.git_job.analysis.store.TechnologyCandidateStore.Detail;
@@ -87,6 +88,56 @@ class TechnologyCandidateAdminServiceTest {
 
         verify(drafts).addTechnology(anyString(), eq("nestjs-core"), eq("NestJS"),
                 any(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("이미 등록된 기술로 승격하면 매핑만 더한다")
+    void promotingOntoAnExistingTechnologyOnlyAddsTheMapping() {
+        // 좌표 여럿이 기술 하나인 것이 보통이다 — @vue/tsconfig 도 vue-tsc 도 Vue.js 다.
+        // 초안은 CURRENT 의 복사본이라 이미 있는 기술을 다시 INSERT 하면 기본키
+        // (tech_id, registry_version) 에 걸려 500 이 났다.
+        candidate("NPM", "@vue/tsconfig", "NEW");
+        when(drafts.hasTechnology(DRAFT, "vuejs")).thenReturn(true);
+
+        assertEquals("vuejs", admin.promote(1L, "vuejs", "덮어쓰면 안 되는 이름",
+                List.of("BACKEND"), ADMIN, null));
+
+        verify(drafts).addMapping(DRAFT, "vuejs", "PACKAGE", "NPM", "@vue/tsconfig", "EXACT");
+        // 표시명과 직무는 기술을 등록할 때 정해진 값이다. 나중에 붙는 좌표가
+        // 다시 쓰면 자리잡은 기술의 이름이 빌드 플러그인 이름으로 바뀐다.
+        verify(drafts, never()).addTechnology(anyString(), anyString(), anyString(),
+                any(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("이미 매핑된 좌표는 다시 승격되지 않는다")
+    void aCoordinateThatIsAlreadyMappedIsRefused() {
+        // 같은 좌표가 기술 둘로 해석되면 어느 쪽이 답인지를 해석 순서가 정한다.
+        candidate("MAVEN", "org.springframework.kafka:spring-kafka", "NEW");
+        when(drafts.hasMapping(DRAFT, "MAVEN", "org.springframework.kafka:spring-kafka"))
+                .thenReturn(true);
+
+        CustomException thrown = assertThrows(CustomException.class,
+                () -> admin.promote(1L, "apache-kafka", null, null, ADMIN, null));
+
+        assertEquals(ErrorCode.TECHNOLOGY_COORDINATE_ALREADY_MAPPED, thrown.getErrorCode());
+        verify(drafts, never()).addMapping(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString());
+        verify(drafts, never()).addTechnology(anyString(), anyString(), anyString(),
+                any(), anyString(), anyString(), anyString(), anyString());
+        verify(candidates, never()).decide(anyLong(), anyString(), any(), anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("승격 화면이 고를 수 있는 기술은 초안 기준이다")
+    void technologyOptionsComeFromTheRegistry() {
+        // 방금 등록한 기술에도 바로 좌표를 더 붙일 수 있어야 하므로 CURRENT 가
+        // 아니라 초안을 본다. 어느 버전을 읽을지는 스토어가 정한다.
+        when(drafts.options()).thenReturn(List.of(
+                new RegistryDraftStore.TechnologyOption("vuejs", "Vue.js")));
+
+        assertEquals(List.of(new RegistryDraftStore.TechnologyOption("vuejs", "Vue.js")),
+                admin.technologyOptions());
     }
 
     @Test
@@ -190,11 +241,25 @@ class TechnologyCandidateAdminServiceTest {
     @DisplayName("목록 개수는 범위 안으로 맞춘다")
     void theListSizeIsClamped() {
         // 화면이 보낸 값이 그대로 LIMIT 이 되면 한 번의 요청이 테이블 전체를 끈다.
-        admin.list(100000);
-        admin.list(0);
+        admin.list(100000, CandidateFilter.UNDECIDED);
+        admin.list(0, CandidateFilter.UNDECIDED);
 
-        verify(candidates).topCandidates(200);
-        verify(candidates).topCandidates(1);
+        verify(candidates).topCandidates(200, List.of("NEW", "REVIEWING"));
+        verify(candidates).topCandidates(1, List.of("NEW", "REVIEWING"));
+    }
+
+    @Test
+    @DisplayName("결정이 끝난 후보는 따로 골라야 나온다")
+    void decidedCandidatesAreAskedForSeparately() {
+        // 기본 화면은 처리할 일이 쌓이는 큐다. 승격된 것이 거기 남으면 사용자 수로
+        // 정렬되는 탓에 가장 많이 쓰이는 기술이 맨 위에 영구히 박힌다.
+        admin.list(50, CandidateFilter.PROMOTED);
+        admin.list(50, CandidateFilter.REJECTED);
+        admin.list(50, CandidateFilter.ALL);
+
+        verify(candidates).topCandidates(50, List.of("PROMOTED"));
+        verify(candidates).topCandidates(50, List.of("REJECTED"));
+        verify(candidates).topCandidates(50, List.of("NEW", "REVIEWING", "PROMOTED", "REJECTED"));
     }
 
     @Test

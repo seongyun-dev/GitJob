@@ -3,6 +3,7 @@ package com.example.git_job.analysis.store;
 import com.example.git_job.analysis.event.TechnologyCandidate;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -155,17 +156,42 @@ public class TechnologyCandidateStore {
     }
 
     /** The admin screen's default list: most people affected first, rejected hidden. */
-    public List<Ranked> topCandidates(int limit) {
+    /**
+     * Ranked candidates in the given statuses.
+     *
+     * <p>Most recently observed first. The list is what an administrator works
+     * through in order, and a coordinate that appeared this week is the one they can
+     * still place -- the counts are on every row for weighing impact, but they are a
+     * poor order on their own: a technology decided months ago keeps its user count and
+     * would sit at the top for good.</p>
+     *
+     * <p>The caller names the statuses rather than this method assuming them. The
+     * screen is a work queue by default, but a decision that was already made has to
+     * stay reachable: a rejection records why it was rejected, and the same coordinate
+     * comes back up the ranking as more people use it. If the only way to see that
+     * note is a database query, the next reviewer makes the same judgement again from
+     * nothing.</p>
+     */
+    public List<Ranked> topCandidates(int limit, List<String> statuses) {
+        if (statuses.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(", ", Collections.nCopies(statuses.size(), "?"));
+        Object[] args = new Object[statuses.size() + 1];
+        for (int i = 0; i < statuses.size(); i++) {
+            args[i] = statuses.get(i);
+        }
+        args[statuses.size()] = limit;
         return jdbc.query("""
                 SELECT candidate_id, ecosystem, coordinate, scope, status,
                        distinct_user_count, distinct_repository_count, occurrence_count,
                        first_seen_at, last_seen_at
                 FROM technology_candidate
-                WHERE status <> 'REJECTED'
-                ORDER BY distinct_user_count DESC, distinct_repository_count DESC,
-                         coordinate
+                WHERE status IN (%s)
+                ORDER BY last_seen_at DESC, distinct_user_count DESC,
+                         distinct_repository_count DESC, coordinate
                 LIMIT ?
-                """, RANKED, limit);
+                """.formatted(placeholders), RANKED, args);
     }
 
     public Optional<Ranked> findById(long candidateId) {

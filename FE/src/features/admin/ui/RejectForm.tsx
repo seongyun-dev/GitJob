@@ -21,7 +21,7 @@ export function RejectForm({
 
   return (
     <form
-      className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3"
+      className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault()
         if (canSubmit) {
@@ -29,26 +29,32 @@ export function RejectForm({
         }
       }}
     >
-      <input
-        className="min-w-60 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
-        value={note}
-        onChange={(event) => setNote(event.target.value)}
-        placeholder="거절 사유 (예: 라이브러리가 아니라 빌드 도구)"
-      />
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        className="rounded bg-tone-danger px-3 py-1 text-sm text-white disabled:bg-neutral-300"
-      >
-        {pending ? '처리 중…' : '거절'}
-      </button>
-      <button
-        type="button"
-        onClick={onCancel}
-        className="rounded border border-neutral-300 px-3 py-1 text-sm"
-      >
-        취소
-      </button>
+      <label className="block">
+        <span className="mb-1 block text-[11.5px] text-brand-faint">거절 사유</span>
+        <input
+          className="w-full rounded-[10px] border border-brand-line px-3 py-2 text-[13px] outline-none placeholder:text-brand-faint focus:border-brand-400"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="예: 라이브러리가 아니라 빌드 도구"
+        />
+      </label>
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="flex-1 rounded-xl bg-tone-danger px-4 py-2.5 text-[13.5px] font-bold text-white disabled:bg-brand-line disabled:text-brand-faint"
+        >
+          {pending ? '처리 중…' : '거절'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border border-brand-line bg-white px-5 py-2.5 text-[13.5px] font-semibold text-brand-muted"
+        >
+          취소
+        </button>
+      </div>
     </form>
   )
 }

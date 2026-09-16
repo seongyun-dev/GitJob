@@ -53,8 +53,37 @@ public class TechnologyCandidateAdminService {
      *  the totals, so the trail only needs to be recent, not complete. */
     private static final int MAX_OBSERVATIONS = 100;
 
-    public List<Ranked> list(int limit) {
-        return candidates.topCandidates(Math.clamp(limit, 1, 200));
+    public List<Ranked> list(int limit, CandidateFilter filter) {
+        return candidates.topCandidates(Math.clamp(limit, 1, 200), filter.statuses());
+    }
+
+    /**
+     * What the list screen is asking for.
+     *
+     * <p>The screen is a queue first: an administrator opens it to decide what has not
+     * been decided. Leaving promoted rows in that queue puts the most-used technologies
+     * permanently at the top -- they rank by user count and never leave -- so the work
+     * sinks below the work that is already done.</p>
+     *
+     * <p>Decided rows are a separate view rather than gone. A rejection carries the
+     * reason it was rejected, and the candidate is not deleted: the same coordinate
+     * climbs the ranking again as more people declare it.</p>
+     */
+    public enum CandidateFilter {
+        UNDECIDED(List.of("NEW", "REVIEWING")),
+        PROMOTED(List.of("PROMOTED")),
+        REJECTED(List.of("REJECTED")),
+        ALL(List.of("NEW", "REVIEWING", "PROMOTED", "REJECTED"));
+
+        private final List<String> statuses;
+
+        CandidateFilter(List<String> statuses) {
+            this.statuses = statuses;
+        }
+
+        public List<String> statuses() {
+            return statuses;
+        }
     }
 
     /**
@@ -69,6 +98,17 @@ public class TechnologyCandidateAdminService {
         Detail candidate = candidates.findDetail(candidateId).orElseThrow(
                 () -> new CustomException(ErrorCode.TECHNOLOGY_CANDIDATE_NOT_FOUND));
         return new CandidateDetail(candidate, candidates.observations(candidateId, MAX_OBSERVATIONS));
+    }
+
+    /**
+     * Technologies a coordinate can be attached to.
+     *
+     * <p>The draft is read when one is open so that a technology registered earlier in
+     * the same review session can take further coordinates immediately.</p>
+     */
+    @Transactional(readOnly = true)
+    public List<RegistryDraftStore.TechnologyOption> technologyOptions() {
+        return drafts.options();
     }
 
     /**
@@ -96,10 +136,29 @@ public class TechnologyCandidateAdminService {
         Instant now = Instant.now();
 
         String draft = drafts.openDraft(now);
-        drafts.addTechnology(draft, id,
-                displayName == null || displayName.isBlank() ? candidate.coordinate() : displayName,
-                jobDomains == null || jobDomains.isEmpty() ? List.of("BACKEND") : jobDomains,
-                MAPPING_TYPE, candidate.ecosystem(), candidate.coordinate(), "EXACT");
+
+        // The same coordinate must not resolve to two technologies. Whoever mapped it
+        // first decided; a second promotion of the same coordinate is a mistake, not a
+        // refinement, and silently adding it would make resolution order decide the answer.
+        if (drafts.hasMapping(draft, candidate.ecosystem(), candidate.coordinate())) {
+            throw new CustomException(ErrorCode.TECHNOLOGY_COORDINATE_ALREADY_MAPPED);
+        }
+
+        if (drafts.hasTechnology(draft, id)) {
+            // Attaching to a technology that already exists -- the common case. Several
+            // coordinates are one technology (@vue/tsconfig and vue-tsc are both Vue.js),
+            // which is the shape technology_mapping was built for. Only the mapping is
+            // added: display name and job domains belong to the technology that is
+            // already registered, and letting the newest coordinate rewrite them would
+            // rename an established technology from a build plugin's name.
+            drafts.addMapping(draft, id, MAPPING_TYPE,
+                    candidate.ecosystem(), candidate.coordinate(), "EXACT");
+        } else {
+            drafts.addTechnology(draft, id,
+                    displayName == null || displayName.isBlank() ? candidate.coordinate() : displayName,
+                    jobDomains == null || jobDomains.isEmpty() ? List.of("BACKEND") : jobDomains,
+                    MAPPING_TYPE, candidate.ecosystem(), candidate.coordinate(), "EXACT");
+        }
 
         if (!candidates.decide(candidateId, "PROMOTED", id, adminUserId, note, now)) {
             // Someone decided it between the read and the write. The draft edit
