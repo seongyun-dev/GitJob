@@ -24,7 +24,7 @@ import { REPOSITORY_LIST } from '@/mocks/fixtures/repositoryList'
  *   eyebrow 11px/800 #2F5EEB ls 1.76px · 제목 34px/750 ls -1.53px · 설명 14px/23.1px
  *
  * Final에 있으나 넣지 않은 것과 이유(실제 데이터가 없으면 만들지 않는다):
- *   - 헤더 네비게이션·`마지막 분석 오늘 10:42`: 라우트와 API가 없다(AppHeader 주석).
+ *   - 헤더 네비게이션·`마지막 분석 오늘 10:42`: 라우트와 API가 없다(SiteHeader 주석).
  *   - `Fork` · `Archived` 배지와 그 안내문: BE 응답에 fork 플래그가 없고 archived·disabled
  *     구분도 없다. `analyzable` 한 값만 온다.
  *   - 저장소별 언어 여러 개: 응답의 `language`는 대표 언어 한 개다.

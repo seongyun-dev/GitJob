@@ -40,7 +40,7 @@ const ADMIN_BACKDROP = [
 function AdminHeader() {
   return (
     <header className="sticky top-0 z-10 border-b border-[rgba(224,231,241,0.9)] bg-white/[0.62] backdrop-blur-[20px]">
-      {/* 71px + 아래 테두리 1px = 확정 디자인의 헤더 높이 72px. AppHeader와 같다. */}
+      {/* 71px + 아래 테두리 1px = 확정 디자인의 헤더 높이 72px. SiteHeader와 같다. */}
       <div className="mx-auto flex h-[71px] w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
         <div className="flex shrink-0 items-center gap-3.5">
           <Link to="/" className="flex items-center" aria-label="GitJob 홈으로">
@@ -76,7 +76,7 @@ function AdminHeader() {
         {/*
           확정 디자인 헤더 오른쪽의 `admin-ops · 시스템 관리자` 자리. 로그인한 관리자
           정보를 주는 API가 없어(`GET /me` 미구현) 아무것도 렌더하지 않고 자리만 비워
-          nav 가운데 정렬을 유지한다. AppHeader와 같은 판단이다.
+          nav 가운데 정렬을 유지한다. SiteHeader와 같은 판단이다.
         */}
         <div className="hidden shrink-0 lg:block lg:w-[132px]" aria-hidden />
       </div>

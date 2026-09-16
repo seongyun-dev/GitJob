@@ -1,5 +1,5 @@
 import { Outlet } from 'react-router'
-import { AppHeader } from '@/app/layouts/AppHeader'
+import { SiteHeader } from '@/app/layouts/SiteHeader'
 import { SiteFooter } from '@/app/layouts/SiteFooter'
 
 /**
@@ -46,7 +46,7 @@ export function AppLayout() {
       className="flex min-h-full flex-col text-brand-ink"
       style={{ background: APP_BACKDROP }}
     >
-      <AppHeader />
+      <SiteHeader variant="app" />
       <main className="gj-shell flex-1">
         <Outlet />
       </main>

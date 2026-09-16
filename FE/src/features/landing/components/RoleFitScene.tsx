@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router'
+import { SiteHeader } from '@/app/layouts/SiteHeader'
 import { githubLoginUrl } from '@/features/auth/api/authUrls'
-import { LandingHeader } from '@/features/landing/components/LandingHeader'
 import { ROLE_FIT, ROLE_FITS } from '@/features/landing/roleFitData'
 import type { RoleKey } from '@/features/landing/roleFitData'
 
@@ -36,7 +36,7 @@ export function RoleFitScene({
       />
 
       <div className="relative z-[4] mx-auto flex w-full max-w-[1440px] flex-1 flex-col">
-        <LandingHeader />
+        <SiteHeader variant="landing" />
 
         <div className="grid flex-1 items-center gap-8 pt-4 pb-8 lg:grid-cols-[46%_54%] lg:gap-10 lg:pt-0 lg:pb-10">
           {/* ── 왼쪽 · 무엇을 묻는 서비스인가 ── */}
