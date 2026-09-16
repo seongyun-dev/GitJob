@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -38,6 +39,8 @@ ROW_DIGEST_FORMAT = "typed-json-v2"
 MAX_MANIFEST_BYTES = 1_048_576
 MAX_EXPORT_BYTES = 32 * 1024 * 1024
 MAX_EXPORT_ROWS = 50_000
+
+LOGGER = logging.getLogger(__name__)
 
 
 class InputAdapterUnavailable(RuntimeError):
@@ -113,7 +116,7 @@ class MountedWeeklyExportReader:
         try:
             return self.manifest_reader.read(uri, max_bytes=max_bytes)
         except (OSError, WebHdfsError) as error:
-            raise InputAdapterUnavailable("INPUT_ADAPTER_UNAVAILABLE") from error
+            raise InputAdapterUnavailable("HDFS_UNAVAILABLE") from error
 
     def rows(
         self,
@@ -355,6 +358,7 @@ class WeeklyActivityConsumer:
     include_partial: bool = False
     poll_timeout_ms: int = 1_000
     tally: dict[str, int] = field(default_factory=dict)
+    last_retry_code: str | None = field(default=None, init=False)
 
     def handle(self, message: ConsumedMessage) -> Outcome:
         ticket = None
@@ -439,21 +443,41 @@ class WeeklyActivityConsumer:
                 public_payload,
                 public_result,
             )
-        except (RetryableWeeklyError, InputAdapterUnavailable):
-            if not self._fail_owned(ticket, "WEEKLY_ACTIVITY_RETRY"):
+        except (RetryableWeeklyError, InputAdapterUnavailable) as error:
+            code = _retry_code(error)
+            self.last_retry_code = code
+            LOGGER.warning(
+                "weekly activity retry reason=%s topic=%s partition=%s offset=%s key=%r",
+                code,
+                message.topic,
+                message.partition,
+                message.offset,
+                message.key,
+            )
+            if not self._fail_owned(ticket, code):
                 return self._count(Outcome.RETRY)
             return self._count(Outcome.RETRY)
         # Must precede the ValueError clause: IdempotencyConflict subclasses it.
         # A conflict means the store refused to hand us the ticket, so nothing
         # was computed — REJECTED would commit the offset and drop the event
         # silently, which is how the 2026-03-02 week was lost. RETRY leaves the
-        # record uncommitted and exits, so the failure is loud and the event
-        # survives (S15P21E102-283).
+        # record uncommitted, so the failure is loud and the event survives
+        # the consumer reconnect (S15P21E102-283).
         except IdempotencyConflict:
-            self._fail_owned(ticket, "WEEKLY_ACTIVITY_IDEMPOTENCY_CONFLICT")
+            self.last_retry_code = "WEEKLY_ACTIVITY_IDEMPOTENCY_CONFLICT"
+            LOGGER.warning(
+                "weekly activity retry reason=%s topic=%s partition=%s offset=%s key=%r",
+                self.last_retry_code,
+                message.topic,
+                message.partition,
+                message.offset,
+                message.key,
+            )
+            self._fail_owned(ticket, self.last_retry_code)
             return self._count(Outcome.RETRY)
         except (ValueError, TypeError, KeyError):
             if not self._fail_owned(ticket, "WEEKLY_ACTIVITY_INVALID_INPUT"):
+                self.last_retry_code = "WEEKLY_ACTIVITY_FAILURE_RECORDING_FAILED"
                 return self._count(Outcome.RETRY)
             return self._count(Outcome.REJECTED)
 
@@ -540,6 +564,7 @@ class WeeklyActivityConsumer:
         return artifacts
 
     def run_once(self) -> tuple[Outcome, ...]:
+        self.last_retry_code = None
         outcomes = tuple(
             self.handle(message)
             for message in self.transport.poll(self.poll_timeout_ms)
@@ -560,6 +585,18 @@ class WeeklyActivityConsumer:
         except (OSError, RuntimeError):
             return False
         return True
+
+
+def _retry_code(error: RetryableWeeklyError | InputAdapterUnavailable) -> str:
+    code = str(error).strip()
+    if (
+        code
+        and len(code) <= 128
+        and code.replace("_", "").isalnum()
+        and code == code.upper()
+    ):
+        return code
+    return "WEEKLY_ACTIVITY_RETRY"
 
 
 def _merge_weekly_result(

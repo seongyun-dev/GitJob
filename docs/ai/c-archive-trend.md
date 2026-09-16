@@ -305,7 +305,9 @@ snapshot을 만들고 이전 head의 점을 합쳐 저장하므로 첫 주는 �
 과거 주차도 최신 누적 결과에 포함한다.
 
 - PUBLIC_GITHUB 또는 export가 아직 없거나 DB/WebHDFS가 일시 실패하면 offset을
-  commit하지 않고 프로세스가 75로 종료되어 Compose 재시작 후 재전달된다.
+  commit하지 않는다. Consumer는 `BLOCKED` readiness와 구체 오류 코드를 기록하고,
+  60초부터 최대 15분까지 지수 backoff한 뒤 Kafka consumer를 다시 연결해 미커밋
+  offset을 재전달받는다. 프로세스는 종료하지 않는다.
 - 계약 위반 입력은 소유한 claim을 `FAILED`로 닫은 후 거절 offset만 commit한다.
 - claim이 BUSY이거나 실패 상태를 기록하지 못하면 offset을 commit하지 않는다.
 - A의 Spark exporter 실행과 topic·운영 배포는 A/Infra 책임이며, 해당 export가 실제
@@ -315,4 +317,8 @@ Compose의 `data` profile은 `C_WEEKLY_EXPORT_DIR`을 read-only로 mount한다.
 `WEBHDFS_URL`, `WEBHDFS_USER`, 필요 시 `WEBHDFS_DATANODE_HOSTS`,
 `WEEKLY_ACTIVITY_CONSUMER_GROUP`, `C_WEEKLY_HDFS_ROOT`,
 `C_WEEKLY_INCLUDE_PARTIAL`, PostgreSQL/Registry 설정을 Worker와 동일하게 제공한다.
+재시도 간격은 `WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS`와
+`WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS`로 조정한다. Docker readiness는 정상 poll을
+`READY`, 재시도 대기를 `BLOCKED`로 구분하므로 입력이 준비될 때까지 `unhealthy`를
+유지하고 짧은 running 구간을 복구로 오판하지 않는다.
 코드·fixture 검증과 실제 Kafka/HDFS/DB 운영 E2E는 별도 상태로 기록한다.

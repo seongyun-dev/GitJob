@@ -1,8 +1,13 @@
-"""Runnable weekly Trend consumer; RETRY exits so Kafka redelivers on restart."""
+"""Runnable weekly Trend consumer with bounded in-process retry backoff."""
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,6 +23,11 @@ from worker.weekly_activity_intake import (
     StorePublicSnapshotSelector,
     WeeklyActivityConsumer,
 )
+
+LOGGER = logging.getLogger(__name__)
+DEFAULT_RETRY_DELAY_SECONDS = 60
+DEFAULT_MAX_RETRY_DELAY_SECONDS = 900
+DEFAULT_STATUS_FILE = "/tmp/weekly-activity-consumer-status.json"
 
 
 def _boolean(name: str, default: bool = False) -> bool:
@@ -37,6 +47,39 @@ def _datanode_routes() -> dict[str, str]:
         f"{scheme}://{source}": f"{scheme}://{target}"
         for source, target in routes.items()
     }
+
+
+def _positive_seconds(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _status_path() -> Path:
+    return Path(os.environ.get("WEEKLY_ACTIVITY_STATUS_FILE", DEFAULT_STATUS_FILE))
+
+
+def _write_status(state: str, *, reason: str | None = None) -> None:
+    value = {
+        "state": state,
+        "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    if reason is not None:
+        value["reason"] = reason
+    path = _status_path()
+    try:
+        path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as error:
+        LOGGER.error(
+            "weekly activity status write failed path=%s error=%s", path, error
+        )
 
 
 def build_from_env() -> WeeklyActivityConsumer:
@@ -72,15 +115,63 @@ def build_from_env() -> WeeklyActivityConsumer:
     )
 
 
-def main() -> int:
-    consumer = build_from_env()
+def run(
+    factory: Callable[[], WeeklyActivityConsumer] = build_from_env,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> int:
+    initial_delay = _positive_seconds(
+        "WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS", DEFAULT_RETRY_DELAY_SECONDS
+    )
+    max_delay = _positive_seconds(
+        "WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS", DEFAULT_MAX_RETRY_DELAY_SECONDS
+    )
+    if max_delay < initial_delay:
+        raise ValueError(
+            "WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS must be greater than or equal "
+            "to WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS"
+        )
+    delay = initial_delay
+    blocked = False
+    consumer: WeeklyActivityConsumer | None = factory()
+    # Invalidate a READY file left in the container's writable layer by an
+    # earlier process before the first successful Kafka poll.
+    _write_status("STARTING")
     try:
         while True:
             outcomes = consumer.run_once()
             if Outcome.RETRY in outcomes:
-                return 75
+                reason = consumer.last_retry_code or "WEEKLY_ACTIVITY_RETRY"
+                blocked = True
+                _write_status("BLOCKED", reason=reason)
+                LOGGER.warning(
+                    "weekly activity consumer blocked reason=%s retry_in_seconds=%s",
+                    reason,
+                    delay,
+                )
+                # Closing and rebuilding is intentional. kafka-python advances its
+                # local position after poll even without a commit; a fresh group
+                # member resumes from the uncommitted offset and redelivers it.
+                consumer.transport.close()
+                consumer = None
+                sleeper(delay)
+                consumer = factory()
+                delay = min(delay * 2, max_delay)
+                continue
+            if outcomes:
+                blocked = False
+                delay = initial_delay
+            # Keep BLOCKED latched across empty polls after reconnect. Readiness
+            # only recovers once the failed record has an explicit outcome.
+            if not blocked:
+                _write_status("READY")
     finally:
-        consumer.transport.close()
+        if consumer is not None:
+            consumer.transport.close()
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    return run()
 
 
 if __name__ == "__main__":

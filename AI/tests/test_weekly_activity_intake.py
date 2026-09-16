@@ -136,10 +136,9 @@ def test_unavailable_c_read_adapter_retries_without_committing_offset():
             )
         ]
     )
-    result = WeeklyActivityConsumer(
-        transport, object(), Reader(), object(), object()
-    ).run_once()
-    assert result == (Outcome.RETRY,)
+    result = WeeklyActivityConsumer(transport, object(), Reader(), object(), object())
+    assert result.run_once() == (Outcome.RETRY,)
+    assert result.last_retry_code == "INPUT_ADAPTER_UNAVAILABLE"
     assert transport.commits == 0
 
 
@@ -297,14 +296,17 @@ def test_busy_claim_and_compute_failure_retry_without_commit(monkeypatch):
     assert busy.transport.commits == 0
     failed, store = _working(monkeypatch, complete_error=RuntimeError("db"))
     assert failed.run_once() == (Outcome.RETRY,)
-    assert store.failed == ["WEEKLY_ACTIVITY_RETRY"]
+    assert store.failed == ["WEEKLY_ACTIVITY_COMPUTE_FAILED"]
+    assert failed.last_retry_code == "WEEKLY_ACTIVITY_COMPUTE_FAILED"
     assert failed.transport.commits == 0
 
 
-def test_missing_public_snapshot_retries_without_claim_or_commit(monkeypatch):
+def test_missing_public_snapshot_records_reason_without_commit(monkeypatch):
     value, store = _working(monkeypatch)
     value.public.select = lambda **kwargs: None
     assert value.run_once() == (Outcome.RETRY,)
+    assert value.last_retry_code == "PUBLIC_GITHUB_NOT_READY"
+    assert store.failed == ["PUBLIC_GITHUB_NOT_READY"]
     assert not hasattr(store, "artifacts")
     assert value.transport.commits == 0
 
@@ -519,6 +521,15 @@ def test_mounted_reader_retries_missing_export(tmp_path):
             public_snapshot_id="c-" + "0" * 64,
             public_result=SimpleNamespace(records=()),
         )
+
+
+def test_mounted_reader_distinguishes_hdfs_from_missing_export(tmp_path):
+    def unavailable(*args, **kwargs):
+        raise OSError("namenode unavailable")
+
+    reader = MountedWeeklyExportReader(SimpleNamespace(read=unavailable), tmp_path)
+    with pytest.raises(InputAdapterUnavailable, match="HDFS_UNAVAILABLE"):
+        reader.read("hdfs:///weekly/_SUCCESS.json", max_bytes=1024)
 
 
 def test_mounted_reader_rejects_manifest_extension_and_foreign_repo(tmp_path):

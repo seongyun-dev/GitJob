@@ -460,6 +460,9 @@ services:
       C_WEEKLY_EXPORT_ROOT: /state/weekly-exports
       C_WEEKLY_INCLUDE_PARTIAL: ${C_WEEKLY_INCLUDE_PARTIAL:-false}
       C_COMPUTE_LEASE_SECONDS: ${C_COMPUTE_LEASE_SECONDS:-120}
+      WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS: ${WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS:-60}
+      WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS: ${WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS:-900}
+      WEEKLY_ACTIVITY_STATUS_FILE: /tmp/weekly-activity-consumer-status.json
       POSTGRES_HOST: ${DB_HOST:-postgres}
       POSTGRES_PORT: ${DB_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-gitjob}
@@ -469,6 +472,12 @@ services:
       C_REGISTRY_VERSION: ${C_REGISTRY_VERSION:-technology-registry/v1}
     volumes:
       - ${C_WEEKLY_EXPORT_DIR:-.local/c-weekly-exports}:/state/weekly-exports:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "worker.weekly_activity_health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging: *default-logging
 
   # Consumes gitjob.repository-analysis.requests.v1 and fetches the requested

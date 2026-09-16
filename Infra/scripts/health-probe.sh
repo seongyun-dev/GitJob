@@ -33,6 +33,7 @@ WEBHOOK="${HEALTH_ALERT_WEBHOOK:-}"
 HOST_LABEL="${HEALTH_HOST_LABEL:-$(hostname)}"
 
 failures=()
+health_pending=false
 
 # --- entry point ------------------------------------------------------------
 # Only meaningful where something serves it; the data host has no nginx.
@@ -52,6 +53,7 @@ while IFS=$'\t' read -r name state health; do
   case "$state" in
     running)
       [[ "$health" == "unhealthy" ]] && failures+=("$name is unhealthy")
+      [[ "$health" == "starting" ]] && health_pending=true
       ;;
     restarting)
       failures+=("$name is restarting in a loop")
@@ -63,7 +65,7 @@ while IFS=$'\t' read -r name state health; do
 done < <(docker ps -a \
   --filter 'name=gitjob-' \
   --format '{{.Names}}\t{{.State}}\t{{if .Status}}{{.Status}}{{end}}' \
-  | sed -E 's/\t[^\t]*\(healthy\)[^\t]*$/\thealthy/; s/\t[^\t]*\(unhealthy\)[^\t]*$/\tunhealthy/; s/\t[^\t]*$/\tnone/')
+  | sed -E 's/\t[^()\t]*$/\tnone/; s/\t[^\t]*\(healthy\)[^\t]*$/\thealthy/; s/\t[^\t]*\(unhealthy\)[^\t]*$/\tunhealthy/; s/\t[^\t]*\(health: starting\)[^\t]*$/\tstarting/')
 
 # One-shot containers finish and stay exited on purpose; they are not failures.
 filtered=()
@@ -77,6 +79,14 @@ failure_count=0
 for f in "${failures[@]:-}"; do [[ -n "$f" ]] && failure_count=$((failure_count + 1)); done
 
 # --- verdict and transition -------------------------------------------------
+# A starting healthcheck is neither recovery nor failure yet. Keep the previous
+# verdict untouched so a restarting or blocked service cannot emit a green
+# recovery during Docker's start period and a red alert moments later.
+if [[ "$failure_count" -eq 0 && "$health_pending" == true ]]; then
+  echo "[$HOST_LABEL] PENDING: one or more service healthchecks are starting"
+  exit 0
+fi
+
 if [[ "$failure_count" -eq 0 ]]; then
   verdict="OK"
   summary="all services healthy"

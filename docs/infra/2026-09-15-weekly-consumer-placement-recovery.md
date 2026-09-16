@@ -47,7 +47,7 @@ WEEKLY_CONSUMER_DATANODE_HOSTS
 WEEKLY_CONSUMER_POSTGRES_HOST
 ```
 
-offset reset 기본값은 `latest`, WebHDFS 사용자는 `hadoop`, PostgreSQL port는
+offset reset 기본값은 `earliest`, WebHDFS 사용자는 `hadoop`, PostgreSQL port는
 `5432`다.
 
 ## 배포 및 확인
