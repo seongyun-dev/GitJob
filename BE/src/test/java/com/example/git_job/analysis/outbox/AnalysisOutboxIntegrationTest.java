@@ -137,7 +137,7 @@ class AnalysisOutboxIntegrationTest {
         context.registerBean(JpaTransactionManager.class, () -> transactions);
         context.registerBean(RepositoryAnalysisKafkaProperties.class,
                 () -> new RepositoryAnalysisKafkaProperties(
-                        TOPIC, "gitjob.repository-analysis.results.v1"));
+                        TOPIC, "gitjob.repository-analysis.results.v1", ""));
         context.registerBean(JsonMapper.class, () -> mapper);
         context.registerBean(AnalysisRequestService.class);
         context.refresh();

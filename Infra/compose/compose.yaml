@@ -219,6 +219,13 @@ services:
       AES_SYMMETRIC_KEY: ${AES_SYMMETRIC_KEY:?AES_SYMMETRIC_KEY must be set}
       AES_SALT: ${AES_SALT:?AES_SALT must be set}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # C Compute 내부 API. worker 서비스에는 C_COMPUTE_TOKEN 이 이미 전달되지만
+      # backend 에는 없어서, 값을 넣어도 컨테이너 안에서는 미설정으로 동작했다.
+      # 주소는 데이터 서버의 Tailscale 주소이고 토큰은 worker 와 같은 값이어야 한다.
+      # 둘 다 브라우저로 나가지 않는다 -- FE 는 BE 공개 API 만 호출한다.
+      # 비어 있으면 BE 가 C 를 호출하지 않고 계산 결과를 미준비로 내린다.
+      C_COMPUTE_URL: ${C_COMPUTE_URL:-}
+      C_COMPUTE_TOKEN: ${C_COMPUTE_TOKEN:-}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       KAFKA_TOPIC_SOURCE_EVENTS: ${KAFKA_TOPIC_SOURCE_EVENTS:-gitjob.source.events}
       KAFKA_TOPIC_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_ANALYSIS_REQUESTS:-gitjob.analysis.requests}

@@ -9,8 +9,9 @@ import type { PageParams } from '@/shared/types/api'
  *
  * 이 분리가 있어야 "깃허브를 다시 읽지 않으므로 즉시 계산됩니다"가 성립한다.
  *
- * 어느 키가 실제로 BE에 있는지는 docs/fe/shared-api-contract.md 1-4.
- * 저장소 목록·브랜치만 구현되어 있고 나머지는 아직 엔드포인트가 없다.
+ * 매칭 계열의 실제 계약은 docs/be/c-compute-public-api.md다. 그 계열의 요청에는
+ * analysisId도 snapshotId도 들어가지 않는다 -- 어느 계산 결과를 읽을지는 BE가
+ * 로그인 사용자와 저장된 목표 직무로 정한다.
  */
 
 /** 증거 계열은 analysisId가 같으면 서버 응답이 바뀌지 않는다. */
@@ -52,49 +53,44 @@ export const queryKeys = {
   monitoringTimeseries: (metric: string) =>
     ['admin', 'monitoring', 'timeseries', metric] as const,
 
-  // 매칭 계열 — target이 키의 일부
-  matching: (analysisId: string, target: unknown) => ['matching', analysisId, target] as const,
-  matchingSkillGap: (analysisId: string, target: unknown) =>
-    ['matching', analysisId, target, 'skill-gap'] as const,
-  matchingPostings: (analysisId: string, target: unknown) =>
-    ['matching', analysisId, target, 'postings'] as const,
+  // 매칭 계열 -- 서버가 만든 targetKey가 키의 일부다.
+  //
+  // analysisId를 키에서 뺐다(S15P21E102-279). 요청이 analysisId도 snapshotId도
+  // 보내지 않기 때문이다 -- 어느 계산 결과를 읽을지는 BE가 로그인 사용자와 목표
+  // 직무로 정한다. 화면이 식별자를 들고 다니면 그것을 바꿔 보내는 경로가 생긴다.
+  //
+  // -281이 같은 결론에 먼저 닿았다("경로에 analysisId가 없다"). 다른 점은 키 재료뿐이며,
+  // roleId 대신 targetKey를 쓰는 이유는 지역·경력까지 바뀌면 비교 집합이 달라지기
+  // 때문이다. targetKey는 `GET /me/target`이 주는 정규화 문자열이고(`BACKEND|서울|신입`)
+  // FE가 조합하지 않는다 -- 공백과 순서 차이로 같은 조건에 캐시가 두 벌 생긴다.
+  target: () => ['me', 'target'] as const,
+  matching: (targetKey: string) => ['matching', targetKey] as const,
+  matchingPostings: (targetKey: string, params: PageParams & { includeConditional?: boolean }) =>
+    ['matching', targetKey, 'postings', params] as const,
+  matchingPosting: (targetKey: string, jobId: string) =>
+    ['matching', targetKey, 'postings', jobId] as const,
+  matchingSkillGap: (targetKey: string) => ['matching', targetKey, 'skill-gap'] as const,
+  matchingRecommendations: (targetKey: string) =>
+    ['matching', targetKey, 'recommendations'] as const,
+  matchingWhatIf: (targetKey: string, techId: string, params: PageParams) =>
+    ['matching', targetKey, 'what-if', techId, params] as const,
+
+  // 시장 지표 -- 개인 결과가 아니라 사용자 단위로 나뉘지 않는다.
+  jobDemands: (targetRole: string, regions: readonly string[], careerLevels: readonly string[]) =>
+    ['job-demands', targetRole, regions, careerLevels] as const,
+  technologyTrends: (techId: string, periods: readonly string[]) =>
+    ['trends', 'technology', techId, periods] as const,
+  trendCompare: (source: string, techIds: readonly string[], periods: readonly string[]) =>
+    ['trends', 'compare', source, techIds, periods] as const,
 
   /*
-   * 매칭·트렌드 조회 키 · 티켓 S15P21E102-281.
+   * 아직 조회 API가 없는 화면 · 티켓 S15P21E102-281.
    *
-   * **위의 `matching*` 세 키와 왜 따로 두는가.** 저 키들은 설계 4-1이 정한 규약을
-   * `analysisId` 기준으로 옮긴 것인데, 명세 v0.1이 확정한 실제 엔드포인트는
-   * `GET /me/skill-gap`처럼 **경로에 analysisId가 없다.** 목표 직무는 서버가 들고
-   * 있고(`/me/target`), 기준 분석도 서버가 최신 것으로 정한다. 키에 넣을 수 없는 값을
-   * 키에 넣으면 호출부가 빈 문자열 같은 자리표시자를 만들게 된다.
-   *
-   * 설계 4-1의 요점("매칭은 목표 직무가 키의 일부라 직무가 바뀌면 키가 달라져 자동
-   * 무효화된다")은 그대로 지킨다 — `roleId`를 키에 넣는다. 직무를 바꾸면 `/me/target`
-   * 하나만 무효화해도 아래 키들이 전부 새 키가 되어 다시 조회된다.
-   *
-   * **`['me']` 를 통째로 무효화하지 않는다.** 그러면 증거 계열(`['me','technologies']`)
-   * 까지 함께 날아가는데, 설계 4-1은 증거가 목표 직무 변경에도 살아 있어야 한다고
-   * 정했다. 접두를 공유할 뿐 무효화 범위는 공유하지 않는다.
-   *
-   * 로그인 사용자 조회는 여기 없다 — 티켓 246이 `features/auth/hooks/useMe.ts`에
-   * `['auth','me']`로 이미 두었고, 그쪽이 BE에 구현된 유일한 `me` 조회다.
+   * 분석 이력과 기술 단건 학습 자료는 -279 범위 밖이라 엔드포인트가 없다. 키만 먼저
+   * 두는 이유는 화면이 붙을 자리를 고정해 두기 위해서이며, 지금 부르면 `HTTP-404`로
+   * 끝나고 화면은 기존 상태 카드를 그린다.
    */
-  jobRoles: () => ['job-roles'] as const,
-  myTarget: () => ['me', 'target'] as const,
-  /** 필터가 키의 일부다 — 서버가 거르므로 필터마다 다른 응답이다. */
-  jobPostings: (params: unknown) => ['job-postings', params] as const,
-  jobDemands: (roleId: string | null) => ['job-demands', roleId] as const,
-  mySkillGap: (roleId: string | null) => ['me', 'skill-gap', roleId] as const,
-  myRecommendations: (roleId: string | null) => ['me', 'recommendations', roleId] as const,
-  myLearningTarget: () => ['me', 'learning-target'] as const,
-  /** 분석 이력. 분석이 하나 더 끝나면 달라지므로 기본 staleTime이다. */
   myAnalyses: (params: unknown) => ['me', 'analyses', params] as const,
-
-  // 트렌드 계열 — 사용자와 무관한 공개 집계라 `me` 접두를 쓰지 않는다.
-  trends: () => ['trends'] as const,
-  technologyTrends: (techId: string) => ['technologies', techId, 'trends'] as const,
-
-  // 학습 지원 — 기술 단위 정적 자료. 사람이 검수해 발행하므로 자주 바뀌지 않는다.
   projectTemplates: (techId: string) => ['technologies', techId, 'project-templates'] as const,
   technologyFaqs: (techId: string) => ['technologies', techId, 'faqs'] as const,
   technologyPainTopics: (techId: string) => ['technologies', techId, 'pain-topics'] as const,

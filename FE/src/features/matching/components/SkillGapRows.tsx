@@ -1,4 +1,8 @@
-import type { SkillGapGroupFixture, SkillGapRowFixture, SkillGapVerdict } from '@/mocks/types'
+import type {
+  SkillGapGroupView,
+  SkillGapRowView,
+  SkillGapVerdict,
+} from '@/features/matching/model/view'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
 
 /**
@@ -21,7 +25,7 @@ const VERDICT_STYLE: Readonly<Record<SkillGapVerdict, { mark: string; className:
   UNDETERMINED: { mark: '?', className: 'bg-tone-neutral-bg text-tone-neutral' },
 }
 
-function GapRow({ row }: { row: SkillGapRowFixture }) {
+function GapRow({ row }: { row: SkillGapRowView }) {
   const style = VERDICT_STYLE[row.verdict]
 
   return (
@@ -32,7 +36,10 @@ function GapRow({ row }: { row: SkillGapRowFixture }) {
       <p className="truncate text-[13px] font-[750] text-brand-ink max-lg:col-span-2">
         {row.techName}
       </p>
-      <p className="text-[12.5px] tabular-nums text-brand-muted">{row.requiredCount}건</p>
+      {/* 수요 집계에 없는 기술은 0건이 아니라 `—`다. 요구가 없는 것과 모르는 것은 다르다 */}
+      <p className="text-[12.5px] tabular-nums text-brand-muted">
+        {row.requiredCount === null ? '—' : `${row.requiredCount}건`}
+      </p>
       {/* 우대 요구가 아예 없는 행은 0이 아니라 `—`다. 0건과 구분한다 */}
       <p className="text-[12.5px] tabular-nums text-brand-faint">
         {row.preferredCount === null ? '—' : `${row.preferredCount}건`}
@@ -63,7 +70,7 @@ function GapRow({ row }: { row: SkillGapRowFixture }) {
   )
 }
 
-export function SkillGapRows({ groups }: { groups: readonly SkillGapGroupFixture[] }) {
+export function SkillGapRows({ groups }: { groups: readonly SkillGapGroupView[] }) {
   return (
     <div className="grid gap-1">
       {groups.map((group) => (

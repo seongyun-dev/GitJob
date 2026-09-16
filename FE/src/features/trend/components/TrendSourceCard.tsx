@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import type { TrendSourceFixture } from '@/mocks/types'
+import type { TrendSourceView } from '@/features/trend/model/view'
 import { MeterBar } from '@/shared/ui/MeterBar'
 import { StateCard } from '@/shared/ui/StateCard'
 import type { StateKind } from '@/shared/ui/StateCard'
@@ -23,7 +23,7 @@ import type { StateKind } from '@/shared/ui/StateCard'
  */
 
 /** `DataStatus`를 상태 카드 종류로 옮긴다. 카드가 받는 값 목록이 닫혀 있어 매핑이 필요하다. */
-const STATE_KIND: Readonly<Record<TrendSourceFixture['status'], StateKind>> = {
+const STATE_KIND: Readonly<Record<TrendSourceView['status'], StateKind>> = {
   READY: 'LOADING',
   PREPARING: 'PREPARING',
   PARTIAL: 'PARTIAL',
@@ -36,7 +36,7 @@ const STATE_KIND: Readonly<Record<TrendSourceFixture['status'], StateKind>> = {
 const RANK_COLUMNS = ['#', '기술', '비중', '전기 대비'] as const
 const RANK_TEMPLATE = '22px minmax(0,1fr) 64px 62px'
 
-export function TrendSourceCard({ source }: { source: TrendSourceFixture }) {
+export function TrendSourceCard({ source }: { source: TrendSourceView }) {
   const top = source.rows[0]?.share
 
   return (
@@ -121,14 +121,20 @@ export function TrendSourceCard({ source }: { source: TrendSourceFixture }) {
                     막대 분모는 이 출처의 1위 값이다. 출처 간 길이를 비교할 수 있게
                     만들면 "합치지 않는다"는 규칙을 화면이 깬다.
                   */}
-                  <div className="mt-1.5">
-                    <MeterBar
-                      value={Number.parseFloat(row.share)}
-                      total={Number.parseFloat(top ?? row.share)}
-                      tone={row.rank === 1 ? 'accent' : 'muted'}
-                      height={4}
-                    />
-                  </div>
+                  {/*
+                    막대 분모는 이 출처의 1위 값이다. 값이 없는 행(`—`)은 막대를
+                    그리지 않는다 -- 0 길이 막대는 "관측했더니 0"으로 읽힌다.
+                  */}
+                  {Number.isFinite(Number.parseFloat(row.share)) && (
+                    <div className="mt-1.5">
+                      <MeterBar
+                        value={Number.parseFloat(row.share)}
+                        total={Number.parseFloat(top ?? row.share)}
+                        tone={row.rank === 1 ? 'accent' : 'muted'}
+                        height={4}
+                      />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

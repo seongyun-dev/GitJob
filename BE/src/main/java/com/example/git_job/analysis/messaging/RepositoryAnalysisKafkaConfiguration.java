@@ -22,6 +22,24 @@ import org.springframework.util.backoff.FixedBackOff;
 class RepositoryAnalysisKafkaConfiguration {
 
     /**
+     * 구독할 결과 토픽 (S15P21E102-279 후속).
+     *
+     * <p>워커는 Registry 버전에 따라 발행 토픽을 <b>바꾼다</b> -- v1 을 함께 보내지
+     * 않는다. 그래서 v3 토픽도 함께 구독해야 {@code registry-20260911.3/.4} 결과가
+     * 도달한다. 구독하지 않으면 분석이 QUEUED 에 남고 C 계산도 시작되지 않는다.</p>
+     *
+     * <p>애너테이션에 토픽 두 개를 직접 적지 않고 빈으로 만드는 이유는 v3 토픽이
+     * 선택값이기 때문이다. 미설정이면 빈 문자열이 되는데, 그대로 넘기면 Spring 이
+     * 이름 없는 토픽을 구독하려다 실패한다. 여기서 걸러 낸다.</p>
+     */
+    @Bean
+    String[] repositoryAnalysisResultTopics(RepositoryAnalysisKafkaProperties topics) {
+        return topics.hasResultsV3()
+                ? new String[] {topics.results(), topics.resultsV3()}
+                : new String[] {topics.results()};
+    }
+
+    /**
      * A dedicated factory rather than the autoconfigured one: this topic carries
      * exactly one payload type, and pinning it here means a message of another
      * shape fails at deserialization instead of arriving half-built.

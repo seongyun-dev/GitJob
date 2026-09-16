@@ -8,6 +8,7 @@ import com.example.git_job.analysis.service.AnalysisSubmissionService;
 import com.example.git_job.global.logging.TraceIdFilter;
 import com.example.git_job.global.response.ApiResponse;
 import com.example.git_job.global.security.AuthenticatedUser;
+import com.example.git_job.global.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;

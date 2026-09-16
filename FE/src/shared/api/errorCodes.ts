@@ -106,6 +106,17 @@ const ERROR_ACTIONS: Readonly<Record<string, ErrorAction>> = {
   // 남의 analysisId를 지정한 경우. 명세 B-FN-010 403.
   'ANL-403-1': 'SHOW_FORBIDDEN',
 
+  // C 계산 결과 조회 (S15P21E102-279). 계산 대기·미준비·표본 부족은 여기 없다 --
+  // 그것들은 오류가 아니라 200 응답의 dataStatus 로 온다.
+  //
+  // 목표 직무를 고르지 않은 것은 실패가 아니라 다음 할 일이 정해진 상태다.
+  'MATCH-404-1': 'SHOW_EMPTY_WITH_CTA',
+  'MATCH-404-2': 'SHOW_NOT_FOUND',
+  'MATCH-400-1': 'SHOW_INLINE_ERROR',
+  // 재시도하면 풀릴 수 있다. 일반 오류로 두면 화면이 재시도를 권하지 못한다.
+  'MATCH-503-1': 'SHOW_RETRY',
+  'TREND-400-1': 'SHOW_INLINE_ERROR',
+
   // 증거 조회 — BE 미구현. 명세 B-FN-011 `실패 응답 정의` (티켓 208)
   // 404지만 "그 기술의 근거가 0건"이다. 사용자가 특정 기술 상세로 들어온 상황이라
   // 빈 화면을 조용히 두지 않고 재분석 CTA를 준다.

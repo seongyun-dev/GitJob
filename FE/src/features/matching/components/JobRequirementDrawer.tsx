@@ -1,4 +1,4 @@
-import type { JobPostingFixture, JobRequirementFixture } from '@/mocks/types'
+import type { JobPostingView, JobRequirement } from '@/features/matching/model/view'
 import { MeterBar } from '@/shared/ui/MeterBar'
 
 /**
@@ -14,19 +14,20 @@ import { MeterBar } from '@/shared/ui/MeterBar'
  * 닫혀 있을 때는 `inert`로 초점이 들어가지 않게 한다. 화면 밖 패널의 링크에 Tab이
  * 걸리면 키보드 사용자가 보이지 않는 곳을 헤맨다.
  */
-const VERDICT: Readonly<Record<JobRequirementFixture['mark'], { text: string; className: string }>> =
-  {
-    HAVE: { text: '보유', className: 'text-tone-success' },
-    WEAK: { text: '강화 필요', className: 'text-tone-caution' },
-    NONE: { text: '근거 없음', className: 'text-brand-faint' },
-  }
+const VERDICT: Readonly<Record<JobRequirement['mark'], { text: string; className: string }>> = {
+  HAVE: { text: '보유', className: 'text-tone-success' },
+  WEAK: { text: '강화 필요', className: 'text-tone-caution' },
+  NONE: { text: '근거 없음', className: 'text-brand-faint' },
+  // 근거가 없는 것이 아니라 판정하지 않은 것이다. 같은 문구를 쓰면 구분이 사라진다.
+  UNKNOWN: { text: '판정 못 함', className: 'text-tone-neutral' },
+}
 
 function RequirementList({
   title,
   requirements,
 }: {
   title: string
-  requirements: readonly JobRequirementFixture[]
+  requirements: readonly JobRequirement[]
 }) {
   if (requirements.length === 0) {
     return null
@@ -62,7 +63,7 @@ export function JobRequirementDrawer({
   onClose,
 }: {
   /** 열 공고. 닫혀 있으면 `null`이고 패널은 화면 밖에 남는다. */
-  posting: JobPostingFixture | null
+  posting: JobPostingView | null
   onClose: () => void
 }) {
   const open = posting !== null
@@ -99,7 +100,9 @@ export function JobRequirementDrawer({
             <p className="mt-1 text-[12px] text-brand-faint">
               {posting === null
                 ? ''
-                : `${posting.region} · ${posting.career} · ${posting.deadline}`}
+                : [posting.companyName, posting.region, posting.career, posting.deadline]
+                    .filter((value) => value !== null && value !== '')
+                    .join(' · ')}
             </p>
           </div>
           <button
@@ -156,15 +159,50 @@ export function JobRequirementDrawer({
               <div className="mt-6 grid gap-5">
                 <RequirementList title="필수 기술" requirements={posting.required} />
                 <RequirementList title="우대 기술" requirements={posting.preferred} />
+
+                {/*
+                  해석하지 못한 요구. 부족으로 세지 않고 따로 적는다 -- 공고가 무엇을
+                  요구했는지 우리가 읽지 못한 것이지, 사용자가 못 갖춘 것이 아니다.
+                */}
+                {posting.unresolved.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">
+                      해석하지 못한 요구
+                    </p>
+                    <ul className="mt-2 grid gap-1.5">
+                      {posting.unresolved.map((item) => (
+                        <li
+                          key={`${item.requirementKind}-${item.reason}`}
+                          className="rounded-[10px] border border-brand-line bg-[#F7F9FC] px-3.5 py-2.5 text-[12.5px] leading-[1.6] text-brand-muted"
+                        >
+                          {item.requirementKind === 'REQUIRED' ? '필수' : '우대'} · {item.reason}
+                          {item.knownTechIds.length > 0 && ` (${item.knownTechIds.join(', ')})`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </>
           )}
         </div>
 
-        <p className="border-t border-brand-line px-6 py-4 text-[11.5px] leading-[1.6] text-brand-faint">
-          보유 여부는 GitHub Personal Evidence 기준입니다. 기술요건 충족 여부만 보여주며 지원
-          결과를 예측하지 않습니다.
-        </p>
+        <div className="border-t border-brand-line px-6 py-4">
+          {posting?.sourceUrl != null && (
+            <a
+              href={posting.sourceUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="mb-3 block rounded-xl border border-brand-line px-4 py-2.5 text-center text-[13px] font-[750] text-brand-ink hover:border-brand-line-active"
+            >
+              원문 공고 보기{posting.sourceSite === null ? '' : ` · ${posting.sourceSite}`}
+            </a>
+          )}
+          <p className="text-[11.5px] leading-[1.6] text-brand-faint">
+            보유 여부는 GitHub Personal Evidence 기준입니다. 기술요건 충족 여부만 보여주며 지원
+            결과를 예측하지 않습니다.
+          </p>
+        </div>
       </aside>
     </>
   )

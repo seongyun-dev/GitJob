@@ -27,10 +27,10 @@ VITE_DESIGN_FIXTURES=on
 
 ```tsx
 import { withDesignFixture } from '@/mocks/designFixtures'
-import { JOB_MATCH_ALL } from '@/mocks/fixtures/jobMatch'
+import { ANALYSIS_HISTORY } from '@/mocks/fixtures/analysisFlow'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 
-const scenario = withDesignFixture(query.data, () => JOB_MATCH_ALL)
+const history = withDesignFixture(query.data, () => ANALYSIS_HISTORY)
 ```
 
 fixture를 직접 import해서 렌더하지 말고 반드시 `withDesignFixture`를 거친다. 그래야
@@ -46,14 +46,21 @@ fixture를 직접 import해서 렌더하지 말고 반드시 `withDesignFixture`
 | `fixtures/technologyProfile.ts` | 08 My Evidence | 계약 (`features/evidence/api/types.ts`) |
 | `fixtures/technologyEvidence.ts` | 09 Evidence Detail | 계약 (〃) |
 | `fixtures/evidenceScreen.ts` | 08·09 | 계약에 **없는** 표시값 |
-| `fixtures/targetRole.ts` | 16 Target Role | fixture 전용 |
-| `fixtures/jobMatch.ts` | 02 Job Match | fixture 전용 |
-| `fixtures/skillGap.ts` | 17 Skill Gap | fixture 전용 |
-| `fixtures/nextSkill.ts` | 10 Recommendation · 03 What-if | fixture 전용 |
+| `fixtures/nextSkill.ts` | 11 Technology Detail | fixture 전용 |
 | `fixtures/technologyDetail.ts` | 11 Technology Detail | fixture 전용 |
-| `fixtures/trend.ts` | 12 Trend Overview · 13 Trend Detail | fixture 전용 · 기술 10종 시계열 |
-| `fixtures/growthStage.ts` | S6 성장 단계 (초안) | fixture 전용 |
 | `fixtures/analysisFlow.ts` | 06 Repository · 07 Analysis · 14 My Page | fixture 전용 |
+
+### 지워진 fixture (S15P21E102-279)
+
+`02 Job Match` · `17 Skill Gap` · `10 Recommendation` · `03 What-if` ·
+`12·13 Trend` · `16 Target Role`은 실제 조회 API에 연결됐다. 그 화면의 fixture
+(`jobMatch` · `skillGap` · `targetRole` · `trend` · `growthStage`)를 남겨 두면 다음
+사람이 그것을 되살려 실제 값 위에 덮는다. 화면 타입은 이제
+`features/matching/model/view.ts`와 `features/trend/model/view.ts`에 있고,
+`npm run check:fixtures`가 그 두 영역의 fixture import를 막는다.
+
+`S6 성장 단계`는 화면에서 함께 빠졌다. 세 축을 묶어 단계를 정하는 계산이 어디에도
+없고, 만드는 순간 "출처를 합쳐 종합 점수를 만들지 않는다"는 규칙과 부딪힌다.
 
 Evidence 계열 둘만 실제 계약 타입을 쓴다. 티켓 208이 명세를 근거로 이미 고정해 둔
 계약이라 fixture도 그 타입을 만족해야 한다. 나머지는 조회 API가 없어 계약이 없으므로

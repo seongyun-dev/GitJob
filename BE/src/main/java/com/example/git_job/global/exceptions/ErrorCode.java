@@ -83,7 +83,20 @@ public enum ErrorCode {
 
     // 근거 조회. ANALYSIS_NOT_FOUND 는 위(AN-404-1)에 이미 있으므로 다시 만들지
     // 않는다 -- 같은 뜻의 코드가 둘이면 화면이 어느 쪽으로 분기해야 할지 알 수 없다.
-    TECHNOLOGY_NOT_IN_REGISTRY(HttpStatus.NOT_FOUND, "EVD-404-2", "레지스트리에 없는 기술입니다.");
+    TECHNOLOGY_NOT_IN_REGISTRY(HttpStatus.NOT_FOUND, "EVD-404-2", "레지스트리에 없는 기술입니다."),
+
+    // C 계산 결과 조회 (S15P21E102-279). 계산 대기·미준비·표본 부족은 여기 없다 --
+    // 그것들은 오류가 아니라 200 응답의 dataStatus 로 내려간다. 오류 코드는 사용자가
+    // 무언가 해야 하거나(목표 직무 선택) 아무것도 할 수 없는 경우(장애)에만 쓴다.
+    TARGET_ROLE_NOT_SELECTED(HttpStatus.NOT_FOUND, "MATCH-404-1", "목표 직무를 먼저 선택해 주세요."),
+    // 없는 결과와 남의 결과를 구분하지 않는다. 구분하면 다른 사용자의 Snapshot 존재
+    // 여부가 새어 나간다 -- C 도 같은 이유로 둘 다 404 를 준다.
+    MATCHING_RESULT_NOT_FOUND(HttpStatus.NOT_FOUND, "MATCH-404-2", "매칭 결과를 찾을 수 없습니다."),
+    MATCHING_CRITERIA_INVALID(HttpStatus.BAD_REQUEST, "MATCH-400-1", "지원하지 않는 직무 또는 필터입니다."),
+    // 재시도하면 풀릴 수 있는 상태다. 500 으로 내리면 화면이 재시도를 권하지 못한다.
+    COMPUTE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "MATCH-503-1",
+            "분석 계산 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요."),
+    TREND_CRITERIA_INVALID(HttpStatus.BAD_REQUEST, "TREND-400-1", "지원하지 않는 기술 또는 기간입니다.");
 
 
 

@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run check:fixtures && tsc --noEmit && vite build",
     "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
     "test:session": "node --experimental-strip-types --test tests/sessionSync.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:fixtures": "node scripts/check-fixture-boundary.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.8",

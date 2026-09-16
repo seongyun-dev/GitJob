@@ -1,6 +1,4 @@
 import { Link, useParams, useSearchParams } from 'react-router'
-import { useRecommendations } from '@/features/matching/hooks/useMatching'
-import { toNextSkillViews } from '@/features/matching/lib/nextSkillView'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { NEXT_SKILLS } from '@/mocks/fixtures/nextSkill'
@@ -100,12 +98,19 @@ export function TechnologyDetailPage() {
   const [params, setParams] = useSearchParams()
 
   /*
-   * 추천 화면과 **같은 훅**을 쓴다 · 티켓 S15P21E102-281. 네 화면이 한 응답을 보므로
-   * 같은 기술의 수가 화면마다 어긋나지 않는다(`lib/nextSkillView.ts`).
+   * 추천 화면과 같은 훅을 쓰던 배선을 뗐다 · 티켓 S15P21E102-281 / -279 병합.
+   *
+   * -281은 명세 v0.1의 추천 DTO(`NextSkill`)를 전제로 이 화면을 붙였는데, -279가
+   * 구현한 `GET /me/recommendations`는 그 모양이 아니다. C 계산 엔진이 후보별
+   * 목표 Level·헤드라인·CTA 문구·신규 부합 공고 목록을 만들지 않기 때문이고
+   * (계약 §6-3), 그 칸을 화면이 채우면 없는 요구를 만들어 낸다.
+   *
+   * 그래서 이 화면은 fixture 로 되돌린다. 추천 응답에서 이 화면이 쓸 수 있는 것은
+   * 기술 ID·순위·근거 문장·공고 수 변화뿐이라, 무엇을 보여줄지 먼저 정해야 한다.
+   * 붙일 자리는 `features/matching/api/adapter.ts`의 `toNextSkills`가 갖고 있다.
    */
-  const query = useRecommendations()
   const skill = withDesignFixture<NextSkillFixture | undefined>(
-    toNextSkillViews(query.data?.skills).find((item) => item.techId === techId),
+    undefined,
     () => NEXT_SKILLS.find((item) => item.techId === techId),
   )
 

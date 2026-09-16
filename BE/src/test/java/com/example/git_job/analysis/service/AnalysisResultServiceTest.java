@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -18,8 +19,10 @@ import com.example.git_job.analysis.event.RepositoryAnalysisResultEvent;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload.Status;
 import com.example.git_job.analysis.event.TechnologyCandidate;
+import com.example.git_job.analysis.event.TechnologySupportItem;
 import com.example.git_job.analysis.event.TechnologyVerdict;
 import com.example.git_job.analysis.store.AnalysisEvidenceStore;
+import com.example.git_job.analysis.store.AnalysisLineageStore;
 import com.example.git_job.analysis.store.TechnologyCandidateStore;
 import com.example.git_job.analysis.repository.AnalysisJobRepository;
 import com.example.git_job.analysis.service.AnalysisResultService.Applied;
@@ -29,6 +32,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -43,6 +47,7 @@ class AnalysisResultServiceTest {
     private AnalysisJobRepository jobs;
     private AnalysisEvidenceStore evidence;
     private TechnologyCandidateStore candidates;
+    private AnalysisLineageStore lineage;
     private AnalysisResultService service;
 
     @BeforeEach
@@ -50,7 +55,8 @@ class AnalysisResultServiceTest {
         jobs = mock(AnalysisJobRepository.class);
         evidence = mock(AnalysisEvidenceStore.class);
         candidates = mock(TechnologyCandidateStore.class);
-        service = new AnalysisResultService(jobs, evidence, candidates);
+        lineage = mock(AnalysisLineageStore.class);
+        service = new AnalysisResultService(jobs, evidence, lineage, candidates);
         when(evidence.insertAll(anyString(), anyLong(), anyString(), any(), any()))
                 .thenReturn(1);
     }
@@ -58,6 +64,30 @@ class AnalysisResultServiceTest {
     private AnalysisJob queuedJob() {
         return AnalysisJob.queue("an_1", USER_ID, "repo_1", "octocat/repo", "main", SHA,
                 Instant.now());
+    }
+
+    @Test
+    @DisplayName("v3 결과의 Rule Pack 계보와 지원 범위를 저장한다")
+    void storesRulePackLineage() {
+        when(jobs.findById("an_1")).thenReturn(Optional.of(queuedJob()));
+
+        service.apply(event(completed().payload(),
+                RepositoryAnalysisResultEvent.SCHEMA_VERSION_V3));
+
+        // 저장하지 않으면 C 에 보낼 evidence_rule_version 을 만들 수 없고, 그 자리에
+        // Registry 버전을 넣으면 C 가 근거를 전부 버린다.
+        ArgumentCaptor<RepositoryAnalysisResultPayload> saved =
+                ArgumentCaptor.forClass(RepositoryAnalysisResultPayload.class);
+        verify(lineage).record(eq("an_1"),
+                eq(RepositoryAnalysisResultEvent.SCHEMA_VERSION_V3), saved.capture());
+        assertEquals("rule-pack-20260911.4", saved.getValue().rulePackVersion());
+        assertEquals(1, saved.getValue().technologySupport().size());
+    }
+
+    private RepositoryAnalysisResultEvent event(RepositoryAnalysisResultPayload payload,
+                                                String schemaVersion) {
+        return new RepositoryAnalysisResultEvent("ev_r1", schemaVersion,
+                RepositoryAnalysisResultEvent.EVENT_TYPE, Instant.now(), "tr_1", payload);
     }
 
     private RepositoryAnalysisResultEvent completed() {
@@ -70,14 +100,19 @@ class AnalysisResultServiceTest {
                         "import org.springframework.boot.SpringApplication;", null)),
                 List.of(new TechnologyCandidate(TechnologyCandidate.Ecosystem.MAVEN,
                         "com.h2database:h2", "runtimeOnly", 1)),
-                new AnalysisStats(50, 82, 471, 55, 1932742, 250)));
+                new AnalysisStats(50, 82, 471, 55, 1932742, 250, Map.of(), 0),
+                // v3 결과는 Rule Pack 계보를 함께 싣는다. C 가 근거의 범위를 검사하는
+                // 값이라 이것이 없으면 조립 단계에서 그 저장소가 통째로 빠진다.
+                "rule-pack-20260911.4", "a".repeat(64),
+                List.of(new TechnologySupportItem("spring-boot", "REPOSITORY",
+                        List.of("IMPORT", "DEPENDENCY"), "L3", "SUPPORTED", List.of()))));
     }
 
     private RepositoryAnalysisResultEvent failed(String errorCode) {
         return event(new RepositoryAnalysisResultPayload(
                 "an_1", "ev_1", "registry-20260910.1", SHA, Status.FAILED, errorCode,
                 "git fetch could not find the repository",
-                List.of(), List.of(), List.of(), null));
+                List.of(), List.of(), List.of(), null, null, null, List.of()));
     }
 
     private RepositoryAnalysisResultEvent event(RepositoryAnalysisResultPayload payload) {

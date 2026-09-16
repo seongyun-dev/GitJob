@@ -6,6 +6,7 @@ import com.example.git_job.analysis.service.TechnologyProfileService;
 import com.example.git_job.analysis.service.TechnologyProfileService.Profile;
 import com.example.git_job.global.response.ApiResponse;
 import com.example.git_job.global.security.AuthenticatedUser;
+import com.example.git_job.global.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;

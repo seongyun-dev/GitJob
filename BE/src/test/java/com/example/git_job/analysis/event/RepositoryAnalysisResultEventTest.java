@@ -58,7 +58,7 @@ class RepositoryAnalysisResultEventTest {
         IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
                 () -> new RepositoryAnalysisResultPayload("an_1", "ev_1",
                         "registry-20260908.1", SHA, Status.FAILED, "CLONE_TIMEOUT", null,
-                        List.of(verdict()), List.of(), List.of(), null));
+                        List.of(verdict()), List.of(), List.of(), null, null, null, List.of()));
         assertTrue(thrown.getMessage().contains("must not carry findings"));
     }
 
@@ -67,7 +67,7 @@ class RepositoryAnalysisResultEventTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new RepositoryAnalysisResultPayload("an_1", "ev_1",
                         "registry-20260908.1", SHA, Status.COMPLETED, "CLONE_TIMEOUT", null,
-                        List.of(), List.of(), List.of(), null));
+                        List.of(), List.of(), List.of(), null, null, null, List.of()));
     }
 
     @Test
@@ -76,17 +76,31 @@ class RepositoryAnalysisResultEventTest {
         // wrong registry_version would silently imitate.
         RepositoryAnalysisResultPayload payload = new RepositoryAnalysisResultPayload(
                 "an_1", "ev_1", "registry-20260908.1", SHA, Status.COMPLETED,
-                null, null, List.of(), List.of(), List.of(), null);
+                null, null, List.of(), List.of(), List.of(), null, null, null, List.of());
 
         assertFalse(payload.failed());
         assertTrue(payload.technologies().isEmpty());
     }
 
     @Test
+    void acceptsTheRulePackContracts() {
+        // 워커는 Registry 버전에 따라 발행 계약을 바꾸며 v1 을 함께 보내지 않는다.
+        // v2·v3 를 거절하면 registry-20260911.3/.4 결과가 통째로 도달하지 않는다.
+        for (String version : RepositoryAnalysisResultEvent.SUPPORTED_SCHEMA_VERSIONS) {
+            RepositoryAnalysisResultEvent event = new RepositoryAnalysisResultEvent("ev_r1",
+                    version, RepositoryAnalysisResultEvent.EVENT_TYPE,
+                    Instant.parse("2026-09-10T01:02:03Z"), "tr_1", completedPayload());
+            assertEquals(version, event.schemaVersion());
+        }
+    }
+
+    @Test
     void refusesAVersionItDoesNotImplement() {
+        // v4 는 개인 귀속(personal_assessments)이 붙는 계약이고 저장할 자리가 없다.
+        // 반쯤 해석한 결과를 저장하면 그 사실이 어디에도 남지 않는다.
         assertThrows(IllegalArgumentException.class,
                 () -> new RepositoryAnalysisResultEvent("ev_r1",
-                        "repository-analysis-result/v2",
+                        "repository-analysis-result/v4",
                         RepositoryAnalysisResultEvent.EVENT_TYPE,
                         Instant.parse("2026-09-10T01:02:03Z"), "tr_1", completedPayload()));
     }
@@ -98,7 +112,7 @@ class RepositoryAnalysisResultEventTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new RepositoryAnalysisResultPayload("an_1", "ev_1",
                         "registry-20260908.1", "818c4136ea97", Status.COMPLETED,
-                        null, null, List.of(), List.of(), List.of(), null));
+                        null, null, List.of(), List.of(), List.of(), null, null, null, List.of()));
     }
 
     @Test
@@ -128,7 +142,7 @@ class RepositoryAnalysisResultEventTest {
         // a NullPointerException in the consumer rather than a clear contract error.
         RepositoryAnalysisResultPayload payload = new RepositoryAnalysisResultPayload(
                 "an_1", "ev_1", "registry-20260908.1", SHA, Status.FAILED,
-                "CLONE_TIMEOUT", null, null, null, null, null);
+                "CLONE_TIMEOUT", null, null, null, null, null, null, null, List.of());
 
         assertTrue(payload.technologies().isEmpty());
         assertTrue(payload.evidence().isEmpty());
@@ -151,13 +165,14 @@ class RepositoryAnalysisResultEventTest {
                         Map.of("MODULE", "org.springframework.boot.SpringApplication"), null, null)),
                 List.of(new TechnologyCandidate(Ecosystem.MAVEN,
                         "org.postgresql:postgresql", "runtimeOnly", 1)),
-                new AnalysisStats(50, 82, 471, 17, 1932742, 1400));
+                new AnalysisStats(50, 82, 471, 17, 1932742, 1400, Map.of(), 0),
+                null, null, List.of());
     }
 
     private static RepositoryAnalysisResultPayload failedPayload(String errorCode) {
         return new RepositoryAnalysisResultPayload("an_1", "ev_1", "registry-20260908.1",
                 SHA, Status.FAILED, errorCode, "git fetch could not find the repository",
-                List.of(), List.of(), List.of(), null);
+                List.of(), List.of(), List.of(), null, null, null, List.of());
     }
 
     private static TechnologyVerdict verdict() {

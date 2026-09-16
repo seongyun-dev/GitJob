@@ -50,11 +50,18 @@ export function MeterBar({
  * 칠한다. 비율 하나로 합치지 않는 이유는 "4개 중 3개"와 "8개 중 6개"가 같은 75%라도
  * 다른 상황이기 때문이다.
  */
-export function SegmentBar({ marks }: { marks: readonly ('HAVE' | 'WEAK' | 'NONE')[] }) {
-  const color: Readonly<Record<'HAVE' | 'WEAK' | 'NONE', string>> = {
+export function SegmentBar({
+  marks,
+}: {
+  marks: readonly ('HAVE' | 'WEAK' | 'NONE' | 'UNKNOWN')[]
+}) {
+  // UNKNOWN 은 미보유와 다른 색이다. 같은 색으로 칠하면 "판정하지 않았다"가
+  // "없다"로 읽히고, 그 구분이 이 제품의 규칙이다(S15P21E102-279).
+  const color: Readonly<Record<'HAVE' | 'WEAK' | 'NONE' | 'UNKNOWN', string>> = {
     HAVE: 'bg-brand-600',
     WEAK: 'bg-[#F0C27B]',
     NONE: 'bg-[#E4E9F1]',
+    UNKNOWN: 'bg-[#CBD5E6]',
   }
 
   return (

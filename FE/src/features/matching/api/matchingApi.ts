@@ -1,110 +1,95 @@
-import {
-  parseJobDemandList,
-  parseJobPostingList,
-  parseJobRoleList,
-  parseLearningTarget,
-  parseRecommendations,
-  parseSkillGap,
-  parseTargetRole,
-} from '@/features/matching/api/parseMatching'
 import type {
-  JobDemandList,
-  JobPostingList,
-  JobPostingParams,
-  JobRoleList,
-  LearningTarget,
-  LearningTargetInput,
-  Recommendations,
-  SkillGap,
-  TargetRole,
-  TargetRoleInput,
+  JobDemandDto,
+  JobMatchDetailDto,
+  JobMatchListDto,
+  RecommendationDto,
+  SkillGapDto,
+  TargetDto,
+  WhatIfDto,
 } from '@/features/matching/api/types'
 import { get, put } from '@/shared/api/client'
-import { toQuery } from '@/shared/api/query'
 
 /**
- * 매칭 계열 HTTP 계층 · 티켓 S15P21E102-281.
+ * 매칭 계열 조회 (S15P21E102-279).
  *
- * **이 파일만 경로 문자열을 안다.** 봉투 해제·오류 변환은 `shared/api/client`가 하고,
- * `data` 안쪽 검증은 `parseMatching`이 한다. 버전 접두(`/v1`)는 client가 붙이므로
- * 여기서 쓰지 않는다. `features/evidence/api/evidenceApi.ts`와 같은 구조다.
+ * **요청에 사용자 ID도 Snapshot ID도 넣지 않는다.** 어느 계산 결과를 읽을지는 BE가
+ * 로그인 사용자와 저장된 목표 직무로 정한다. 화면이 식별자를 들고 다니면 그것을 바꿔
+ * 보내는 경로가 생기고, 그 경로는 곧 남의 결과를 요구하는 시도가 된다.
  *
- * **일곱 엔드포인트 모두 BE에 아직 없다**(명세 상태 `시작 전`, BE `-279`가 구현 중).
- * 지금 호출하면 `HTTP-404`가 온다(계약 1-3의 FE 합성 코드). 화면은 훅이 값을 받지
- * 못하는 동안 기존 `StateCard`나 디자인 fixture를 그대로 그리므로 깨지지 않는다.
- *
- * `get<unknown>`으로 받는 이유는 제네릭으로 타입을 주장하면 검증 없이 그 타입이라고
- * 믿게 되기 때문이다. 실제 타입은 파서를 통과한 뒤에만 생긴다.
- *
- * 경로에 사용자 식별자가 없다 — 세션 쿠키로 who를 정한다(client의 `credentials`).
+ * 인증은 HttpOnly 세션 쿠키로 하며 `client`가 모든 요청에 실어 보낸다.
  */
 
-/** 직무 마스터 목록 · 명세 B-FN-014 (화면 16). */
-export async function fetchJobRoles(): Promise<JobRoleList> {
-  return parseJobRoleList(await get<unknown>('/job-roles'))
+/** 고른 적이 없으면 `null`이다. 오류가 아니라 다음 할 일이 정해진 상태다. */
+export function fetchTarget(): Promise<TargetDto | null> {
+  return get<TargetDto | null>('/me/target')
 }
 
-/** 현재 목표 직무 · 명세 B-FN-013. */
-export async function fetchTargetRole(): Promise<TargetRole> {
-  return parseTargetRole(await get<unknown>('/me/target'))
+export function saveTarget(body: {
+  targetRole: string
+  regions: string[]
+  careerLevels: string[]
+}): Promise<TargetDto> {
+  return put<TargetDto>('/me/target', body)
 }
 
 /**
- * 목표 직무 변경 · 명세 B-FN-013.
+ * 공고 매칭 목록.
  *
- * 명세가 PUT 전량 교체로 정했다. 바뀌면 Skill Gap·공고·추천이 모두 다른 집합을
- * 근거로 하므로, 호출부는 성공 후 매칭 계열 캐시를 통째로 무효화한다
- * (`hooks/useMatching.ts`의 `useUpdateTargetRole`).
+ * @param includeConditional 기본은 꺼져 있다. 조건부 공고는 자격 자체가 확정되지 않아
+ *                           충족 여부를 말할 수 없고, 섞으면 충족 건수가 커 보인다.
  */
-export async function updateTargetRole(body: TargetRoleInput): Promise<TargetRole> {
-  return parseTargetRole(await put<unknown>('/me/target', body))
-}
-
-/**
- * 관련 채용공고 목록 · 명세 B-FN-015 (화면 02).
- *
- * 필터를 서버에 넘긴다. **화면이 목록을 걸러내지 않는다** — 한 페이지만 받은 상태에서
- * 거르면 "87건 중 12건"의 분모가 그 페이지 안의 수가 되어 사실과 달라진다.
- */
-export async function fetchJobPostings(params: JobPostingParams = {}): Promise<JobPostingList> {
-  const query = toQuery({
-    roleId: params.roleId,
-    region: params.region,
-    career: params.career,
-    page: params.page,
-    size: params.size,
+export function fetchJobMatches(params: {
+  page: number
+  perPage: number
+  includeConditional: boolean
+}): Promise<JobMatchListDto> {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    perPage: String(params.perPage),
+    includeConditional: String(params.includeConditional),
   })
-  return parseJobPostingList(await get<unknown>(`/job-postings${query}`))
+  return get<JobMatchListDto>(`/me/job-matches?${query.toString()}`)
 }
 
-/** 기술 수요 집계 · 명세 B-FN-015. */
-export async function fetchJobDemands(roleId?: string): Promise<JobDemandList> {
-  return parseJobDemandList(await get<unknown>(`/job-demands${toQuery({ roleId })}`))
+export function fetchJobMatch(jobId: string): Promise<JobMatchDetailDto> {
+  return get<JobMatchDetailDto>(`/me/job-matches/${encodeURIComponent(jobId)}`)
 }
 
-/** Skill Gap · 명세 B-FN-016 (화면 17). */
-export async function fetchSkillGap(): Promise<SkillGap> {
-  return parseSkillGap(await get<unknown>('/me/skill-gap'))
+export function fetchSkillGap(): Promise<SkillGapDto> {
+  return get<SkillGapDto>('/me/skill-gap')
+}
+
+export function fetchRecommendations(): Promise<RecommendationDto> {
+  return get<RecommendationDto>('/me/recommendations')
 }
 
 /**
- * 학습 기술 후보·What-if · 명세 B-FN-017 (화면 10·03·17 하단·11 상단).
+ * 추천 기술을 채웠을 때 새로 부합하는 공고.
  *
- * **네 화면이 이 한 응답을 본다.** 화면마다 따로 부르면 같은 기술의 수가 화면마다
- * 어긋날 수 있고, 명세도 후보와 What-if를 한 엔드포인트로 묶었다. 화면은 받은 배열을
- * 각자 다르게 고를 뿐이다 — 10은 `[0]`을 크게, 03은 `?tech=`로 하나를, 17은 상위 3개,
- * 11은 `techId`로 찾는다.
+ * 증가 건수와 목록이 한 응답에서 온다. 숫자를 추천 API에서 목록을 여기서 읽으면 그
+ * 사이에 새 계산이 생겼을 때 화면의 "+7건"과 아래 목록이 어긋난다.
  */
-export async function fetchRecommendations(): Promise<Recommendations> {
-  return parseRecommendations(await get<unknown>('/me/recommendations'))
+export function fetchWhatIf(
+  techId: string,
+  params: { page: number; perPage: number },
+): Promise<WhatIfDto> {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    perPage: String(params.perPage),
+  })
+  return get<WhatIfDto>(
+    `/me/recommendations/${encodeURIComponent(techId)}/what-if?${query.toString()}`,
+  )
 }
 
-/** 현재 고른 학습 기술 · 명세 B-FN-018. */
-export async function fetchLearningTarget(): Promise<LearningTarget> {
-  return parseLearningTarget(await get<unknown>('/me/learning-target'))
-}
-
-/** 학습 기술 선택·변경 · 명세 B-FN-018. 확정 범위상 **최대 1개**다. */
-export async function updateLearningTarget(body: LearningTargetInput): Promise<LearningTarget> {
-  return parseLearningTarget(await put<unknown>('/me/learning-target', body))
+/** 직무별 기술 수요. 개인 결과가 아니라 조건을 직접 넣어 본다. */
+export function fetchJobDemands(params: {
+  targetRole: string
+  regions: readonly string[]
+  careerLevels: readonly string[]
+}): Promise<JobDemandDto> {
+  const query = new URLSearchParams({ targetRole: params.targetRole })
+  params.regions.forEach((region) => query.append('regions', region))
+  params.careerLevels.forEach((level) => query.append('careerLevels', level))
+  return get<JobDemandDto>(`/job-demands?${query.toString()}`)
 }

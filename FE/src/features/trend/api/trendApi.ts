@@ -1,50 +1,88 @@
-import {
-  parseTechnologyTrend,
-  parseTrendComparison,
-  parseTrendOverview,
-} from '@/features/trend/api/parseTrend'
-import type {
-  TechnologyTrend,
-  TrendComparison,
-  TrendOverview,
-} from '@/features/trend/api/types'
+import type { DataStatus } from '@/shared/types/domain'
 import { get } from '@/shared/api/client'
-import { toQuery } from '@/shared/api/query'
 
 /**
- * 트렌드 HTTP 계층 · 티켓 S15P21E102-281.
+ * 기술 Trend 조회 (S15P21E102-279).
  *
- * 이 파일만 경로 문자열을 안다. 세 엔드포인트 모두 BE에 아직 없다(명세 상태 `시작 전`).
+ * 개인 결과가 아니라 로그인만 확인한다. 계약은 `docs/be/c-compute-public-api.md` §4-8·4-9.
  *
- * 인증이 필요한 조회로 표에 적혀 있지만 사용자별 값은 아니다 — 같은 기술의 추세는
- * 누가 보든 같다. 그래서 캐시 키에 `me` 접두를 쓰지 않는다(`queryKeys.trends`).
+ * **출처별로 따로 받는다.** 응답이 배열인 것이 계약의 핵심이고, 합성 점수 필드는 없다.
+ * 출처 하나가 비어도 요청은 성공이며 그 카드만 비운다.
  */
 
-/** 기술 트렌드 개요 · 명세 B-FN-020 (화면 12). */
-export async function fetchTrendOverview(): Promise<TrendOverview> {
-  return parseTrendOverview(await get<unknown>('/trends'))
+export interface TrendPointDto {
+  period: string
+  status: string | null
+  /** 미집계 기간은 `null`. 0이 아니다. */
+  value: number | null
+  denominator: number | null
+  ratio: number | null
+  absoluteChange: number | null
+  relativeChange: number | null
+}
+
+export interface TrendSourceDto {
+  sourceId: string
+  cSource: string
+  dataStatus: DataStatus
+  statusReason: string
+  /** 무엇을 세는지. 출처 간 비교를 막기 위해 화면이 반드시 표시한다. */
+  unit: string | null
+  metric: string | null
+  granularity: string | null
+  periods: string[]
+  points: TrendPointDto[]
+  reasons: string[]
+}
+
+export interface TechnologyTrendDto {
+  techId: string
+  sources: TrendSourceDto[]
+}
+
+export interface TrendCompareRowDto {
+  techId: string
+  dataStatus: DataStatus
+  statusReason: string
+  period: string | null
+  value: number | null
+  ratio: number | null
+  absoluteChange: number | null
+  relativeChange: number | null
+}
+
+export interface TrendCompareDto {
+  sourceId: string
+  cSource: string
+  unit: string | null
+  rows: TrendCompareRowDto[]
 }
 
 /**
- * 출처별 기술 추세 · 명세 B-FN-020 (화면 13).
+ * 기술 하나의 출처별 추세.
  *
- * `techId`를 인코딩하는 이유는 이 값이 라우트 파라미터에서 오기 때문이다. 주소창에서
- * 고칠 수 있고, `../`나 `?`가 섞이면 다른 엔드포인트를 부르게 된다.
+ * @param periods 월별 Archive를 볼 기간. 비우면 주간 출처만 조회한다. 화면이 임의로
+ *                최근 몇 달을 고르지 않는 이유는, 표시한 기간과 실제 계산 기간이
+ *                달라지면 안 되기 때문이다.
  */
-export async function fetchTechnologyTrend(techId: string): Promise<TechnologyTrend> {
-  return parseTechnologyTrend(await get<unknown>(`/technologies/${encodeURIComponent(techId)}/trends`))
+export function fetchTechnologyTrends(
+  techId: string,
+  periods: readonly string[],
+): Promise<TechnologyTrendDto> {
+  const query = new URLSearchParams()
+  periods.forEach((period) => query.append('periods', period))
+  const suffix = query.toString() === '' ? '' : `?${query.toString()}`
+  return get<TechnologyTrendDto>(`/technologies/${encodeURIComponent(techId)}/trends${suffix}`)
 }
 
-/**
- * 후보 기술 교차 비교 · 명세 B-FN-021.
- *
- * `sourceId`를 받는 이유는 **같은 출처끼리만** 비교할 수 있기 때문이다. 출처를 섞으면
- * 단위가 다른 수를 한 축에 놓게 되는데, 명세 확정 범위가 금지한 종합 점수와 같은 일이다.
- */
-export async function fetchTrendComparison(
-  techIds: readonly string[],
-  sourceId: string,
-): Promise<TrendComparison> {
-  const query = toQuery({ techIds: techIds.join(','), sourceId })
-  return parseTrendComparison(await get<unknown>(`/trends/compare${query}`))
+/** 기술 교차 비교. 한 번에 한 출처만 본다 — 섞으면 분모가 다른 값이 한 축에 들어간다. */
+export function fetchTrendCompare(params: {
+  source: string
+  techIds: readonly string[]
+  periods: readonly string[]
+}): Promise<TrendCompareDto> {
+  const query = new URLSearchParams({ source: params.source })
+  params.techIds.forEach((techId) => query.append('techIds', techId))
+  params.periods.forEach((period) => query.append('periods', period))
+  return get<TrendCompareDto>(`/trends/compare?${query.toString()}`)
 }

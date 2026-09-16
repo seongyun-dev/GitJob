@@ -24,23 +24,26 @@ FE 화면 작업 중 **다른 조의 결정이나 구현이 있어야 진행되�
 현재 FE 화면 13개가 `withDesignFixture`로만 값을 받는다. 그중 아래는 **BE 엔드포인트
 자체가 없어** FE가 붙을 대상이 없다.
 
-| 화면 | 경로 | 필요한 것 |
+> 2026-09-15 갱신(`S15P21E102-279`). 아래 여덟 중 여섯이 연결됐다. 계약은
+> [C 계산 결과 공개 API 계약](../be/c-compute-public-api.md)이다.
+
+| 화면 | 경로 | 상태 |
 |---|---|---|
-| 직무 선택 | `/roles` | 목표 직무 목록 |
-| 공고 매칭 | `/jobs` | 기술요건 매칭 공고 목록 |
-| Skill Gap | `/skill-gap` | 사용자 Evidence × 시장 수요 비교 |
-| 다음 기술 | `/recommendations` | 추천 기술 후보 |
-| What-if | `/what-if` | 기술 추가 시 공고 수 변화 |
-| 기술 상세 | `/technologies/:techId` | 기술 단건 상세 |
-| 트렌드 | `/trends`, `/trends/:techId` | JOB·GITHUB 출처별 추세 |
-| 마이페이지 | `/mypage` | 분석 이력·연결 상태 |
+| 직무 선택 | `/roles` | **연결됨** — `GET/PUT /api/v1/me/target` + `GET /api/v1/job-demands`. 직무 목록 API가 없어 카드 3열 대신 입력·미리보기 폼이다 |
+| 공고 매칭 | `/jobs` | **연결됨** — `GET /api/v1/me/job-matches` |
+| Skill Gap | `/skill-gap` | **연결됨** — `GET /api/v1/me/skill-gap` |
+| 다음 기술 | `/recommendations` | **연결됨** — `GET /api/v1/me/recommendations` |
+| What-if | `/what-if` | **연결됨** — `GET /api/v1/me/recommendations/{techId}/what-if` |
+| 기술 상세 | `/technologies/:techId` | 여전히 fixture. 기술 단건 상세 API가 없다 |
+| 트렌드 | `/trends`, `/trends/:techId` | **연결됨** — `GET /api/v1/trends/compare`, `GET /api/v1/technologies/{techId}/trends`. JOB 출처는 조회 경로가 없어 `NOT_SUPPORTED` |
+| 마이페이지 | `/mypage` | 여전히 fixture. 분석 이력 API가 없다 |
 
-캐시 키는 `FE/src/shared/api/queryKeys.ts`에 `matching`·`matchingSkillGap`·
-`matchingPostings`로 이미 잡아 두었다. 설계 4-1의 확정 규약이라 BE 미구현이어도
-키 구조는 유지한다.
+캐시 키는 `analysisId`를 빼고 서버가 만든 `targetKey` 기반으로 바꿨다. 요청이
+`analysisId`도 `snapshotId`도 보내지 않기 때문이다 — 어느 계산 결과를 읽을지는 BE가
+로그인 사용자와 저장된 목표 직무로 정한다.
 
-**요청**: 이 목록 중 MVP 인수 대상이 무엇이고 언제 열리는지. 범위에서 빠지는 화면이
-있으면 알려주면 FE가 해당 라우트를 접는다. 지금은 접을 근거가 없어 골격만 두고 있다.
+**남은 요청**: 기술 단건 상세와 분석 이력 API가 MVP 범위인지. 범위에서 빠지면 FE가
+두 라우트를 접는다.
 
 ### 2-2. `GET /me` 부재
 

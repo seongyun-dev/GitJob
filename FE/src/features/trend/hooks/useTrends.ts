@@ -1,36 +1,52 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchTechnologyTrend, fetchTrendOverview } from '@/features/trend/api/trendApi'
+import { fetchTechnologyTrends, fetchTrendCompare } from '@/features/trend/api/trendApi'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 /**
- * 트렌드 조회 훅 · 티켓 S15P21E102-281.
+ * Trend 조회 훅 (S15P21E102-279).
  *
- * 엔드포인트가 아직 없어(-279·데이터 팀 작업 중) 지금은 `HTTP-404`로 끝난다. 화면은
- * 값이 없으면 기존 `StateCard`를 그리므로 표시는 지금과 같다.
+ * 폴링하지 않는다. 공용 집계는 사용자의 분석과 무관하게 주기적으로 갱신되고, 화면을
+ * 열어 둔 몇 분 사이에 바뀌지 않는다. 계산 대기를 기다리는 매칭 계열과 다르다.
  *
- * `trends/compare`(B-FN-021) 훅은 두지 않았다. 후보 비교를 쓰는 화면이 아직 없고,
- * 쓰이지 않는 훅은 다음 사람이 화면 요구와 맞는지 확인할 방법이 없다. `trendApi`에
- * 호출 함수는 있으므로 화면이 생기면 훅만 여기 추가한다.
+ * 출처별 요청을 하나로 묶지 않는 이유는 비교 화면이 출처 카드마다 독립이기 때문이다.
+ * 한 출처가 실패해도 나머지 카드는 그려져야 한다.
  */
 
-/** 기술 트렌드 개요 · 화면 12. 사용자와 무관한 집계다. */
-export function useTrendOverview() {
+/** 공용 집계는 자주 바뀌지 않는다. 화면 전환마다 다시 부르지 않는다. */
+const TREND_STALE_TIME = 5 * 60 * 1000
+
+export function useTechnologyTrends(techId: string | undefined, periods: readonly string[]) {
   return useQuery({
-    queryKey: queryKeys.trends(),
-    queryFn: fetchTrendOverview,
+    queryKey: queryKeys.technologyTrends(techId ?? '', periods),
+    queryFn: () => fetchTechnologyTrends(techId as string, periods),
+    enabled: techId !== undefined && techId !== '',
+    staleTime: TREND_STALE_TIME,
   })
 }
 
 /**
- * 출처별 기술 추세 · 화면 13.
+ * 한 출처 안에서 기술 여러 개를 비교한다.
  *
- * `techId`가 라우트 파라미터라 없을 수 있다. 없으면 조회하지 않는다 — 빈 문자열로
- * 부르면 `/technologies//trends`가 되어 의미 없는 404를 만든다.
+ * `techIds`가 비면 부르지 않는다. 비교할 기술을 화면이 임의로 고르면 그 목록 자체가
+ * 근거 없는 순위가 된다 — 목록은 사용자의 목표 직무 수요에서 온다.
  */
-export function useTechnologyTrend(techId: string | undefined) {
+export function useTrendCompare(params: {
+  source: string
+  techIds: readonly string[]
+  periods: readonly string[]
+  enabled?: boolean
+}) {
   return useQuery({
-    queryKey: queryKeys.technologyTrends(techId ?? ''),
-    queryFn: () => fetchTechnologyTrend(techId as string),
-    enabled: techId !== undefined && techId !== '',
+    queryKey: queryKeys.trendCompare(params.source, params.techIds, params.periods),
+    queryFn: () =>
+      fetchTrendCompare({
+        source: params.source,
+        techIds: params.techIds,
+        periods: params.periods,
+      }),
+    enabled: (params.enabled ?? true) && params.techIds.length > 0,
+    staleTime: TREND_STALE_TIME,
+    // 한 출처의 실패가 다른 카드를 막지 않는다. 재시도로 화면 전체를 붙잡지 않는다.
+    retry: false,
   })
 }

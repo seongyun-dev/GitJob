@@ -4,6 +4,7 @@ import com.example.git_job.analysis.domain.AnalysisJob;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultEvent;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload;
 import com.example.git_job.analysis.store.AnalysisEvidenceStore;
+import com.example.git_job.analysis.store.AnalysisLineageStore;
 import com.example.git_job.analysis.store.TechnologyCandidateStore;
 import com.example.git_job.analysis.repository.AnalysisJobRepository;
 import java.time.Instant;
@@ -42,6 +43,7 @@ public class AnalysisResultService {
 
     private final AnalysisJobRepository jobs;
     private final AnalysisEvidenceStore evidence;
+    private final AnalysisLineageStore lineage;
     private final TechnologyCandidateStore candidates;
 
     /**
@@ -69,6 +71,11 @@ public class AnalysisResultService {
             return Applied.ALREADY_TERMINAL;
         }
 
+        // 판정 기준을 먼저 남긴다. 근거가 0건이어도 남아야 하는 값이라
+        // 근거 저장과 분리했다 -- 근거 행에만 두면 "분석했지만 아는 기술이 없었다"가
+        // "분석하지 않았다"와 구분되지 않고, 그 사용자는 C 계산에서 통째로 빠진다.
+        int supported = lineage.record(payload.analysisId(), event.schemaVersion(), payload);
+
         int written = evidence.insertAll(payload.analysisId(), job.getUserId(),
                 payload.registryVersion(), payload.evidence(), now);
         // The worker can only say what this repository declared. How many people
@@ -78,10 +85,11 @@ public class AnalysisResultService {
                 job.getRepositoryId(), payload.candidates(), now);
         jobs.save(job);
 
-        log.info("Analysis closed: analysisId={}, status={}, technologies={}, evidence={},"
-                        + " candidates={}, traceId={}",
-                payload.analysisId(), job.getStatus(), payload.technologies().size(),
-                written, observed, event.traceId());
+        log.info("Analysis closed: analysisId={}, status={}, schema={}, rulePack={},"
+                        + " technologies={}, evidence={}, candidates={}, support={}, traceId={}",
+                payload.analysisId(), job.getStatus(), event.schemaVersion(),
+                payload.rulePackVersion(), payload.technologies().size(),
+                written, observed, supported, event.traceId());
         return payload.failed() ? Applied.FAILED : Applied.SUCCEEDED;
     }
 

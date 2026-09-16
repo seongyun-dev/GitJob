@@ -1,0 +1,55 @@
+package com.example.git_job.compute.service;
+
+import com.example.git_job.compute.client.CComputeApi;
+import com.example.git_job.compute.client.dto.CSnapshot;
+import com.example.git_job.compute.controller.dto.Basis;
+import com.example.git_job.compute.controller.dto.ComputeState;
+import com.example.git_job.compute.controller.dto.RecommendationResponse;
+import com.example.git_job.compute.controller.dto.SkillGapResponse;
+import com.example.git_job.compute.service.ComputeResultReader.Computed;
+import org.springframework.stereotype.Service;
+
+/**
+ * Skill Gap과 다음 학습 기술 (S15P21E102-279).
+ *
+ * <p>둘이 한 서비스인 이유는 둘 다 같은 RECOMMENDATION Snapshot 하나에서 나오기
+ * 때문이다. C가 한 계산에서 Gap·추천·What-if를 함께 저장하므로 두 화면의 숫자가 서로
+ * 맞는다. 각각 다른 Snapshot을 읽으면 "부족 기술 9개"와 "추천 후보 3개"가 다른 기준 위에
+ * 서게 된다.</p>
+ */
+@Service
+public class SkillGapService {
+
+    private final CComputeApi compute;
+    private final ComputeResultReader reader;
+
+    public SkillGapService(CComputeApi compute, ComputeResultReader reader) {
+        this.compute = compute;
+        this.reader = reader;
+    }
+
+    public SkillGapResponse skillGap(long userId) {
+        Computed<CSnapshot> computed = read(userId);
+        if (!computed.hasValue()) {
+            return SkillGapResponse.pending(computed.state(), Basis.of(computed.target()));
+        }
+        CSnapshot.Recommendation recommendation = computed.value().payload();
+        return SkillGapResponse.of(ComputeState.ofRecommendation(recommendation.status()),
+                Basis.of(computed.target(), recommendation.demand()), recommendation);
+    }
+
+    public RecommendationResponse recommendations(long userId) {
+        Computed<CSnapshot> computed = read(userId);
+        if (!computed.hasValue()) {
+            return RecommendationResponse.pending(computed.state(), Basis.of(computed.target()));
+        }
+        CSnapshot.Recommendation recommendation = computed.value().payload();
+        return RecommendationResponse.of(ComputeState.ofRecommendation(recommendation.status()),
+                Basis.of(computed.target(), recommendation.demand()), recommendation);
+    }
+
+    private Computed<CSnapshot> read(long userId) {
+        return reader.read(userId, snapshot ->
+                compute.recommendation(snapshot.recommendationSnapshotId(), userId));
+    }
+}

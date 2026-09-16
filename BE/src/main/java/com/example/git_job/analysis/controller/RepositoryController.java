@@ -6,6 +6,7 @@ import com.example.git_job.analysis.controller.dto.RepositorySummaryResponse;
 import com.example.git_job.analysis.service.GithubRepositoryQueryService;
 import com.example.git_job.global.response.ApiResponse;
 import com.example.git_job.global.security.AuthenticatedUser;
+import com.example.git_job.global.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;

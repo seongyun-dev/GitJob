@@ -93,9 +93,25 @@ gitjob:
       repository-analysis:
         requests: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:gitjob.repository-analysis.requests.v1}
         results: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:gitjob.repository-analysis.results.v1}
+        # v3 결과 토픽. 워커는 Registry 버전에 따라 발행 토픽을 바꾸며 v1 을 함께
+        # 보내지 않는다(AI/analysis/consumer.py). registry-20260911.3/.4 환경에서
+        # 이 값을 비워 두면 결과가 도달하지 않아 분석이 QUEUED 에 남는다.
+        # 워커와 같은 환경 변수 이름을 쓴다.
+        results-v3: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3:}
     consumer:
       repository-analysis-results:
         group-id: ${ANALYSIS_RESULTS_CONSUMER_GROUP:gitjob-analysis-results}
+  compute:
+    # C Compute(데이터 서버 Worker 8080)의 내부 주소와 토큰. 둘 다 서버 설정으로만
+    # 주입하고 브라우저에 전달하지 않는다. 기본값을 넣지 않는 이유는 관리자망
+    # (Tailscale) 주소이고, 코드에 박힌 사설 IP는 환경이 바뀌면 조용히 틀린 곳을
+    # 가리키기 때문이다. 비어 있으면 C를 호출하지 않고 계산 결과를 미준비로 내린다.
+    base-url: ${C_COMPUTE_URL:}
+    token: ${C_COMPUTE_TOKEN:}
+    # 조회는 사용자 요청 스레드가 물려 있으므로 짧게 둔다.
+    read-timeout: ${C_COMPUTE_READ_TIMEOUT:5s}
+    # 분석 완료 전달은 C가 실제로 계산하는 동안 응답을 기다린다.
+    write-timeout: ${C_COMPUTE_WRITE_TIMEOUT:30s}
   monitoring:
     prometheus:
       # 비워 두면 Prometheus를 호출하지 않고 화면에 미연결 상태를 내린다. 관리자망

@@ -206,6 +206,22 @@ POST /api/v1/analyses
 
 ### 프로필·직무·추천
 
+> C 계산 계열은 `compute` 패키지가 구현한다(`S15P21E102-279`). 계약은
+> [C 계산 결과 공개 API 계약](c-compute-public-api.md), C 내부 API 호출 순서는
+> [B ↔ C Compute 연결 인수](../ai/c-compute-backend-integration.md)에 있다.
+> 이 계열의 수치는 B가 계산하지 않는다 — C 응답을 변환만 한다. 계산 대기·미준비·표본
+> 부족은 오류가 아니라 200 응답의 `dataStatus`로 내려간다.
+>
+> | Method | URI | 기능 |
+> |---|---|---|
+> | `GET`/`PUT` | `/api/v1/me/target` | 목표 직무. 저장하면 C 계산을 한 번 시도한다 |
+> | `GET` | `/api/v1/me/job-matches` | 공고 매칭 목록 |
+> | `GET` | `/api/v1/me/job-matches/{jobId}` | 공고 한 건의 요건 대조 |
+> | `GET` | `/api/v1/me/recommendations/{techId}/what-if` | 증가 건수와 신규 부합 공고 |
+>
+> `/api/v1/me/learning-target`과 `/api/v1/me/roadmap`은 아직 없다.
+
+
 | Method | URI | 기능 |
 |---|---|---|
 | `GET` | `/api/v1/me/profile` | 기술별 Repository/Personal Profile |

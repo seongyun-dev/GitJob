@@ -24,7 +24,7 @@ class RepositoryAnalysisEventProducerTest {
                 new RepositoryAnalysisKafkaProperties(
                         "gitjob.repository-analysis.requests.v1",
                         "gitjob.repository-analysis.results.v1"
-                );
+                , "");
         RepositoryAnalysisEventProducer producer =
                 new RepositoryAnalysisEventProducer(kafkaTemplate, properties);
         RepositoryAnalysisRequestedEvent event = event();

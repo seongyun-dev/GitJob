@@ -1,4 +1,4 @@
-import type { TrendSeriesFixture } from '@/mocks/types'
+import type { TrendSeriesView } from '@/features/trend/model/view'
 import { StateCard } from '@/shared/ui/StateCard'
 import type { StateKind } from '@/shared/ui/StateCard'
 
@@ -18,7 +18,7 @@ import type { StateKind } from '@/shared/ui/StateCard'
  * 없는 형태라 차트 라이브러리를 넣으면 번들만 커진다. 관리자 모니터링의
  * `ui/LineChart.tsx`도 같은 이유로 직접 그린다.
  */
-const SERIES_STATE: Readonly<Record<TrendSeriesFixture['status'], StateKind>> = {
+const SERIES_STATE: Readonly<Record<TrendSeriesView['status'], StateKind>> = {
   READY: 'LOADING',
   PREPARING: 'PREPARING',
   PARTIAL: 'PARTIAL',
@@ -28,7 +28,7 @@ const SERIES_STATE: Readonly<Record<TrendSeriesFixture['status'], StateKind>> = 
   FAILED: 'ERROR',
 }
 
-const STATE_TITLE: Readonly<Record<TrendSeriesFixture['status'], string>> = {
+const STATE_TITLE: Readonly<Record<TrendSeriesView['status'], string>> = {
   READY: '불러오는 중',
   PREPARING: '데이터를 준비하고 있어요',
   PARTIAL: '일부 기간만 집계됐어요',
@@ -38,7 +38,7 @@ const STATE_TITLE: Readonly<Record<TrendSeriesFixture['status'], string>> = {
   FAILED: '추이를 불러오지 못했어요',
 }
 
-export function TrendBarChart({ series }: { series: TrendSeriesFixture }) {
+export function TrendBarChart({ series }: { series: TrendSeriesView }) {
   if (series.points.length === 0) {
     return (
       <StateCard
@@ -49,14 +49,22 @@ export function TrendBarChart({ series }: { series: TrendSeriesFixture }) {
     )
   }
 
-  const max = Math.max(...series.points.map((point) => point.value))
+  /*
+   * 값이 없는 기간이 섞여 있다. 분모에서 빼는 이유는 `null`을 0으로 셈하면 최대값이
+   * 왜곡되고, 무엇보다 그 기간의 막대를 0 높이로 그리면 "그 달에는 아무 일도
+   * 없었다"는 다른 사실이 되기 때문이다(S15P21E102-279).
+   */
+  const values = series.points
+    .map((point) => point.value)
+    .filter((value): value is number => value !== null)
+  const max = values.length === 0 ? 0 : Math.max(...values)
   const lastIndex = series.points.length - 1
 
   return (
     <div>
       <div className="flex flex-wrap items-baseline gap-3">
         <p className="text-[28px] leading-none font-[850] tracking-[-0.04em] text-brand-ink">
-          {series.latestText}
+          {series.latestText ?? '—'}
         </p>
         {series.deltaText !== null && (
           <p className="text-[13px] font-[750] text-tone-success">{series.deltaText}</p>
@@ -69,17 +77,26 @@ export function TrendBarChart({ series }: { series: TrendSeriesFixture }) {
         좁은 화면에서 막대가 눌려 값 차이가 안 보인다.
       */}
       <div className="mt-4 flex h-[136px] items-end gap-1.5" aria-hidden>
-        {series.points.map((point, index) => (
-          <span
-            key={point.period}
-            className={`flex-1 rounded-t-[5px] ${
-              index === lastIndex
-                ? 'bg-[linear-gradient(180deg,#3F73FF,#2F5EEB)]'
-                : 'bg-[#AFC8FF]'
-            }`}
-            style={{ height: `${Math.round((point.value / max) * 100)}%` }}
-          />
-        ))}
+        {series.points.map((point, index) =>
+          point.value === null || max === 0 ? (
+            // 미집계 기간. 빈 칸으로 두고 점선 윤곽만 남긴다 -- 막대를 그리면 값이
+            // 있는 것으로, 0 높이로 그리면 0으로 읽힌다.
+            <span
+              key={point.period}
+              className="flex-1 self-stretch rounded-t-[5px] border border-dashed border-[#D7DFEC]"
+            />
+          ) : (
+            <span
+              key={point.period}
+              className={`flex-1 rounded-t-[5px] ${
+                index === lastIndex
+                  ? 'bg-[linear-gradient(180deg,#3F73FF,#2F5EEB)]'
+                  : 'bg-[#AFC8FF]'
+              }`}
+              style={{ height: `${Math.round((point.value / max) * 100)}%` }}
+            />
+          ),
+        )}
       </div>
       <div className="mt-2 flex gap-1.5">
         {series.points.map((point, index) => (
@@ -101,7 +118,7 @@ export function TrendBarChart({ series }: { series: TrendSeriesFixture }) {
       <ul className="sr-only">
         {series.points.map((point) => (
           <li key={point.period}>
-            {point.period} {point.value}
+            {point.period} {point.value === null ? '미집계' : point.value}
           </li>
         ))}
       </ul>
