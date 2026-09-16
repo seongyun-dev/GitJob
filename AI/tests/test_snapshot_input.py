@@ -333,3 +333,90 @@ def test_generic_fetch_summary_keeps_legitimate_partial_candidate_scope(publishe
     assert (
         loaded.quality.candidate_count == loaded.batch.collection_policy.top_n_limit - 1
     )
+
+
+def _quota_stop(published, *, examined=None):
+    """Shrink the publication to a rank prefix the way a quota stop does.
+
+    The two synthetic tail candidates sit above every record's rank, so
+    dropping them leaves ranks 1..max_rank with the batch untouched -- exactly
+    the shape a Weekly run produces when it fills its quota before the pool
+    runs out (S15P21E102-287).
+    """
+
+    summary = published.documents["summary"]
+    failures = published.documents["failures"]
+    keep = {row["github_repo_id"] for row in published.documents["snapshot"]["records"]}
+    summary["repos"] = [row for row in summary["repos"] if row["repo_id"] in keep]
+    failures["repos"] = [row for row in failures["repos"] if row["repo_id"] in keep]
+    summary["status_counts"] = dict(Counter(row["status"] for row in summary["repos"]))
+    failures["failure_count"] = len(failures["repos"])
+    summary["quota_reached"] = True
+    summary["quota_shortfall"] = 0
+    summary["candidates_examined"] = (
+        len(summary["repos"]) if examined is None else examined
+    )
+    return summary
+
+
+def test_quota_completion_is_accepted_without_full_pool_coverage(published):
+    summary = _quota_stop(published)
+    published.publish()
+
+    loaded = load_published_snapshot(ROOT, published)
+
+    top_n_limit = loaded.batch.collection_policy.top_n_limit
+    assert summary["candidates_examined"] < top_n_limit
+    assert loaded.quality.candidate_count == summary["candidates_examined"]
+
+
+def test_quota_shortfall_is_still_an_incomplete_run(published):
+    _quota_stop(published)["quota_shortfall"] = 3
+    published.publish()
+    with pytest.raises(SnapshotInputError, match="bootstrap"):
+        load_published_snapshot(ROOT, published)
+
+
+def test_partial_coverage_without_a_quota_claim_is_still_rejected(published):
+    summary = _quota_stop(published)
+    del summary["quota_reached"]
+    published.publish()
+    with pytest.raises(SnapshotInputError, match="bootstrap"):
+        load_published_snapshot(ROOT, published)
+
+
+def test_examined_count_must_match_the_rows_it_claims(published):
+    _quota_stop(published, examined=1)
+    published.publish()
+    with pytest.raises(SnapshotInputError, match="bootstrap"):
+        load_published_snapshot(ROOT, published)
+
+
+def test_quota_stop_must_be_a_rank_prefix_not_a_skipped_selection(published):
+    """A run that skipped candidates it could not fetch is not a quota stop."""
+
+    summary = _quota_stop(published)
+    lowest = min(summary["repos"], key=lambda row: row["rank"])
+    removed = [row for row in summary["repos"] if row is not lowest]
+    # Same row count as the batch claims, but the ranks now reach past it.
+    summary["repos"] = removed + [{**lowest, "rank": max(r["rank"] for r in removed) + 1}]
+    summary["candidates_examined"] = len(summary["repos"])
+    published.publish()
+    with pytest.raises(SnapshotInputError, match="bootstrap"):
+        load_published_snapshot(ROOT, published)
+
+
+def test_quota_completion_still_requires_the_published_marker(published):
+    _quota_stop(published)
+    published.documents["summary"]["snapshot_published"] = False
+    published.publish()
+    with pytest.raises(SnapshotInputError):
+        load_published_snapshot(ROOT, published)
+
+
+def test_quota_completion_still_rejects_an_early_stop_reason(published):
+    _quota_stop(published)
+    published.documents["summary"]["stopped_reason"] = "RUN_TIME_LIMIT"
+    published.publish()
+    with pytest.raises(SnapshotInputError, match="bootstrap"):
+        load_published_snapshot(ROOT, published)

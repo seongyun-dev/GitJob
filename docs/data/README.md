@@ -1253,6 +1253,15 @@ C조 범위다.
 - 회수: legacy FAILED ticket 을 DB 수정 없이 재claim. 재처리는 공식 `weekly_activity_publish_cli` 재실행 1 회로 수행하며 offset reset / group 삭제 / registry rollback 을 쓰지 않는다
 - 상세: [registry 교체가 Weekly 완료 이벤트를 유실시킨 경로와 재처리 절차](2026-09-16-weekly-trend-idempotency-event-loss.md)
 
+## Weekly quota publication의 A→C 로더 거부
+
+- Jira: `S15P21E102-287`
+- 증상: 정상 완료된 Weekly quota publication 을 `load_published_snapshot()` 이 `bootstrap publication lacks complete candidate coverage or stopped early` 로 거부 → PUBLIC_GITHUB 미생성
+- 원인: `-274` resolver 는 valid quota 도달 시 의도적으로 조기 종료하는데, `_reconcile()` 은 `top_n_limit` 전수 커버리지만 허용. quota < pool 인 모든 Weekly publication 이 거부됨
+- 수정: 전수 커버리지(기존)에 더해 `quota_reached` / `quota_shortfall == 0` / `candidates_examined == rows` / rank prefix 를 모두 만족할 때만 부분 커버리지 허용. schema_version 상향 없음, Historical full-coverage 경로 불변
+- 검증: 실제 publication 로드 미수정 FAIL → 수정 PASS, 광범위 회귀 135 passed / 0 failed
+- 상세: [Weekly quota publication이 A→C 로더에서 거부된 경로와 수용 계약](2026-09-16-weekly-quota-publication-coverage.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

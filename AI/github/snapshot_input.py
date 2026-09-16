@@ -74,6 +74,14 @@ class _Summary(_SourceModel):
     repos: tuple[_Disposition, ...]
     snapshot_published: StrictBool | None = None
     stopped_reason: StrictStr | None = None
+    # A Weekly run stops on its valid-artifact quota instead of consuming the
+    # whole candidate pool (S15P21E102-274), so its summary covers a prefix of
+    # `top_n_limit` rather than all of it. These three are what let the loader
+    # tell that deliberate stop apart from a run that died early; they are
+    # absent from Historical summaries, which stay on the full-coverage rule.
+    quota_reached: StrictBool | None = None
+    quota_shortfall: StrictInt | None = None
+    candidates_examined: StrictInt | None = None
 
 
 class _Failures(_SourceModel):
@@ -183,6 +191,38 @@ def _index(rows: tuple[_Disposition, ...], top_n_limit: int) -> dict[int, _Dispo
     return by_id
 
 
+def _covers_its_candidates(
+    by_id: dict[int, _Disposition], top_n_limit: int, summary: _Summary
+) -> bool:
+    """Did the run examine everything it was supposed to examine?
+
+    For a Historical bootstrap that means the whole pool. `_index` already
+    proves distinct ranks in 1..top_n_limit, so equal size proves exact
+    contiguous coverage without allocating a range.
+    """
+
+    if len(by_id) == top_n_limit:
+        return True
+    # A Weekly run is allowed to stop short, but only because it filled its
+    # valid-artifact quota. Every part of that has to be visible in the
+    # summary: the quota was reached, nothing is outstanding, and the rows are
+    # exactly the candidates it says it examined. `shortfall` is what separates
+    # "we have all 100" from "we ran out of pool with 60"; without it a crashed
+    # or truncated run would look the same as a deliberate stop.
+    if (
+        summary.quota_reached is not True
+        or summary.quota_shortfall != 0
+        or summary.candidates_examined != len(by_id)
+        or len(by_id) > top_n_limit
+    ):
+        return False
+    # The pool is rank-ordered and consumed from the top, so a quota stop
+    # leaves a prefix. Ranks are already distinct, so the largest one matching
+    # the count proves 1..examined with no gaps — a run that skipped
+    # candidates it could not fetch would not satisfy this.
+    return max((row.rank for row in by_id.values()), default=0) == len(by_id)
+
+
 def _reconcile(batch: GitHubRepoSnapshotBatch, summary: _Summary, failures: _Failures):
     if not (
         summary.dataset_snapshot_id
@@ -195,12 +235,10 @@ def _reconcile(batch: GitHubRepoSnapshotBatch, summary: _Summary, failures: _Fai
         raise SnapshotInputError("publication dataset/run/record count mismatch")
     by_id = _index(summary.repos, batch.collection_policy.top_n_limit)
     failed = _index(failures.repos, batch.collection_policy.top_n_limit)
-    if summary.schema_version == "github-repo-snapshot-bootstrap-summary/v1" and (
-        # _index already proves distinct ranks in 1..top_n_limit. Equal size
-        # therefore proves exact contiguous coverage without allocating a range.
-        len(by_id) != batch.collection_policy.top_n_limit
-        or summary.snapshot_published is not True
-        or summary.stopped_reason is not None
+    if summary.schema_version == "github-repo-snapshot-bootstrap-summary/v1" and not (
+        summary.snapshot_published is True
+        and summary.stopped_reason is None
+        and _covers_its_candidates(by_id, batch.collection_policy.top_n_limit, summary)
     ):
         raise SnapshotInputError(
             "bootstrap publication lacks complete candidate coverage or stopped early"
