@@ -1244,6 +1244,15 @@ C조 범위다.
 - 주의: 브로커 `message.max.bytes`·topic `max.message.bytes`·`replica.fetch.max.bytes` 를 함께 올리지 않으면 한계 상향은 불가
 - 상세: [oversized 이벤트가 github.events 를 2.4배로 불린 경로](2026-09-14-publisher-oversize-amplification.md)
 
+## registry 교체로 인한 Weekly 완료 이벤트 유실
+
+- Jira: `S15P21E102-283`
+- 증상: 2026-03-02 주 완료 이벤트가 소비되어 offset 0 → 1 로 commit됐으나 C export / PUBLIC_GITHUB / TREND 가 전부 미생성. TREND snapshot 0 건
+- 원인: claim request 에 처리 시점 CURRENT 에서 resolve 한 `registry_version` 이 포함되어 registry 교체 후 같은 Kafka record 가 다른 request_hash 가 됨 → `IdempotencyConflict` → ticket 미보유 상태에서 `REJECTED` 로 분류되어 offset 이 silent commit
+- 수정: Weekly claim request 를 A 가 게시한 값(identity + manifest 바이트)만으로 축소, `IdempotencyConflict` 를 `RETRY` 로 분리해 offset 보존, `claim()` 의 hash 불일치 conflict 를 COMPLETED/live RUNNING 으로 한정하고 미종료 ticket 은 재claim 허용
+- 회수: legacy FAILED ticket 을 DB 수정 없이 재claim. 재처리는 공식 `weekly_activity_publish_cli` 재실행 1 회로 수행하며 offset reset / group 삭제 / registry rollback 을 쓰지 않는다
+- 상세: [registry 교체가 Weekly 완료 이벤트를 유실시킨 경로와 재처리 절차](2026-09-16-weekly-trend-idempotency-event-loss.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
