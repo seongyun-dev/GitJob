@@ -12,8 +12,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Detail;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Observation;
 import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService;
+import com.example.git_job.analysis.service.TechnologyCandidateAdminService.CandidateDetail;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService.RegistryStatus;
 import com.example.git_job.auth.domain.Role;
 import com.example.git_job.global.exceptions.CustomException;
@@ -75,6 +78,34 @@ class AdminTechnologyCandidateControllerTest {
                 .andExpect(jsonPath("$.data[0].candidateId").value(7))
                 .andExpect(jsonPath("$.data[0].coordinate").value("com.h2database:h2"))
                 .andExpect(jsonPath("$.data[0].distinctUserCount").value(9));
+    }
+
+    @Test
+    @DisplayName("상세는 후보 정보·결정 내역과 관찰 근거를 함께 내려준다")
+    void theDetailCarriesTheCandidateAndItsObservations() throws Exception {
+        when(admin.detail(7L)).thenReturn(new CandidateDetail(
+                new Detail(7L, "MAVEN", "com.h2database:h2", "TEST", "PROMOTED",
+                        9, 12, 30, SEEN, SEEN, "h2database", SEEN, "빌드 도구로 확인"),
+                List.of(new Observation("repo-1", "TEST", 5, SEEN))));
+
+        mockMvc.perform(get(BASE + "/7"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.candidateId").value(7))
+                .andExpect(jsonPath("$.data.coordinate").value("com.h2database:h2"))
+                .andExpect(jsonPath("$.data.promotedTechId").value("h2database"))
+                .andExpect(jsonPath("$.data.observations[0].repositoryId").value("repo-1"))
+                .andExpect(jsonPath("$.data.observations[0].occurrenceCount").value(5));
+    }
+
+    @Test
+    @DisplayName("없는 후보의 상세는 404다")
+    void theDetailOfAnUnknownCandidateIsNotFound() throws Exception {
+        when(admin.detail(99L))
+                .thenThrow(new CustomException(ErrorCode.TECHNOLOGY_CANDIDATE_NOT_FOUND));
+
+        mockMvc.perform(get(BASE + "/99"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ADMIN-404-1"));
     }
 
     @Test

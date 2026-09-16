@@ -2,6 +2,8 @@ package com.example.git_job.analysis.service;
 
 import com.example.git_job.analysis.store.RegistryDraftStore;
 import com.example.git_job.analysis.store.TechnologyCandidateStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Detail;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Observation;
 import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
@@ -47,8 +49,26 @@ public class TechnologyCandidateAdminService {
     private final TechnologyCandidateStore candidates;
     private final RegistryDraftStore drafts;
 
+    /** Newest observations shown on the detail screen. The summary counts carry
+     *  the totals, so the trail only needs to be recent, not complete. */
+    private static final int MAX_OBSERVATIONS = 100;
+
     public List<Ranked> list(int limit) {
         return candidates.topCandidates(Math.clamp(limit, 1, 200));
+    }
+
+    /**
+     * The detail screen (S15P21E102-141): one candidate with its decision fields
+     * and the recent evidence behind it.
+     *
+     * @throws CustomException {@code TECHNOLOGY_CANDIDATE_NOT_FOUND} when the id
+     *     does not exist -- a detail request for a missing candidate is a 404,
+     *     not an empty body that reads as "no evidence yet".
+     */
+    public CandidateDetail detail(long candidateId) {
+        Detail candidate = candidates.findDetail(candidateId).orElseThrow(
+                () -> new CustomException(ErrorCode.TECHNOLOGY_CANDIDATE_NOT_FOUND));
+        return new CandidateDetail(candidate, candidates.observations(candidateId, MAX_OBSERVATIONS));
     }
 
     /**
@@ -146,5 +166,9 @@ public class TechnologyCandidateAdminService {
     }
 
     public record RegistryStatus(String current, String draft) {
+    }
+
+    /** A candidate and the recent observations behind it (S15P21E102-141). */
+    public record CandidateDetail(Detail candidate, List<Observation> observations) {
     }
 }

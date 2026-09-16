@@ -40,6 +40,32 @@ public class TechnologyCandidateStore {
             rs.getTimestamp("first_seen_at").toInstant(),
             rs.getTimestamp("last_seen_at").toInstant());
 
+    private static final RowMapper<Detail> DETAIL = (rs, row) -> new Detail(
+            rs.getLong("candidate_id"),
+            rs.getString("ecosystem"),
+            rs.getString("coordinate"),
+            rs.getString("scope"),
+            rs.getString("status"),
+            rs.getInt("distinct_user_count"),
+            rs.getInt("distinct_repository_count"),
+            rs.getInt("occurrence_count"),
+            rs.getTimestamp("first_seen_at").toInstant(),
+            rs.getTimestamp("last_seen_at").toInstant(),
+            rs.getString("promoted_tech_id"),
+            instantOrNull(rs.getTimestamp("decided_at")),
+            rs.getString("decision_note"));
+
+    private static final RowMapper<Observation> OBSERVATION = (rs, row) -> new Observation(
+            rs.getString("repository_id"),
+            rs.getString("scope"),
+            rs.getInt("occurrence_count"),
+            rs.getTimestamp("observed_at").toInstant());
+
+    /** {@code decided_at} is null while a candidate is undecided. */
+    private static Instant instantOrNull(Timestamp value) {
+        return value == null ? null : value.toInstant();
+    }
+
     private final JdbcTemplate jdbc;
 
     public TechnologyCandidateStore(JdbcTemplate jdbc) {
@@ -152,6 +178,36 @@ public class TechnologyCandidateStore {
     }
 
     /**
+     * The detail screen's candidate. Same summary as {@link #findById} plus the
+     * decision fields, so a promoted/rejected candidate shows what it became and
+     * the note it carried (S15P21E102-141).
+     */
+    public Optional<Detail> findDetail(long candidateId) {
+        return jdbc.query("""
+                SELECT candidate_id, ecosystem, coordinate, scope, status,
+                       distinct_user_count, distinct_repository_count, occurrence_count,
+                       first_seen_at, last_seen_at,
+                       promoted_tech_id, decided_at, decision_note
+                FROM technology_candidate WHERE candidate_id = ?
+                """, DETAIL, candidateId).stream().findFirst();
+    }
+
+    /**
+     * The evidence behind a candidate: which repository saw it, in what scope,
+     * how often, and when (S15P21E102-141). Newest first, capped -- the summary
+     * counts already say the total, so the detail only needs the recent trail.
+     */
+    public List<Observation> observations(long candidateId, int limit) {
+        return jdbc.query("""
+                SELECT repository_id, scope, occurrence_count, observed_at
+                FROM technology_candidate_observation
+                WHERE candidate_id = ?
+                ORDER BY observed_at DESC, observation_id DESC
+                LIMIT ?
+                """, OBSERVATION, candidateId, limit);
+    }
+
+    /**
      * Records the administrator's decision.
      *
      * <p>Only an undecided candidate moves. A second click, or two
@@ -175,5 +231,18 @@ public class TechnologyCandidateStore {
     public record Ranked(long candidateId, String ecosystem, String coordinate, String scope,
             String status, int distinctUserCount, int distinctRepositoryCount,
             int occurrenceCount, Instant firstSeenAt, Instant lastSeenAt) {
+    }
+
+    /** A candidate with its decision fields. {@code promotedTechId}/{@code decidedAt}/
+     * {@code decisionNote} are null while undecided. */
+    public record Detail(long candidateId, String ecosystem, String coordinate, String scope,
+            String status, int distinctUserCount, int distinctRepositoryCount,
+            int occurrenceCount, Instant firstSeenAt, Instant lastSeenAt,
+            String promotedTechId, Instant decidedAt, String decisionNote) {
+    }
+
+    /** One sighting behind a candidate. {@code scope} is null when a manifest omitted it. */
+    public record Observation(String repositoryId, String scope, int occurrenceCount,
+            Instant observedAt) {
     }
 }

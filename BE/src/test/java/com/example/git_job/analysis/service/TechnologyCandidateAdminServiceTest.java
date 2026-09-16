@@ -3,6 +3,7 @@ package com.example.git_job.analysis.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -14,6 +15,8 @@ import static org.mockito.Mockito.when;
 
 import com.example.git_job.analysis.store.RegistryDraftStore;
 import com.example.git_job.analysis.store.TechnologyCandidateStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Detail;
+import com.example.git_job.analysis.store.TechnologyCandidateStore.Observation;
 import com.example.git_job.analysis.store.TechnologyCandidateStore.Ranked;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
@@ -192,5 +195,32 @@ class TechnologyCandidateAdminServiceTest {
 
         verify(candidates).topCandidates(200);
         verify(candidates).topCandidates(1);
+    }
+
+    @Test
+    @DisplayName("상세 조회는 후보와 최근 관찰을 함께 준다")
+    void detailReturnsCandidateWithRecentObservations() {
+        when(candidates.findDetail(1L)).thenReturn(Optional.of(new Detail(
+                1L, "MAVEN", "io.jsonwebtoken:jjwt-api", "MAIN", "NEW",
+                9, 12, 30, SEEN, SEEN, null, null, null)));
+        when(candidates.observations(1L, 100)).thenReturn(List.of(
+                new Observation("repo-1", "MAIN", 5, SEEN)));
+
+        var detail = admin.detail(1L);
+
+        assertEquals(1L, detail.candidate().candidateId());
+        assertEquals(1, detail.observations().size());
+        assertEquals("repo-1", detail.observations().get(0).repositoryId());
+    }
+
+    @Test
+    @DisplayName("없는 후보의 상세는 NOT_FOUND 이고 관찰은 읽지 않는다")
+    void detailOfUnknownCandidateIsNotFound() {
+        when(candidates.findDetail(99L)).thenReturn(Optional.empty());
+
+        assertEquals(ErrorCode.TECHNOLOGY_CANDIDATE_NOT_FOUND,
+                assertThrows(CustomException.class,
+                        () -> admin.detail(99L)).getErrorCode());
+        verify(candidates, never()).observations(anyLong(), anyInt());
     }
 }

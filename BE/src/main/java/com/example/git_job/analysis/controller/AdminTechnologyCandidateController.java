@@ -3,6 +3,7 @@ package com.example.git_job.analysis.controller;
 import com.example.git_job.analysis.controller.dto.CandidatePromoteRequest;
 import com.example.git_job.analysis.controller.dto.CandidateRejectRequest;
 import com.example.git_job.analysis.controller.dto.PromotionResponse;
+import com.example.git_job.analysis.controller.dto.TechnologyCandidateDetailResponse;
 import com.example.git_job.analysis.controller.dto.TechnologyCandidateResponse;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService;
 import com.example.git_job.analysis.service.TechnologyCandidateAdminService.RegistryStatus;
@@ -51,6 +52,20 @@ public class AdminTechnologyCandidateController {
                 .map(TechnologyCandidateResponse::from)
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(rows));
+    }
+
+    /**
+     * One candidate with its decision and the recent evidence behind it
+     * (S15P21E102-141). 404 when the id does not exist -- the summary counts on
+     * the list say how many people are affected, and this traces that number to
+     * the repositories and scopes that produced it.
+     */
+    @GetMapping("/{candidateId}")
+    public ResponseEntity<ApiResponse<TechnologyCandidateDetailResponse>> detail(
+            @PathVariable long candidateId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                TechnologyCandidateDetailResponse.from(admin.detail(candidateId))));
     }
 
     /** Which version analyses use now, and which one promotions are accumulating in. */

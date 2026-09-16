@@ -266,4 +266,63 @@ class TechnologyCandidateStoreTest {
 
         assertEquals(0, store.record("an_empty", 901L, "repo_empty", List.of(), SEEN));
     }
+
+    private long candidateId(String coordinate) {
+        return jdbc.queryForObject(
+                "SELECT candidate_id FROM technology_candidate WHERE coordinate = ?",
+                Long.class, coordinate);
+    }
+
+    @Test
+    @DisplayName("상세 조회는 결정 필드까지 주고, 미결정이면 null이다 (S15P21E102-141)")
+    void findDetailCarriesTheDecisionFields() {
+        givenJob("an_det", 1001L, "repo_det");
+        store.record("an_det", 1001L, "repo_det",
+                List.of(candidate("org.example:detail", "implementation", 4)), SEEN);
+        long id = candidateId("org.example:detail");
+
+        var undecided = store.findDetail(id).orElseThrow();
+        assertEquals("org.example:detail", undecided.coordinate());
+        assertEquals("NEW", undecided.status());
+        assertNull(undecided.promotedTechId());
+        assertNull(undecided.decidedAt());
+        assertNull(undecided.decisionNote());
+
+        store.decide(id, "PROMOTED", "example-detail", 1001L, "등록함", SEEN);
+
+        var decided = store.findDetail(id).orElseThrow();
+        assertEquals("PROMOTED", decided.status());
+        assertEquals("example-detail", decided.promotedTechId());
+        assertEquals("등록함", decided.decisionNote());
+        assertEquals(SEEN, decided.decidedAt());
+    }
+
+    @Test
+    @DisplayName("없는 후보의 상세는 빈 Optional 이다 (S15P21E102-141)")
+    void findDetailOfUnknownIsEmpty() {
+        assertTrue(store.findDetail(-1L).isEmpty());
+    }
+
+    @Test
+    @DisplayName("관찰은 최근 것부터, 저장소·scope·횟수와 함께 주고 limit을 지킨다 (S15P21E102-141)")
+    void observationsComeBackNewestFirst() {
+        givenJob("an_ob1", 1101L, "repo_old");
+        givenJob("an_ob2", 1102L, "repo_new");
+        store.record("an_ob1", 1101L, "repo_old",
+                List.of(candidate("org.example:obs", "implementation", 2)),
+                Instant.parse("2026-09-01T00:00:00Z"));
+        store.record("an_ob2", 1102L, "repo_new",
+                List.of(candidate("org.example:obs", "testImplementation", 7)),
+                Instant.parse("2026-09-10T00:00:00Z"));
+        long id = candidateId("org.example:obs");
+
+        var observations = store.observations(id, 50);
+        assertEquals(2, observations.size());
+        // 최근 것 먼저.
+        assertEquals("repo_new", observations.get(0).repositoryId());
+        assertEquals("testImplementation", observations.get(0).scope());
+        assertEquals(7, observations.get(0).occurrenceCount());
+        // limit을 지킨다.
+        assertEquals(1, store.observations(id, 1).size());
+    }
 }
