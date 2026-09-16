@@ -525,11 +525,17 @@ Worker는 token을 URL·argv·Git config 파일에 넣지 않고 해당 `git fet
 환경 설정(`http.extraHeader`)에만 전달한다. 응답을 캐시하지 않고 한 번 사용한 뒤 참조를
 버린다. BE 응답도 `Cache-Control: no-store`를 고정하고, Worker는 HTTP(S)가 아니거나
 사용자 정보가 포함된 broker URL과 예상하지 않은 응답 schema/type을 거절한다.
+환경 전달은 디스크·argv 잔존을 막지만 같은 host의 동일 UID나 root가 자식 프로세스의
+환경을 읽는 위협까지 막지는 않는다. 따라서 Worker host와 실행 계정은 신뢰 경계 안에서
+격리한다.
 현재 GitHub OAuth token 자체의 만료 시간을 보장하는 구조는 아니므로
 "short-lived token"이라고 부르지 않는다.
 
 내부 경로는 public Nginx에 route를 만들지 않는다. split EC2에서는 service host backend를
 private/Tailscale 주소의 별도 host port에 bind하고 data host만 접근하게 한다.
+`http://` broker URL은 WireGuard로 암호화되는 Tailscale 주소에서만 사용한다. 일반 VPC
+private IP 경로라면 OAuth token의 전송 구간을 보호하도록 내부 TLS와 `https://` URL을
+사용한다. 포트 비공개만으로 전송 암호화를 대신하지 않는다.
 
 요청·응답 구조는
 `docs/data/contracts/repository-analysis-credential-request-v1.schema.json`과

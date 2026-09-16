@@ -29,6 +29,7 @@ from pathlib import Path
 from time import monotonic
 from types import FrameType
 
+from common.kafka import ConsumedMessage, ConsumerTransport, KafkaTransport
 from pydantic import ValidationError
 
 from analysis.attribution import CommitAuthorIdentityResolver, GitEvidenceAttributor
@@ -65,7 +66,6 @@ from analysis.results import (
     schema_for_rule_pack,
 )
 from analysis.rules import RegistryStore, UnknownRegistryVersion
-from common.kafka import ConsumedMessage, ConsumerTransport, KafkaTransport
 
 __all__ = ["AnalysisConsumer", "ClaimBusyError", "ClaimLostError", "Outcome"]
 
@@ -448,7 +448,8 @@ class AnalysisConsumer:
                 access_token=access_token,
             )
         finally:
-            # Do not retain the per-user credential on the consumer instance.
+            # Drop this local reference promptly. Python strings are immutable, so this
+            # is not a promise that the token bytes are erased from process memory.
             access_token = None
 
     def _report_failure(

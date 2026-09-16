@@ -19,11 +19,37 @@ interface SessionStorageEvent {
 interface SessionQueryClient {
   cancelQueries(): Promise<void>
   clear(): void
+  getQueryCache?(): {
+    getAll(): readonly { reset(): void }[]
+  }
   setQueryData(queryKey: readonly string[], value: Me | null): unknown
 }
 
 /** 각 탭의 메모리 캐시가 실제로 어느 세션을 담는지 추적한다. */
 const queryClientIdentities = new WeakMap<object, string>()
+/** 직접 실행한 /me 요청 중 어느 세션 전환이 최신인지 추적한다. */
+const refreshGenerations = new WeakMap<object, number>()
+
+function beginSessionTransition(queryClient: object): number {
+  const next = (refreshGenerations.get(queryClient) ?? 0) + 1
+  refreshGenerations.set(queryClient, next)
+  return next
+}
+
+function isCurrentTransition(queryClient: object, generation: number): boolean {
+  return refreshGenerations.get(queryClient) === generation
+}
+
+/**
+ * 활성 화면이 구독 중인 Query에도 빈 상태를 먼저 통지한 다음 캐시에서 제거한다.
+ * QueryClient.clear()만 호출하면 제거된 Query의 observer가 이전 사용자 결과를 계속 가진다.
+ */
+function clearSessionQueries(queryClient: SessionQueryClient): void {
+  for (const query of queryClient.getQueryCache?.().getAll() ?? []) {
+    query.reset()
+  }
+  queryClient.clear()
+}
 
 /** 이름·아바타가 같아도 계정을 구분할 수 있는 서버 발급 식별자를 쓴다. */
 export function sessionIdentity(me: Pick<Me, 'userId'> | null): string {
@@ -62,11 +88,16 @@ export function isSessionChangeEvent(
 export async function replaceSessionCache(
   queryClient: SessionQueryClient,
   me: Me | null,
-): Promise<void> {
-  queryClientIdentities.set(queryClient, sessionIdentity(me))
+): Promise<boolean> {
+  const generation = beginSessionTransition(queryClient)
   await queryClient.cancelQueries()
-  queryClient.clear()
+  if (!isCurrentTransition(queryClient, generation)) {
+    return false
+  }
+  queryClientIdentities.set(queryClient, sessionIdentity(me))
+  clearSessionQueries(queryClient)
   queryClient.setQueryData(ME_QUERY_KEY, me)
+  return true
 }
 
 /**
@@ -79,9 +110,20 @@ export async function synchronizeSessionCache(
   me: Me | null,
 ): Promise<boolean> {
   const next = sessionIdentity(me)
-  const cacheChanged = queryClientIdentities.get(queryClient) !== next
+  const current = queryClientIdentities.get(queryClient)
+  // 새 QueryClient는 이전 사용자의 캐시를 담은 적이 없다. 첫 /me 관측은 소유자만
+  // 기록하고, 동시에 시작된 저장소·공개 Trend 요청을 취소하거나 비우지 않는다.
+  if (current === undefined) {
+    queryClientIdentities.set(queryClient, next)
+    storeSessionIdentity(storage, me)
+    return false
+  }
+  const cacheChanged = current !== next
   if (cacheChanged) {
-    await replaceSessionCache(queryClient, me)
+    const applied = await replaceSessionCache(queryClient, me)
+    if (!applied) {
+      return false
+    }
   }
   storeSessionIdentity(storage, me)
   return cacheChanged
@@ -92,13 +134,20 @@ export async function refreshSessionCache(
   queryClient: SessionQueryClient,
   loadMe: () => Promise<Me | null>,
 ): Promise<void> {
+  const generation = beginSessionTransition(queryClient)
   await queryClient.cancelQueries()
-  queryClient.clear()
+  if (!isCurrentTransition(queryClient, generation)) {
+    return
+  }
+  clearSessionQueries(queryClient)
   // 재조회 중에는 이전 사용자의 헤더도 남기지 않는다.
   queryClient.setQueryData(ME_QUERY_KEY, null)
   queryClientIdentities.set(queryClient, sessionIdentity(null))
   try {
     const me = await loadMe()
+    if (!isCurrentTransition(queryClient, generation)) {
+      return
+    }
     queryClient.setQueryData(ME_QUERY_KEY, me)
     queryClientIdentities.set(queryClient, sessionIdentity(me))
   } catch {

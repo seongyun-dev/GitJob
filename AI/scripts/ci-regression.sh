@@ -16,6 +16,8 @@ cleanup() {
 trap cleanup EXIT
 
 "${python_bin}" --version
+command -v git >/dev/null
+git --version
 "${python_bin}" -m venv "${ci_venv}"
 ci_python="${ci_venv}/bin/python"
 # The Jenkins stage supplies the Worker Python Linux image. POSIX permission
@@ -34,6 +36,10 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
   tests/test_registry_review.py \
   tests/test_worker_intake.py \
   tests/test_worker_registry_source.py \
+  tests/test_analysis_credentials.py \
+  tests/test_analysis_clone.py \
+  tests/test_analysis_consumer.py \
+  tests/test_entrypoints.py \
   tests/test_job_review_provenance.py \
   tests/test_trend_archive.py \
   tests/test_recommendation_engine.py \
@@ -42,6 +48,7 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
   tests/test_compute_archive.py::test_missing_archive_mount_is_retryable_operational_failure \
   --deselect tests/test_worker_intake.py::test_actual_app_startup_consumes_to_postgres_and_restart_deduplicates \
   --deselect tests/test_worker_registry_source.py::test_real_db_default_survives_app_restart \
+  --deselect tests/test_analysis_clone.py::test_junction_cannot_redirect_cleanup_to_another_work_directory \
   --junitxml "${results_xml}" \
   -q
 

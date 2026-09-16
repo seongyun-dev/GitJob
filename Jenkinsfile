@@ -138,6 +138,9 @@ pipeline {
                     git archive --format=tar HEAD | docker run --rm -i \\
                       python:3.12-slim-bookworm bash -c '
                         set -Eeuo pipefail
+                        apt-get update -qq
+                        apt-get install -y --no-install-recommends git >/dev/null
+                        rm -rf /var/lib/apt/lists/*
                         mkdir /workspace
                         tar -xf - -C /workspace
                         cd /workspace
@@ -159,7 +162,7 @@ pipeline {
                     # the only thing in CI that looks at the code itself.
                     npm run lint
                     if node -e "const packageJson = require('./package.json'); process.exit(packageJson.scripts?.test ? 0 : 1)"; then
-                        npm test -- --runInBand
+                        npm test
                     else
                         echo 'No frontend test script configured; skipping frontend test command.'
                     fi

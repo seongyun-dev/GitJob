@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test:session": "node --test tests/sessionSync.test.ts",
+    "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
+    "test:session": "node --experimental-strip-types --test tests/sessionSync.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "preview": "vite preview"
