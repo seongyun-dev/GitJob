@@ -76,3 +76,57 @@ def test_datanode_host_mapping_becomes_reader_origin_routes(monkeypatch):
     assert entry._datanode_routes() == {
         "http://datanode:9864": "http://100.70.66.38:9864"
     }
+
+
+def test_service_host_override_defaults_to_earliest():
+    """The library default was never the problem — the override was.
+
+    `consumer_from_env` has defaulted to `earliest` all along, but the
+    Service-host override pinned `latest`, and that is the file Production
+    runs. A new group then seeks past events already sitting in the topic,
+    which is exactly how `gitjob-weekly-trend-prod-v1` ended up idling with an
+    unread completion event at offset 0 (S15P21E102-282). Assert the rendered
+    default here so the two cannot drift apart again.
+    """
+
+    from pathlib import Path
+
+    override = (
+        Path(__file__).resolve().parents[2]
+        / "Infra"
+        / "compose"
+        / "compose.weekly-host.yaml"
+    ).read_text(encoding="utf-8")
+    assert (
+        "KAFKA_AUTO_OFFSET_RESET: ${WEEKLY_CONSUMER_KAFKA_AUTO_OFFSET_RESET:-earliest}"
+        in override
+    )
+    assert ":-latest}" not in override
+
+
+def test_env_example_matches_the_override_default():
+    from pathlib import Path
+
+    example = (
+        Path(__file__).resolve().parents[2] / ".env.example"
+    ).read_text(encoding="utf-8")
+    assert "WEEKLY_CONSUMER_KAFKA_AUTO_OFFSET_RESET=earliest" in example
+
+
+def test_offset_reset_is_scoped_to_the_weekly_consumer():
+    """No other service may be forced onto a reset policy by compose.
+
+    `earliest` is safe for a group that has never committed and a no-op for one
+    that has, but forcing it across the stack would still be a change nobody
+    asked for. Only the Weekly override sets this key.
+    """
+
+    from pathlib import Path
+
+    compose_dir = Path(__file__).resolve().parents[2] / "Infra" / "compose"
+    setters = [
+        path.name
+        for path in sorted(compose_dir.glob("*.yaml"))
+        if "KAFKA_AUTO_OFFSET_RESET" in path.read_text(encoding="utf-8")
+    ]
+    assert setters == ["compose.weekly-host.yaml"]
