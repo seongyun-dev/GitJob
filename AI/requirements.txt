@@ -4,6 +4,7 @@ uvicorn==0.52.4
 psycopg[binary]==3.3.3
 tzdata>=2024.1
 kafka-python==3.0.11
+redis==8.1.0
 
 # Repository analysis parsing (S15P21E102-121). C extensions, but every one of
 # these publishes manylinux cp312 wheels, so the compiler-less

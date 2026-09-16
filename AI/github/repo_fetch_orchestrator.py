@@ -33,6 +33,7 @@ from github.contracts import (
     RepoCollectionStatus,
     RepoLanguageMetadata,
 )
+from github.redis_artifact_index import RedisArtifactIndex
 from github.repo_fetch_policy import (
     RepoFetchPolicy,
     devops_artifact_category,
@@ -204,8 +205,11 @@ class RepoFetchOrchestrator:
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         monotonic: Callable[[], float] = time.monotonic,
         progress: Callable[[RepoExecution, int, int], None] | None = None,
+        redis_index: RedisArtifactIndex | None = None,
         require_historical_head: bool = False,
     ) -> None:
+        if require_historical_head and redis_index is not None:
+            raise ValueError("Historical orchestrators cannot use Redis artifact index")
         metadata = {
             "dataset_snapshot_id": dataset_snapshot_id,
             "pipeline_run_id": pipeline_run_id,
@@ -225,7 +229,9 @@ class RepoFetchOrchestrator:
         self.now = now
         self.monotonic = monotonic
         self.progress = progress
+        self.redis_index = redis_index
         self.require_historical_head = require_historical_head
+        self.materialization_context = artifact_store.materialization_context
         self.cache_policy_version = (
             f"{policy.cache_identity}:historical-head-required"
             if require_historical_head
@@ -320,6 +326,7 @@ class RepoFetchOrchestrator:
             ):
                 self.cache.put(
                     policy_version=self.cache_policy_version,
+                    materialization_context=self.materialization_context,
                     record=result.record,
                 )
             if result.status is RepoExecutionStatus.RATE_LIMITED:
@@ -480,6 +487,7 @@ class RepoFetchOrchestrator:
 
         cached = self.cache.get(
             policy_version=self.cache_policy_version,
+            materialization_context=self.materialization_context,
             repo_id=candidate.repo_id,
             pinned_commit_sha=pinned_commit_sha,
         )
@@ -487,6 +495,7 @@ class RepoFetchOrchestrator:
             if head_tree_sha is not None and cached.tree_sha != head_tree_sha:
                 repaired = self.cache.repair_tree_sha(
                     policy_version=self.cache_policy_version,
+                    materialization_context=self.materialization_context,
                     repo_id=candidate.repo_id,
                     pinned_commit_sha=pinned_commit_sha,
                     tree_sha=head_tree_sha,
@@ -508,6 +517,29 @@ class RepoFetchOrchestrator:
                 record=record,
                 requests=tuple(requests),
             )
+
+        if self.redis_index is not None:
+            redis_hit = self.redis_index.lookup(
+                cache_policy_version=self.cache_policy_version,
+                repo_id=candidate.repo_id,
+                pinned_commit_sha=pinned_commit_sha,
+                sha_source=sha_source,
+                artifact_store=self.artifact_store,
+            )
+            if redis_hit is not None:
+                record = self._redis_reused_record(
+                    candidate,
+                    canonical_name,
+                    redis_hit,
+                    current_default_head=current_default_head,
+                    sha_fallback_reason=sha_fallback_reason,
+                )
+                return RepoExecution(
+                    candidate=candidate,
+                    status=RepoExecutionStatus.REUSED,
+                    record=record,
+                    requests=tuple(requests),
+                )
 
         # The branch HEAD response is the authoritative source for the
         # pinned commit's root Git tree.  A GitHub Tree response may echo the
@@ -706,6 +738,18 @@ class RepoFetchOrchestrator:
             sha_source=sha_source,
             sha_fallback_reason=sha_fallback_reason,
         )
+        if (
+            self.redis_index is not None
+            and collection_status is RepoCollectionStatus.COMPLETE
+            and artifacts
+        ):
+            self.redis_index.put(
+                cache_policy_version=self.cache_policy_version,
+                repo_id=candidate.repo_id,
+                pinned_commit_sha=pinned_commit_sha,
+                sha_source=sha_source,
+                artifacts=tuple(artifacts),
+            )
         status = (
             RepoExecutionStatus.RATE_LIMITED
             if rate_limited
@@ -898,6 +942,35 @@ class RepoFetchOrchestrator:
             current_default_head=cached_current_head,
             sha_source=cached_source,
             sha_fallback_reason=cached_reason,
+        )
+
+    def _redis_reused_record(
+        self,
+        candidate: RepoActivityCandidate,
+        canonical_name: str,
+        hit: Any,
+        *,
+        current_default_head: str | None,
+        sha_fallback_reason: str | None,
+    ) -> GitHubRepoSnapshot:
+        return self._record(
+            candidate=candidate,
+            canonical_name=canonical_name,
+            pinned_commit_sha=hit.pinned_commit_sha,
+            tree_sha=None,
+            collection_status=RepoCollectionStatus.REUSED,
+            collection_issues=(),
+            checkpoint_uri=None,
+            reused_from_snapshot_id=(
+                f"redis-artifact-index-repo-{candidate.repo_id}-"
+                f"{hit.pinned_commit_sha[:12]}"
+            ),
+            tree_truncated=False,
+            observed_tree_entries=0,
+            artifacts=hit.artifacts,
+            current_default_head=current_default_head,
+            sha_source=hit.sha_source,
+            sha_fallback_reason=sha_fallback_reason,
         )
 
     def _record(
@@ -1103,18 +1176,72 @@ def create_orchestrator(
     token: str,
     progress: Callable[[RepoExecution, int, int], None] | None = None,
 ) -> RepoFetchOrchestrator:
+    artifact_store = create_artifact_store(arguments)
+    redis_index = None
+    if bool(getattr(arguments, "weekly_redis_enabled", False)):
+        redis_index = create_redis_artifact_index(
+            materialization_context=artifact_store.materialization_context,
+        )
     return RepoFetchOrchestrator(
         client=GitHubClient(token),
         policy=create_policy(arguments),
-        artifact_store=create_artifact_store(arguments),
+        artifact_store=artifact_store,
         cache=RepoSnapshotCache(arguments.cache),
         checkpoint=RepoFetchCheckpoint(arguments.checkpoint),
         dataset_snapshot_id=arguments.dataset_snapshot_id,
         pipeline_run_id=arguments.pipeline_run_id,
         collector_version=arguments.collector_version,
         progress=progress,
+        redis_index=redis_index,
         require_historical_head=arguments.require_historical_head,
     )
+
+
+def create_redis_artifact_index(
+    *,
+    materialization_context: str,
+) -> RedisArtifactIndex | None:
+    """Create the optional Weekly Redis index without making Redis mandatory."""
+
+    try:
+        import redis
+
+        ttl_seconds = int(
+            os.environ.get("WEEKLY_REDIS_ARTIFACT_INDEX_TTL_SECONDS", "2592000")
+        )
+        namespace = os.environ.get(
+            "WEEKLY_REDIS_ARTIFACT_INDEX_NAMESPACE",
+            "gitjob:weekly:artifact-index:v1",
+        )
+        redis_url = os.environ.get("WEEKLY_REDIS_URL")
+        if redis_url:
+            client = redis.Redis.from_url(
+                redis_url,
+                decode_responses=False,
+                socket_timeout=0.5,
+                socket_connect_timeout=0.5,
+            )
+        else:
+            host = os.environ.get("REDIS_HOST")
+            if not host:
+                return None
+            client = redis.Redis(
+                host=host,
+                port=int(os.environ.get("REDIS_PORT", "6379")),
+                db=int(os.environ.get("WEEKLY_REDIS_DB", "1")),
+                password=os.environ.get("REDIS_PASSWORD") or None,
+                decode_responses=False,
+                socket_timeout=0.5,
+                socket_connect_timeout=0.5,
+            )
+        return RedisArtifactIndex(
+            client,
+            materialization_context=materialization_context,
+            ttl_seconds=ttl_seconds,
+            namespace=namespace,
+        )
+    except (ImportError, TypeError, ValueError):
+        return None
 
 
 def create_artifact_store(arguments: argparse.Namespace) -> ArtifactStore:

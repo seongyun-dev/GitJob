@@ -9,16 +9,26 @@ import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
-from common.webhdfs import WebHdfsClient, WebHdfsTransport, normalize_hdfs_path
+from common.webhdfs import (
+    WebHdfsClient,
+    WebHdfsError,
+    WebHdfsTransport,
+    normalize_hdfs_path,
+)
 
 from github.client import RequestRecord
-from github.contracts import GitHubRepoSnapshot, RepoCollectionStatus
+from github.contracts import GitHubRepoSnapshot, RepoArtifact, RepoCollectionStatus
 
 STORE_VERSION = 1
 
 
 class ArtifactStore(Protocol):
+    @property
+    def materialization_context(self) -> str: ...
+
     def store(
         self,
         *,
@@ -29,12 +39,18 @@ class ArtifactStore(Protocol):
         content: bytes,
     ) -> str: ...
 
+    def validate_artifact(self, artifact: RepoArtifact) -> bool: ...
+
 
 class FileArtifactStore:
     """Immutable local artifact store used by the orchestrator interface."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
+
+    @property
+    def materialization_context(self) -> str:
+        return self.root.as_uri()
 
     def store(
         self,
@@ -77,6 +93,22 @@ class FileArtifactStore:
             temporary.unlink(missing_ok=True)
         return destination.as_uri()
 
+    def validate_artifact(self, artifact: RepoArtifact) -> bool:
+        parsed = urlsplit(artifact.uri)
+        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+            return False
+        try:
+            target = Path(url2pathname(unquote(parsed.path))).resolve()
+            if not target.is_relative_to(self.root) or not target.is_file():
+                return False
+            content = target.read_bytes()
+        except (OSError, ValueError):
+            return False
+        return (
+            len(content) == artifact.size_bytes
+            and hashlib.sha256(content).hexdigest() == artifact.content_hash
+        )
+
 
 class WebHdfsArtifactStore:
     """Immutable shared artifact store for bootstrap and C-team read-back."""
@@ -100,6 +132,10 @@ class WebHdfsArtifactStore:
             client_arguments["transport"] = transport
         self.client = WebHdfsClient(**client_arguments)
 
+    @property
+    def materialization_context(self) -> str:
+        return f"{self.client.base_url}|root={self.root.as_posix()}"
+
     def store(
         self,
         *,
@@ -120,9 +156,24 @@ class WebHdfsArtifactStore:
         )
         return self.client.store_immutable(destination, content)
 
+    def validate_artifact(self, artifact: RepoArtifact) -> bool:
+        parsed = urlsplit(artifact.uri)
+        if parsed.scheme != "hdfs" or parsed.netloc:
+            return False
+        try:
+            path = normalize_hdfs_path(parsed.path)
+            if not path.is_relative_to(self.root):
+                return False
+            if self.client.length(path) != artifact.size_bytes:
+                return False
+            content = self.client.read(path)
+        except (OSError, ValueError, WebHdfsError):
+            return False
+        return hashlib.sha256(content).hexdigest() == artifact.content_hash
+
 
 class RepoSnapshotCache:
-    """Cross-period cache keyed by policy, GitHub repo id, and pinned SHA."""
+    """Cache snapshots by policy, materialization context, repo id, and SHA."""
 
     def __init__(self, path: Path, *, flush_every: int = 100) -> None:
         if flush_every < 1:
@@ -140,11 +191,17 @@ class RepoSnapshotCache:
         self,
         *,
         policy_version: str,
+        materialization_context: str = "legacy",
         repo_id: int,
         pinned_commit_sha: str,
     ) -> GitHubRepoSnapshot | None:
         payload = self.data["entries"].get(
-            _cache_key(policy_version, repo_id, pinned_commit_sha)
+            _cache_key(
+                policy_version,
+                repo_id,
+                pinned_commit_sha,
+                materialization_context,
+            )
         )
         if not isinstance(payload, Mapping):
             return None
@@ -157,6 +214,7 @@ class RepoSnapshotCache:
         self,
         *,
         policy_version: str,
+        materialization_context: str = "legacy",
         record: GitHubRepoSnapshot,
     ) -> None:
         if record.collection_status is not RepoCollectionStatus.COMPLETE:
@@ -165,6 +223,7 @@ class RepoSnapshotCache:
             policy_version,
             record.github_repo_id,
             record.pinned_commit_sha,
+            materialization_context,
         )
         payload = record.model_dump(mode="json")
         existing = self.data["entries"].get(key)
@@ -177,20 +236,26 @@ class RepoSnapshotCache:
         self,
         *,
         policy_version: str,
+        materialization_context: str = "legacy",
         repo_id: int,
         pinned_commit_sha: str,
         tree_sha: str,
     ) -> GitHubRepoSnapshot | None:
         """Repair cached tree metadata without touching immutable artifacts.
 
-        Cache identity is still policy + repo ID + pinned commit.  When an
-        older run stored the commit SHA in ``tree_sha``, the current HEAD
-        response can provide the authoritative tree SHA.  Only that metadata
-        field is replaced; artifact URIs and content hashes remain byte-for-
-        byte unchanged.
+        Cache identity includes policy + materialization context + repo ID +
+        pinned commit. When an older run stored the commit SHA in ``tree_sha``,
+        the current HEAD response can provide the authoritative tree SHA. Only
+        that metadata field is replaced; artifact URIs and content hashes
+        remain byte-for-byte unchanged.
         """
 
-        key = _cache_key(policy_version, repo_id, pinned_commit_sha)
+        key = _cache_key(
+            policy_version,
+            repo_id,
+            pinned_commit_sha,
+            materialization_context,
+        )
         payload = self.data["entries"].get(key)
         if not isinstance(payload, Mapping):
             return None
@@ -478,8 +543,16 @@ def _atomic_json_write(path: Path, payload: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def _cache_key(policy_version: str, repo_id: int, pinned_commit_sha: str) -> str:
-    return f"{policy_version}\u001f{repo_id}\u001f{pinned_commit_sha}"
+def _cache_key(
+    policy_version: str,
+    repo_id: int,
+    pinned_commit_sha: str,
+    materialization_context: str = "legacy",
+) -> str:
+    return (
+        f"{policy_version}\u001f{materialization_context}\u001f{repo_id}\u001f"
+        f"{pinned_commit_sha}"
+    )
 
 
 def _safe_relative_path(path: str) -> PurePosixPath:

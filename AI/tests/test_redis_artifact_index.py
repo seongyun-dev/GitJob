@@ -1,0 +1,634 @@
+"""TDD contract tests for the Weekly Redis artifact index."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping
+from datetime import date
+from pathlib import Path
+
+import pytest
+from common.webhdfs import WebHdfsResponse
+from github.client import GitHubClient, HttpResponse
+from github.contracts import (
+    GitHubRepoSnapshot,
+    RepoArtifact,
+    RepoArtifactType,
+    RepoCollectionStatus,
+)
+from github.redis_artifact_index import RedisArtifactIndex
+from github.repo_fetch_orchestrator import (
+    RepoActivityCandidate,
+    RepoExecutionStatus,
+    RepoFetchOrchestrator,
+    create_redis_artifact_index,
+)
+from github.repo_fetch_policy import RepoFetchPolicy
+from github.repo_fetch_store import (
+    FileArtifactStore,
+    RepoFetchCheckpoint,
+    RepoSnapshotCache,
+    WebHdfsArtifactStore,
+)
+
+COMMIT = "a" * 40
+CONTENT_HASH = "b" * 64
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, tuple[str, int]] = {}
+
+    def get(self, key: str):
+        stored = self.values.get(key)
+        return None if stored is None else stored[0]
+
+    def set(self, key: str, value: str, *, ex: int):
+        self.values[key] = (value, ex)
+        return True
+
+
+class FakeArtifactStore:
+    def __init__(
+        self,
+        *,
+        valid: bool = True,
+        materialization_context: str = "file:///artifacts",
+    ) -> None:
+        self.valid = valid
+        self.materialization_context = materialization_context
+        self.validated: list[RepoArtifact] = []
+
+    def validate_artifact(self, artifact: RepoArtifact) -> bool:
+        self.validated.append(artifact)
+        return self.valid
+
+
+class ScriptedTransport:
+    def __init__(self, outcomes: list[HttpResponse]) -> None:
+        self.outcomes = list(outcomes)
+        self.calls: list[str] = []
+
+    def request(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> HttpResponse:
+        del headers, timeout
+        self.calls.append(url)
+        if not self.outcomes:
+            raise AssertionError(f"unexpected GitHub request: {url}")
+        return self.outcomes.pop(0)
+
+
+RATE_HEADERS = {
+    "X-RateLimit-Limit": "5000",
+    "X-RateLimit-Remaining": "4999",
+    "X-RateLimit-Used": "1",
+    "X-RateLimit-Reset": "2000000000",
+    "X-RateLimit-Resource": "core",
+}
+
+
+def response(
+    payload: Mapping[str, object] | bytes, *, status: int = 200
+) -> HttpResponse:
+    body = json.dumps(payload).encode("utf-8") if isinstance(payload, Mapping) else payload
+    return HttpResponse(status=status, headers=RATE_HEADERS, body=body)
+
+
+def rate_control() -> HttpResponse:
+    return response(
+        {
+            "resources": {
+                "core": {
+                    "limit": 5000,
+                    "remaining": 4999,
+                    "used": 1,
+                    "reset": 2_000_000_000,
+                }
+            }
+        }
+    )
+
+
+def metadata() -> HttpResponse:
+    return response({"id": 7, "full_name": "octo/repo", "default_branch": "main"})
+
+
+def head() -> HttpResponse:
+    return response(
+        {"commit": {"sha": COMMIT, "commit": {"tree": {"sha": "c" * 40}}}}
+    )
+
+
+def tree() -> HttpResponse:
+    return response(
+        {
+            "sha": "c" * 40,
+            "truncated": False,
+            "tree": [{"path": "package.json", "type": "blob", "size": 12}],
+        }
+    )
+
+
+def weekly_policy() -> RepoFetchPolicy:
+    return RepoFetchPolicy(
+        policy_version="weekly-policy-v1",
+        top_n_limit=10,
+        max_api_calls=100,
+        max_runtime_seconds=3600,
+        max_tree_entries=100,
+        max_artifact_files=3,
+        max_artifact_bytes=100_000,
+        max_manifest_files=3,
+        max_source_files=0,
+        max_file_bytes=50_000,
+        max_depth=8,
+        source_prefix_bytes=8192,
+        rate_limit_safety_threshold=10,
+    )
+
+
+def weekly_repo_candidate() -> RepoActivityCandidate:
+    return RepoActivityCandidate(
+        repo_id=7,
+        repo_name="octo/repo",
+        activity_count=10,
+        activity_rank=1,
+        activity_metric="repo_activity_weekly_event_count",
+        activity_period_start=date(2026, 9, 7),
+        activity_period_end=date(2026, 9, 13),
+    )
+
+
+def make_orchestrator(
+    tmp_path: Path,
+    transport: ScriptedTransport,
+    *,
+    artifact_store: FileArtifactStore,
+    redis_index: RedisArtifactIndex | None = None,
+    require_historical_head: bool = False,
+) -> RepoFetchOrchestrator:
+    from datetime import datetime, timezone
+
+    return RepoFetchOrchestrator(
+        client=GitHubClient("offline", transport=transport, sleep=lambda _: None),
+        policy=weekly_policy(),
+        artifact_store=artifact_store,
+        cache=RepoSnapshotCache(tmp_path / "cache.json"),
+        checkpoint=RepoFetchCheckpoint(tmp_path / "checkpoint.json"),
+        dataset_snapshot_id="weekly-001",
+        pipeline_run_id="run-weekly-001",
+        now=lambda: datetime(2026, 9, 16, tzinfo=timezone.utc),
+        redis_index=redis_index,
+        require_historical_head=require_historical_head,
+    )
+
+
+def artifact() -> RepoArtifact:
+    return RepoArtifact(
+        artifact_type=RepoArtifactType.MANIFEST,
+        path="package.json",
+        uri="file:///artifacts/package.json",
+        content_hash=CONTENT_HASH,
+        size_bytes=12,
+    )
+
+
+def snapshot(*, artifacts: tuple[RepoArtifact, ...] = (artifact(),)) -> GitHubRepoSnapshot:
+    return GitHubRepoSnapshot(
+        repo_snapshot_id="weekly-001-repo-7-aaaaaaaaaaaa",
+        github_repo_id=7,
+        repo_full_name="octo/repo",
+        activity_metric="repo_activity_weekly_event_count",
+        activity_period_start=date(2026, 9, 7),
+        activity_period_end=date(2026, 9, 13),
+        activity_count=10,
+        activity_rank=1,
+        pinned_commit_sha=COMMIT,
+        selected_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        current_default_head=COMMIT,
+        sha_fallback_reason="MONTH_EVENT_SHA_NOT_AVAILABLE",
+        target_period="2026-09-07/2026-09-13",
+        tree_sha="c" * 40,
+        collection_status=RepoCollectionStatus.COMPLETE,
+        tree_truncated=False,
+        observed_tree_entries=1,
+        artifacts=artifacts,
+    )
+
+
+def test_valid_index_hit_requires_durable_validation_and_sets_ttl() -> None:
+    redis = FakeRedis()
+    store = FakeArtifactStore()
+    index = RedisArtifactIndex(
+        redis,
+        materialization_context=store.materialization_context,
+        ttl_seconds=2_592_000,
+    )
+
+    index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(artifact(),),
+    )
+
+    hit = index.lookup(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifact_store=store,
+    )
+
+    assert hit is not None
+    assert hit.artifacts == (artifact(),)
+    assert len(redis.values) == 1
+    assert next(iter(redis.values.values()))[1] == 2_592_000
+    assert store.validated == [artifact()]
+
+
+def test_invalid_durable_artifact_is_a_redis_miss() -> None:
+    redis = FakeRedis()
+    index = RedisArtifactIndex(redis, materialization_context="file:///artifacts")
+    index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(artifact(),),
+    )
+
+    assert (
+        index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(valid=False),
+        )
+        is None
+    )
+
+
+def test_identity_mismatch_in_redis_payload_is_a_miss() -> None:
+    redis = FakeRedis()
+    index = RedisArtifactIndex(redis, materialization_context="file:///artifacts")
+    index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(artifact(),),
+    )
+    key = next(iter(redis.values))
+    payload = json.loads(redis.values[key][0])
+    payload["selected_commit_sha"] = "c" * 40
+    redis.values[key] = (json.dumps(payload), redis.values[key][1])
+
+    assert (
+        index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(),
+        )
+        is None
+    )
+
+
+def test_materialization_context_mismatch_is_a_redis_miss() -> None:
+    redis = FakeRedis()
+    index = RedisArtifactIndex(redis, materialization_context="file:///artifacts")
+    index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(artifact(),),
+    )
+
+    assert (
+        index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(
+                materialization_context="hdfs://namenode:9870/gitjob/artifacts"
+            ),
+        )
+        is None
+    )
+
+
+def test_redis_failures_are_fail_open() -> None:
+    class BrokenRedis:
+        def get(self, key: str):
+            raise TimeoutError(key)
+
+        def set(self, key: str, value: str, *, ex: int):
+            raise ConnectionError(key)
+
+    index = RedisArtifactIndex(
+        BrokenRedis(), materialization_context="file:///artifacts"
+    )
+
+    assert (
+        index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(),
+        )
+        is None
+    )
+    assert (
+        index.put(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifacts=(artifact(),),
+        )
+        is False
+    )
+
+
+def test_empty_or_historical_results_are_not_indexed() -> None:
+    redis = FakeRedis()
+    index = RedisArtifactIndex(redis, materialization_context="file:///artifacts")
+
+    assert index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(),
+    ) is False
+    assert index.put(
+        cache_policy_version="historical-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="MONTH_EVENT_SHA",
+        artifacts=(artifact(),),
+    ) is False
+    assert redis.values == {}
+
+
+def test_snapshot_cache_context_prevents_file_to_hdfs_reuse(tmp_path: Path) -> None:
+    cache = RepoSnapshotCache(tmp_path / "cache.json")
+    cache.put(
+        policy_version="weekly-policy-v1",
+        materialization_context="file:///artifacts",
+        record=snapshot(),
+    )
+
+    assert (
+        cache.get(
+            policy_version="weekly-policy-v1",
+            materialization_context="file:///artifacts",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+        )
+        is not None
+    )
+    assert (
+        cache.get(
+            policy_version="weekly-policy-v1",
+            materialization_context="hdfs://namenode:9870/gitjob/artifacts",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+        )
+        is None
+    )
+
+
+def test_snapshot_cache_context_prevents_hdfs_namespace_reuse(tmp_path: Path) -> None:
+    cache = RepoSnapshotCache(tmp_path / "cache.json")
+    cache.put(
+        policy_version="weekly-policy-v1",
+        materialization_context="http://namenode-a:9870|root=/gitjob/artifacts",
+        record=snapshot(),
+    )
+
+    assert (
+        cache.get(
+            policy_version="weekly-policy-v1",
+            materialization_context="http://namenode-b:9870|root=/gitjob/artifacts",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+        )
+        is None
+    )
+
+
+def test_file_artifact_store_validates_existence_size_and_sha(tmp_path: Path) -> None:
+    store = FileArtifactStore(tmp_path / "artifacts")
+    content = b'{"name":"repo"}'
+    uri = store.store(
+        policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        path="package.json",
+        content=content,
+    )
+    valid = RepoArtifact(
+        artifact_type=RepoArtifactType.MANIFEST,
+        path="package.json",
+        uri=uri,
+        content_hash=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+    )
+
+    assert store.validate_artifact(valid) is True
+    assert store.validate_artifact(valid.model_copy(update={"size_bytes": 1})) is False
+    assert store.validate_artifact(
+        valid.model_copy(update={"content_hash": "0" * 64})
+    ) is False
+    assert store.validate_artifact(valid.model_copy(update={"uri": "hdfs:///x"})) is False
+
+
+def test_weekly_orchestrator_uses_valid_redis_hit_without_tree_or_raw_calls(
+    tmp_path: Path,
+) -> None:
+    store = FileArtifactStore(tmp_path / "artifacts")
+    content = b'{"name":"repo"}'
+    policy = weekly_policy()
+    uri = store.store(
+        policy_version=policy.cache_identity,
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        path="package.json",
+        content=content,
+    )
+    cached_artifact = RepoArtifact(
+        artifact_type=RepoArtifactType.MANIFEST,
+        path="package.json",
+        uri=uri,
+        content_hash=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+    )
+    redis = FakeRedis()
+    index = RedisArtifactIndex(
+        redis, materialization_context=store.materialization_context
+    )
+    index.put(
+        cache_policy_version=policy.cache_identity,
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(cached_artifact,),
+    )
+    transport = ScriptedTransport([metadata(), head()])
+
+    result = make_orchestrator(
+        tmp_path,
+        transport,
+        artifact_store=store,
+        redis_index=index,
+    ).fetch_repo(weekly_repo_candidate())
+
+    assert result.status is RepoExecutionStatus.REUSED
+    assert result.record is not None
+    assert result.record.artifacts == (cached_artifact,)
+    assert len(transport.calls) == 2
+
+
+def test_historical_orchestrator_rejects_redis_index(tmp_path: Path) -> None:
+    store = FileArtifactStore(tmp_path / "artifacts")
+    index = RedisArtifactIndex(
+        FakeRedis(), materialization_context=store.materialization_context
+    )
+    with pytest.raises(ValueError, match="Historical"):
+        make_orchestrator(
+            tmp_path,
+            ScriptedTransport([]),
+            artifact_store=store,
+            redis_index=index,
+            require_historical_head=True,
+        )
+
+
+def test_new_extraction_publishes_positive_artifact_index_entry(tmp_path: Path) -> None:
+    store = FileArtifactStore(tmp_path / "artifacts")
+    redis = FakeRedis()
+    index = RedisArtifactIndex(
+        redis, materialization_context=store.materialization_context
+    )
+    transport = ScriptedTransport(
+        [metadata(), head(), tree(), response(b'{"name":"repo"}')]
+    )
+
+    result = make_orchestrator(
+        tmp_path,
+        transport,
+        artifact_store=store,
+        redis_index=index,
+    ).fetch_repo(weekly_repo_candidate())
+
+    assert result.status is RepoExecutionStatus.COMPLETE
+    assert len(redis.values) == 1
+
+
+def test_redis_write_failure_does_not_change_durable_publication(
+    tmp_path: Path,
+) -> None:
+    class WriteBrokenRedis:
+        def get(self, key: str):
+            del key
+
+        def set(self, key: str, value: str, *, ex: int):
+            del key, value, ex
+            raise ConnectionError("Redis unavailable")
+
+    store = FileArtifactStore(tmp_path / "artifacts")
+    index = RedisArtifactIndex(
+        WriteBrokenRedis(), materialization_context=store.materialization_context
+    )
+    transport = ScriptedTransport(
+        [metadata(), head(), tree(), response(b'{"name":"repo"}')]
+    )
+
+    result = make_orchestrator(
+        tmp_path,
+        transport,
+        artifact_store=store,
+        redis_index=index,
+    ).fetch_repo(weekly_repo_candidate())
+
+    assert result.status is RepoExecutionStatus.COMPLETE
+    assert result.record is not None
+    assert len(result.record.artifacts) == 1
+
+
+def test_redis_factory_defaults_to_db_one_and_configured_ttl(monkeypatch) -> None:
+    monkeypatch.delenv("WEEKLY_REDIS_URL", raising=False)
+    monkeypatch.setenv("REDIS_HOST", "redis")
+    monkeypatch.delenv("WEEKLY_REDIS_DB", raising=False)
+    monkeypatch.setenv("WEEKLY_REDIS_ARTIFACT_INDEX_TTL_SECONDS", "123")
+
+    index = create_redis_artifact_index(materialization_context="file:///artifacts")
+
+    assert index is not None
+    assert index.ttl_seconds == 123
+    assert index.client.connection_pool.connection_kwargs["db"] == 1
+
+
+class WebHdfsValidationTransport:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        body: Path | bytes | None = None,
+        timeout: float,
+    ) -> WebHdfsResponse:
+        del method, body, timeout
+        if "op=GETFILESTATUS" in url:
+            return WebHdfsResponse(
+                status=200,
+                headers={},
+                body=json.dumps(
+                    {"FileStatus": {"type": "FILE", "length": len(self.content)}}
+                ).encode("utf-8"),
+            )
+        if "op=OPEN" in url:
+            return WebHdfsResponse(status=200, headers={}, body=self.content)
+        raise AssertionError(f"unexpected WebHDFS request: {url}")
+
+
+def test_webhdfs_artifact_store_validates_namespace_size_and_sha() -> None:
+    content = b"durable artifact"
+    store = WebHdfsArtifactStore(
+        base_url="http://namenode:9870/webhdfs/v1",
+        root="hdfs:///gitjob/artifacts",
+        transport=WebHdfsValidationTransport(content),
+    )
+    valid = RepoArtifact(
+        artifact_type=RepoArtifactType.MANIFEST,
+        path="package.json",
+        uri="hdfs:///gitjob/artifacts/package.json",
+        content_hash=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+    )
+
+    assert store.validate_artifact(valid) is True
+    assert store.validate_artifact(
+        valid.model_copy(update={"uri": "hdfs:///outside/package.json"})
+    ) is False
+    assert store.validate_artifact(
+        valid.model_copy(update={"uri": "hdfs://other/gitjob/artifacts/package.json"})
+    ) is False

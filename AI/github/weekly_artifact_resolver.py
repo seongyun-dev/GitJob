@@ -18,22 +18,23 @@ from pathlib import Path
 from typing import Any
 
 from common.webhdfs import WebHdfsClient
+
 from github.contracts import (
     GitHubRepoSnapshotBatch,
     RepoCollectionStatus,
 )
 from github.repo_fetch_orchestrator import (
+    TERMINAL_STATUSES,
     RepoActivityCandidate,
     RepoFetchOrchestrator,
     RepoFetchRun,
-    TERMINAL_STATUSES,
     create_orchestrator,
 )
 from github.repo_snapshot_bootstrap import (
     BootstrapBatchRunner,
     BootstrapResult,
-    build_parser as build_bootstrap_parser,
 )
+from github.repo_snapshot_bootstrap import build_parser as build_bootstrap_parser
 
 WEEKLY_CANDIDATE_SCHEMA = "repo-activity-weekly-candidates/v1"
 WEEKLY_ACTIVITY_METRIC = "repo_activity_weekly_event_count"
@@ -369,7 +370,6 @@ def _assert_weekly_batch(
             )
 
     records_by_id = {record.github_repo_id: record for record in batch.records}
-    expected_record_statuses = {"COMPLETE", "PARTIAL", "REUSED", "FAILED"}
     if set(records_by_id) - set(expected):
         unexpected = sorted(set(records_by_id) - set(expected))
         raise WeeklyArtifactResolutionError(
@@ -579,6 +579,16 @@ def build_parser() -> argparse.ArgumentParser:
             "repository that reaches the quota."
         ),
     )
+    parser.add_argument(
+        "--enable-redis-artifact-index",
+        dest="weekly_redis_enabled",
+        action="store_true",
+        default=_bool_env("WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED"),
+        help=(
+            "Use the optional Weekly Redis artifact index. Historical runs "
+            "never enable this path."
+        ),
+    )
     return parser
 
 
@@ -644,6 +654,10 @@ def _positive_int(value: str) -> int:
 def _positive_env(name: str, default: int) -> int:
     raw = os.environ.get(name)
     return default if raw is None else _positive_int(raw)
+
+
+def _bool_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI delegation
