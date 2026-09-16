@@ -206,10 +206,6 @@ services:
       # 로그인 후 돌아갈 수 있는 경로의 허용 목록. 임의 경로를 허용하면 open
       # redirect 가 되므로 목록으로 둔다.
       OAUTH_ALLOWED_REDIRECT_PATHS: ${OAUTH_ALLOWED_REDIRECT_PATHS:-/onboarding/repositories,/repos,/}
-      # 관리자 전용 ID/PW 로그인 자격 증명. 실제 값은 비공개 env 파일에서 주입한다.
-      # 둘 중 하나라도 비면 관리자 로그인은 항상 실패한다(기능 비활성).
-      ADMIN_LOGIN_ID: ${ADMIN_LOGIN_ID:-}
-      ADMIN_LOGIN_PASSWORD: ${ADMIN_LOGIN_PASSWORD:-}
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
       JWT_SECRET: ${JWT_SECRET:-}

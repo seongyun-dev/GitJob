@@ -1,6 +1,5 @@
 package com.example.git_job.auth.repository;
 
-import com.example.git_job.auth.domain.Role;
 import com.example.git_job.auth.domain.User;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,9 +10,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByGithubId(Long githubId);
 
     /**
-     * 관리자 ID/PW 로그인이 발급할 세션의 주체를 찾는다. 별도 관리자 계정을 두지 않고
-     * 이미 role=ADMIN 으로 승격된 사용자로 로그인시키므로, 그 사용자가 필요하다.
-     * 여럿이면 가장 먼저 승격된(userId 오름차순) 한 명을 쓴다.
+     * 관리자 ID/PW 로그인의 조회 기준 (V15). {@code admin_login_id} 는 UNIQUE 이고,
+     * 이 방식을 쓰지 않는 사용자는 NULL 이라 후보에 들어오지 않는다.
+     *
+     * <p>역할 확인은 여기서 하지 않는다 -- 조회된 사용자가 실제로 ADMIN 인지는
+     * 서비스가 판단한다(자격 증명만 맞고 승격이 풀린 경우를 거르기 위해서다).</p>
      */
-    Optional<User> findFirstByRoleOrderByUserIdAsc(Role role);
+    Optional<User> findByAdminLoginId(String adminLoginId);
 }

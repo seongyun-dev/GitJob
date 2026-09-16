@@ -6,69 +6,48 @@ import com.example.git_job.auth.repository.UserRepository;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
 import com.example.git_job.global.security.JwtTokenProvider;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 관리자 전용 ID/PW 로그인. GitHub OAuth를 거치지 않고 관리자 화면에 들어가기 위한
+ * 관리자 전용 ID/PW 로그인. GitHub OAuth 를 거치지 않고 관리자 화면에 들어가기 위한
  * 진입점이다(운영/시연용).
  *
- * <p>별도의 관리자 계정 테이블을 만들지 않는다. 자격 증명(ID/PW)은 환경변수로만 받고,
- * 검증에 성공하면 <b>이미 role=ADMIN 으로 승격된 실제 사용자</b>의 세션을 발급한다.
- * 그래야 {@code /me}와 {@code /api/v1/admin/**}이 GitHub 로그인과 똑같이 동작한다.</p>
+ * <p>자격 증명은 <b>DB 의 사용자 행</b>에 있다(V15). 환경변수로 두면 환경마다 값을 맞추고
+ * 컨테이너를 재생성해야 하는데, 관리자 승격({@code role}) 자체가 이미 DB 에서만 바뀌므로
+ * 자격 증명도 같은 자리에 두는 편이 일관되고 값을 바꿀 때 재배포가 필요 없다.</p>
  *
- * <p>자격 증명은 코드·응답·로그에 싣지 않는다. 비교는 {@link MessageDigest#isEqual}로
- * 상수시간에 하고, 실패는 원인을 구분하지 않고 {@link ErrorCode#UNAUTHORIZED}로 접는다
- * (ID/PW 중 무엇이 틀렸는지, 기능이 꺼져 있는지 드러내지 않는다).</p>
+ * <p>별도 관리자 계정 테이블은 없다. 발급되는 세션의 주체가 결국 그 사용자이므로
+ * {@code /me} 와 {@code /api/v1/admin/**} 이 GitHub 로그인과 똑같이 동작한다.</p>
+ *
+ * <p>실패는 원인을 구분하지 않고 {@link ErrorCode#UNAUTHORIZED} 로 접는다 -- 아이디가
+ * 없는지, 비밀번호가 틀렸는지, 승격이 풀렸는지 드러내지 않는다. 비밀번호는 BCrypt
+ * 해시로만 비교하며 평문은 어디에도 남기지 않는다.</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AdminLoginService {
-
-    private static final Logger log = LoggerFactory.getLogger(AdminLoginService.class);
 
     private final UserRepository userRepository;
     private final JwtTokenProvider jwtTokenProvider;
-    private final String adminId;
-    private final String adminPassword;
-
-    public AdminLoginService(
-            UserRepository userRepository,
-            JwtTokenProvider jwtTokenProvider,
-            @Value("${admin.login.id:}") String adminId,
-            @Value("${admin.login.password:}") String adminPassword
-    ) {
-        this.userRepository = userRepository;
-        this.jwtTokenProvider = jwtTokenProvider;
-        this.adminId = adminId;
-        this.adminPassword = adminPassword;
-    }
+    private final PasswordEncoder passwordEncoder;
 
     @Transactional(readOnly = true)
     public LoginSession login(String id, String password) {
-        // 자격 증명이 설정되지 않았으면 기능이 꺼진 것이다. 실패로 접되 이유는 로그에만 남긴다.
-        if (adminId == null || adminId.isBlank() || adminPassword == null || adminPassword.isBlank()) {
-            log.warn("관리자 로그인 시도, 그러나 ADMIN_LOGIN_ID/PASSWORD 가 설정되지 않았다.");
+        if (id == null || id.isBlank() || password == null || password.isEmpty()) {
             throw new CustomException(ErrorCode.UNAUTHORIZED);
         }
 
-        // 앞에서 끊지 않고 두 비교를 모두 수행한다 — 어느 필드에서 갈렸는지 응답 시간으로도 드러내지 않는다.
-        boolean matched = constantTimeEquals(id, adminId) & constantTimeEquals(password, adminPassword);
-        if (!matched) {
-            throw new CustomException(ErrorCode.UNAUTHORIZED);
-        }
-
-        User admin = userRepository.findFirstByRoleOrderByUserIdAsc(Role.ADMIN)
-                .orElseThrow(() -> {
-                    log.warn("관리자 자격 증명은 맞았으나 role=ADMIN 사용자가 DB에 없다.");
-                    return new CustomException(ErrorCode.UNAUTHORIZED);
-                });
+        User admin = userRepository.findByAdminLoginId(id)
+                .filter(user -> user.getAdminPasswordHash() != null)
+                .filter(user -> passwordEncoder.matches(password, user.getAdminPasswordHash()))
+                // 자격 증명만 맞고 승격이 풀린 계정으로는 들어올 수 없다.
+                .filter(user -> user.getRole() == Role.ADMIN)
+                .orElseThrow(() -> new CustomException(ErrorCode.UNAUTHORIZED));
 
         String sessionToken = jwtTokenProvider.createToken(
                 String.valueOf(admin.getUserId()),
@@ -77,20 +56,6 @@ public class AdminLoginService {
                 Instant.now()
         );
         return new LoginSession(sessionToken, jwtTokenProvider.getAccessTokenExpiration());
-    }
-
-    /**
-     * 길이가 다르면 곧바로 false지만, 그 판정 자체는 값 내용에 의존하지 않는다.
-     * 같은 길이일 때는 {@link MessageDigest#isEqual}이 전체 바이트를 상수시간에 비교한다.
-     */
-    private boolean constantTimeEquals(String a, String b) {
-        if (a == null || b == null) {
-            return false;
-        }
-        return MessageDigest.isEqual(
-                a.getBytes(StandardCharsets.UTF_8),
-                b.getBytes(StandardCharsets.UTF_8)
-        );
     }
 
     /** 발급된 세션 토큰과 쿠키 수명. 컨트롤러가 이 값으로 SESSION 쿠키를 심는다. */

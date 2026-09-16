@@ -105,6 +105,25 @@ public class User {
     @Column(name = "role", nullable = false, length = 16)
     private Role role = Role.USER;
 
+    /**
+     * 관리자 ID/PW 로그인의 식별자 (V15). GitHub 없이 관리자 화면에 들어가기 위한 값이라
+     * {@code githubLogin} 과 별개다. 이 방식으로 로그인하지 않는 사용자는 {@code null}이다.
+     *
+     * <p>{@code role} 과 같은 이유로 DB 에서만 바뀐다 -- 환경변수로 두면 환경마다 값을
+     * 맞추고 재배포해야 한다.</p>
+     */
+    @Column(name = "admin_login_id", length = 100)
+    private String adminLoginId;
+
+    /**
+     * 관리자 ID/PW 로그인 비밀번호의 <b>BCrypt 해시</b> (V15).
+     *
+     * <p>평문을 담지 않는다. 검증은 {@code PasswordEncoder.matches} 가 하며, 이 값은
+     * 응답·로그에 싣지 않는다. {@code null}이면 ID/PW 로그인이 비활성이다.</p>
+     */
+    @Column(name = "admin_password_hash", length = 100)
+    private String adminPasswordHash;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
