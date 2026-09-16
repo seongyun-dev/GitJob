@@ -55,6 +55,13 @@ public class SecurityConfig {
                         // 관리자 ID/PW 로그인도 세션 발급 이전 단계라 공개한다. 성공 시에만
                         // 관리자 세션을 심고, 실패는 401로 접는다(AdminLoginService).
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/admin-login").permitAll()
+                        // 데이터 EC2의 analysis-worker 전용. 사용자 JWT 대신 Controller의
+                        // 별도 service token과 저장된 분석 tuple로 인증한다. Nginx에는
+                        // 이 경로를 공개 route로 추가하지 않는다.
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/internal/v1/repository-analysis/credentials"
+                        ).permitAll()
                         // Spring MVC가 오류를 forward하는 내부 경로.
                         .requestMatchers("/error").permitAll()
                         // Docker 내부 네트워크 전용 (Nginx 비라우팅): healthcheck

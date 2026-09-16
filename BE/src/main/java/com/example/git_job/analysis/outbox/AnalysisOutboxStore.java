@@ -27,6 +27,19 @@ public class AnalysisOutboxStore {
                 Timestamp.from(event.occurredAt()), Timestamp.from(event.occurredAt()));
     }
 
+    /**
+     * 자격증명 교환 요청의 repository-scoped ID가 실제로 발행된 분석 요청에 속하는지 본다.
+     * 재발행은 같은 ID를 여러 행에 둘 수 있으므로 unique 조회가 아니라 존재 여부만 확인한다.
+     */
+    public boolean containsAnalysisRepository(String analysisId, String analysisRepositoryId) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_outbox
+                WHERE analysis_id = ? AND analysis_repository_id = ?
+                """, Integer.class, analysisId, analysisRepositoryId);
+        return count != null && count > 0;
+    }
+
     /** Caller must hold this transaction open until marking success/failure. */
     public Optional<Entry> lockNext() {
         return jdbc.query("""

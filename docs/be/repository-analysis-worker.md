@@ -468,7 +468,7 @@ fact마다 조회하는 방식은 모양이 틀렸다. 저장소 하나가 수�
 | --- | --- | --- |
 | 일시 (예산 남음) | DNS, 연결 끊김, 5xx, rate limit, early EOF, timeout | 선점 반납, **커밋 안 함**. 예외가 `run()`을 관통해 프로세스가 죽고 컨테이너가 재시작하며, 그 재배달이 재시도다 |
 | 일시 (예산 소진) | 위와 같은 오류가 `ANALYSIS_MAX_ATTEMPTS`번째로 난 경우 | 영구로 전환한다. `FAILED` + DLQ + **커밋** |
-| 영구 | 404, 없는 SHA, 인증 필요, 크기 초과, 알 수 없는 git 오류 | `FAILED` + DLQ + **커밋** |
+| 영구 | 인증된 404, 없는 SHA, 갱신이 필요한 OAuth, 크기 초과, 알 수 없는 git 오류 | `FAILED` + DLQ + **커밋** |
 | 예기치 못한 예외 | claim 저장 실패, 디스크 오류 | 선점 반납 후 그대로 전파. 아래 설명 |
 
 **예기치 못한 예외도 선점을 반납한다.** 반납하지 않으면 프로세스가 죽을 때 선점이
@@ -504,15 +504,45 @@ fact마다 조회하는 방식은 모양이 틀렸다. 저장소 하나가 수�
 `GIT_TERMINAL_PROMPT=0`을 준다. 비공개 저장소에서 git이 사용자명을 물으며 멈추면
 브로커가 파티션을 회수할 때까지 매달려 있게 된다. 즉시 실패하는 편이 낫다.
 
-## 비공개 저장소는 아직 안 된다
+## 비공개 저장소 자격증명 교환
 
 이벤트에 토큰이 없다. 의도된 것이고, payload 주석이 이유를 적어 두었다.
 
-> The worker exchanges `analysis_repository_id` for a short-lived credential
-> through an authenticated internal API when it starts the job.
+> The worker exchanges `analysis_repository_id` for the request owner's stored
+> GitHub credential through an authenticated internal API when an anonymous fetch needs it.
 
-**그 내부 API가 아직 없다.** 지금은 공개 저장소만 받는다. 비공개는
-`REPOSITORY_NOT_ACCESSIBLE`로 끝난다.
+내부 API는 `POST /internal/v1/repository-analysis/credentials`다. Worker는 먼저
+익명 clone을 시도하고 GitHub의 anonymous 404/인증 필요 응답을 받은 경우에만 이 API를
+호출한다. 공개 저장소는 기존 경로와 호출 수가 그대로다.
+
+요청은 Kafka payload의 `analysis_id`, `analysis_repository_id`, GitHub repository ID,
+canonical full name, pinned commit SHA를 그대로 보낸다. BE는 `analysis_job`과
+`analysis_outbox`를 함께 조회해 다섯 값과 활성 상태가 모두 맞을 때만 해당 사용자의
+암호화 저장 token을 복호화한다. `analysis_repository_id`는 재발행 때 중복될 수 있으므로
+단독 식별자로 쓰지 않는다.
+
+Worker는 token을 URL·argv·Git config 파일에 넣지 않고 해당 `git fetch` 자식 프로세스의
+환경 설정(`http.extraHeader`)에만 전달한다. 응답을 캐시하지 않고 한 번 사용한 뒤 참조를
+버린다. BE 응답도 `Cache-Control: no-store`를 고정하고, Worker는 HTTP(S)가 아니거나
+사용자 정보가 포함된 broker URL과 예상하지 않은 응답 schema/type을 거절한다.
+현재 GitHub OAuth token 자체의 만료 시간을 보장하는 구조는 아니므로
+"short-lived token"이라고 부르지 않는다.
+
+내부 경로는 public Nginx에 route를 만들지 않는다. split EC2에서는 service host backend를
+private/Tailscale 주소의 별도 host port에 bind하고 data host만 접근하게 한다.
+
+요청·응답 구조는
+`docs/data/contracts/repository-analysis-credential-request-v1.schema.json`과
+`repository-analysis-credential-response-v1.schema.json`이 고정한다. 실패는 다음처럼
+처리한다.
+
+| HTTP | Worker code | 처리 |
+| --- | --- | --- |
+| 401/403 | `CREDENTIAL_BROKER_UNAUTHORIZED` | 설정 오류로 영구 실패 |
+| 404 | `REPOSITORY_CREDENTIAL_NOT_FOUND` | tuple 불일치/삭제로 영구 실패 |
+| 409 | `ANALYSIS_NOT_ACTIVE` | 종료 요청이므로 영구 실패 |
+| 424 | `GITHUB_RECONNECT_REQUIRED` | 사용자에게 GitHub 재연결 안내 |
+| 429/5xx/연결 실패 | `CREDENTIAL_BROKER_UNAVAILABLE` | claim과 offset을 반납해 예산 안에서 재시도 |
 
 ## 설정
 
@@ -525,6 +555,10 @@ fact마다 조회하는 방식은 모양이 틀렸다. 저장소 하나가 수�
 | `ANALYSIS_CLAIM_LEASE_SECONDS` | `900` | 위와 같은 이유로 clone 최대 소요보다 커야 한다 |
 | `ANALYSIS_MAX_ATTEMPTS` | `5` | 일시 실패를 몇 번까지 재시도할지. 소진되면 영구 실패로 전환한다 |
 | `ANALYSIS_CLONE_TIMEOUT_SECONDS` | `600` | |
+| `ANALYSIS_PRIVATE_REPOSITORIES_ENABLED` | `false` | BE와 Worker에 함께 켠다. Worker 설정이 빠지면 기동 실패한다 |
+| `ANALYSIS_CREDENTIAL_BROKER_URL` | 없음 | Worker 전용 내부 API 전체 URL |
+| `ANALYSIS_WORKER_SERVICE_TOKEN` | 없음 | BE·Worker가 공유하는 별도 service token. Kafka/이미지/Git에 넣지 않는다 |
+| `ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS` | `5` | 429/5xx/연결 실패는 기존 claim 예산 안에서 재시도한다 |
 | `ANALYSIS_MAX_REPOSITORY_BYTES` | `2147483648` | clone 후 검사. git에 미리 물을 방법이 없다 |
 | `ANALYSIS_WORK_ROOT` | `/tmp/gitjob-analysis` | 볼륨이 없어 재시작하면 사라진다. 재시도하면 다시 받으므로 의도된 것 |
 | `ANALYSIS_MAX_FILE_BYTES` | `1048576` | 파싱할 파일 하나의 상한 |
@@ -615,7 +649,7 @@ tree-sitter도 이 경로에서 실제로 실행하지만, Windows native Kafka 
 
 1. **분석 상태 되돌리기** — 결과 토픽으로 `COLLECTING`/`FAILED`를 B에 전달. 지금은
    `analysis_job`이 `QUEUED`에 머문다
-2. **자격 증명 내부 API** — 비공개 저장소
+2. ~~**자격 증명 내부 API** — 비공개 저장소~~ — 구현 완료, 실제 EC2 canary는 배포 후 검증
 3. ~~기술 판정~~ — 완료. `analysis/judge.py`가 매핑으로 해석하고 규칙을 평가한다
 4. **기술 후보 집계** — worker는 관찰만 낸다. 사용자 수 집계와 관리자 화면은 B
 5. **Evidence 저장** — 결과 토픽으로 보내고 B가 `analysis_evidence`에 쓴다

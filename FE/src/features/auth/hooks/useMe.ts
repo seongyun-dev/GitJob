@@ -1,5 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchMe } from '@/features/auth/api/me'
+import {
+  ME_QUERY_KEY,
+  synchronizeSessionCache,
+} from '@/features/auth/sessionSync'
+
+export { ME_QUERY_KEY } from '@/features/auth/sessionSync'
 
 /**
  * 로그인 사용자 조회 · 티켓 S15P21E102-246.
@@ -19,10 +26,9 @@ import { fetchMe } from '@/features/auth/api/me'
  * 매 이동마다 부르지도 않는다. 전역 기본값(`refetchOnWindowFocus: false`)을 이 쿼리에서만
  * 뒤집는다 — 인증 표시는 신선함이 캐시 절약보다 중요하다.
  */
-export const ME_QUERY_KEY = ['auth', 'me'] as const
-
 export function useMe() {
-  return useQuery({
+  const queryClient = useQueryClient()
+  const query = useQuery({
     queryKey: ME_QUERY_KEY,
     queryFn: fetchMe,
     retry: false,
@@ -30,4 +36,13 @@ export function useMe() {
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
   })
+
+  useEffect(() => {
+    if (query.data === undefined) {
+      return
+    }
+    void synchronizeSessionCache(queryClient, window.localStorage, query.data)
+  }, [query.data, queryClient])
+
+  return query
 }

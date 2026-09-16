@@ -197,6 +197,19 @@ class AnalysisOutboxIntegrationTest {
     }
 
     @Test
+    void credentialLookupRequiresTheAnalysisAndRepositoryScopedIdPair() {
+        enqueue("an_1", "ar_1");
+
+        assertTrue(store.containsAnalysisRepository("an_1", "ar_1"));
+        assertFalse(store.containsAnalysisRepository("an_other", "ar_1"));
+        assertFalse(store.containsAnalysisRepository("an_1", "ar_other"));
+
+        store.published(jdbc.queryForObject(
+                "SELECT event_id FROM analysis_outbox", String.class));
+        assertTrue(store.containsAnalysisRepository("an_1", "ar_1"));
+    }
+
+    @Test
     void enclosingTransactionRollbackRemovesBothRows() {
         new TransactionTemplate(transactions).executeWithoutResult(tx -> {
             enqueue("an_1", "ar_1");

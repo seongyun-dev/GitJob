@@ -190,6 +190,10 @@ export function RepositorySelectionPage() {
           선택한 Repository의 파일 · 설정 · Commit을 읽기 전용으로 분석합니다. 언제든 다시 선택해
           재분석할 수 있습니다.
         </p>
+        <p className="mt-2 text-[12.5px] leading-[1.6] text-brand-faint">
+          비공개 Repository도 같은 기준으로 분석하며, 임시 checkout은 분석 후 삭제하고 공개 Trend에
+          포함하지 않습니다.
+        </p>
       </header>
 
       <div className="gj-split mt-7">

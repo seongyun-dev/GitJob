@@ -44,6 +44,7 @@ class AuthQueryServiceTest {
 
         MeResponse me = service.me(principal("42"));
 
+        assertThat(me.userId()).isEqualTo("42");
         assertThat(me.displayName()).isEqualTo("윤서");
         assertThat(me.avatarUrl()).isEqualTo("http://a/x.png");
         assertThat(me.githubConnected()).isTrue();

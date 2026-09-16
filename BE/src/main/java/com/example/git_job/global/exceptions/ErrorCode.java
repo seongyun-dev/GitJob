@@ -58,6 +58,17 @@ public enum ErrorCode {
     GITHUB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "REPO-429-1", "GitHub API 호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."),
     GITHUB_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "REPO-503-1", "GitHub API에 연결할 수 없습니다."),
 
+    // Worker 전용 repository credential broker. 외부 세션 JWT와 다른 서비스 토큰을
+    // 쓰며, 요청 tuple이 저장된 분석과 정확히 일치할 때만 사용자 토큰을 반환한다.
+    INTERNAL_WORKER_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "INTERNAL-401-1",
+            "분석 Worker 인증에 실패했습니다."),
+    ANALYSIS_CREDENTIAL_NOT_FOUND(HttpStatus.NOT_FOUND, "INTERNAL-404-1",
+            "분석 요청에 해당하는 저장소 자격증명을 찾을 수 없습니다."),
+    ANALYSIS_CREDENTIAL_NOT_ACTIVE(HttpStatus.CONFLICT, "INTERNAL-409-1",
+            "이미 종료된 분석에는 저장소 자격증명을 발급할 수 없습니다."),
+    GITHUB_RECONNECT_REQUIRED(HttpStatus.FAILED_DEPENDENCY, "INTERNAL-424-1",
+            "GitHub 연결을 갱신해야 합니다."),
+
     // 분석 요청은 활성 Registry snapshot 없이 재현 가능한 이벤트를 만들 수 없다.
     REGISTRY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "ANALYSIS-503-1",
             "현재 분석 기준을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."),

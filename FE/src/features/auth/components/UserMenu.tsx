@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { logout } from '@/features/auth/api/me'
 import type { Me } from '@/features/auth/api/me'
-import { ME_QUERY_KEY } from '@/features/auth/hooks/useMe'
+import { synchronizeSessionCache } from '@/features/auth/sessionSync'
 
 /**
  * 로그인 사용자 프로필 메뉴 · 티켓 S15P21E102-246.
@@ -127,8 +127,9 @@ export function UserMenu({ me, tone = 'dark' }: { me: Me; tone?: 'light' | 'dark
       // 서버 오류가 나도 클라이언트는 로그아웃 상태로 둔다 — 쿠키가 남아도 다음 요청이
       // 401 이면 어차피 로그아웃으로 읽힌다. 사용자를 로그인 상태에 붙잡아 두지 않는다.
     }
-    // 서버가 준 me 캐시를 즉시 비운다. 헤더가 곧바로 로그인 버튼으로 바뀐다.
-    queryClient.setQueryData(ME_QUERY_KEY, null)
+    // 저장소·분석·Evidence 캐시는 사용자 범위다. 다음 로그인 계정이 이전
+    // 사용자의 비공개 저장소 이름이나 판정을 잠깐이라도 보지 않게 전부 비운다.
+    await synchronizeSessionCache(queryClient, window.localStorage, null)
     setOpen(false)
     navigate('/')
   }

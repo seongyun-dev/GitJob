@@ -26,6 +26,11 @@ services:
     build:
       context: .
       dockerfile: Infra/docker/backend/Dockerfile
+    # Data EC2 -> Backend credential broker. Bind only to the service host's
+    # private/Tailscale address and restrict the port to the data host in the
+    # supplied network boundary. Public Nginx does not route /internal/**.
+    ports:
+      - "${EC2_BACKEND_PRIVATE_BIND_ADDRESS:-127.0.0.1}:${EC2_BACKEND_PRIVATE_PORT:-8088}:8080"
 
   frontend:
     build:

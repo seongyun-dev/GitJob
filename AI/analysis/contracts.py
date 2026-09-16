@@ -14,9 +14,9 @@ A field that fails here is rejected before any clone is attempted.
 ### What is deliberately absent
 
 There is no token. The payload carries `analysis_repository_id` instead, which
-the worker exchanges for a short-lived credential when private repositories are
-supported. Nothing here should ever be widened to carry a secret: the topic
-outlives the credential.
+the worker exchanges for the request owner's stored GitHub credential only when
+an anonymous fetch needs it. Nothing here should ever be widened to carry a
+secret: the topic outlives the credential exchange.
 """
 
 from __future__ import annotations

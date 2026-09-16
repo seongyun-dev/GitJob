@@ -12,7 +12,12 @@ from hashlib import sha256
 import pytest
 
 from analysis.claim import Claim, ClaimStatus
-from analysis.clone import CloneResult, PermanentCloneError, TransientCloneError
+from analysis.clone import (
+    CloneResult,
+    CredentialRequiredCloneError,
+    PermanentCloneError,
+    TransientCloneError,
+)
 from analysis.consumer import AnalysisConsumer, ClaimBusyError, ClaimLostError
 from analysis.parse import ImportOccurrence, ParseReport
 from analysis.publish import ResultPublisher
@@ -100,11 +105,18 @@ class FakeCloner:
         self.work_root = work_root
         self._result = result
         self._error = error
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, str | None]] = []
         self.cleaned: list[str] = []
 
-    def fetch(self, full_name: str, commit_sha: str, into: str) -> CloneResult:
-        self.calls.append((full_name, commit_sha, into))
+    def fetch(
+        self,
+        full_name: str,
+        commit_sha: str,
+        into: str,
+        *,
+        access_token: str | None = None,
+    ) -> CloneResult:
+        self.calls.append((full_name, commit_sha, into, access_token))
         if self._error is not None:
             raise self._error
         return self._result or CloneResult(path=self.work_root / into, bytes_on_disk=10)
@@ -204,7 +216,95 @@ def test_clone_is_pinned_to_the_commit_not_the_branch(tmp_path):
     outcome = build(tmp_path, cloner=cloner).handle(message(event()))
 
     assert outcome.action == "parsed"
-    assert cloner.calls == [("octocat/gitjob", SHA, work_target())]
+    assert cloner.calls == [("octocat/gitjob", SHA, work_target(), None)]
+
+
+def test_private_repository_retries_the_same_pinned_commit_with_broker_token(tmp_path):
+    secret = "github-token"
+
+    class PrivateCloner(FakeCloner):
+        def fetch(self, full_name, commit_sha, into, *, access_token=None):
+            self.calls.append((full_name, commit_sha, into, access_token))
+            if access_token is None:
+                raise CredentialRequiredCloneError(
+                    "REPOSITORY_CREDENTIAL_REQUIRED", "credential required"
+                )
+            return CloneResult(path=tmp_path / into, bytes_on_disk=10)
+
+    class Broker:
+        def __init__(self):
+            self.calls = []
+
+        def access_token_for(self, **request):
+            self.calls.append(request)
+            return secret
+
+    cloner = PrivateCloner(tmp_path)
+    broker = Broker()
+    outcome = build(tmp_path, cloner=cloner, credential_broker=broker).handle(
+        message(event())
+    )
+
+    assert outcome.action == "parsed"
+    assert cloner.calls == [
+        ("octocat/gitjob", SHA, work_target(), None),
+        ("octocat/gitjob", SHA, work_target(), secret),
+    ]
+    assert broker.calls == [
+        {
+            "analysis_id": "an_1",
+            "analysis_repository_id": "ar_1",
+            "github_repository_id": 123456789,
+            "repository_full_name": "octocat/gitjob",
+            "commit_sha": SHA,
+        }
+    ]
+
+
+def test_public_repository_never_calls_the_credential_broker(tmp_path):
+    class Broker:
+        def access_token_for(self, **_request):
+            raise AssertionError("public clone must not request a credential")
+
+    assert build(tmp_path, credential_broker=Broker()).handle(message(event())).action == "parsed"
+
+
+def test_private_repository_without_broker_keeps_the_existing_failure_contract(tmp_path):
+    cloner = FakeCloner(
+        tmp_path,
+        error=CredentialRequiredCloneError(
+            "REPOSITORY_CREDENTIAL_REQUIRED", "credential required"
+        ),
+    )
+
+    outcome = build(tmp_path, cloner=cloner).handle(message(event()))
+
+    assert outcome.action == "failed"
+    assert outcome.error_code == "REPOSITORY_NOT_ACCESSIBLE"
+
+
+def test_transient_credential_broker_failure_releases_the_claim_for_redelivery(tmp_path):
+    claims = FakeClaims()
+    cloner = FakeCloner(
+        tmp_path,
+        error=CredentialRequiredCloneError(
+            "REPOSITORY_CREDENTIAL_REQUIRED", "credential required"
+        ),
+    )
+
+    class Broker:
+        def access_token_for(self, **_request):
+            raise TransientCloneError(
+                "CREDENTIAL_BROKER_UNAVAILABLE", "temporarily unavailable"
+            )
+
+    with pytest.raises(TransientCloneError):
+        build(
+            tmp_path, claims=claims, cloner=cloner, credential_broker=Broker()
+        ).handle(message(event()))
+
+    assert claims.released == [("ev_1", 1)]
+    assert claims.finished == []
 
 
 def test_a_cloned_repository_is_parsed_before_the_checkout_is_removed(tmp_path):

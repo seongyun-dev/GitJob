@@ -25,6 +25,7 @@ where it is visible instead of silently looping.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ from pathlib import Path
 
 __all__ = [
     "CloneResult",
+    "CredentialRequiredCloneError",
     "PermanentCloneError",
     "RepositoryCloner",
     "TransientCloneError",
@@ -57,25 +59,32 @@ class PermanentCloneError(CloneError):
     """Not worth retrying: recorded, sent to the DLQ, offset committed."""
 
 
+class CredentialRequiredCloneError(CloneError):
+    """Anonymous GitHub response that must be retried with authorised access."""
+
+
 class UnsafeWorkPathError(ValueError):
     """A checkout target is not an isolated directory below the work root."""
 
 
 # Matched against git's stderr. Everything unmatched is permanent on purpose.
 _TRANSIENT = (
-    re.compile(r"could not resolve host", re.I),
-    re.compile(r"connection (timed out|reset|refused)", re.I),
-    re.compile(r"failed to connect", re.I),
-    re.compile(r"the remote end hung up", re.I),
-    re.compile(r"unable to access .*: (50\d|429)", re.I),
-    re.compile(r"rate limit", re.I),
-    re.compile(r"early eof", re.I),
+    re.compile(r"could not resolve host", re.IGNORECASE),
+    re.compile(r"connection (timed out|reset|refused)", re.IGNORECASE),
+    re.compile(r"failed to connect", re.IGNORECASE),
+    re.compile(r"the remote end hung up", re.IGNORECASE),
+    re.compile(r"unable to access .*: (50\d|429)", re.IGNORECASE),
+    re.compile(r"rate limit", re.IGNORECASE),
+    re.compile(r"early eof", re.IGNORECASE),
 )
-_NOT_FOUND = re.compile(r"(repository not found|not found|does not exist)", re.I)
+_NOT_FOUND = re.compile(
+    r"(repository not found|not found|does not exist|does not appear to be a git repository)",
+    re.IGNORECASE,
+)
 # git asks for a username when a repository is private or missing. With
 # GIT_TERMINAL_PROMPT=0 it fails instead of hanging, and this is that failure.
 _NEEDS_AUTH = re.compile(
-    r"(could not read username|authentication failed|terminal prompts disabled)", re.I
+    r"(could not read username|authentication failed|terminal prompts disabled)", re.IGNORECASE
 )
 
 
@@ -111,7 +120,14 @@ class RepositoryCloner:
     #: only option that both works and finishes.
     with_history: bool = False
 
-    def fetch(self, full_name: str, commit_sha: str, into: str) -> CloneResult:
+    def fetch(
+        self,
+        full_name: str,
+        commit_sha: str,
+        into: str,
+        *,
+        access_token: str | None = None,
+    ) -> CloneResult:
         target = self._target(into)
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
@@ -125,6 +141,7 @@ class RepositoryCloner:
             ["-c", "protocol.version=2", "fetch", *depth, "--quiet", "origin", commit_sha],
             target,
             "fetch",
+            access_token=access_token,
         )
         self._git(["checkout", "--quiet", "FETCH_HEAD"], target, "checkout")
 
@@ -167,7 +184,14 @@ class RepositoryCloner:
             raise UnsafeWorkPathError("work target must be a child of the work root")
         return resolved
 
-    def _git(self, args: list[str], cwd: Path, operation: str) -> None:
+    def _git(
+        self,
+        args: list[str],
+        cwd: Path,
+        operation: str,
+        *,
+        access_token: str | None = None,
+    ) -> None:
         """`operation` is reported separately: args[0] may be a `-c` override."""
         environment = {
             **os.environ,
@@ -176,10 +200,29 @@ class RepositoryCloner:
             # broker takes the partition away.
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_CONFIG_NOSYSTEM": "1",
+            # A developer machine may have a GitHub credential helper in the
+            # global config. Public-first must remain truly anonymous and use
+            # only the credential obtained for this analysis request.
+            "GIT_CONFIG_GLOBAL": os.devnull,
             "GCM_INTERACTIVE": "never",
         }
+        redactions: tuple[str, ...] = ()
+        if access_token is not None:
+            # Git reads this config only in the child process. The token never
+            # enters argv, the remote URL, or a repository config file.
+            basic = base64.b64encode(
+                f"x-access-token:{access_token}".encode()
+            ).decode("ascii")
+            environment.update(
+                {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "http.extraHeader",
+                    "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+                }
+            )
+            redactions = (access_token, basic)
         try:
-            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            completed = subprocess.run(
                 ["git", *args],
                 cwd=cwd,
                 capture_output=True,
@@ -197,22 +240,38 @@ class RepositoryCloner:
                 "CLONE_TIMEOUT", f"git {operation} exceeded {self.timeout_seconds}s"
             ) from error
         if completed.returncode != 0:
-            raise _classify(operation, completed.stderr)
+            raise _classify(
+                operation,
+                _redact(completed.stderr, redactions),
+                credential_supplied=access_token is not None,
+            )
 
 
-def _classify(operation: str, stderr: str) -> CloneError:
+def _classify(
+    operation: str, stderr: str, *, credential_supplied: bool = False
+) -> CloneError:
     text = stderr.strip()
     if _NEEDS_AUTH.search(text):
-        # Indistinguishable from "deleted" without a credential, and the answer
-        # to both is the same: this worker cannot fetch it.
+        if not credential_supplied:
+            return CredentialRequiredCloneError(
+                "REPOSITORY_CREDENTIAL_REQUIRED",
+                f"git {operation} requires authorised repository access",
+            )
         return PermanentCloneError(
-            "REPOSITORY_NOT_ACCESSIBLE",
-            f"git {operation} needs credentials this worker has none of",
+            "GITHUB_RECONNECT_REQUIRED",
+            f"git {operation} rejected the authorised repository access",
         )
     if _NOT_FOUND.search(text):
+        # GitHub intentionally uses the same anonymous 404 for private and
+        # missing repositories. Only an authorised retry can distinguish them.
+        if not credential_supplied:
+            return CredentialRequiredCloneError(
+                "REPOSITORY_CREDENTIAL_REQUIRED",
+                f"git {operation} requires authorised repository access",
+            )
         return PermanentCloneError(
-            "REPOSITORY_NOT_FOUND",
-            f"git {operation} could not find the repository or commit",
+            "REPOSITORY_NOT_ACCESSIBLE",
+            f"git {operation} could not access the repository or commit",
         )
     for pattern in _TRANSIENT:
         if pattern.search(text):
@@ -220,6 +279,14 @@ def _classify(operation: str, stderr: str) -> CloneError:
                 "GITHUB_UNAVAILABLE", f"git {operation} failed: {text[:200]}"
             )
     return PermanentCloneError("CLONE_FAILED", f"git {operation} failed: {text[:200]}")
+
+
+def _redact(text: str, values: tuple[str, ...]) -> str:
+    redacted = text
+    for value in values:
+        if value:
+            redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
 
 
 def _directory_bytes(root: Path) -> int:

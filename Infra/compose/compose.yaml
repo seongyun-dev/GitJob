@@ -227,6 +227,10 @@ services:
       KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:-gitjob.repository-analysis.requests.v1}
       # Consumed here: the worker's verdicts, evidence and unmatched dependencies.
       KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
+      # Private repository credential broker. The same service token is injected
+      # into the data-host worker; it never enters Kafka or an image layer.
+      ANALYSIS_PRIVATE_REPOSITORIES_ENABLED: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:-false}
+      ANALYSIS_WORKER_SERVICE_TOKEN: ${ANALYSIS_WORKER_SERVICE_TOKEN:-}
       ANALYSIS_OUTBOX_MODE: ${ANALYSIS_OUTBOX_MODE:-CDC}
       ANALYSIS_OUTBOX_ENABLED: ${ANALYSIS_OUTBOX_ENABLED:-true}
       ANALYSIS_OUTBOX_POLL_INTERVAL: ${ANALYSIS_OUTBOX_POLL_INTERVAL:-2s}
@@ -486,6 +490,12 @@ services:
       # partitions to someone else, who then clones the same repository again.
       KAFKA_MAX_POLL_INTERVAL_MS: ${ANALYSIS_MAX_POLL_INTERVAL_MS:-900000}
       ANALYSIS_CLONE_TIMEOUT_SECONDS: ${ANALYSIS_CLONE_TIMEOUT_SECONDS:-600}
+      # Empty while the feature flag is off. In split EC2 mode this points to
+      # the service host's private backend listener, never the public Nginx URL.
+      ANALYSIS_PRIVATE_REPOSITORIES_ENABLED: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:-false}
+      ANALYSIS_CREDENTIAL_BROKER_URL: ${ANALYSIS_CREDENTIAL_BROKER_URL:-}
+      ANALYSIS_WORKER_SERVICE_TOKEN: ${ANALYSIS_WORKER_SERVICE_TOKEN:-}
+      ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS: ${ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS:-5}
       # 근거 한 줄을 누가 썼는지 읽어 Personal Level 을 만들 수 있게 한다.
       #
       # 켜면 전체 히스토리를 클론한다. 얕은 체크아웃에서 git blame 은 실패하지

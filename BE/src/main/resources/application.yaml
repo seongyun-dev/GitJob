@@ -73,6 +73,9 @@ gitjob:
       # 읽는다(CurrentRegistryVersion). 설정으로 두면 실재하지 않는 버전이 기본값으로
       # 앉을 수 있고, 그 값으로 규칙을 조회하면 조용히 0행이 나온다.
       poll-after-seconds: ${ANALYSIS_POLL_AFTER_SECONDS:2}
+    credential-broker:
+      enabled: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:false}
+      service-token: ${ANALYSIS_WORKER_SERVICE_TOKEN:}
     outbox:
       # CDC uses Debezium, not a Spring Kafka producer. POLLING is a deliberate rollback option.
       mode: ${ANALYSIS_OUTBOX_MODE:CDC}

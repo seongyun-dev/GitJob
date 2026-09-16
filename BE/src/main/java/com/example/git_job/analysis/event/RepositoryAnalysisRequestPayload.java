@@ -9,8 +9,8 @@ import java.util.regex.Pattern;
  *
  * <p>GitHub access tokens and installation credentials intentionally do not
  * belong to this contract. The worker exchanges {@code analysisRepositoryId}
- * for a short-lived credential through an authenticated internal API when it
- * starts the job.</p>
+ * for the request owner's stored GitHub credential through an authenticated
+ * internal API only when an anonymous fetch needs it.</p>
  *
  * <p>{@code branchName} records the selected branch at request time; the worker
  * must still analyze {@code commitSha} even if that branch moves later.</p>

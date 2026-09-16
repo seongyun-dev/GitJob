@@ -1379,7 +1379,7 @@ try {
 | `UNVERIFIED`가 두 가지를 뭉갠다 | "팀원이 썼다"와 "GitHub이 커밋을 계정과 연결하지 못했다"가 같은 값이다. 화면에서 구분하려면 `UNLINKED_COMMIT`이 따로 필요하다 |
 | 사용 기간 | 미착수. `repository_commit.authored_at`이 채워지므로 재료는 생겼다 |
 | `CO_AUTHORED` · `PARTIAL_EDIT` | 값은 있지만 안 나온다. 근거가 한 줄짜리라 `SOLE_AUTHOR`/`UNVERIFIED`로만 갈린다 |
-| 비공개 저장소 분석 | 워커가 익명으로 clone한다. `REPOSITORY_NOT_ACCESSIBLE`로 실패 |
+| ~~비공개 저장소 분석~~ | S15P21E102-280에서 on-demand 내부 credential broker를 구현했다. 실제 EC2 배포·사용자 canary는 별도 검증이 필요하다 |
 | `analysis_outbox` 보존 정책 | 행이 무한히 쌓인다. 정리 배치가 필요하다 |
 | L3 규칙 | 기술 29개 중 2개만 있다 |
 | FE 조회 클라이언트 이원화 | `evidenceApi.ts`(티켓 208)와 `technologiesApi.ts`가 같은 엔드포인트를 본다. 하나로 정리해야 한다 |

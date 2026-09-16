@@ -178,3 +178,39 @@ def test_attribution_is_off_by_default(monkeypatch, tmp_path):
 
     assert captured["with_history"] is False
     assert built["attribute_authors"] is False
+
+
+def test_private_repository_broker_is_off_by_default(monkeypatch):
+    from analysis.__main__ import credential_broker_from_env
+
+    monkeypatch.delenv("ANALYSIS_PRIVATE_REPOSITORIES_ENABLED", raising=False)
+
+    assert credential_broker_from_env() is None
+
+
+def test_private_repository_broker_requires_both_endpoint_and_service_token(monkeypatch):
+    from analysis.__main__ import credential_broker_from_env
+
+    monkeypatch.setenv("ANALYSIS_PRIVATE_REPOSITORIES_ENABLED", "true")
+    monkeypatch.delenv("ANALYSIS_CREDENTIAL_BROKER_URL", raising=False)
+    monkeypatch.delenv("ANALYSIS_WORKER_SERVICE_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit, match="ANALYSIS_CREDENTIAL_BROKER_URL"):
+        credential_broker_from_env()
+
+
+def test_private_repository_broker_uses_configured_timeout(monkeypatch):
+    from analysis.__main__ import credential_broker_from_env
+
+    monkeypatch.setenv("ANALYSIS_PRIVATE_REPOSITORIES_ENABLED", "true")
+    monkeypatch.setenv(
+        "ANALYSIS_CREDENTIAL_BROKER_URL",
+        "http://backend:8080/internal/v1/repository-analysis/credentials",
+    )
+    monkeypatch.setenv("ANALYSIS_WORKER_SERVICE_TOKEN", "service-token")
+    monkeypatch.setenv("ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS", "7")
+
+    broker = credential_broker_from_env()
+
+    assert broker is not None
+    assert broker.timeout_seconds == 7

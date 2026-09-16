@@ -18,6 +18,7 @@ import sys
 from analysis.claim import ClaimStore, connect, dsn_from_env
 from analysis.clone import RepositoryCloner
 from analysis.consumer import AnalysisConsumer, work_root_from_env
+from analysis.credentials import HttpCredentialBroker
 from analysis.manifests import ManifestScanner
 from analysis.parse import RepositoryParser, verify_grammars
 from analysis.publish import ResultPublisher
@@ -82,6 +83,7 @@ def build() -> AnalysisConsumer:
         max_bytes=_int("ANALYSIS_MAX_REPOSITORY_BYTES", 2 * 1024 * 1024 * 1024),
         with_history=attribute_authors,
     )
+    credential_broker = credential_broker_from_env()
 
     dlq_topic = (
         os.getenv("KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ") or DEFAULT_DLQ_TOPIC
@@ -151,6 +153,7 @@ def build() -> AnalysisConsumer:
         transport=transport,
         claims=claims,
         cloner=cloner,
+        credential_broker=credential_broker,
         parser=parser,
         scanner=scanner,
         registry=registry,
@@ -180,6 +183,23 @@ def _flag(name: str, *, default: bool) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def credential_broker_from_env() -> HttpCredentialBroker | None:
+    if not _flag("ANALYSIS_PRIVATE_REPOSITORIES_ENABLED", default=False):
+        return None
+    broker_url = (os.getenv("ANALYSIS_CREDENTIAL_BROKER_URL") or "").strip()
+    service_token = (os.getenv("ANALYSIS_WORKER_SERVICE_TOKEN") or "").strip()
+    if not broker_url or not service_token:
+        raise SystemExit(
+            "ANALYSIS_CREDENTIAL_BROKER_URL and ANALYSIS_WORKER_SERVICE_TOKEN "
+            "are required when private repository analysis is enabled"
+        )
+    return HttpCredentialBroker(
+        broker_url,
+        service_token,
+        timeout_seconds=_int("ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS", 5),
+    )
 
 
 def result_destination_from_env(

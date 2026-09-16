@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
 import { AnalysisStepList } from '@/features/analysis/components/AnalysisStepList'
 import { useAnalysisStatus } from '@/features/analysis/hooks/useRepositoryAnalysis'
@@ -5,6 +7,7 @@ import { profileErrorMessage } from '@/features/evidence/hooks/useTechnologyProf
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
+import { queryKeys } from '@/shared/api/queryKeys'
 
 /**
  * 분석 진행 · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `07 Analysis Progress`).
@@ -28,8 +31,15 @@ import { StateCard } from '@/shared/ui/StateCard'
  */
 export function AnalysisProgressPage() {
   const { analysisId } = useParams()
+  const queryClient = useQueryClient()
   const status = useAnalysisStatus(analysisId)
   const data = status.data
+
+  useEffect(() => {
+    if (data?.analysisStatus === 'SUCCEEDED' || data?.analysisStatus === 'PARTIAL_SUCCEEDED') {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
+    }
+  }, [data?.analysisStatus, queryClient])
 
   return (
     <div>
@@ -129,12 +139,14 @@ function ProgressState({
   const scope = `저장소 ${data.completedCount}/${data.totalCount}`
 
   if (data.analysisStatus === 'FAILED') {
+    const failure = analysisFailure(data.errorCode)
     return (
       <StateCard
         kind="ERROR"
-        title="분석에 실패했어요"
-        description="아래 사유를 확인하고 다시 시도해 주세요."
+        title={failure.title}
+        description={failure.description}
         meta={data.errorCode ?? data.currentStage}
+        action={failure.action}
       />
     )
   }
@@ -161,4 +173,48 @@ function ProgressState({
       meta={`${data.currentStage} · ${scope}`}
     />
   )
+}
+
+function analysisFailure(errorCode: string | null) {
+  if (errorCode === 'GITHUB_RECONNECT_REQUIRED') {
+    return {
+      title: 'GitHub 연결을 갱신해 주세요',
+      description: '비공개 저장소 권한이 만료되었거나 조직 승인이 필요합니다.',
+      action: (
+        <Link to="/onboarding/github?redirectTo=/onboarding/repositories" className="text-tone-accent underline">
+          GitHub 다시 연결
+        </Link>
+      ),
+    }
+  }
+  if (
+    errorCode === 'REPOSITORY_NOT_ACCESSIBLE' ||
+    errorCode === 'REPOSITORY_CREDENTIAL_NOT_FOUND'
+  ) {
+    return {
+      title: '저장소에 접근할 수 없어요',
+      description: '저장소가 삭제되었거나 현재 GitHub 계정의 접근 권한이 바뀌었습니다.',
+      action: (
+        <Link to="/onboarding/repositories" className="text-tone-accent underline">
+          저장소 다시 선택
+        </Link>
+      ),
+    }
+  }
+  if (
+    errorCode === 'CREDENTIAL_BROKER_UNAVAILABLE' ||
+    errorCode === 'CREDENTIAL_BROKER_INVALID_RESPONSE' ||
+    errorCode === 'CREDENTIAL_BROKER_UNAUTHORIZED'
+  ) {
+    return {
+      title: '비공개 저장소 연결이 지연되고 있어요',
+      description: '서비스 연결을 복구한 뒤 다시 분석해 주세요.',
+      action: undefined,
+    }
+  }
+  return {
+    title: '분석에 실패했어요',
+    description: '아래 사유를 확인하고 다시 시도해 주세요.',
+    action: undefined,
+  }
 }

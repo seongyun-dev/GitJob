@@ -9,6 +9,8 @@ import { ApiError, get, post } from '@/shared/api/client'
  */
 
 export interface Me {
+  /** 계정 전환 시 사용자 범위 캐시를 분리하는 서버 발급 불변 식별자. */
+  userId: string
   /** 프로필 이름. 없으면 BE가 GitHub 핸들로 대체하므로 빈 값은 아니다. */
   displayName: string
   /** GitHub 아바타. 없으면 `null` — 화면은 이름 첫 글자로 대체한다. */

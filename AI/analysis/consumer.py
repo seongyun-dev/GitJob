@@ -34,9 +34,16 @@ from pydantic import ValidationError
 from analysis.attribution import CommitAuthorIdentityResolver, GitEvidenceAttributor
 from analysis.blame import BlameError, blame_files
 from analysis.claim import ClaimStatus, ClaimStore
-from analysis.clone import CloneError, RepositoryCloner, TransientCloneError
+from analysis.clone import (
+    CloneError,
+    CredentialRequiredCloneError,
+    PermanentCloneError,
+    RepositoryCloner,
+    TransientCloneError,
+)
 from analysis.configs import ConfigReport, ConfigScanner, facts_from_configs
 from analysis.contracts import RepositoryAnalysisRequest
+from analysis.credentials import HttpCredentialBroker
 from analysis.judge import (
     Judge,
     Judgement,
@@ -93,6 +100,7 @@ class AnalysisConsumer:
     transport: ConsumerTransport
     claims: ClaimStore
     cloner: RepositoryCloner
+    credential_broker: HttpCredentialBroker | None = None
     #: Read line authorship so the backend can judge personal level.
     #:
     #: Needs a checkout with history (`RepositoryCloner.with_history`). Left off
@@ -186,9 +194,7 @@ class AnalysisConsumer:
         target = f"{payload.analysis_id}-{event_key}-{token}"
         started = monotonic()
         try:
-            result = self.cloner.fetch(
-                payload.repository_full_name, payload.commit_sha, target
-            )
+            result = self._fetch_repository(payload, target)
             log.info(
                 "cloned: analysisId=%s repo=%s sha=%s bytes=%s traceId=%s",
                 payload.analysis_id,
@@ -412,6 +418,38 @@ class AnalysisConsumer:
             )
         finally:
             self.cloner.cleanup(target)
+
+    def _fetch_repository(self, payload, target: str):
+        """Keep public fetch anonymous; exchange a credential only on demand."""
+
+        try:
+            return self.cloner.fetch(
+                payload.repository_full_name, payload.commit_sha, target
+            )
+        except CredentialRequiredCloneError as anonymous_failure:
+            if self.credential_broker is None:
+                raise PermanentCloneError(
+                    "REPOSITORY_NOT_ACCESSIBLE",
+                    "repository requires credentials but no broker is configured",
+                ) from anonymous_failure
+
+        access_token = self.credential_broker.access_token_for(
+            analysis_id=payload.analysis_id,
+            analysis_repository_id=payload.analysis_repository_id,
+            github_repository_id=payload.github_repository_id,
+            repository_full_name=payload.repository_full_name,
+            commit_sha=payload.commit_sha,
+        )
+        try:
+            return self.cloner.fetch(
+                payload.repository_full_name,
+                payload.commit_sha,
+                target,
+                access_token=access_token,
+            )
+        finally:
+            # Do not retain the per-user credential on the consumer instance.
+            access_token = None
 
     def _report_failure(
         self,

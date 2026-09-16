@@ -8,13 +8,22 @@ repository on disk.
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
+from contextlib import contextmanager
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
 import pytest
 
-from analysis.clone import PermanentCloneError, RepositoryCloner, UnsafeWorkPathError
+from analysis.clone import (
+    CredentialRequiredCloneError,
+    PermanentCloneError,
+    RepositoryCloner,
+    UnsafeWorkPathError,
+)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git is not installed"
@@ -53,6 +62,43 @@ def cloner(tmp_path, root) -> RepositoryCloner:
     # full_name is appended to the base URL, so a local path base makes
     # "<tmp>/origin.git" resolve to the repository above.
     return RepositoryCloner(work_root=work, github_base_url=str(root.parent))
+
+
+@contextmanager
+def authenticated_git_server(tmp_path, source, token: str):
+    """Serve a real dumb-HTTP Git remote that requires the expected Basic header."""
+
+    served = tmp_path / "served"
+    served.mkdir()
+    bare = served / "private.git"
+    _run("git", "clone", "--quiet", "--bare", str(source), str(bare), cwd=served)
+    _run("git", "update-server-info", cwd=bare)
+    expected = "basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode()
+
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(served), **kwargs)
+
+        def do_GET(self):
+            if self.headers.get("Authorization") != expected:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="private-git"')
+                self.end_headers()
+                return
+            super().do_GET()
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_checks_out_the_requested_commit_not_the_branch_tip(tmp_path):
@@ -98,8 +144,89 @@ def test_an_unknown_commit_is_permanent_not_retried(tmp_path):
 def test_a_missing_repository_is_permanent_not_retried(tmp_path):
     root, shas = origin(tmp_path)
 
-    with pytest.raises(PermanentCloneError):
+    # GitHub deliberately returns the same anonymous response for a missing
+    # repository and a private repository. The caller must try its authorised
+    # credential before deciding that the repository is gone.
+    with pytest.raises(CredentialRequiredCloneError):
         cloner(tmp_path, root).fetch("does-not-exist", shas[-1], "an_1")
+
+
+def test_access_token_is_only_passed_in_the_child_environment(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs["env"]))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("analysis.clone.subprocess.run", run)
+    secret = "github-secret-that-must-not-reach-argv"
+
+    RepositoryCloner(work_root=work).fetch(
+        "octocat/private", "a" * 40, "an_1", access_token=secret
+    )
+
+    assert all(secret not in repr(argv) for argv, _ in calls)
+    fetch_call = next(call for call in calls if "fetch" in call[0])
+    assert all(env["GIT_CONFIG_GLOBAL"] == os.devnull for _, env in calls)
+    assert fetch_call[1]["GIT_CONFIG_COUNT"] == "1"
+    assert fetch_call[1]["GIT_CONFIG_KEY_0"] == "http.extraHeader"
+    assert secret not in fetch_call[1]["GIT_CONFIG_VALUE_0"]
+    assert all("GIT_CONFIG_VALUE_0" not in env for argv, env in calls if "fetch" not in argv)
+
+
+def test_access_token_and_derived_header_are_redacted_from_git_errors(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    secret = "github-secret"
+    basic = base64.b64encode(f"x-access-token:{secret}".encode()).decode("ascii")
+
+    def run(argv, **_kwargs):
+        if "fetch" in argv:
+            return subprocess.CompletedProcess(
+                argv, 1, "", f"fatal: rejected {secret} header {basic}"
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("analysis.clone.subprocess.run", run)
+
+    with pytest.raises(PermanentCloneError) as failure:
+        RepositoryCloner(work_root=work).fetch(
+            "octocat/private", "a" * 40, "an_1", access_token=secret
+        )
+
+    assert secret not in str(failure.value)
+    assert basic not in str(failure.value)
+
+
+def test_authenticated_http_full_history_clone_is_pinned_without_persisting_token(tmp_path):
+    source, shas = origin(tmp_path, commits=3)
+    pinned = shas[-1]
+    secret = "github-private-token"
+    work = tmp_path / "private-work"
+    work.mkdir()
+
+    with authenticated_git_server(tmp_path, source, secret) as base_url:
+        fetcher = RepositoryCloner(
+            work_root=work,
+            github_base_url=base_url,
+            # Python's static test server provides Git's dumb HTTP protocol,
+            # which deliberately has no shallow capability. The unit test
+            # above covers the same header injection for the shallow argv.
+            with_history=True,
+        )
+        with pytest.raises(CredentialRequiredCloneError):
+            fetcher.fetch("private", pinned, "an_1")
+
+        result = fetcher.fetch("private", pinned, "an_1", access_token=secret)
+
+    assert _run("git", "rev-parse", "HEAD", cwd=result.path) == pinned
+    assert _run("git", "rev-list", "--count", "HEAD", cwd=result.path) == "3"
+    config = (result.path / ".git" / "config").read_text(encoding="utf-8")
+    encoded = base64.b64encode(f"x-access-token:{secret}".encode()).decode()
+    assert secret not in config
+    assert encoded not in config
 
 
 def test_a_rerun_replaces_a_leftover_directory(tmp_path):

@@ -1,7 +1,9 @@
-import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { QueryCache, QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { router } from '@/app/router'
+import { fetchMe } from '@/features/auth/api/me'
+import { isSessionChangeEvent, refreshSessionCache } from '@/features/auth/sessionSync'
 import { ApiError } from '@/shared/api/client'
 
 /** GitHub 재연결 안내 화면. 라우터 정의와 같은 경로다. */
@@ -55,8 +57,32 @@ function createQueryClient() {
   })
 }
 
+/** 로그아웃·재로그인이 다른 탭에서 일어나도 사용자 범위 캐시를 즉시 교체한다. */
+function AuthSessionSync() {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    function onStorage(event: StorageEvent) {
+      if (!isSessionChangeEvent(event, window.localStorage)) {
+        return
+      }
+      void refreshSessionCache(queryClient, fetchMe)
+    }
+
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [queryClient])
+
+  return null
+}
+
 export function AppProviders({ children }: { children: ReactNode }) {
   const [queryClient] = useState(createQueryClient)
 
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthSessionSync />
+      {children}
+    </QueryClientProvider>
+  )
 }
