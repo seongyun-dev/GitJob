@@ -82,10 +82,17 @@ export const queryKeys = {
   // 시장 지표 -- 개인 결과가 아니라 사용자 단위로 나뉘지 않는다.
   jobDemands: (targetRole: string, regions: readonly string[], careerLevels: readonly string[]) =>
     ['job-demands', targetRole, regions, careerLevels] as const,
-  technologyTrends: (techId: string, periods: readonly string[]) =>
-    ['trends', 'technology', techId, periods] as const,
-  trendCompare: (source: string, techIds: readonly string[], periods: readonly string[]) =>
-    ['trends', 'compare', source, techIds, periods] as const,
+  technologyTrends: (
+    techId: string,
+    periods: readonly string[],
+    targetKey: string | undefined,
+  ) => ['trends', 'technology', techId, periods, targetKey] as const,
+  trendCompare: (
+    source: string,
+    techIds: readonly string[],
+    periods: readonly string[],
+    targetKey: string | undefined,
+  ) => ['trends', 'compare', source, techIds, periods, targetKey] as const,
 
   /*
    * 아직 조회 API가 없는 화면 · 티켓 S15P21E102-281.

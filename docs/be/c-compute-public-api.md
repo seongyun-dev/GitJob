@@ -528,7 +528,8 @@ C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/job-postings?mode=WHA
 
 ### 4.8 `GET /api/v1/technologies/{techId}/trends` — 출처별 Trend (화면 13)
 
-쿼리: `periods`(선택, `2026-06,2026-07,2026-08` 형태)
+쿼리: `periods`(선택, `2026-06,2026-07,2026-08` 형태), `targetRole`,
+`regions`, `careerLevels`. JOB 출처는 `periods`와 `targetRole`이 모두 있어야 조회한다.
 
 C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤 각 `snapshot_id`로
 `GET /internal/v1/c/snapshots/{id}`.
@@ -544,8 +545,8 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
       "dataStatus": "PARTIAL", "unit": "월별 commit 관측 수",
       "basis": "2026-06~2026-08", "points": [] },
     { "sourceId": "JOB", "cSource": "JOB_MONTHLY_DEMAND",
-      "dataStatus": "NOT_SUPPORTED", "statusReason": "JOB_TREND_RESOLVE_UNAVAILABLE",
-      "unit": "월별 공고 요구 건수", "points": [] }
+      "dataStatus": "READY", "statusReason": "NONE",
+      "unit": "월별 공고 요구 건수", "points": [{"period":"2026-08","value":54}] }
   ]
 }
 ```
@@ -558,16 +559,16 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
 - 한 출처가 404여도 나머지는 정상 응답한다. 출처 하나의 미준비는 요청 실패가 아니다.
 - JOB Trend는 월별 `MONTHLY_DEMAND` cohort를 쓴다. 활성 추천용 DEMAND를 JOB Trend로
   쓰지 않는다(§6-4).
-- **JOB 출처는 현재 조회할 수 없다.** C의 `trends/resolve`가 받는 source는
-  `WEEKLY_REPO_ACTIVITY`·`GH_ARCHIVE`·`GH_ARCHIVE_HISTORICAL` 셋뿐이고, JOB Trend는
-  `trends/completed`로 저장되지만 head를 찾을 경로가 없다. 없는 경로를 추측해 부르는 대신
-  `NOT_SUPPORTED`로 내려보낸다(§6-9).
-- `periods`를 주지 않으면 Archive 출처를 부르지 않는다. 서버가 최근 몇 달을 임의로 고르면
-  화면에 적힌 기간과 실제 계산 기간이 달라진다.
+- C의 `JOB` resolve는 기술·월·목표 직무·지역·경력·수집원·최소 표본을 포함한 정확한
+  stream identity로 저장 결과를 찾는다. BE는 로그인 사용자의 목표 조건을 그대로 넘기고
+  다른 직무의 월별 수요를 대신 고르지 않는다.
+- `periods`를 주지 않으면 Archive와 JOB 출처를 부르지 않는다. 서버가 최근 몇 달을 임의로
+  고르면 화면에 적힌 기간과 실제 계산 기간이 달라진다.
 
 ### 4.9 `GET /api/v1/trends/compare` — 기술 교차 비교 (화면 12)
 
-쿼리: `techIds`(쉼표 구분, 최대 10), `source`(단일 출처 필수)
+쿼리: `techIds`(쉼표 구분, 최대 10), `source`(단일 출처 필수), `periods`,
+`targetRole`, `regions`, `careerLevels`. `source=JOB`이면 월별 기간과 목표 직무가 필수다.
 
 한 응답에 **한 출처만** 담는다. 여러 출처를 한 표에 섞으면 분모가 다른 값이 한 축에
 들어간다. 화면 12는 출처 카드마다 이 API를 따로 호출한다.
@@ -613,9 +614,9 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
    남기지 않는다.
 8. **`GET /internal/v1/c/contracts` 출력.** 이 문서의 요청 필드는 구현 소스에서 읽은
    것이고, 계약 원본은 그 schema다.
-9. **JOB Trend의 resolve 경로.** `trends/resolve`는 GitHub 계열 세 source만 받는다.
-   JOB Trend를 화면에 올리려면 같은 형태의 조회 경로가 필요하다. 그때까지 화면 12·13의
-   JOB 카드는 `NOT_SUPPORTED`로 비어 있다.
+9. **JOB Trend의 실제 월별 산출물.** 조회 경로는 준비됐지만, 화면에 표시하려면 A 입력으로
+   생성한 `MONTHLY_DEMAND` cohort와 같은 조건의 JOB Trend Snapshot이 기간별로 있어야 한다.
+   없는 기간을 0으로 만들거나 다른 직무의 Snapshot으로 대체하지 않는다.
 10. **Evidence 근거 행의 실제 수용 여부.** B가 `analysis_evidence` 한 행을 C의
     `EvidenceProof` 하나로 옮기는데(`UserEvidenceAssembler`), C가 그 근거를 실제로
     받아들이는지는 운영 C와 한 번 돌려 봐야 안다. C는 근거가 하나도 수용되지 않으면

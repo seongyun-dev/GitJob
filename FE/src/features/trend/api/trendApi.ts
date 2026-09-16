@@ -58,6 +58,20 @@ export interface TrendCompareDto {
   rows: TrendCompareRowDto[]
 }
 
+export interface TrendTargetParams {
+  targetRole?: string
+  regions?: readonly string[]
+  careerLevels?: readonly string[]
+}
+
+function appendTarget(query: URLSearchParams, target: TrendTargetParams): void {
+  if (target.targetRole !== undefined && target.targetRole !== '') {
+    query.set('targetRole', target.targetRole)
+  }
+  target.regions?.forEach((region) => query.append('regions', region))
+  target.careerLevels?.forEach((level) => query.append('careerLevels', level))
+}
+
 /**
  * 기술 하나의 출처별 추세.
  *
@@ -68,9 +82,11 @@ export interface TrendCompareDto {
 export function fetchTechnologyTrends(
   techId: string,
   periods: readonly string[],
+  target: TrendTargetParams = {},
 ): Promise<TechnologyTrendDto> {
   const query = new URLSearchParams()
   periods.forEach((period) => query.append('periods', period))
+  appendTarget(query, target)
   const suffix = query.toString() === '' ? '' : `?${query.toString()}`
   return get<TechnologyTrendDto>(`/technologies/${encodeURIComponent(techId)}/trends${suffix}`)
 }
@@ -80,9 +96,11 @@ export function fetchTrendCompare(params: {
   source: string
   techIds: readonly string[]
   periods: readonly string[]
+  target?: TrendTargetParams
 }): Promise<TrendCompareDto> {
   const query = new URLSearchParams({ source: params.source })
   params.techIds.forEach((techId) => query.append('techIds', techId))
   params.periods.forEach((period) => query.append('periods', period))
+  appendTarget(query, params.target ?? {})
   return get<TrendCompareDto>(`/trends/compare?${query.toString()}`)
 }

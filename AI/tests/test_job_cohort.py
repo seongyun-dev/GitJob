@@ -568,6 +568,12 @@ def test_explicit_ai_development_engineer_title_matches_without_generic_ai_tags(
     [
         ("AI Research Engineer (ML/LLM Service)", "AI_DATA"),
         ("React 웹 개발자", "FRONTEND"),
+        ("[경력] 백엔드개발자 채용", "BACKEND"),
+        ("프론트엔드개발자", "FRONTEND"),
+        ("데이터엔지니어", "AI_DATA"),
+        ("AI엔지니어", "AI_DATA"),
+        ("인프라엔지니어", "INFRASTRUCTURE"),
+        ("모바일개발자", "MOBILE"),
     ],
 )
 def test_explicit_technology_role_titles_are_not_dropped(title, target_role):

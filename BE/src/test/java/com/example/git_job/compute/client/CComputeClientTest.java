@@ -4,6 +4,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.git_job.compute.client.dto.CTrend;
 import com.example.git_job.compute.config.CComputeProperties;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -12,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -235,6 +237,44 @@ class CComputeClientTest {
                 // C의 X | None은 "없어도 되는 필드"가 아니라 null 이 허용되는 필수
                 // 필드다. 생략하면 field required 로 422 가 난다.
                 .contains("\"cohort_snapshot_id\":null");
+    }
+
+    @Test
+    @DisplayName("JOB Trend selector는 목표 직무와 공고 필터를 snake_case로 보낸다")
+    void serializesJobTrendSelector() {
+        responses.put("/internal/v1/c/trends/resolve",
+                Response.of(200, "{\"message\":\"ok\",\"data\":{\"status\":\"COMPLETED\"}}"));
+
+        client().post("/internal/v1/c/trends/resolve",
+                CTrend.Selector.job("java", List.of("2026-07", "2026-08"), "BACKEND",
+                        List.of("서울"), List.of("신입")),
+                Object.class);
+
+        assertThat(lastBody.get())
+                .contains("\"source\":\"JOB\"")
+                .contains("\"tech_id\":\"java\"")
+                .contains("\"periods\":[\"2026-07\",\"2026-08\"]")
+                .contains("\"granularity\":\"MONTH\"")
+                .contains("\"target_role\":\"BACKEND\"")
+                .contains("\"sources\":[]")
+                .contains("\"regions\":[\"서울\"]")
+                .contains("\"career_levels\":[\"신입\"]")
+                .contains("\"min_jobs\":1");
+    }
+
+    @Test
+    @DisplayName("주간 Trend selector는 C 계약에 맞게 빈 periods 배열을 보낸다")
+    void serializesWeeklyTrendSelectorWithEmptyPeriods() {
+        responses.put("/internal/v1/c/trends/resolve",
+                Response.of(200, "{\"message\":\"ok\",\"data\":{\"status\":\"COMPLETED\"}}"));
+
+        client().post("/internal/v1/c/trends/resolve",
+                CTrend.Selector.weekly("java"), Object.class);
+
+        assertThat(lastBody.get())
+                .contains("\"source\":\"WEEKLY_REPO_ACTIVITY\"")
+                .contains("\"tech_id\":\"java\"")
+                .contains("\"periods\":[]");
     }
 
     @Test

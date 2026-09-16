@@ -35,7 +35,7 @@ FE 화면 작업 중 **다른 조의 결정이나 구현이 있어야 진행되�
 | 다음 기술 | `/recommendations` | **연결됨** — `GET /api/v1/me/recommendations` |
 | What-if | `/what-if` | **연결됨** — `GET /api/v1/me/recommendations/{techId}/what-if` |
 | 기술 상세 | `/technologies/:techId` | 여전히 fixture. 기술 단건 상세 API가 없다 |
-| 트렌드 | `/trends`, `/trends/:techId` | **연결됨** — `GET /api/v1/trends/compare`, `GET /api/v1/technologies/{techId}/trends`. JOB 출처는 조회 경로가 없어 `NOT_SUPPORTED` |
+| 트렌드 | `/trends`, `/trends/:techId` | **연결됨** — `GET /api/v1/trends/compare`, `GET /api/v1/technologies/{techId}/trends`. 월별 기간과 목표 직무를 보내면 같은 공고 조건의 JOB 출처도 조회한다 |
 | 마이페이지 | `/mypage` | 여전히 fixture. 분석 이력 API가 없다 |
 
 캐시 키는 `analysisId`를 빼고 서버가 만든 `targetKey` 기반으로 바꿨다. 요청이

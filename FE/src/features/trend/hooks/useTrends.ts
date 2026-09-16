@@ -1,5 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchTechnologyTrends, fetchTrendCompare } from '@/features/trend/api/trendApi'
+import {
+  fetchTechnologyTrends,
+  fetchTrendCompare,
+  type TrendTargetParams,
+} from '@/features/trend/api/trendApi'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 /**
@@ -15,11 +19,16 @@ import { queryKeys } from '@/shared/api/queryKeys'
 /** 공용 집계는 자주 바뀌지 않는다. 화면 전환마다 다시 부르지 않는다. */
 const TREND_STALE_TIME = 5 * 60 * 1000
 
-export function useTechnologyTrends(techId: string | undefined, periods: readonly string[]) {
+export function useTechnologyTrends(
+  techId: string | undefined,
+  periods: readonly string[],
+  target: TrendTargetParams & { targetKey?: string } = {},
+  enabled = true,
+) {
   return useQuery({
-    queryKey: queryKeys.technologyTrends(techId ?? '', periods),
-    queryFn: () => fetchTechnologyTrends(techId as string, periods),
-    enabled: techId !== undefined && techId !== '',
+    queryKey: queryKeys.technologyTrends(techId ?? '', periods, target.targetKey),
+    queryFn: () => fetchTechnologyTrends(techId as string, periods, target),
+    enabled: enabled && techId !== undefined && techId !== '',
     staleTime: TREND_STALE_TIME,
   })
 }
@@ -34,15 +43,22 @@ export function useTrendCompare(params: {
   source: string
   techIds: readonly string[]
   periods: readonly string[]
+  target?: TrendTargetParams & { targetKey?: string }
   enabled?: boolean
 }) {
   return useQuery({
-    queryKey: queryKeys.trendCompare(params.source, params.techIds, params.periods),
+    queryKey: queryKeys.trendCompare(
+      params.source,
+      params.techIds,
+      params.periods,
+      params.target?.targetKey,
+    ),
     queryFn: () =>
       fetchTrendCompare({
         source: params.source,
         techIds: params.techIds,
         periods: params.periods,
+        target: params.target,
       }),
     enabled: (params.enabled ?? true) && params.techIds.length > 0,
     staleTime: TREND_STALE_TIME,

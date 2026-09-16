@@ -70,10 +70,15 @@ public class MarketController {
     @GetMapping("/technologies/{techId}/trends")
     public ResponseEntity<ApiResponse<TrendResponse>> trends(
             @PathVariable String techId,
-            @RequestParam(required = false) List<String> periods
+            @RequestParam(required = false) List<String> periods,
+            @RequestParam(required = false) String targetRole,
+            @RequestParam(required = false) List<String> regions,
+            @RequestParam(required = false) List<String> careerLevels
     ) {
         return ResponseEntity.ok(ApiResponse.success(
-                trends.trends(techId, periods == null ? List.of() : periods)));
+                trends.trends(techId, periods == null ? List.of() : periods, targetRole,
+                        regions == null ? List.of() : regions,
+                        careerLevels == null ? List.of() : careerLevels)));
     }
 
     /**
@@ -86,10 +91,15 @@ public class MarketController {
     public ResponseEntity<ApiResponse<TrendResponse.Compare>> compare(
             @RequestParam String source,
             @RequestParam List<String> techIds,
-            @RequestParam(required = false) List<String> periods
+            @RequestParam(required = false) List<String> periods,
+            @RequestParam(required = false) String targetRole,
+            @RequestParam(required = false) List<String> regions,
+            @RequestParam(required = false) List<String> careerLevels
     ) {
         return ResponseEntity.ok(ApiResponse.success(trends.compare(
-                source, techIds, periods == null ? List.of() : periods)));
+                source, techIds, periods == null ? List.of() : periods, targetRole,
+                regions == null ? List.of() : regions,
+                careerLevels == null ? List.of() : careerLevels)));
     }
 
     private static int limit(Integer limit) {

@@ -81,10 +81,15 @@ const COPY: Readonly<Record<string, Copy>> = {
     title: '결과가 너무 커서 표시할 수 없어요',
     description: '조건을 좁히면 다시 계산할 수 있습니다.',
   },
-  JOB_TREND_RESOLVE_UNAVAILABLE: {
-    kind: 'NOT_SUPPORTED',
-    title: '아직 제공하지 않는 출처예요',
-    description: '공고 기반 추세는 조회 경로가 준비되면 표시됩니다.',
+  JOB_TREND_PERIODS_REQUIRED: {
+    kind: 'NO_DATA',
+    title: '조회할 공고 기간을 선택해 주세요',
+    description: '공고 추세는 월별 기간을 지정해야 같은 기간의 수요를 비교할 수 있습니다.',
+  },
+  JOB_TREND_TARGET_ROLE_REQUIRED: {
+    kind: 'NO_DATA',
+    title: '먼저 목표 직무를 선택해 주세요',
+    description: '공고 추세는 선택한 목표 직무·지역·경력 조건을 기준으로 계산합니다.',
   },
 }
 

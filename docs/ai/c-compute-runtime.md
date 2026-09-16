@@ -43,7 +43,7 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | `POST /internal/v1/c/public-repositories/completed` | -157 `batch`, `include_partial=false`: COMPLETE/REUSED 우선 공개 기술 관측 |
 | `POST /internal/v1/c/trends/completed` | `tech_id`, `source`, `periods`: JOB `demand_snapshot_ids` 또는 GITHUB 공식 형식 `csv_text`·`source_uri`·`source_version` |
 | `POST /internal/v1/c/archive-trends/completed` | v1은 검증된 activity export와 저장된 PUBLIC_GITHUB ID로 current 관측을 유지한다. `archive_version=v2`는 같은 trusted root의 A 원본 snapshot path/URI/SHA-256을 추가로 받고 `C_ARCHIVE_A_SNAPSHOT_URI_ROOT`와 URI를 결속해 월별 commit lineage가 일치한 역사 관측만 저장한다. [Archive 계약](c-archive-trend.md) |
-| `POST /internal/v1/c/trends/resolve` | B가 주간 Repo Activity 또는 고정 기간 Archive v1/v2의 최신 완료 Snapshot ID를 자연 키로 조회. 서로 다른 source·Registry·algorithm·PARTIAL·기간·granularity는 섞지 않음 |
+| `POST /internal/v1/c/trends/resolve` | B가 목표 직무별 JOB 월간 수요, 주간 Repo Activity 또는 고정 기간 Archive v1/v2의 최신 완료 Snapshot ID를 자연 키로 조회. 서로 다른 source·직무/필터·Registry·algorithm·PARTIAL·기간·granularity는 섞지 않음 |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록. `user_id`, page/size, `include_conditional=false` |
@@ -117,10 +117,26 @@ hash 검증을 통과한 마지막 불변 입력으로 계속 응답하며, 응�
 공용 Trend resolve는 저장 시 사용한 source별 stream identity를 그대로 계산해 `head`를
 읽는다. `WEEKLY_REPO_ACTIVITY`는 주차를 누적하는 head이므로 `periods`와 `granularity`를
 받지 않는다. `GH_ARCHIVE`는 명시한 `periods`와 `MONTH|WEEK`,
-`GH_ARCHIVE_HISTORICAL`은 명시한 월과 `MONTH`만 받는다. 세 source 모두
-`tech_id`, 활성 Registry 버전, algorithm 버전, `include_partial`을 pointer 범위에
-포함한다. 따라서 같은 기술이라도 주간 누적·현재 Evidence Archive·역사 commit Archive는
-서로 resolve되지 않는다.
+`GH_ARCHIVE_HISTORICAL`은 명시한 월과 `MONTH`만 받는다. `JOB`은 명시한 월,
+`MONTH`, 목표 직무와 선택 source·지역·경력·최소 공고 수를 받는다. JOB pointer에는
+활성 Registry와 parser·quality·aggregation 버전도 포함하므로 다른 직무나 계산 정책의
+수요가 섞이지 않는다. Archive 세 source는 `tech_id`, 활성 Registry 버전, algorithm 버전,
+`include_partial`을 pointer 범위에 포함한다. 따라서 같은 기술이라도 목표 직무별 채용 수요,
+주간 누적·현재 Evidence Archive·역사 commit Archive는 서로 resolve되지 않는다.
+
+```json
+{
+  "source":"JOB",
+  "tech_id":"java",
+  "periods":["2026-07","2026-08"],
+  "granularity":"MONTH",
+  "target_role":"BACKEND",
+  "sources":["SARAMIN","WORKNET"],
+  "regions":["서울"],
+  "career_levels":["신입"],
+  "min_jobs":1
+}
+```
 
 ```json
 {"source":"WEEKLY_REPO_ACTIVITY","tech_id":"python","include_partial":false}

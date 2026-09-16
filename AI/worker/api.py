@@ -30,7 +30,12 @@ from pydantic import (
 from common.health import create_health_app
 from github.contracts import GitHubRepoSnapshotBatch
 from job.classifier import JOB_REQUIREMENT_PARSER_VERSION
-from job.cohort import JOB_QUALITY_VERSION, CohortCriteria, JobCohort
+from job.cohort import (
+    JOB_QUALITY_VERSION,
+    CohortCriteria,
+    JobCohort,
+    normalize_cohort_filters,
+)
 from job.contracts import JobAnalysisInputBatch
 from job.demand import JOB_DEMAND_AGGREGATION_VERSION, DemandSnapshot
 from recommendation.evidence import EvidenceAnalysis
@@ -106,6 +111,15 @@ class TrendCompleted(Event):
     source_version: str | None = None
     source_uri: str | None = None
 
+    @model_validator(mode="after")
+    def require_job_scope_reference(self) -> "TrendCompleted":
+        # JOB stream identity comes from the referenced Demand criteria. Without
+        # one there is no target role/filter identity under which the result can
+        # later be resolved, so storing a PREPARING orphan is never useful.
+        if self.source == "JOB" and not self.demand_snapshot_ids:
+            raise ValueError("JOB Trend requires at least one demand snapshot")
+        return self
+
 
 class ArchiveTrendCompleted(Event, ArchiveTrendFields):
     """Trusted local activity references plus immutable C public snapshots."""
@@ -135,22 +149,14 @@ class JobCohortResolveSelector(BaseModel):
     def normalize_filters(
         cls, values: tuple[str, ...] | None
     ) -> tuple[str, ...] | None:
-        if values is None:
-            return None
-        if any(not value.strip() for value in values):
-            raise ValueError("filter values must not be blank")
-        return tuple(sorted({value.strip() for value in values}))
+        return normalize_cohort_filters(values)
 
     @field_validator("sources")
     @classmethod
     def normalize_sources(
         cls, values: tuple[str, ...] | None
     ) -> tuple[str, ...] | None:
-        return (
-            tuple(sorted({value.upper() for value in values}))
-            if values is not None
-            else None
-        )
+        return normalize_cohort_filters(values, uppercase=True)
 
     def criteria_at(self, as_of: datetime) -> CohortCriteria:
         return CohortCriteria(
@@ -168,20 +174,67 @@ class TrendResolveSelector(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    source: Literal["WEEKLY_REPO_ACTIVITY", "GH_ARCHIVE", "GH_ARCHIVE_HISTORICAL"]
+    source: Literal[
+        "JOB", "WEEKLY_REPO_ACTIVITY", "GH_ARCHIVE", "GH_ARCHIVE_HISTORICAL"
+    ]
     tech_id: Annotated[
         str, StringConstraints(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=80)
     ]
     periods: tuple[str, ...] = Field(default=(), max_length=48)
     granularity: PeriodGranularity | None = None
     include_partial: StrictBool = False
+    target_role: StrictStr | None = None
+    sources: tuple[StrictStr, ...] | None = None
+    regions: tuple[StrictStr, ...] = ()
+    career_levels: tuple[StrictStr, ...] = ()
+    min_jobs: StrictInt | None = Field(default=None, ge=1)
+
+    @field_validator("target_role")
+    @classmethod
+    def normalize_optional_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return CohortCriteria.model_validate(
+            {"target_role": value, "as_of": "2020-01-01T00:00:00Z"}
+        ).target_role
+
+    @field_validator("sources", "regions", "career_levels")
+    @classmethod
+    def normalize_job_filters(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return normalize_cohort_filters(values)
+
+    @field_validator("sources")
+    @classmethod
+    def normalize_job_sources(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return normalize_cohort_filters(values, uppercase=True)
 
     @model_validator(mode="after")
     def source_specific_scope(self) -> "TrendResolveSelector":
+        job_scope = bool(
+            self.target_role is not None
+            or self.sources is not None
+            or self.regions
+            or self.career_levels
+            or self.min_jobs is not None
+        )
         if self.source == "WEEKLY_REPO_ACTIVITY":
-            if self.periods or self.granularity is not None:
+            if self.periods or self.granularity is not None or job_scope:
                 raise ValueError("weekly resolve does not accept a fixed period scope")
             return self
+        if self.source == "JOB":
+            if (
+                not self.periods
+                or self.granularity is not PeriodGranularity.MONTH
+                or self.target_role is None
+                or self.include_partial
+            ):
+                raise ValueError("JOB resolve requires a target role and MONTH periods")
+        elif job_scope:
+            raise ValueError("archive resolve does not accept JOB cohort filters")
         if not self.periods or self.granularity is None:
             raise ValueError("archive resolve requires periods and granularity")
         if (
@@ -208,6 +261,14 @@ class TrendResolveSelector(BaseModel):
             common.update(
                 periods=list(self.periods),
                 granularity=self.granularity.value,
+            )
+        if self.source == "JOB":
+            common.update(
+                target_role=self.target_role,
+                sources=list(self.sources or ()),
+                regions=list(self.regions),
+                career_levels=list(self.career_levels),
+                min_jobs=1 if self.min_jobs is None else self.min_jobs,
             )
         return common
 
@@ -1118,8 +1179,12 @@ def create_compute_app(
             HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION,
             HistoricalArchiveTrendResult,
         )
+        from trend.contracts import TrendResult
+        from trend.job import JOB_TREND_POLICY_VERSION
         from worker.trend_streams import (
             archive_trend_stream,
+            job_trend_filters,
+            job_trend_stream,
             weekly_activity_trend_stream,
         )
 
@@ -1130,7 +1195,30 @@ def create_compute_app(
         )
         if not active:
             raise ValueError("tech_id must reference an active Registry technology")
-        if selector.source == "WEEKLY_REPO_ACTIVITY":
+        expected_job_filters = None
+        if selector.source == "JOB":
+            algorithm = JOB_TREND_POLICY_VERSION
+            minimum = 1 if selector.min_jobs is None else selector.min_jobs
+            expected_job_filters = job_trend_filters(
+                target_role=selector.target_role,
+                sources=selector.sources or (),
+                regions=selector.regions,
+                career_levels=selector.career_levels,
+                min_jobs=minimum,
+                registry_version=registry.registry_version,
+            )
+            stream = job_trend_stream(
+                tech_id=selector.tech_id,
+                periods=selector.periods,
+                target_role=selector.target_role,
+                sources=selector.sources or (),
+                regions=selector.regions,
+                career_levels=selector.career_levels,
+                min_jobs=minimum,
+                registry_version=registry.registry_version,
+                versions=compute_versions("TREND", registry),
+            )
+        elif selector.source == "WEEKLY_REPO_ACTIVITY":
             algorithm = ARCHIVE_TREND_ALGORITHM_VERSION
             stream = weekly_activity_trend_stream(
                 tech_id=selector.tech_id,
@@ -1162,29 +1250,47 @@ def create_compute_app(
             raise TypeError("resolved Trend payload is invalid")
         try:
             result = (
-                HistoricalArchiveTrendResult.model_validate(payload)
-                if selector.source == "GH_ARCHIVE_HISTORICAL"
-                else ArchiveTrendResult.model_validate(payload)
+                TrendResult.model_validate(payload)
+                if selector.source == "JOB"
+                else (
+                    HistoricalArchiveTrendResult.model_validate(payload)
+                    if selector.source == "GH_ARCHIVE_HISTORICAL"
+                    else ArchiveTrendResult.model_validate(payload)
+                )
             )
         except ValueError as exc:
             raise RuntimeError("resolved Trend payload is invalid") from exc
         periods = [point.period for point in result.points]
-        expected_granularity = (
-            PeriodGranularity.WEEK
-            if selector.source == "WEEKLY_REPO_ACTIVITY"
-            else selector.granularity
-        )
-        if (
-            result.tech_id != selector.tech_id
-            or result.registry_version != registry.registry_version
-            or result.algorithm_version != algorithm
-            or result.granularity is not expected_granularity
-            or result.include_partial is not selector.include_partial
-            or (
-                selector.source != "WEEKLY_REPO_ACTIVITY"
-                and periods != list(selector.periods)
+        if selector.source == "JOB":
+            consistent = (
+                result.source == "JOB"
+                and result.tech_id == selector.tech_id
+                and result.registry_version == registry.registry_version
+                and result.algorithm_version == algorithm
+                and result.granularity == PeriodGranularity.MONTH.value
+                and periods == list(selector.periods)
+                and result.filters == expected_job_filters
             )
-        ):
+            include_partial = False
+        else:
+            expected_granularity = (
+                PeriodGranularity.WEEK
+                if selector.source == "WEEKLY_REPO_ACTIVITY"
+                else selector.granularity
+            )
+            consistent = (
+                result.tech_id == selector.tech_id
+                and result.registry_version == registry.registry_version
+                and result.algorithm_version == algorithm
+                and result.granularity is expected_granularity
+                and result.include_partial is selector.include_partial
+                and (
+                    selector.source == "WEEKLY_REPO_ACTIVITY"
+                    or periods == list(selector.periods)
+                )
+            )
+            include_partial = result.include_partial
+        if not consistent:
             raise RuntimeError("resolved Trend scope is inconsistent")
         return {
             "message": "C current public Trend reference",
@@ -1195,9 +1301,13 @@ def create_compute_app(
                 "status": result.status.value,
                 "registry_version": result.registry_version,
                 "algorithm_version": result.algorithm_version,
-                "granularity": result.granularity.value,
+                "granularity": (
+                    result.granularity
+                    if selector.source == "JOB"
+                    else result.granularity.value
+                ),
                 "periods": periods,
-                "include_partial": result.include_partial,
+                "include_partial": include_partial,
                 "lineage": {
                     "event_id": resolved["event_id"],
                     "occurred_at": resolved["occurred_at"],
@@ -1209,6 +1319,7 @@ def create_compute_app(
     def trend_completed(event: TrendCompleted):
         from trend.github import github_trend, parse_innovation_graph_csv
         from trend.job import job_trend
+        from worker.trend_streams import source_trend_stream
 
         def compute():
             if event.source == "JOB":
@@ -1250,16 +1361,14 @@ def create_compute_app(
                     "TREND",
                     None,
                     result.model_dump(mode="json"),
-                    digest(
-                        {
-                            "tech_id": event.tech_id,
-                            "source": event.source,
-                            "periods": event.periods,
-                            "versions": compute_versions("TREND", registry),
-                            # Validated non-period filters include JOB cohort rule
-                            # versions, never values, run IDs or source snapshots.
-                            "filters": result.filters,
-                        }
+                    source_trend_stream(
+                        tech_id=event.tech_id,
+                        source=event.source,
+                        periods=event.periods,
+                        versions=compute_versions("TREND", registry),
+                        # Validated non-period filters include JOB cohort rule
+                        # versions, never values, run IDs or source snapshots.
+                        filters=result.filters,
                     ),
                 )
             ]

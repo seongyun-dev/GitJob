@@ -2,10 +2,15 @@
 
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
-from test_compute_api import PREFIX, REGISTRY, TOKEN
-from test_job_cohort import criteria
+from pydantic import ValidationError
+from test_compute_api import PREFIX, REGISTRY, TOKEN, event
+from test_job_cohort import batch, criteria, posting
 
+from job.cohort import build_cohort
+from job.demand import aggregate_demand
+from registry.mapper import RegistryMapper
 from trend.archive import (
     ARCHIVE_TREND_ALGORITHM_VERSION,
     PeriodGranularity,
@@ -15,10 +20,16 @@ from trend.archive_v2 import (
     HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION,
     archive_historical_trend,
 )
-from worker.api import compute_versions, create_compute_app
+from trend.job import JOB_TREND_POLICY_VERSION, job_trend
+from worker.api import TrendCompleted, compute_versions, create_compute_app
 from worker.jobs import job_stream
 from worker.store import digest
-from worker.trend_streams import archive_trend_stream, weekly_activity_trend_stream
+from worker.trend_streams import (
+    archive_trend_stream,
+    job_trend_stream,
+    source_trend_stream,
+    weekly_activity_trend_stream,
+)
 
 COHORT_ID = "c-" + "1" * 64
 DEMAND_ID = "c-" + "2" * 64
@@ -276,6 +287,145 @@ def _trend_head(payload):
     }
 
 
+def _job_trend_result():
+    selected = criteria(
+        target_role="BACKEND",
+        purpose="MONTHLY_DEMAND",
+        as_of="2026-09-01T00:00:00+09:00",
+        posted_from="2026-08-01T00:00:00+09:00",
+        posted_to="2026-09-01T00:00:00+09:00",
+        sources=("SARAMIN",),
+        regions=("서울",),
+        career_levels=("신입",),
+        min_jobs=1,
+    )
+    cohort = build_cohort(
+        batch(posting(posted_at="2026-08-15T00:00:00Z")),
+        selected,
+        RegistryMapper(REGISTRY),
+    )
+    demand = aggregate_demand(cohort)
+    return job_trend("java", (demand,), REGISTRY, periods=("2026-08",))
+
+
+def test_job_trend_resolve_uses_target_role_and_exact_filter_stream():
+    result = _job_trend_result()
+    store = ResolveStore(trend=_trend_head(result.model_dump(mode="json")))
+    request = {
+        "source": "JOB",
+        "tech_id": "java",
+        "periods": ["2026-08"],
+        "granularity": "MONTH",
+        "target_role": "BACKEND_ENGINEER",
+        "sources": ["SARAMIN"],
+        "regions": ["서울"],
+        "career_levels": ["신입"],
+        "min_jobs": 1,
+    }
+    with _client(store) as client:
+        response = client.post(PREFIX + "/trends/resolve", json=request)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["snapshot_id"] == TREND_ID
+    assert data["selector"]["target_role"] == "BACKEND"
+    assert data["selector"]["source"] == "JOB"
+    assert data["algorithm_version"] == JOB_TREND_POLICY_VERSION
+    assert store.trend_calls == [
+        (
+            "TREND",
+            None,
+            job_trend_stream(
+                tech_id="java",
+                periods=("2026-08",),
+                target_role="BACKEND",
+                sources=("SARAMIN",),
+                regions=("서울",),
+                career_levels=("신입",),
+                min_jobs=1,
+                registry_version=REGISTRY.registry_version,
+                versions=compute_versions("TREND", REGISTRY),
+            ),
+        )
+    ]
+
+
+def test_job_trend_stream_matches_the_completed_event_identity():
+    result = _job_trend_result()
+    expected = job_trend_stream(
+        tech_id="java",
+        periods=("2026-08",),
+        target_role="BACKEND",
+        sources=("SARAMIN",),
+        regions=("서울",),
+        career_levels=("신입",),
+        min_jobs=1,
+        registry_version=REGISTRY.registry_version,
+        versions=compute_versions("TREND", REGISTRY),
+    )
+    assert expected == source_trend_stream(
+        tech_id="java",
+        source="JOB",
+        periods=("2026-08",),
+        versions=compute_versions("TREND", REGISTRY),
+        filters=result.filters,
+    )
+
+
+def test_job_trend_event_without_demand_scope_is_rejected_before_storage():
+    with pytest.raises(ValidationError, match="at least one demand snapshot"):
+        TrendCompleted.model_validate(
+            event(tech_id="java", source="JOB", periods=["2026-08"])
+        )
+
+
+def test_job_trend_resolve_separates_role_and_rejects_incomplete_scope():
+    common = {
+        "source": "JOB",
+        "tech_id": "java",
+        "periods": ["2026-08"],
+        "granularity": "MONTH",
+    }
+    store = ResolveStore()
+    invalid = (
+        common,
+        {**common, "target_role": "BACKEND", "granularity": "WEEK"},
+        {**common, "target_role": "BACKEND", "include_partial": True},
+    )
+    with _client(store) as client:
+        responses = [
+            client.post(PREFIX + "/trends/resolve", json=row) for row in invalid
+        ]
+
+    assert [response.status_code for response in responses] == [422, 422, 422]
+    assert store.trend_calls == []
+
+    versions = compute_versions("TREND", REGISTRY)
+    backend = job_trend_stream(
+        tech_id="java",
+        periods=("2026-08",),
+        target_role="BACKEND",
+        sources=(),
+        regions=(),
+        career_levels=(),
+        min_jobs=1,
+        registry_version=REGISTRY.registry_version,
+        versions=versions,
+    )
+    frontend = job_trend_stream(
+        tech_id="java",
+        periods=("2026-08",),
+        target_role="FRONTEND",
+        sources=(),
+        regions=(),
+        career_levels=(),
+        min_jobs=1,
+        registry_version=REGISTRY.registry_version,
+        versions=versions,
+    )
+    assert backend != frontend
+
+
 def test_weekly_trend_resolve_uses_weekly_stream_without_period_selector():
     payload = archive_trend(
         "python",
@@ -289,6 +439,7 @@ def test_weekly_trend_resolve_uses_weekly_stream_without_period_selector():
     request = {
         "source": "WEEKLY_REPO_ACTIVITY",
         "tech_id": "python",
+        "periods": [],
         "include_partial": False,
     }
     with _client(store) as client:
@@ -296,7 +447,9 @@ def test_weekly_trend_resolve_uses_weekly_stream_without_period_selector():
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["snapshot_id"] == TREND_ID
-    assert response.json()["data"]["selector"] == request
+    assert response.json()["data"]["selector"] == {
+        key: value for key, value in request.items() if key != "periods"
+    }
     assert response.json()["data"]["periods"] == ["2026-09-07"]
     assert store.trend_calls == [
         (
@@ -458,6 +611,7 @@ def test_contracts_publish_the_trend_resolve_selector_schema():
     assert response.status_code == 200
     schema = response.json()["data"]["TrendResolveSelector"]
     assert set(schema["properties"]["source"]["enum"]) == {
+        "JOB",
         "WEEKLY_REPO_ACTIVITY",
         "GH_ARCHIVE",
         "GH_ARCHIVE_HISTORICAL",

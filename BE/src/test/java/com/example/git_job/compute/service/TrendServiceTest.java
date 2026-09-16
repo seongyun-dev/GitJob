@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.git_job.compute.client.CComputeApi;
@@ -15,6 +17,7 @@ import com.example.git_job.compute.controller.dto.ComputeState;
 import com.example.git_job.compute.controller.dto.TrendResponse;
 import com.example.git_job.global.exceptions.CustomException;
 import java.util.List;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,7 +57,8 @@ class TrendServiceTest {
     @Test
     @DisplayName("출처를 배열로 나눠 내려보내고 합치지 않는다")
     void keepsSourcesSeparate() {
-        TrendResponse response = service.trends("kafka", List.of("2026-07", "2026-08"));
+        TrendResponse response = service.trends("kafka", List.of("2026-07", "2026-08"),
+                "BACKEND", List.of("서울"), List.of("신입"));
 
         assertThat(response.sources()).extracting(TrendResponse.Source::sourceId)
                 .containsExactly("GITHUB_WEEKLY", "GITHUB_ARCHIVE", "JOB");
@@ -64,33 +68,43 @@ class TrendServiceTest {
     }
 
     @Test
-    @DisplayName("JOB Trend는 조회 경로가 없어 지원하지 않는다고 말한다")
-    void reportsJobTrendUnsupported() {
-        TrendResponse.Source job = service.trends("kafka", List.of()).sources().stream()
+    @DisplayName("JOB Trend는 목표 직무와 공고 필터를 그대로 C selector에 보낸다")
+    void resolvesJobTrendForTheSelectedRole() {
+        TrendResponse.Source job = service.trends("kafka", List.of("2026-07"),
+                        "BACKEND", List.of("서울"), List.of("신입")).sources().stream()
                 .filter(source -> "JOB".equals(source.sourceId()))
                 .findFirst()
                 .orElseThrow();
 
-        // 빈 배열을 주면 화면이 "공고 수요가 0"으로 읽는다. 조회할 방법이 없는 것과 다르다.
-        assertThat(job.dataStatus()).isEqualTo(ComputeState.NOT_SUPPORTED);
-        assertThat(job.statusReason()).isEqualTo("JOB_TREND_RESOLVE_UNAVAILABLE");
-        assertThat(job.points()).isEmpty();
+        assertThat(job.dataStatus()).isEqualTo(ComputeState.READY);
+        ArgumentCaptor<CTrend.Selector> captor = ArgumentCaptor.forClass(CTrend.Selector.class);
+        verify(compute, atLeastOnce()).resolveTrend(captor.capture());
+        assertThat(captor.getAllValues()).anySatisfy(selector -> {
+            assertThat(selector.source()).isEqualTo("JOB");
+            assertThat(selector.targetRole()).isEqualTo("BACKEND");
+            assertThat(selector.regions()).containsExactly("서울");
+            assertThat(selector.careerLevels()).containsExactly("신입");
+        });
     }
 
     @Test
     @DisplayName("기간을 주지 않으면 Archive 출처를 부르지 않는다")
     void doesNotGuessPeriods() {
-        TrendResponse response = service.trends("kafka", List.of());
+        TrendResponse response = service.trends("kafka", List.of(),
+                "BACKEND", List.of(), List.of());
 
         // 서버가 최근 몇 달을 임의로 고르면 화면에 적힌 기간과 실제 계산 기간이 달라진다.
         assertThat(response.sources()).extracting(TrendResponse.Source::sourceId)
                 .containsExactly("GITHUB_WEEKLY", "JOB");
+        assertThat(response.sources().get(1).statusReason())
+                .isEqualTo("JOB_TREND_PERIODS_REQUIRED");
     }
 
     @Test
     @DisplayName("값이 없는 기간을 0으로 채우지 않는다")
     void doesNotFillMissingPeriodsWithZero() {
-        List<TrendResponse.Point> points = service.trends("kafka", List.of()).sources()
+        List<TrendResponse.Point> points = service.trends("kafka", List.of(),
+                        "BACKEND", List.of(), List.of()).sources()
                 .getFirst().points();
 
         assertThat(points).hasSize(2);
@@ -106,7 +120,8 @@ class TrendServiceTest {
         when(compute.resolveTrend(any())).thenThrow(
                 new CComputeException(CComputeStatus.NOT_PREPARED, "TREND_NOT_PREPARED", null, "x"));
 
-        TrendResponse response = service.trends("kafka", List.of());
+        TrendResponse response = service.trends("kafka", List.of(),
+                "BACKEND", List.of(), List.of());
 
         assertThat(response.sources().getFirst().dataStatus()).isEqualTo(ComputeState.NO_DATA);
         assertThat(response.sources()).hasSize(2);
@@ -119,16 +134,19 @@ class TrendServiceTest {
                 new CComputeException(CComputeStatus.UNAVAILABLE, null, null, "x"));
 
         // 카드 하나 때문에 화면 전체를 못 그리게 만들 이유가 없다.
-        assertThat(service.trends("kafka", List.of()).sources().getFirst().dataStatus())
+        assertThat(service.trends("kafka", List.of(), "BACKEND", List.of(), List.of())
+                .sources().getFirst().dataStatus())
                 .isEqualTo(ComputeState.FAILED);
     }
 
     @Test
     @DisplayName("기술 식별자와 기간 형식을 검증한다")
     void validatesSelector() {
-        assertThatThrownBy(() -> service.trends("Apache Kafka", List.of()))
+        assertThatThrownBy(() -> service.trends("Apache Kafka", List.of(),
+                "BACKEND", List.of(), List.of()))
                 .isInstanceOf(CustomException.class);
-        assertThatThrownBy(() -> service.trends("kafka", List.of("2026-13")))
+        assertThatThrownBy(() -> service.trends("kafka", List.of("2026-13"),
+                "BACKEND", List.of(), List.of()))
                 .isInstanceOf(CustomException.class);
     }
 
@@ -136,7 +154,7 @@ class TrendServiceTest {
     @DisplayName("비교는 한 번에 한 출처만 본다")
     void compareUsesOneSource() {
         TrendResponse.Compare compare = service.compare("GITHUB_WEEKLY",
-                List.of("kafka", "redis"), List.of());
+                List.of("kafka", "redis"), List.of(), null, List.of(), List.of());
 
         assertThat(compare.sourceId()).isEqualTo("GITHUB_WEEKLY");
         assertThat(compare.rows()).hasSize(2);
@@ -144,9 +162,14 @@ class TrendServiceTest {
         assertThat(compare.rows().getFirst().period()).isEqualTo("2026-08");
 
         // 여러 출처를 한 표에 섞는 요청은 받지 않는다.
-        assertThatThrownBy(() -> service.compare("JOB", List.of("kafka"), List.of()))
+        TrendResponse.Compare job = service.compare("JOB", List.of("kafka"),
+                List.of("2026-07"), "BACKEND", List.of(), List.of());
+        assertThat(job.sourceId()).isEqualTo("JOB");
+        assertThatThrownBy(() -> service.compare("JOB", List.of("kafka"),
+                List.of("2026-07"), null, List.of(), List.of()))
                 .isInstanceOf(CustomException.class);
-        assertThatThrownBy(() -> service.compare("GITHUB_ARCHIVE", List.of("kafka"), List.of()))
+        assertThatThrownBy(() -> service.compare("GITHUB_ARCHIVE", List.of("kafka"), List.of(),
+                null, List.of(), List.of()))
                 .isInstanceOf(CustomException.class);
     }
 }

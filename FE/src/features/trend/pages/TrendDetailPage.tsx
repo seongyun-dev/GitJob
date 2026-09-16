@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
+import { useTarget } from '@/features/matching/hooks/useMatching'
 import { toTrendSeries } from '@/features/trend/api/adapter'
 import { TrendBarChart } from '@/features/trend/components/TrendBarChart'
 import { useTechnologyTrends } from '@/features/trend/hooks/useTrends'
@@ -11,7 +12,7 @@ import { StateCard } from '@/shared/ui/StateCard'
 /**
  * 트렌드 상세 · 확정 디자인 `Final v2`의 `13 Trend Detail` (S15P21E102-279).
  *
- * 두 출처의 Y축 · 단위 · 기간은 각각 독립이다. 한 화면에 겹쳐 그리거나 합산하지
+ * 각 출처의 Y축 · 단위 · 기간은 각각 독립이다. 한 화면에 겹쳐 그리거나 합산하지
  * 않는다. 출처마다 상태가 다를 수 있어(READY · NO_DATA · NOT_SUPPORTED) 계열별로
  * 따로 렌더한다.
  *
@@ -48,8 +49,19 @@ export function TrendDetailPage() {
   const { techId } = useParams()
   const [range, setRange] = useState<number>(6)
   const periods = useMemo(() => recentMonths(range), [range])
+  const target = useTarget()
 
-  const trends = useTechnologyTrends(techId, periods)
+  const trends = useTechnologyTrends(
+    techId,
+    periods,
+    {
+      targetKey: target.data?.targetKey,
+      targetRole: target.data?.targetRole,
+      regions: target.data?.regions,
+      careerLevels: target.data?.careerLevels,
+    },
+    target.isFetched,
+  )
   const series = trends.data === undefined ? [] : toTrendSeries(trends.data)
   const charted = series.filter((item) => item.points.length > 0)
   const stateOnly = series.filter((item) => item.points.length === 0)
@@ -67,7 +79,7 @@ export function TrendDetailPage() {
         <PageHero
           eyebrow="TREND DETAIL"
           title={techId ?? '이 기술의 출처별 추이'}
-          description="두 출처의 Y축 · 단위 · 기간은 각각 독립적입니다. 서로 비교하거나 합산하지 마세요."
+          description="출처별 Y축 · 단위 · 기간은 각각 독립적입니다. 서로 비교하거나 합산하지 마세요."
         />
         {/* 조회 범위. 화면이 고른 기간이 그대로 요청에 실린다 */}
         <div className="flex shrink-0 flex-wrap gap-1.5">

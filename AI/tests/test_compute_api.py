@@ -204,6 +204,68 @@ def test_github_trend_is_stored_without_inventing_missing_history(client):
     assert result["status"] == "NOT_SUPPORTED"
 
 
+def test_job_trend_requires_a_demand_snapshot_to_preserve_filter_identity(client):
+    response = client.post(
+        PREFIX + "/trends/completed",
+        json=event(tech_id="java", source="JOB", periods=["2026-08"]),
+    )
+
+    assert response.status_code == 422
+
+
+def test_monthly_job_trend_is_stored_and_resolved_by_exact_target_scope(client):
+    monthly_job = batch(
+        posting(
+            "august-java",
+            posted_at="2026-08-15T00:00:00+09:00",
+            posting_status="CLOSED",
+        )
+    ).model_dump(mode="json")
+    monthly_criteria = criteria(
+        purpose="MONTHLY_DEMAND",
+        as_of="2026-09-01T00:00:00+09:00",
+        posted_from="2026-08-01T00:00:00+09:00",
+        posted_to="2026-09-01T00:00:00+09:00",
+        min_jobs=1,
+    ).model_dump(mode="json")
+    demand_id = snapshot_ref(
+        client.post(
+            PREFIX + "/job-batches/completed",
+            json=event(batch=monthly_job, criteria=monthly_criteria),
+        ),
+        "DEMAND",
+    )
+    completed = client.post(
+        PREFIX + "/trends/completed",
+        json=event(
+            tech_id="java",
+            source="JOB",
+            periods=["2026-08"],
+            demand_snapshot_ids=[demand_id],
+        ),
+    )
+    trend_id = snapshot_ref(completed, "TREND")
+
+    resolved = client.post(
+        PREFIX + "/trends/resolve",
+        json={
+            "source": "JOB",
+            "tech_id": "java",
+            "periods": ["2026-08"],
+            "granularity": "MONTH",
+            "target_role": "BACKEND",
+            "min_jobs": 1,
+        },
+    )
+
+    assert resolved.status_code == 200, resolved.text
+    data = resolved.json()["data"]
+    assert data["snapshot_id"] == trend_id
+    assert data["selector"]["target_role"] == "BACKEND"
+    assert data["selector"]["periods"] == ["2026-08"]
+    assert data["status"] == "INSUFFICIENT_DATA"
+
+
 def test_runtime_is_fail_closed_and_liveness_is_not_readiness(monkeypatch):
     monkeypatch.delenv("C_COMPUTE_DATABASE_URL", raising=False)
     monkeypatch.delenv("POSTGRES_HOST", raising=False)

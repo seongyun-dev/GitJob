@@ -131,6 +131,26 @@ POST /internal/v1/c/trends/resolve
 Authorization: Bearer <server-only token>
 ```
 
+목표 직무별 월간 채용 수요:
+
+```json
+{
+  "source":"JOB",
+  "tech_id":"java",
+  "periods":["2026-07","2026-08"],
+  "granularity":"MONTH",
+  "target_role":"BACKEND",
+  "sources":["SARAMIN","WORKNET"],
+  "regions":[],
+  "career_levels":[],
+  "min_jobs":1
+}
+```
+
+JOB selector의 직무·source·지역·경력·최소 공고 수는 월별 DEMAND를 만들 때 사용한
+코호트와 같아야 한다. B는 로그인 사용자가 선택한 목표 직무를 전달하며, 여러 직무의
+수요를 하나의 시장 Trend로 합치지 않는다.
+
 주간 증분 Trend:
 
 ```json
@@ -149,9 +169,9 @@ Authorization: Bearer <server-only token>
 }
 ```
 
-세 source `WEEKLY_REPO_ACTIVITY`, `GH_ARCHIVE`, `GH_ARCHIVE_HISTORICAL`은 서로 다른
-series다. B/FE가 하나의 합성 점수로 섞지 않는다. resolve 응답의 `snapshot_id`로 기존
-snapshot 조회 API를 호출한다. 미완료 월을 0으로 채우지 않는다.
+네 source `JOB`, `WEEKLY_REPO_ACTIVITY`, `GH_ARCHIVE`, `GH_ARCHIVE_HISTORICAL`은 서로
+다른 series다. B/FE가 하나의 합성 점수로 섞지 않는다. resolve 응답의 `snapshot_id`로
+기존 snapshot 조회 API를 호출한다. 미완료 월을 0으로 채우지 않는다.
 
 ## 4. B·FE 공개 API 경계
 

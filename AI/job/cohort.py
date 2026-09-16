@@ -116,13 +116,27 @@ _TITLE_ROLES = {
         r"(?:React|Vue(?:\.js)?|Next(?:\.js)?)\s*(?:웹\s*)?개발자"
     ),
     "AI_DATA": (
-        r"데이터\s+엔지니어|"
-        r"AI\s+(?:(?:Research|ML|LLM|Data|Agent|Application)\s+)*"
+        r"데이터\s*엔지니어|"
+        r"AI\s*(?:(?:Research|ML|LLM|Data|Agent|Application)\s+)*"
         r"(?:개발자|개발\s+엔지니어|엔지니어|engineer)|data\s+engineer"
     ),
-    "INFRASTRUCTURE": r"데브옵스|devops|인프라\s+엔지니어",
-    "MOBILE": r"모바일\s+개발자|mobile\s+(?:developer|engineer)",
+    "INFRASTRUCTURE": r"데브옵스|devops|인프라\s*엔지니어",
+    "MOBILE": r"모바일\s*(?:개발자|엔지니어)|mobile\s+(?:developer|engineer)",
 }
+
+
+def normalize_cohort_filters(
+    values: tuple[str, ...] | None, *, uppercase: bool = False
+) -> tuple[str, ...] | None:
+    """Canonical cohort filters shared by writers and exact-stream readers."""
+    if values is None:
+        return None
+    if any(not value.strip() for value in values):
+        raise ValueError("filter values must not be blank")
+    normalized = (value.strip() for value in values)
+    if uppercase:
+        normalized = (value.upper() for value in normalized)
+    return tuple(sorted(set(normalized)))
 
 
 class CohortCriteria(CohortModel):
@@ -153,14 +167,16 @@ class CohortCriteria(CohortModel):
     @field_validator("sources", "regions", "career_levels")
     @classmethod
     def normalize_filters(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if any(not value.strip() for value in values):
-            raise ValueError("filter values must not be blank")
-        return tuple(sorted({value.strip() for value in values}))
+        normalized = normalize_cohort_filters(values)
+        assert normalized is not None
+        return normalized
 
     @field_validator("sources")
     @classmethod
     def normalize_sources(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(sorted({value.upper() for value in values}))
+        normalized = normalize_cohort_filters(values, uppercase=True)
+        assert normalized is not None
+        return normalized
 
     @field_validator("as_of", "posted_from", "posted_to")
     @classmethod
@@ -461,7 +477,12 @@ def _matches_role(record: JobPostingInput, target: str) -> bool:
         return True
     return (
         re.search(
-            rf"(?<![\w])(?:{_TITLE_ROLES[target]})(?![\w])", record.title, re.IGNORECASE
+            # Python의 ``\w``는 한글도 단어 문자로 본다. 그래서 실제 공고에서 흔한
+            # ``백엔드개발자``를 경계가 없다고 버렸다. 영문 식별자 내부만 막고,
+            # 명시적인 한국어 역할명 뒤에 조사·직책이 붙는 표기는 허용한다.
+            rf"(?<![A-Za-z0-9_])(?:{_TITLE_ROLES[target]})(?![A-Za-z0-9_])",
+            record.title,
+            re.IGNORECASE,
         )
         is not None
     )
