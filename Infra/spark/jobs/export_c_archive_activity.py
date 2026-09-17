@@ -600,6 +600,8 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             dataset_snapshot_id=arguments.dataset_snapshot_id,
             source_uri=arguments.source_uri or arguments.input,
             source_hash=arguments.source_hash,
+            upstream_source_uri=arguments.upstream_source_uri,
+            upstream_source_hash=arguments.upstream_source_hash,
             period=arguments.period,
             granularity=arguments.granularity,
             top_n_limit=arguments.top_n_limit,
@@ -634,6 +636,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-snapshot-id", required=True)
     parser.add_argument("--source-uri")
     parser.add_argument("--source-hash", required=True)
+    # The upstream binding is what a downstream consumer compares against the
+    # producing pipeline's own manifest.  Without these it silently falls back
+    # to `--source-uri`/`--source-hash`, which describe this export's input
+    # rather than the manifest it must be bound to.  Supply both or neither.
+    parser.add_argument("--upstream-source-uri")
+    parser.add_argument("--upstream-source-hash")
     parser.add_argument("--valid-event-count", type=int)
     parser.add_argument("--total-active-repo-count", type=int)
     parser.add_argument("--app-name", default="gitjob-c-archive-activity-export")

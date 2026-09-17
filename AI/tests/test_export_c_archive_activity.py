@@ -525,3 +525,248 @@ def test_week_export_uses_the_week_start_contract_field(tmp_path):
     header, row = (output / "activity.csv").read_text(encoding="utf-8").splitlines()
     assert header == "week_start,repo_id,repo_name,event_count"
     assert row == "2026-03-02,1,o/one,5"
+
+
+def _install_fake_spark(monkeypatch, selected_rows):
+    """Minimal Spark stand-in so the CLI can be driven without a cluster."""
+
+    class FakeExpression:
+        def cast(self, *_args):
+            return self
+
+        def alias(self, *_args):
+            return self
+
+    class FakeRow(dict):
+        def asDict(self):
+            return dict(self)
+
+    class FakeSelected:
+        def select(self, *_args):
+            return self
+
+        def orderBy(self, *_args):
+            return self
+
+        def agg(self, *_args):
+            summary = FakeRow(
+                repo_count=len(selected_rows),
+                event_count=sum(row["event_count"] for row in selected_rows),
+            )
+            return SimpleNamespace(first=lambda: summary)
+
+        def toLocalIterator(self):
+            return iter([FakeRow(row) for row in selected_rows])
+
+    selected = FakeSelected()
+
+    class FakeActivity:
+        columns = ("repo_id", "repo_name", "event_count", "period")
+
+        def join(self, *_args):
+            return selected
+
+    class FakeSpark:
+        read = SimpleNamespace(parquet=lambda _path: FakeActivity())
+
+        def createDataFrame(self, *_args):
+            return object()
+
+        def stop(self):
+            return None
+
+    class FakeBuilder:
+        def appName(self, *_args):
+            return self
+
+        def getOrCreate(self):
+            return FakeSpark()
+
+    spark_sql = ModuleType("pyspark.sql")
+    spark_sql.SparkSession = SimpleNamespace(builder=FakeBuilder())
+    spark_sql.functions = SimpleNamespace(
+        broadcast=lambda value: value,
+        col=lambda *_args: FakeExpression(),
+        count=lambda *_args: FakeExpression(),
+        lit=lambda *_args: FakeExpression(),
+        sum=lambda *_args: FakeExpression(),
+    )
+    spark_types = ModuleType("pyspark.sql.types")
+    spark_types.LongType = lambda: object()
+    spark_types.StructField = lambda *_args: object()
+    spark_types.StructType = lambda *_args: object()
+    pyspark = ModuleType("pyspark")
+    pyspark.sql = spark_sql
+    monkeypatch.setitem(sys.modules, "pyspark", pyspark)
+    monkeypatch.setitem(sys.modules, "pyspark.sql", spark_sql)
+    monkeypatch.setitem(sys.modules, "pyspark.sql.types", spark_types)
+    monkeypatch.setattr(exporter, "_validate_activity_period", lambda *_args: None)
+    # The declared total_active_repo_count is checked against this, and the
+    # weekly contract binds it to the manifest's row_count.
+    monkeypatch.setattr(
+        exporter, "_activity_quality", lambda *_args: (_WEEK_ROW_COUNT, 5)
+    )
+
+
+_WEEK_ROW_COUNT = 3735673
+_WEEK_DATA_URI = (
+    "hdfs:///gitjob/parquet/github/repo_activity_weekly/period=2026-03"
+    "/snapshot=s15p21e102-weekly-20260302-20260913-v2/repo_activity_weekly"
+    "/week=2026-03-02"
+)
+_WEEK_ROW_DIGEST = "51b65d6837730921425e941ad58344e7fa3b20ac3c976b22033640dbd0936b2f"
+_WEEK_ROW = {"repo_id": 1, "repo_name": "o/one", "event_count": 5}
+
+
+def _weekly_cli_argv(tmp_path, output, *upstream):
+    repo_ids = tmp_path / "repo-ids.json"
+    repo_ids.write_text(
+        json.dumps(
+            {
+                "schema_version": "c-public-published-result/v1",
+                "publication": {"status": "published"},
+                "result": {
+                    "schema_version": "c-public-repo-analysis/v2",
+                    "records": [{"github_repo_id": 1, "included_in_denominator": True}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return [
+        "--input",
+        _WEEK_DATA_URI,
+        "--repo-ids",
+        str(repo_ids),
+        "--output",
+        str(output),
+        "--period",
+        "2026-03-02",
+        "--granularity",
+        "WEEK",
+        "--top-n-limit",
+        "1",
+        "--source-version",
+        "spark-repo-activity-weekly/v1",
+        "--dataset-snapshot-id",
+        "s15p21e102-weekly-20260302-20260913-v2",
+        "--source-hash",
+        "b" * 64,
+        "--total-active-repo-count",
+        str(_WEEK_ROW_COUNT),
+        *upstream,
+    ]
+
+
+def test_cli_binds_upstream_lineage_independently_of_the_source_hash(
+    tmp_path, monkeypatch, capsys
+):
+    """The upstream binding comes from the flags, not from the source-hash fallback."""
+
+    _install_fake_spark(monkeypatch, (_WEEK_ROW,))
+    output = tmp_path / "export"
+    assert (
+        exporter.main(
+            _weekly_cli_argv(
+                tmp_path,
+                output,
+                "--upstream-source-uri",
+                _WEEK_DATA_URI,
+                "--upstream-source-hash",
+                _WEEK_ROW_DIGEST,
+            )
+        )
+        == 0
+    )
+    stored = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert stored["upstream_source_uri"] == _WEEK_DATA_URI
+    assert stored["upstream_source_hash"] == _WEEK_ROW_DIGEST
+    # The export still describes itself; upstream lineage is a separate binding.
+    assert stored["source_hash"] != _WEEK_ROW_DIGEST
+    assert stored["source_hash"] != "b" * 64
+    assert (
+        stored["source_hash"]
+        == json.loads(capsys.readouterr().out)["manifest"]["data_sha256"]
+    )
+
+
+def test_cli_upstream_flags_satisfy_the_weekly_consumer_binding(tmp_path, monkeypatch):
+    """Producer output must match what WeeklyActivityConsumer compares field by field."""
+
+    from worker.weekly_activity_intake import WeeklyManifest
+
+    manifest = WeeklyManifest.parse(
+        json.dumps(
+            {
+                "schema_version": "repo-activity-weekly-publish-manifest/v1",
+                "dataset_snapshot_id": "s15p21e102-weekly-20260302-20260913-v2",
+                "week_start": "2026-03-02",
+                "data_uri": _WEEK_DATA_URI,
+                "row_count": _WEEK_ROW_COUNT,
+                "row_digest": {"format": "typed-json-v2", "value": _WEEK_ROW_DIGEST},
+            }
+        ).encode("utf-8")
+    )
+
+    _install_fake_spark(monkeypatch, (_WEEK_ROW,))
+    output = tmp_path / "export"
+    assert (
+        exporter.main(
+            _weekly_cli_argv(
+                tmp_path,
+                output,
+                "--upstream-source-uri",
+                manifest.data_uri,
+                "--upstream-source-hash",
+                manifest.row_digest,
+            )
+        )
+        == 0
+    )
+    stored = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert stored["dataset_snapshot_id"] == manifest.dataset_snapshot_id
+    assert stored["period"] == manifest.week_start
+    assert stored["granularity"] == "WEEK"
+    assert stored["upstream_source_uri"] == manifest.data_uri
+    assert stored["upstream_source_hash"] == manifest.row_digest
+    assert stored["total_active_repo_count"] == manifest.row_count == _WEEK_ROW_COUNT
+
+
+@pytest.mark.parametrize(
+    "upstream",
+    [
+        ("--upstream-source-uri", _WEEK_DATA_URI),
+        ("--upstream-source-hash", _WEEK_ROW_DIGEST),
+    ],
+)
+def test_cli_rejects_a_half_specified_upstream_binding(tmp_path, monkeypatch, upstream):
+    _install_fake_spark(monkeypatch, (_WEEK_ROW,))
+    with pytest.raises(ValueError, match="upstream source URI and hash"):
+        exporter.main(_weekly_cli_argv(tmp_path, tmp_path / "export", *upstream))
+
+
+def test_cli_rejects_an_upstream_hash_that_is_not_sha256(tmp_path, monkeypatch):
+    _install_fake_spark(monkeypatch, (_WEEK_ROW,))
+    with pytest.raises(ValueError, match="upstream_source_hash"):
+        exporter.main(
+            _weekly_cli_argv(
+                tmp_path,
+                tmp_path / "export",
+                "--upstream-source-uri",
+                _WEEK_DATA_URI,
+                "--upstream-source-hash",
+                "NOTAHASH",
+            )
+        )
+
+
+def test_cli_without_upstream_flags_keeps_the_source_fallback(tmp_path, monkeypatch):
+    """Existing callers pass no upstream flags; that behaviour must not change."""
+
+    _install_fake_spark(monkeypatch, (_WEEK_ROW,))
+    output = tmp_path / "export"
+    assert exporter.main(_weekly_cli_argv(tmp_path, output)) == 0
+    stored = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    # Unchanged contract: upstream lineage falls back to the declared source.
+    assert stored["upstream_source_uri"] == _WEEK_DATA_URI
+    assert stored["upstream_source_hash"] == "b" * 64
