@@ -272,69 +272,64 @@ export function ServiceIntro({ footer }: { footer?: ReactNode }) {
       </Scene>
 
       {/*
-        마지막 장 · 시작 지점.
+        마지막 장 · 시작 지점과 하단바.
 
-        하단바를 이 장 **안에** 넣는다. `ServiceIntro` 뒤에 따로 두면 데스크톱에서
-        읽을 수 없다 — `landing.css`가 1024px·640px 이상에서 스크롤 컨테이너에
-        `scroll-snap-type: y mandatory`를 걸어 두었고, 스냅 지점이 없는 꼬리 요소는
-        가장 가까운 스냅 지점(이 장의 시작)으로 되돌아가 화면에 머물지 않는다.
+        하단바를 이 장 **안에** 넣는다 · 티켓 320. `ServiceIntro` 뒤에 꼬리로 두면
+        데스크톱에서 읽을 수 없다 — `landing.css`가 1024px·640px 이상에서 스크롤
+        컨테이너에 `scroll-snap-type: y mandatory`를 걸어 두었고, 스냅 지점이 없는
+        꼬리 요소는 가장 가까운 스냅 지점(이 장의 시작)으로 되돌아간다.
 
-        그래서 CTA가 남는 높이를 가운데에서 차지한 뒤 하단바가 그 아래에 놓이게 했다.
-        스냅 지점은 이 장 하나 그대로다.
+        그렇다고 하단바에 `lp-snap`과 `min-h-dvh`를 줘서 장을 하나 더 만들면, 사이트
+        정보가 콘텐츠 한 장처럼 읽힌다. 마지막 CTA를 지나 빈 화면이 한 번 더 나오고
+        스크롤이 거기서 또 멈춘다.
+
+        그래서 이 장 하나를 **뷰포트보다 크게** 만든다. 스냅 영역이 스냅포트보다 크면
+        그 안의 어느 위치에서든 멈출 수 있다(CSS Scroll Snap). 스냅 지점은 이 장의
+        시작 하나뿐이라 CTA는 정가운데에 그대로 오고, 그 아래로는 자유 스크롤이라
+        하단바가 이어져 보인다.
+
+        CTA의 가운데는 **안쪽 래퍼**가 `min-h-dvh`를 갖게 해서 지킨다. 바깥 섹션에
+        주고 `flex-1`로 나눠 가지면 가운데가 뷰포트가 아니라 "하단바를 뺀 나머지"의
+        가운데가 되어 하단바 높이의 절반만큼 위로 밀린다.
       */}
-      <section
-        aria-label="시작하기"
-        className="lp-snap relative flex min-h-dvh w-full flex-col items-center justify-center overflow-hidden px-5 py-14 sm:px-8 lg:px-14"
-      >
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-1/2 h-[300px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(ellipse,rgba(91,141,255,.32),transparent_70%)] blur-[60px] lg:h-[420px] lg:w-[900px]"
-        />
+      <section aria-label="시작하기" className="lp-snap relative w-full">
+        <div className="relative flex min-h-dvh w-full flex-col items-center justify-center overflow-hidden px-5 py-14 sm:px-8 lg:px-14">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-1/2 h-[300px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(ellipse,rgba(91,141,255,.32),transparent_70%)] blur-[60px] lg:h-[420px] lg:w-[900px]"
+          />
 
-        <div className="relative z-[1] flex w-full max-w-[820px] flex-col items-center gap-7 text-center">
-          <h2 className="m-0 text-[30px] leading-[1.14] font-extrabold tracking-[-0.045em] break-keep text-balance text-white sm:text-[42px] lg:text-[60px]">
-            내 GitHub에는
-            <br />
-            어떤 가능성이 있을까요?
-          </h2>
+          <div className="relative z-[1] flex w-full max-w-[820px] flex-col items-center gap-7 text-center">
+            <h2 className="m-0 text-[30px] leading-[1.14] font-extrabold tracking-[-0.045em] break-keep text-balance text-white sm:text-[42px] lg:text-[60px]">
+              내 GitHub에는
+              <br />
+              어떤 가능성이 있을까요?
+            </h2>
 
-          <AnalysisStartLink
-            className="inline-flex items-center gap-3 rounded-2xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-8 py-[18px] text-[17px] font-bold text-white shadow-[0_18px_40px_rgba(31,60,140,0.4)] transition-shadow hover:shadow-[0_22px_48px_rgba(31,60,140,0.48)] lg:px-[38px] lg:py-[22px] lg:text-[19px]"
-          >
-            <GithubIcon className="h-[22px] w-[22px] lg:h-6 lg:w-6" />
-            GitHub로 분석 시작하기
-          </AnalysisStartLink>
+            <AnalysisStartLink
+              className="inline-flex items-center gap-3 rounded-2xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-8 py-[18px] text-[17px] font-bold text-white shadow-[0_18px_40px_rgba(31,60,140,0.4)] transition-shadow hover:shadow-[0_22px_48px_rgba(31,60,140,0.48)] lg:px-[38px] lg:py-[22px] lg:text-[19px]"
+            >
+              <GithubIcon className="h-[22px] w-[22px] lg:h-6 lg:w-6" />
+              GitHub로 분석 시작하기
+            </AnalysisStartLink>
 
-          {/* 하지 않는 것을 마지막에 한 번 더 적는다. 권한을 넘기기 직전이라 여기가 맞다. */}
-          <span className="text-[14px] text-white/70 lg:text-[15px]">
-            읽기 전용 · 선택한 저장소만 분석합니다
-          </span>
+            {/* 하지 않는 것을 마지막에 한 번 더 적는다. 권한을 넘기기 직전이라 여기가 맞다. */}
+            <span className="text-[14px] text-white/70 lg:text-[15px]">
+              읽기 전용 · 선택한 저장소만 분석합니다
+            </span>
+          </div>
         </div>
 
+        {/*
+          하단바는 앞 화면 아래에 그대로 이어 붙는다. 자기 높이만 쓰므로 한 장으로
+          읽히지 않고, 이 섹션 안에 있어 스냅이 걸린 화면에서도 도달할 수 있다.
+
+          좌우 여백을 여기서 주지 않는다. `SiteFooter`가 이미 `max-w-[1520px]`
+          컨테이너와 `px-5 sm:px-8 lg:px-12`를 갖고 있어, 감싸면서 한 번 더 주면
+          같은 여백이 두 번 들어간다.
+        */}
+        {footer !== undefined ? <div className="relative z-[1] w-full">{footer}</div> : null}
       </section>
-
-      {/*
-        하단바 장.
-
-        앞 장 안에 두었더니 CTA가 가운데에서 벗어났다. `flex-1`로 남는 높이를 먹는
-        방식이라 가운데가 **뷰포트가 아니라 "하단바를 뺀 나머지"의 가운데**가 되고,
-        하단바 높이의 절반만큼 위로 밀린다.
-
-        아래로 더 내리는 방법도 있었지만 640px 높이 화면에서 CTA와 겹친다. 장을
-        나누면 겹칠 일이 없고 앞 장이 뷰포트 정가운데를 그대로 쓴다.
-
-        스냅이 걸린 화면에서는 장마다 스냅 지점이 필요하므로 `min-h-dvh`를 준다.
-        꼬리로 붙이면 스냅 지점이 없어 가장 가까운 지점(앞 장의 시작)으로 되돌아가
-        화면에 머물지 못한다.
-      */}
-      {footer !== undefined ? (
-        <section
-          aria-label="사이트 정보"
-          className="lp-snap relative flex min-h-dvh w-full flex-col justify-center overflow-hidden px-5 sm:px-8 lg:px-14"
-        >
-          <div className="relative z-[1] w-full">{footer}</div>
-        </section>
-      ) : null}
     </>
   )
 }
