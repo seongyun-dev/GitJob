@@ -1,7 +1,5 @@
 package com.example.git_job.analysis.service;
 
-import java.util.List;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,8 +10,10 @@ import org.springframework.stereotype.Component;
  * 조회하면 0행이 나오고, 0행은 "매칭된 기술 없음"과 구분되지 않는다. 아직 판정
  * 단계가 없어 증상이 없었을 뿐, 붙이는 순간 조용히 틀린 결과를 낸다.</p>
  *
- * <p>버전을 발행하는 곳과 사용하는 곳이 같은 테이블을 보면 어긋날 자리가 없다.
- * {@code CURRENT}는 부분 유니크 인덱스가 하나로 강제한다(V5).</p>
+ * <p>C Registry의 활성 경계는 {@code technology_registry_alias}다. 과거
+ * {@code technology_registry.status = CURRENT}는 새 불변 Snapshot 발행 이전의
+ * lifecycle이라 두 값을 섞으면 새 분석도 구형 규칙으로 실행된다. 새 요청은
+ * {@link TechnologyRegistryVersionResolver}를 통해 활성 alias만 사용한다.</p>
  *
  * <p>캐시하지 않는다. 분석 요청은 사람이 누르는 빈도이고, 조회는 한 행짜리
  * 인덱스 조회다. 캐시를 두면 새 버전을 발행해도 TTL이 지나야 반영되거나 재기동이
@@ -22,25 +22,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class CurrentRegistryVersion {
 
-    private final JdbcTemplate jdbc;
+    private final TechnologyRegistryVersionResolver resolver;
 
-    public CurrentRegistryVersion(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public CurrentRegistryVersion(TechnologyRegistryVersionResolver resolver) {
+        this.resolver = resolver;
     }
 
     /**
-     * @throws IllegalStateException CURRENT 버전이 없을 때. 마이그레이션이 하나를
-     *         보장하므로, 없다는 것은 누군가 손으로 상태를 바꿨다는 뜻이다. 임의의
-     *         버전을 골라 분석을 진행하면 잘못된 기준으로 판정한 결과가 남는다.
+     * @throws com.example.git_job.global.exceptions.CustomException 활성 alias가 없거나
+     *         승인된 불변 Snapshot을 가리키지 않을 때. 임의 버전으로 진행하지 않는다.
      */
     public String resolve() {
-        List<String> found = jdbc.queryForList(
-                "SELECT registry_version FROM technology_registry WHERE status = 'CURRENT'",
-                String.class);
-        if (found.isEmpty()) {
-            throw new IllegalStateException(
-                    "technology_registry에 CURRENT 버전이 없다. 분석 요청은 판정 기준 없이 만들 수 없다");
-        }
-        return found.getFirst();
+        return resolver.resolveForNewRequest(
+                TechnologyRegistryVersionResolver.SUPPORTED_SCHEMA_VERSION);
     }
 }

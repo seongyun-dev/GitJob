@@ -103,7 +103,7 @@ class AnalysisSubmissionServiceTest {
         assertEquals("octocat/GitJob", payload.repositoryFullName());
         assertEquals("feature/cdc", payload.branchName());
         assertEquals(SHA, payload.commitSha());
-        // 설정이 아니라 technology_registry의 CURRENT 행에서 온 값이다.
+        // 설정이나 legacy CURRENT가 아니라 C Registry의 활성 alias에서 온 값이다.
         assertEquals("registry-20260908.9", payload.registryVersion());
         assertEquals(RepositoryAnalysisMode.SNAPSHOT, payload.analysisMode());
         assertTrue(payload.analysisId().startsWith("an_"));
