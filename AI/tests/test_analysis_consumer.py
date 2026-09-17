@@ -290,7 +290,7 @@ def test_result_contract_validation_is_terminal_and_does_not_leave_a_lease(tmp_p
     invalid = Judgement(
         verdicts=(),
         evidence=(),
-        candidates=(Candidate("PYPI", "broken", "x" * 41, 1),),
+        candidates=(Candidate("PYPI", "broken", "x" * 1025, 1),),
     )
     consumer._judge = lambda *_args: invalid
 
@@ -616,7 +616,7 @@ def test_invalid_result_contract_becomes_a_terminal_failure(tmp_path, monkeypatc
         TechnologyCandidate(
             ecosystem="PYPI",
             coordinate="pytest",
-            scope="x" * 41,
+            scope="x" * 1025,
             occurrence_count=1,
         )
 
