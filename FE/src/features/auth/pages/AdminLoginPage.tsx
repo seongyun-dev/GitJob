@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { adminLogin } from '@/features/auth/api/adminLogin'
+import { fetchMe } from '@/features/auth/api/me'
 import { ME_QUERY_KEY } from '@/features/auth/hooks/useMe'
 import { ApiError } from '@/shared/api/client'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
@@ -40,8 +41,19 @@ export function AdminLoginPage() {
     setError(null)
     try {
       await adminLogin(id, password)
-      // 세션이 바뀌었으니 헤더의 로그인 상태(useMe)를 새로 읽게 한다.
-      await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY })
+      /*
+       * 새 세션을 확정적으로 읽어 캐시에 심은 뒤에 이동한다.
+       *
+       * `invalidateQueries`로는 부족하다. 기본 `refetchType: 'active'`라 구독 중인
+       * observer가 있는 Query만 다시 부르는데, 이 화면은 헤더(`AppLayout`) 밖이라
+       * `useMe`를 구독하는 컴포넌트가 없다. 그래서 stale 표시만 되고 요청은 나가지
+       * 않은 채로 `/admin`에 도착하고, `AdminLayout`이 로그인 전에 캐시된 `null`을
+       * 읽어 다시 이 화면으로 되돌린다 — 첫 클릭이 아무 일도 안 한 것처럼 보이던 이유다.
+       *
+       * `fetchQuery`는 observer 유무와 무관하게 요청하고 결과를 캐시에 직접 쓴다.
+       * 별도의 `setQueryData`는 중복이라 두지 않는다.
+       */
+      await queryClient.fetchQuery({ queryKey: ME_QUERY_KEY, queryFn: fetchMe })
       navigate('/admin', { replace: true })
     } catch (caught) {
       // 성공 외에는 원인을 구분하지 않는다(BE도 401로 통일). 일반적인 안내만 보인다.
