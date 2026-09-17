@@ -90,6 +90,83 @@ redownload한 뒤 그 hour의 gz 줄 수를 넣어 **312시간 기준으로 갱�
 전에 WEEK B verifier를 돌리면 그 hour가 `UNKNOWN`으로 나와 fail-closed로 FAIL한다 —
 이것은 계약대로 동작하는 것이며 갱신을 빼먹었다는 신호다.
 
+### 3.1 ACK-based expected — gz 줄 수는 상한이지 기준값이 아니다
+
+**계약**
+
+```text
+expected_count = source_event_count - contractually_rejected_oversized_events
+```
+
+`publish-rejected-events.jsonl`에 해당 hour의 `EVENT_EXCEEDS_MAX_MESSAGE_BYTES`가
+있으면 그 건수를 expected에서 차감한 값을 verifier에 넘긴다.
+
+**이유**
+
+`S15P21E102-257`의 pre-send gate는 `MAX_MESSAGE_BYTES = 1,048,576`를 넘는 event를
+Kafka로 보내지 않고 durable lineage로만 남긴다. 그 event는 **설계상 HDFS에 도달할 수
+없다.** 따라서 gz 줄 수를 그대로 expected로 쓰면 그 hour는 **구조적으로 PASS할 수
+없다.** 무엇을 고쳐도 메울 수 없는 간극을 결손으로 읽는 것이 된다.
+
+2026-09-17 `S15P21E102-259` canary가 이것을 실증했다. hour `2026-09-16T00`에서
+source 72,929건 중 2건(1,722,387 B / 1,320,049 B)이 거부됐고, 두 기준의 결과가
+갈렸다.
+
+| expected 기준 | expected | dedup | 결과 |
+|---|---|---|---|
+| gz 줄 수 그대로 | 72,929 | 72,927 | `PARTIAL`, shortfall 정확히 2 |
+| **ACK-based (차감)** | **72,927** | 72,927 | **`COMPLETE`**, coverage 1.0, shortfall 0 |
+
+publisher `published_events`, Kafka offset delta, HDFS `deduplicated_event_count`가
+셋 모두 72,927로 일치했고 `duplicate_count`는 0이었다.
+
+**차감은 무조건이 아니다.** `EVENT_EXCEEDS_MAX_MESSAGE_BYTES` 하나만 차감한다. 다른
+사유로 빠진 event는 진짜 결손이므로 그대로 FAIL되어야 한다. 차감 전에 다음을
+확인한다.
+
+1. rejection 항목의 `hour`가 검증 대상 hour와 같은가
+2. `reason`이 `EVENT_EXCEEDS_MAX_MESSAGE_BYTES`인가
+3. `bytes > limit`인가
+4. `source_id`가 중복 없이 고유한가
+
+**산출 절차**
+
+pass가 끝나면 그 pass가 만든 rejection을 hour별로 집계해 ACK expected 파일을
+만든다. 원본 `weekly-expected-counts.json`은 **고치지 않는다** — gz 줄 수는 source의
+사실이고, 차감값은 발행 결과에 따라 달라지는 파생값이다.
+
+```python
+import json, collections
+
+SRC = ".local/weekly-recovery-296/weekly-expected-counts.json"
+REJ = ".local/gharchive-watch/hours/publish-rejected-events.jsonl"
+OUT = ".local/weekly-recovery-296/weekly-expected-counts-acked.json"
+
+expected = json.load(open(SRC))
+rejected = collections.Counter()
+for line in open(REJ):
+    line = line.strip()
+    if not line:
+        continue
+    r = json.loads(line)
+    if r.get("reason") == "EVENT_EXCEEDS_MAX_MESSAGE_BYTES":
+        rejected[r["hour"]] += 1
+
+acked = {h: n - rejected.get(h, 0) for h, n in expected.items()}
+json.dump(acked, open(OUT, "w"), indent=1, sort_keys=True)
+for h, n in sorted(rejected.items()):
+    print("adjusted", h, expected[h], "->", acked[h], "(-%d)" % n)
+print("hours:", len(acked), "total:", sum(acked.values()))
+```
+
+verifier에는 `--expected-counts`로 **`weekly-expected-counts-acked.json`을** 넘긴다.
+두 파일을 모두 보존해 원본 source 개수와 차감 근거가 같이 남게 한다.
+
+**보고**
+
+AFTER 검증 결과에는 `expected_source_total`, `rejected_oversize_total`,
+`expected_acked_total`을 함께 적는다. 차감한 건수가 보이지 않으면 다음 사람은
+expected가 왜 줄었는지 알 수 없다.
 > census의 WEEK B 위험 hour expected는 4,915,804로 1건 적다. 이 파일 기준은
 > 4,915,805다. 4.9M분의 1(0.00002%) 차이이며, gz 줄 수 방식이 229시간 전량에서
 > checkpoint와 정확히 일치하므로 **이 파일을 truth source로 삼는다.**
@@ -235,7 +312,7 @@ Historical/Streaming cutoff를 가로질러 `S15P21E102-295`의 transition mode 
 | 상황 | 조치 |
 |---|---|
 | publisher가 hour를 `failed`로 기록 | 그 pass에서 중단. `publish-progress.json`이 마지막 ACK 지점을 들고 있으므로 같은 hour를 다시 돌리면 그 지점부터 재개된다. 처음부터 다시 보내지 않는다 |
-| oversized rejection 발생 | 정상 동작이다. `publish-rejected-events.jsonl`의 `hour`/`source_id`/`bytes`/`limit`/`reason`을 기록하고 계속 진행한다. expected count에서 해당 건을 차감해 verifier와 대조한다 |
+| oversized rejection 발생 | 정상 동작이다. `publish-rejected-events.jsonl`의 `hour`/`source_id`/`bytes`/`limit`/`reason`을 기록하고 계속 진행한다. §3.1의 ACK-based expected를 산출해 verifier에 넘긴다 — 차감하지 않으면 그 hour는 구조적으로 PASS할 수 없다 |
 | C1 lag가 수렴하지 않음 | 다음 pass 중단. C1을 재시작하지 않고 checkpoint와 로그를 먼저 본다 |
 | verifier `PARTIAL` | 해당 hour만 다시 publish. HDFS는 건드리지 않는다 |
 | verifier `OVERFULL_AFTER_DEDUP` | **자동 조치 없음.** 재발행으로 설명되지 않으므로 사람이 판단한다 |
@@ -355,14 +432,30 @@ mode가 별도로 검증한다.
 즉 **WEEK A도 publish와 검증까지는 -295 없이 진행할 수 있다.** 막히는 것은 aggregation
 부터다. 이 분리 덕분에 -295 배포를 기다리는 동안 WEEK A raw 복구를 끝내 둘 수 있다.
 
-## 11. 작성 시점 상태
+## 11. 게이트 상태 (2026-09-17 갱신)
 
 | 게이트 | 상태 |
 |---|---|
 | `S15P21E102-258` develop merge | 완료 (`405ccc2`) |
-| `S15P21E102-258` Production 반영 | **미완료** — Connect가 아직 `DailyRollingFileAppender` |
-| `S15P21E102-259` 1-hour canary | **미실행** — source(`2026-09-16T00`)만 확보 |
+| `S15P21E102-258` Production 반영 | **완료** — Connect가 `RollingFileAppender` 10MB × 10, connector/task RUNNING |
+| `S15P21E102-259` 1-hour canary | **PASS** — hour `2026-09-16T00`, 아래 참조 |
 | `S15P21E102-264` verifier | develop 존재, spark 이미지에 포함 확인 |
-| `S15P21E102-295` transition mode | **미구현** (`해야 할 일`) |
+| `S15P21E102-295` transition mode | **merge 완료** (`5c242cc`) |
 
-복구는 -258 Production 반영과 -259 canary PASS 이후에만 시작한다.
+### canary 실측 (2026-09-17)
+
+| 단계 | 값 |
+|---|---|
+| source gz 줄 수 | 72,929 |
+| oversized rejected | 2 |
+| ACK expected | **72,927** |
+| publisher published_events | **72,927** |
+| Kafka offset delta | **72,927** |
+| HDFS raw / dedup | 72,927 / **72,927** |
+| duplicate | **0** |
+| C1 batch | 3071 → 3079, end offsets == Kafka log-end 6/6 |
+| 분류 | **COMPLETE** (coverage 1.0) |
+
+이 한 시간이 전 경로를 실제로 통과했으므로, 남은 것은 같은 경로를 82시간으로
+늘리는 일이다. 다만 장시간 복구는 Production 배포가 도중에 stack을 건드리지 않는다는
+보장이 있어야 하므로, `S15P21E102-300` deploy guard를 기다린다.

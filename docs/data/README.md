@@ -1109,6 +1109,7 @@ C조 범위다.
 - local source 82개 전부 `gzip -t` PASS, 합계 4,633,571,666 B
 - `--expected-counts` 기준값을 gz 줄 수로 생성했고 발행된 229시간 전량에서 publisher checkpoint와 **delta 0**
 - 복구 전용 checkpoint를 분리하고 기존 backlog checkpoint는 읽기만 한다. HDFS 사전 cleanup은 하지 않는다 (`DEDUP_KEYS`가 흡수)
+- verifier에 넘기는 expected는 `source_event_count - EVENT_EXCEEDS_MAX_MESSAGE_BYTES 건수`다. gz 줄 수는 상한이지 기준값이 아니며, 차감하지 않으면 oversized가 있는 hour는 구조적으로 PASS할 수 없다 (`S15P21E102-259` canary로 실증)
 - WEEK A도 **publish와 검증까지는 `S15P21E102-295` 없이 진행 가능**하며, 막히는 것은 aggregation부터다
 - 상세: [2026-09 Weekly Streaming backlog 복구 실행계획](2026-09-17-weekly-backlog-recovery-plan.md)
 
