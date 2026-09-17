@@ -39,21 +39,31 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from jobs.repo_activity_weekly import (
+    ACTIVITY_COLUMNS,
     DEDUP_KEYS,
     INPUT_FORMAT_STREAM_PARQUET,
     STREAM_REQUIRED_COLUMNS,
     STREAM_SOURCE,
+    aggregate_weekly_rows,
     expected_stream_hours,
+    normalize_stream_rows,
     validate_period,
     validate_stream_hour,
 )
+from jobs.weekly_lineage_verify import (
+    summarize_sections,
+    verify_c_export_lineage,
+    verify_success_manifest,
+    verify_trend_lineage,
+)
 
 SCHEMA_VERSION = "weekly-stream-completeness-report/v1"
+REPORT_SCHEMA_VERSION = "weekly-7day-e2e-report/v1"
 
 # One hour of a week.  `MISSING` and `PARTIAL` are the two the presence-only
 # gate conflates; keeping them apart is the point of this job.
@@ -333,6 +343,214 @@ def read_observed_counts(
     }
 
 
+def recompute_weekly_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Goals 4 and 5: valid repo events, then `(repo_id, week_start)` counts.
+
+    Both rules are `repo_activity_weekly`'s own -- `normalize_stream_rows`
+    filters the source and dedups, `aggregate_weekly_rows` drops rows without a
+    usable `repo_id`, `repo_name` or `created_at` and applies the renamed
+    repository rule.  They are imported, not restated.
+
+    "Independent" in the ticket means independent of the *Spark output*, not of
+    the contract: a recomputation that invented its own idea of a valid event
+    would report differences that are only disagreements about the rules.
+    """
+
+    return aggregate_weekly_rows(normalize_stream_rows(rows))
+
+
+def valid_repo_event_condition(functions: Any) -> Any:
+    """Goal 4 as a Spark predicate, matching `aggregate_weekly_rows`'s filter.
+
+    That function drops an event without a positive integer `repo_id`, without
+    a non-blank `repo_name`, or without a parseable `created_at`.  The three
+    conditions are spelled out here rather than reused because they run on the
+    executors.  `test_invalid_repo_events_are_dropped` pins the same three
+    cases against `recompute_weekly_rows`, which goes through the production
+    helpers, so a drift in either direction shows up as a test failure.
+    """
+
+    repo_id = functions.get_json_object(functions.col("payload"), "$.repo.id").cast(
+        "long"
+    )
+    repo_name = functions.get_json_object(functions.col("payload"), "$.repo.name")
+    occurred = functions.to_timestamp(functions.col("occurred_at"))
+    return (
+        repo_id.isNotNull()
+        & (repo_id > functions.lit(0))
+        & repo_name.isNotNull()
+        & (functions.length(functions.trim(repo_name)) > functions.lit(0))
+        & occurred.isNotNull()
+    )
+
+
+def read_weekly_reconciliation(
+    spark: Any,
+    functions: Any,
+    *,
+    stream_uri: str,
+    weekly_uri: str,
+    hours: Sequence[str],
+) -> dict[str, object]:
+    """Goals 4-6 in Spark, collecting only the disagreements.
+
+    A week's output is one row per repository and can be millions of them, so
+    the join happens on the cluster and the driver receives the mismatching
+    rows and the totals -- never the week.  This is the same reason
+    `repo_activity_weekly.slice_row_digest` sorts in Spark and streams.
+    """
+
+    archive = spark.read.parquet(stream_uri)
+    scoped = archive.where(functions.col("source") == functions.lit(STREAM_SOURCE))
+    if "dt" in archive.columns:
+        dates = sorted({hour[:10] for hour in hours})
+        scoped = scoped.where(functions.col("dt").isin(dates))
+    hour_key = functions.substring_index(functions.col("source_id"), "/", 1)
+    scoped = scoped.where(hour_key.isin(list(hours)))
+
+    deduplicated = scoped.dropDuplicates(list(DEDUP_KEYS))
+    valid = deduplicated.where(valid_repo_event_condition(functions))
+    expected = (
+        valid.select(
+            functions.get_json_object(functions.col("payload"), "$.repo.id")
+            .cast("long")
+            .alias("repo_id"),
+            functions.date_format(
+                functions.date_trunc(
+                    "week", functions.to_timestamp(functions.col("occurred_at"))
+                ),
+                "yyyy-MM-dd",
+            ).alias("week_start"),
+        )
+        .groupBy("repo_id", "week_start")
+        .agg(functions.count(functions.lit(1)).alias("expected_event_count"))
+    )
+
+    output = spark.read.parquet(weekly_uri)
+    missing_columns = sorted(set(ACTIVITY_COLUMNS) - set(output.columns))
+    if missing_columns:
+        raise RuntimeError(f"weekly output is missing columns: {missing_columns}")
+    observed = output.select(
+        functions.col("repo_id").cast("long").alias("repo_id"),
+        functions.col("week_start").alias("week_start"),
+        functions.col("event_count").cast("long").alias("observed_event_count"),
+    )
+
+    joined = expected.join(observed, ["repo_id", "week_start"], "full_outer")
+    disagreeing = joined.where(
+        functions.col("expected_event_count").isNull()
+        | functions.col("observed_event_count").isNull()
+        | (
+            functions.col("expected_event_count")
+            != functions.col("observed_event_count")
+        )
+    )
+    mismatches = [
+        {
+            "repo_id": row["repo_id"],
+            "week_start": row["week_start"],
+            "expected": row["expected_event_count"],
+            "observed": row["observed_event_count"],
+        }
+        for row in disagreeing.limit(MAX_REPORTED_HOURS).collect()
+    ]
+    totals = joined.agg(
+        functions.count(functions.lit(1)).alias("joined_row_count"),
+        functions.sum(
+            functions.coalesce(functions.col("expected_event_count"), functions.lit(0))
+        ).alias("expected_event_total"),
+        functions.sum(
+            functions.coalesce(functions.col("observed_event_count"), functions.lit(0))
+        ).alias("observed_event_total"),
+    ).first()
+    mismatch_count = disagreeing.count()
+
+    errors: list[str] = []
+    if mismatch_count:
+        errors.append(
+            f"{mismatch_count} (repo_id, week_start) rows disagree between the "
+            "recomputed aggregate and the weekly output"
+        )
+    expected_total = int(totals["expected_event_total"] or 0)
+    observed_total = int(totals["observed_event_total"] or 0)
+    if expected_total != observed_total:
+        errors.append(
+            f"event totals disagree: recomputed {expected_total}, "
+            f"weekly output {observed_total}"
+        )
+    return {
+        "section": "weekly_output_reconciliation",
+        "checked": True,
+        "pass": not errors,
+        "errors": errors,
+        "joined_row_count": int(totals["joined_row_count"] or 0),
+        "mismatch_count": mismatch_count,
+        "expected_event_total": expected_total,
+        "observed_event_total": observed_total,
+        "mismatches": mismatches,
+    }
+
+
+def build_full_report(
+    *,
+    input_completeness: Mapping[str, object],
+    weekly_reconciliation: Mapping[str, object] | None = None,
+    success_manifest: Mapping[str, object] | None = None,
+    c_export_lineage: Mapping[str, object] | None = None,
+    trend_lineage: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Compose the ten goals into one PASS/FAIL document.
+
+    `input_completeness` is `build_verification`'s report, wrapped as a section
+    so every goal reads the same way.  A section left out is recorded as
+    unchecked and fails the whole report, because a chain verified only as far
+    as someone remembered to supply evidence is not a verified chain.
+    """
+
+    completeness_section = {
+        "section": "input_completeness",
+        "checked": True,
+        "pass": bool(input_completeness["summary"]["passed"]),
+        "errors": (
+            []
+            if input_completeness["summary"]["passed"]
+            else ["stream input is not complete for this period"]
+        ),
+        "report": dict(input_completeness),
+    }
+    named = (
+        ("weekly_output_reconciliation", weekly_reconciliation),
+        ("success_manifest", success_manifest),
+        ("c_export_lineage", c_export_lineage),
+        ("trend_lineage", trend_lineage),
+    )
+    sections: list[dict[str, object]] = [completeness_section]
+    for name, section in named:
+        if section is None:
+            sections.append(
+                {
+                    "section": name,
+                    "checked": False,
+                    "pass": False,
+                    "errors": ["no evidence was supplied for this section"],
+                }
+            )
+        else:
+            sections.append(dict(section))
+
+    summary = summarize_sections(sections)
+    return {
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "period_start": input_completeness["period_start"],
+        "period_end": input_completeness["period_end"],
+        "summary": summary,
+        "sections": sections,
+        "result": "PASS" if summary["passed"] else "FAIL",
+    }
+
+
 def load_json_document(path: Path) -> Mapping[str, object]:
     document = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(document, Mapping):
@@ -376,18 +594,94 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
         .config("spark.sql.session.timeZone", "UTC")
         .getOrCreate()
     )
+    weekly_reconciliation = None
     try:
         observed = read_observed_counts(spark, functions, arguments.input, hours)
+        if getattr(arguments, "weekly_output", None):
+            weekly_reconciliation = read_weekly_reconciliation(
+                spark,
+                functions,
+                stream_uri=arguments.input,
+                weekly_uri=arguments.weekly_output,
+                hours=hours,
+            )
     finally:
         spark.stop()
 
-    return build_verification(
+    completeness = build_verification(
         period_start=arguments.period_start,
         period_end=arguments.period_end,
         input_uri=arguments.input,
         expected_counts=expected_counts,
         observed=observed,
     )
+    sections = lineage_sections(arguments)
+    if weekly_reconciliation is not None:
+        sections["weekly_reconciliation"] = weekly_reconciliation
+    return build_full_report(input_completeness=completeness, **sections)
+
+
+def lineage_sections(arguments: argparse.Namespace) -> dict[str, object]:
+    """Goals 6-9 from whatever artifacts the caller pointed at.
+
+    Each is optional at the command line and absent evidence leaves its section
+    unchecked, which fails the report.  That is deliberate: production runs
+    supply all four, and a run that cannot is telling the operator something.
+    """
+
+    weekly_manifest = None
+    if getattr(arguments, "weekly_manifest", None):
+        weekly_manifest = load_json_document(arguments.weekly_manifest)
+
+    sections: dict[str, object] = {
+        "weekly_reconciliation": None,
+        "success_manifest": None,
+        "c_export_lineage": None,
+        "trend_lineage": None,
+    }
+
+    if weekly_manifest is not None:
+        sections["success_manifest"] = verify_success_manifest(
+            weekly_manifest,
+            observed_row_count=getattr(arguments, "observed_row_count", None),
+            observed_row_digest=getattr(arguments, "observed_row_digest", None),
+        )
+
+    if weekly_manifest is not None and getattr(arguments, "export_manifest", None):
+        export_manifest = load_json_document(arguments.export_manifest)
+        export_metadata = (
+            load_json_document(arguments.export_metadata)
+            if getattr(arguments, "export_metadata", None)
+            else None
+        )
+        data_bytes = (
+            Path(arguments.export_data).read_bytes()
+            if getattr(arguments, "export_data", None)
+            else None
+        )
+        metadata_bytes = (
+            Path(arguments.export_metadata).read_bytes()
+            if getattr(arguments, "export_metadata", None)
+            else None
+        )
+        sections["c_export_lineage"] = verify_c_export_lineage(
+            weekly_manifest=weekly_manifest,
+            export_manifest=export_manifest,
+            export_metadata=export_metadata,
+            data_bytes=data_bytes,
+            metadata_bytes=metadata_bytes,
+        )
+        if getattr(arguments, "trend_records", None):
+            trend_document = load_json_document(arguments.trend_records)
+            records = trend_document.get("records")
+            sections["trend_lineage"] = verify_trend_lineage(
+                weekly_manifest=weekly_manifest,
+                export_metadata=export_metadata,
+                trend_records=records if isinstance(records, list) else None,
+                public_snapshot_id=trend_document.get("public_snapshot_id"),
+                registry_version=trend_document.get("registry_version"),
+            )
+    return sections
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -422,6 +716,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--report-output", type=Path)
     parser.add_argument("--app-name", default="gitjob-weekly-stream-verify")
+
+    lineage = parser.add_argument_group(
+        "lineage evidence",
+        "Goals 6-9.  Each omitted artifact leaves its section unchecked, which "
+        "fails the report -- absent evidence is never a PASS.",
+    )
+    lineage.add_argument(
+        "--weekly-output",
+        help=(
+            "the week directory the aggregation wrote; enables the goal 4-6 "
+            "recomputation and comparison"
+        ),
+    )
+    lineage.add_argument(
+        "--weekly-manifest", type=Path, help="the week's _SUCCESS.json"
+    )
+    lineage.add_argument(
+        "--observed-row-count",
+        type=int,
+        help="rows actually in the week directory, for the manifest check",
+    )
+    lineage.add_argument(
+        "--observed-row-digest",
+        help="slice_row_digest over the week directory, for the manifest check",
+    )
+    lineage.add_argument("--export-manifest", type=Path, help="C export manifest.json")
+    lineage.add_argument("--export-metadata", type=Path, help="C export metadata.json")
+    lineage.add_argument(
+        "--export-data", type=Path, help="C export activity.csv or activity.ndjson"
+    )
+    lineage.add_argument(
+        "--trend-records",
+        type=Path,
+        help=(
+            "JSON with public_snapshot_id, registry_version and a records array "
+            "of stored TREND rows"
+        ),
+    )
     return parser
 
 

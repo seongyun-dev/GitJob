@@ -121,16 +121,77 @@ compose exec -T spark-worker /opt/spark/bin/spark-submit \
 `Incomplete HDFS URI, no host`로 실패한다. 위처럼 `spark.hadoop.fs.defaultFS`를
 함께 주거나 authority를 명시한다.
 
-## 복구 순서
+## 전체 7단계 (Jira 목표 1~10)
+
+lineage 증거를 함께 주면 한 번의 실행이 목표 1~10을 모두 판정한다.
+
+```bash
+compose exec -T spark-worker /opt/spark/bin/spark-submit \
+  --master spark://100.70.66.38:7077 \
+  --total-executor-cores 1 --executor-memory 1g --driver-memory 1g \
+  --conf spark.hadoop.fs.defaultFS=hdfs://100.70.66.38:8020 \
+  --conf spark.hadoop.dfs.client.use.datanode.hostname=true \
+  /opt/gitjob/spark/jobs/weekly_activity_verify.py \
+  --input         hdfs:///gitjob/parquet/stream/github.events \
+  --period-start  2026-09-07T00:00:00Z \
+  --period-end    2026-09-14T00:00:00Z \
+  --expected-counts /opt/gitjob/state/weekly-expected-counts.json \
+  --weekly-output hdfs:///gitjob/parquet/github/repo_activity_weekly/period=2026-09/snapshot={id}/repo_activity_weekly/week=2026-09-07 \
+  --weekly-manifest   /mnt/weekly/week=2026-09-07/_SUCCESS.json \
+  --observed-row-count  {read-back row count} \
+  --observed-row-digest {slice_row_digest value} \
+  --export-manifest /mnt/c-export/public={pid}/snapshot={sid}/week=2026-09-07/manifest.json \
+  --export-metadata /mnt/c-export/public={pid}/snapshot={sid}/week=2026-09-07/metadata.json \
+  --export-data     /mnt/c-export/public={pid}/snapshot={sid}/week=2026-09-07/activity.csv \
+  --trend-records   /tmp/trend-records-2026-09-07.json \
+  --report-output   /tmp/weekly-verify-2026-09-07.json
+```
+
+| 단계 | 목표 | report section |
+|---|---|---|
+| 1 | source/event completeness (1·2·3) | `input_completeness` |
+| 2 | valid repo event + (repo_id, week_start) 재계산 → Weekly output 비교 (4·5·6) | `weekly_output_reconciliation` |
+| 3 | `_SUCCESS.json` / row_count / row_digest (7) | `success_manifest` |
+| 4 | publication identity (7) | `success_manifest` |
+| 5 | C export manifest/metadata/data lineage (8) | `c_export_lineage` |
+| 6 | TREND snapshot/head lineage (9) | `trend_lineage` |
+| 7 | 전체 PASS/FAIL (10) | `summary.passed` / `result` |
+
+각 section은 `checked` / `pass` / `errors` 를 갖는다. **증거를 주지 않은
+section은 `checked=false, pass=false` 이고 전체 리포트를 FAIL시킨다.** 확인하지
+않은 것을 통과로 기록하면 리포트의 의미가 없어지기 때문이다.
+
+`--trend-records` 는 `public_snapshot_id`, `registry_version`, 그리고 저장된
+TREND 행의 `records` 배열을 담은 JSON이다. read-only 조회 결과를 그대로 넣는다.
+
+### lineage identity 계약
 
 ```
-1. verifier 실행
+Weekly output rows  --(row_count, row_digest)-->  _SUCCESS.json
+_SUCCESS.json       --(dataset_snapshot_id, week_start == period)--> C export metadata
+C export metadata   --(data_sha256, metadata_sha256)--> C export manifest
+PUBLIC_GITHUB head  --(public_snapshot_id, week_start)--> TREND record
+```
+
+`worker/weekly_activity_intake` 가 소비 시점에 강제하는 것과 같은 계약이다.
+차이는 그 모듈이 첫 위반에서 멈추는 반면 verifier는 **모든 링크를 한 번에
+보고**한다는 점이다.
+
+## 복구 순서 (fail-closed)
+
+```
+1. 복구 전 verifier 실행
 2. 168h completeness 확인
 3. PARTIAL / MISSING hour 목록 추출  (report.summary.blocking_hours)
 4. 해당 hour만 복구 (publisher replay / redownload)
 5. verifier 재실행
 6. PASS 후에만 Weekly aggregation 실행
+7. aggregation 후 lineage 증거를 붙여 verifier 재실행
+8. 전체 PASS 후에만 다음 stage(candidate / Artifact / publication / C export / TREND)
 ```
+
+각 stage는 이전 stage의 verifier PASS를 전제로만 진행한다. FAIL이면 종료 코드
+1이므로 스크립트가 다음 단계로 넘어가지 않는다.
 
 4단계의 실제 실행은 이 문서의 범위가 아니다. Streaming backlog 복구와
 Production Weekly 실행은 S15P21E102-296이 담당한다.
