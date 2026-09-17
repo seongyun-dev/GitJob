@@ -1280,6 +1280,16 @@ C조 범위다.
 - 검증: 실제 publication 로드 미수정 FAIL → 수정 PASS, 광범위 회귀 135 passed / 0 failed
 - 상세: [Weekly quota publication이 A→C 로더에서 거부된 경로와 수용 계약](2026-09-16-weekly-quota-publication-coverage.md)
 
+## Weekly Artifact Redis Index 성능 벤치마크
+
+- Jira: `S15P21E102-293`
+- 목적: Redis artifact index 도입 전후의 처리시간 / GitHub API 호출 / artifact 쓰기 변화를 동일 입력·동일 실행환경에서 측정
+- 고정 입력: 2026-03-02 주, candidate 1500, sha256 `8de70ed2dec7e74dff6e4823677d8e9bbdff396223a318364b5ac9654bb73c0e`
+- 공식 비교: W(warm-up, Redis hit 0) → C(measured, Redis warm). wall/active **-16.71%**(1.2006x), API total **-17.17%**, artifact writes **-80.24%**, valid 100건 동일
+- 귀속: REUSED 70건은 `durable_hit = 0` 이므로 전부 Redis 인덱스 경로. 다만 개선 전체는 "Redis 단독"이 아니라 **Redis index + warm durable artifact root 결합 효과**
+- 주의: A(Before) 대비 wall -32.8% 는 A 에 포함된 rate-limit 대기 275.87s 때문이라 공식 수치로 쓰지 않는다. B(publish warm)는 artifact 백엔드가 hdfs/file 혼합이라 control 이 아니다. 각 조건 1회 실행(n=1)
+- 상세: [Weekly Artifact Redis Index 성능 벤치마크](2026-09-17-redis-artifact-index-benchmark.md)
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
