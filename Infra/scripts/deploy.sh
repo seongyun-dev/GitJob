@@ -420,13 +420,18 @@ assert_data_deploy_contract() {
     "set -Eeuo pipefail
      cd $(quote_for_remote "$data_path")
      rendered=\$(${compose_environment}${compose} --profile data config --services)
+     mapfile -t rendered_services <<< \"\$rendered\"
+     rendered_args=()
+     for rendered_service in \"\${rendered_services[@]}\"; do
+       rendered_args+=(--rendered-service \"\$rendered_service\")
+     done
      python3 Infra/scripts/deploy_guard.py full-data \
        --compose-file Infra/compose/compose.yaml \
        --compose-file Infra/compose/compose.ec2-data-cluster.yaml \
        --profile data \
        --deploy-path \"\$PWD\" \
        --production-path $(quote_for_remote "$data_path") \
-       \$(printf -- '--rendered-service=%s ' \$rendered)
+       \"\${rendered_args[@]}\"
      python3 Infra/scripts/deploy_guard.py checkout \
        --head \$(git rev-parse HEAD) \
        --approved-ref \$(git rev-parse $(quote_for_remote "$deploy_ref")) \
