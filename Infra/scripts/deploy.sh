@@ -396,6 +396,45 @@ remove_legacy_data_weekly_consumer() {
      ${compose_environment}${compose} --profile weekly rm --stop --force weekly-trend-consumer"
 }
 
+# S15P21E102-300.  On 2026-09-17 a `deploy.sh` from a stale checkout
+# reconciled this project with `compose.ec2-data.yaml`, the single-node
+# override, and compose removed `hdfs-bootstrap` and `spark-c1-archiver`
+# because the rendered topology no longer contained them.  HDFS stayed in safe
+# mode and the Historical resolver stopped.
+#
+# The two facts that decided that outcome -- which checkout this is and which
+# topology it renders -- are asserted on the data host itself, after
+# `refresh_checkout` and before anything is recreated.  Asserting here would
+# only describe the machine we are on, which was never the one at fault.
+#
+# `deploy_guard.py` prints its reasons and exits non-zero, so `set -Eeuo
+# pipefail` on the remote stops the deploy with them in the log.
+assert_data_deploy_contract() {
+  local compose
+  local compose_environment
+  compose="$(compose_command "$data_path" "$data_env_file" compose.ec2-data-cluster.yaml)"
+  compose_environment="$(data_compose_environment)"
+
+  echo "Asserting data deploy contract on ${data_user}@${data_host}..."
+  remote_exec "$data_host" "$data_user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$data_path")
+     rendered=\$(${compose_environment}${compose} --profile data config --services)
+     python3 Infra/scripts/deploy_guard.py full-data \
+       --compose-file Infra/compose/compose.yaml \
+       --compose-file Infra/compose/compose.ec2-data-cluster.yaml \
+       --profile data \
+       --deploy-path \"\$PWD\" \
+       --production-path $(quote_for_remote "$data_path") \
+       \$(printf -- '--rendered-service=%s ' \$rendered)
+     python3 Infra/scripts/deploy_guard.py checkout \
+       --head \$(git rev-parse HEAD) \
+       --approved-ref \$(git rev-parse $(quote_for_remote "$deploy_ref")) \
+       \$(git merge-base --is-ancestor HEAD $(quote_for_remote "$deploy_ref") && echo --ancestor-of-approved || true) \
+       \$(git merge-base --is-ancestor $(quote_for_remote "$deploy_ref") HEAD && echo --descendant-of-approved || true) \
+       \$(test -z \"\$(git status --porcelain)\" || echo --dirty)"
+}
+
 start_data_app() {
   local compose
   local compose_environment
@@ -455,6 +494,7 @@ start_service_app
 start_service_weekly_consumer
 
 refresh_checkout "$data_host" "$data_user" "$data_path" "$deploy_ref"
+assert_data_deploy_contract
 remove_legacy_data_weekly_consumer
 build_data_images
 start_data_app

@@ -130,25 +130,39 @@ docker compose --project-directory . --env-file .env.service \
 
 ### 데이터 서버: node-exporter만 targeted up
 
+> **2026-09-17 정정 (S15P21E102-300).** 아래 명령의 base override가 이전에는
+> `compose.ec2-data.yaml`이었다. 데이터 서버의 운영 topology는
+> `compose.ec2-data-cluster.yaml`이며, 그쪽에만 `hdfs-bootstrap` ·
+> `spark-c1-archiver` · `weekly-trend-consumer`가 있다. 두 파일 모두
+> `.env.data`의 `COMPOSE_PROJECT_NAME=gitjob-data`를 읽으므로 **같은 compose
+> 프로젝트**로 인식되고, 잘못된 base로 전체를 reconcile하면 그 세 서비스가
+> 사라진다.
+>
+> 이날 05:16 outage의 직접 원인은 **이 monitoring 절차가 아니라 stale checkout
+> (`~/workspace/S15P21E102-monitoring`, HEAD `2f62651`)에서 실행된 `deploy.sh`의
+> full Data reconcile**이었다. 아래 절차는 `--no-deps --no-recreate` + 대상
+> 서비스 1개 지정이라 기존 컨테이너를 건드리지 않는다. 그 원칙은 그대로 두고
+> base override만 바로잡는다.
+
 ```bash
 NODE_EXPORTER_BIND_ADDRESS=100.70.66.38 \
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml \
-  -f Infra/compose/compose.ec2-data.yaml \
+  -f Infra/compose/compose.ec2-data-cluster.yaml \
   -f Infra/compose/compose.monitoring.yaml \
   --profile core --profile data --profile observability config --quiet
 
 NODE_EXPORTER_BIND_ADDRESS=100.70.66.38 \
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml \
-  -f Infra/compose/compose.ec2-data.yaml \
+  -f Infra/compose/compose.ec2-data-cluster.yaml \
   -f Infra/compose/compose.monitoring.yaml \
   --profile core --profile data --profile observability --dry-run up -d --no-deps --no-recreate --no-build node-exporter
 
 NODE_EXPORTER_BIND_ADDRESS=100.70.66.38 \
 docker compose --project-directory . --env-file .env.data \
   -f Infra/compose/compose.yaml \
-  -f Infra/compose/compose.ec2-data.yaml \
+  -f Infra/compose/compose.ec2-data-cluster.yaml \
   -f Infra/compose/compose.monitoring.yaml \
   --profile core --profile data --profile observability up -d --no-deps --no-recreate --no-build node-exporter
 ```
