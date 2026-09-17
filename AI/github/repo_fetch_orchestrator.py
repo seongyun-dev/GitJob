@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import time
 import urllib.parse
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -127,6 +128,40 @@ class RepoExecution:
         return [request.http_status for request in self.requests]
 
 
+@dataclass
+class DurableLookupMetrics:
+    """Measure the durable snapshot-cache lookup used before extraction."""
+
+    lookups: int = 0
+    hits: int = 0
+    misses: int = 0
+    artifact_writes: int = 0
+    latencies_ms: list[float] = field(default_factory=list)
+
+    def record_lookup(self, *, hit: bool, elapsed_ms: float) -> None:
+        self.lookups += 1
+        if hit:
+            self.hits += 1
+        else:
+            self.misses += 1
+        self.latencies_ms.append(elapsed_ms)
+
+    def percentile_ms(self, fraction: float) -> float | None:
+        """Return a nearest-rank percentile, or ``None`` for no lookups."""
+
+        if not self.latencies_ms:
+            return None
+        ordered = sorted(self.latencies_ms)
+        index = max(0, math.ceil(fraction * len(ordered)) - 1)
+        return round(ordered[index], 3)
+
+    @property
+    def hit_rate(self) -> float | None:
+        if not self.lookups:
+            return None
+        return round(self.hits / self.lookups, 6)
+
+
 @dataclass(frozen=True)
 class RepoFetchRun:
     batch: GitHubRepoSnapshotBatch
@@ -136,6 +171,7 @@ class RepoFetchRun:
     checkpoint_rows: list[dict[str, Any]]
     rate_limit_after: RateLimitState | None = None
     active_runtime_seconds: float = 0.0
+    lookup_metrics: DurableLookupMetrics | None = None
 
     def summary(self) -> dict[str, Any]:
         statuses = Counter(str(row["status"]) for row in self.checkpoint_rows)
@@ -185,6 +221,37 @@ class RepoFetchRun:
             ),
             "language_metadata_repo_count": language_repos,
             "devops_artifact_counts": dict(sorted(artifact_categories.items())),
+            **self._baseline_metrics(statuses),
+        }
+
+    def _baseline_metrics(self, statuses: Counter[str]) -> dict[str, Any]:
+        """Return additive metrics for the durable-cache baseline."""
+
+        metrics = self.lookup_metrics or DurableLookupMetrics()
+        repo_api = sum(int(row["api_calls"]) for row in self.checkpoint_rows)
+        repo_core = sum(int(row["core_calls"]) for row in self.checkpoint_rows)
+        control_total = len(self.control_requests)
+        control_core = sum(request.is_core for request in self.control_requests)
+        api_total = repo_api + control_total
+        api_core = repo_core + control_core
+        elapsed = self.active_runtime_seconds
+        return {
+            "durable_lookup_count": metrics.lookups,
+            "durable_hit": metrics.hits,
+            "durable_miss": metrics.misses,
+            "durable_hit_rate": metrics.hit_rate,
+            "durable_lookup_latency_p50_ms": metrics.percentile_ms(0.50),
+            "durable_lookup_latency_p95_ms": metrics.percentile_ms(0.95),
+            "artifact_writes": metrics.artifact_writes,
+            "github_api_total": api_total,
+            "github_api_core": api_core,
+            "github_api_raw": api_total - api_core,
+            "reused_artifact_count": statuses.get("REUSED", 0),
+            "new_extraction_count": statuses.get("COMPLETE", 0),
+            "elapsed_seconds": elapsed,
+            "repos_per_second": (
+                round(len(self.checkpoint_rows) / elapsed, 4) if elapsed > 0 else None
+            ),
         }
 
 
@@ -237,6 +304,7 @@ class RepoFetchOrchestrator:
             if require_historical_head
             else policy.cache_identity
         )
+        self.lookup_metrics = DurableLookupMetrics()
 
     def run(
         self,
@@ -357,6 +425,7 @@ class RepoFetchOrchestrator:
             control_requests=control_requests,
             checkpoint_rows=self.checkpoint.summary_rows(),
             active_runtime_seconds=max(0.0, self.monotonic() - started),
+            lookup_metrics=self.lookup_metrics,
         )
 
     def fetch_repo(self, candidate: RepoActivityCandidate) -> RepoExecution:
@@ -485,11 +554,16 @@ class RepoFetchOrchestrator:
                 requests,
             )
 
+        lookup_started = time.perf_counter()
         cached = self.cache.get(
             policy_version=self.cache_policy_version,
             materialization_context=self.materialization_context,
             repo_id=candidate.repo_id,
             pinned_commit_sha=pinned_commit_sha,
+        )
+        self.lookup_metrics.record_lookup(
+            hit=cached is not None,
+            elapsed_ms=(time.perf_counter() - lookup_started) * 1000.0,
         )
         if cached is not None:
             if head_tree_sha is not None and cached.tree_sha != head_tree_sha:
@@ -700,6 +774,7 @@ class RepoFetchOrchestrator:
                     path=path,
                     content=content,
                 )
+                self.lookup_metrics.artifact_writes += 1
             except (OSError, ValueError) as exc:
                 issues.append(RepoCollectionIssue.ARTIFACT_FETCH_FAILED)
                 error = f"artifact store failed: {type(exc).__name__}"
