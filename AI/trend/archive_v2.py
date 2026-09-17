@@ -17,12 +17,6 @@ from datetime import date
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from github.contracts import (
-    GitHubRepoSnapshot,
-    GitHubRepoSnapshotBatch,
-    RepoCollectionStatus,
-)
-from github.public_analysis import PublicBatchResult, PublicRepoResult
 from pydantic import (
     Field,
     StrictBool,
@@ -32,9 +26,15 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from github.contracts import (
+    GitHubRepoSnapshot,
+    GitHubRepoSnapshotBatch,
+    RepoCollectionStatus,
+)
+from github.public_analysis import PublicBatchResult, PublicRepoResult
 from registry.contracts import RegistryStatus, TechnologyRegistry
 from registry.mapper import MatchStatus
-
 from trend.archive import (
     MAX_EVIDENCE_EXAMPLES,
     ArchiveActivityMetadata,
@@ -572,7 +572,9 @@ def _point_for_input(
         record.collection_status is RepoCollectionStatus.PARTIAL
         for record in sample_records
     )
-    unresolved_repo_count = sum(bool(record.unresolved) for record in sample_records)
+    unresolved_repo_count = sum(
+        _has_unresolved_technology(record, tech_id) for record in sample_records
+    )
 
     positive_records = tuple(
         sorted(
@@ -627,7 +629,9 @@ def _point_for_input(
         quality.append("PARTIAL_COLLECTION_INCLUDED")
     if unresolved_repo_count:
         quality.append("UNRESOLVED_TECHNOLOGY_OBSERVATIONS")
-    if any(record.status is not TrendStatus.READY for record in sample_records):
+    if any(
+        _analysis_not_ready_for_technology(record, tech_id) for record in sample_records
+    ):
         quality.append("PUBLIC_ANALYSIS_NOT_READY")
     if event_count == 0:
         quality.append("ZERO_MEANS_NO_HISTORICAL_POSITIVE_OBSERVATION")
@@ -707,6 +711,40 @@ def _point_for_input(
         public_snapshot_hash=period_input.public_snapshot_hash,
         evidence_lookup=lookup,
         evidence_examples=examples,
+    )
+
+
+def _has_unresolved_technology(record: PublicRepoResult, tech_id: str) -> bool:
+    """Return whether an unresolved mapper result can refer to ``tech_id``.
+
+    An UNKNOWN package has no Registry candidates, so it cannot say anything
+    about every Registry technology. Ambiguous observations carry the exact
+    candidate set that remains uncertain and only those points are degraded.
+    Language mapping uses the same candidate contract and must follow the same
+    scope rule.
+    """
+
+    return any(
+        tech_id in observation.candidates for observation in record.unresolved
+    ) or any(
+        observation.status is not MatchStatus.MATCHED
+        and tech_id in observation.candidates
+        for observation in record.language_observations
+    )
+
+
+def _analysis_not_ready_for_technology(record: PublicRepoResult, tech_id: str) -> bool:
+    """Preserve repository-wide failures without spreading unrelated UNKNOWNs."""
+
+    return (
+        _has_unresolved_technology(record, tech_id)
+        or bool(record.quality_reasons)
+        or record.status is TrendStatus.FAILED
+        or any(
+            artifact.status is not TrendStatus.READY
+            and artifact.reason != "UNSUPPORTED_PACKAGE_ECOSYSTEM"
+            for artifact in record.artifacts
+        )
     )
 
 

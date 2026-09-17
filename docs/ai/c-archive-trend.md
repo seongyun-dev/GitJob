@@ -120,8 +120,11 @@ repository**의 그 기간 GH Archive event 합, `active_repo_count`는 그 중 
   `ZERO_MEANS_NO_CURRENT_POSITIVE_OBSERVATION`이며 기술 미사용·부재가 아니다.
 - `FAILED`, `NOT_FOUND`, artifact 미확인, 표본에서 빠진 repository는 분모와 0 판정에
   넣지 않는다. eligible parsed 표본이 0이면 metric은 `null`이다.
-- COMPLETE repository에서도 mapper unresolved 또는 parser/coverage 문제가 있으면
-  양성 관측은 보존하되 point는 `INSUFFICIENT_DATA`와 quality reason을 갖는다.
+- COMPLETE repository에서도 target 기술을 후보로 가진 mapper ambiguity 또는
+  parser/coverage 문제가 있으면 양성 관측은 보존하되 해당 기술 point는
+  `INSUFFICIENT_DATA`와 quality reason을 갖는다. 후보가 비어 있는 unrelated
+  `UNKNOWN` package/source는 어느 기술의 미해석 근거인지 특정할 수 없으므로 44개
+  point 전체에 `UNRESOLVED_TECHNOLOGY_OBSERVATIONS`를 전파하지 않는다.
 
 각 point는 activity/public schema와 version, snapshot/run/collector/parser, URI와
 hash를 보존한다. 응답 폭증을 막기 위해 artifact 전체를 복제하지 않고 최대 20개의

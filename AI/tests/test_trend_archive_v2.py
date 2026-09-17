@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
 from github.contracts import RepoCollectionStatus, RepoLanguageMetadata
 from github.public_analysis import (
     ArtifactAnalysis,
@@ -42,6 +43,9 @@ def _record(
     included: bool = True,
     partial: bool = False,
     unresolved: bool = False,
+    unresolved_candidates: tuple[str, ...] = (),
+    artifact_status: TrendStatus = TrendStatus.READY,
+    artifact_reason: str | None = None,
 ) -> PublicRepoResult:
     commit_sha = pinned_commit_sha or f"{repo_id:x}".rjust(40, "0")
     artifact = ArtifactAnalysis(
@@ -49,7 +53,8 @@ def _record(
         uri=f"hdfs://trusted/{repo_id}/{commit_sha}/package.json",
         content_hash=f"{repo_id:x}".rjust(64, "0"),
         size_bytes=20,
-        status=TrendStatus.READY,
+        status=artifact_status,
+        reason=artifact_reason,
     )
     language_metadata = tuple(
         RepoLanguageMetadata(
@@ -81,7 +86,11 @@ def _record(
         partial_included=partial,
         exclusion_reasons=() if included else ("COLLECTION_FAILED",),
         quality_reasons=(),
-        status=TrendStatus.INSUFFICIENT_DATA if unresolved else TrendStatus.READY,
+        status=(
+            TrendStatus.INSUFFICIENT_DATA
+            if unresolved or artifact_status is not TrendStatus.READY
+            else TrendStatus.READY
+        ),
         observations=tuple(
             TechnologyObservation(
                 tech_id=tech_id,
@@ -112,7 +121,7 @@ def _record(
                     "raw_value": "unknown-sdk",
                     "basis": "PACKAGE",
                     "status": "NOT_FOUND",
-                    "candidates": (),
+                    "candidates": unresolved_candidates,
                     "path": artifact.path,
                     "scope": "dependencies",
                 },
@@ -686,7 +695,7 @@ def test_v2_preserves_failed_partial_and_unresolved_quality_counts(registry):
                 collection_status=RepoCollectionStatus.FAILED,
                 included=False,
             ),
-            _record(3, unresolved=True),
+            _record(3, unresolved=True, unresolved_candidates=("react",)),
         ),
         [_lineage(1), _lineage(2), _lineage(3)],
         include_partial=True,
@@ -706,3 +715,101 @@ def test_v2_preserves_failed_partial_and_unresolved_quality_counts(registry):
     assert point.unresolved_repo_count == 1
     assert "PARTIAL_COLLECTION_INCLUDED" in point.quality_reasons
     assert "UNRESOLVED_TECHNOLOGY_OBSERVATIONS" in point.quality_reasons
+
+
+def test_v2_unrelated_unknown_package_does_not_degrade_technology_point(registry):
+    period_input = _input(
+        registry,
+        "2026-03",
+        [_row(1, 5)],
+        (
+            _record(
+                1,
+                tech_ids=("react",),
+                unresolved=True,
+                artifact_status=TrendStatus.INSUFFICIENT_DATA,
+                artifact_reason="UNSUPPORTED_PACKAGE_ECOSYSTEM",
+            ),
+        ),
+        [_lineage(1)],
+    )
+
+    point = archive_historical_trend(
+        "react",
+        (period_input,),
+        registry,
+        periods=("2026-03",),
+        granularity="MONTH",
+    ).points[0]
+
+    assert point.status is TrendStatus.READY
+    assert point.unresolved_repo_count == 0
+    assert "UNRESOLVED_TECHNOLOGY_OBSERVATIONS" not in point.quality_reasons
+    assert "PUBLIC_ANALYSIS_NOT_READY" not in point.quality_reasons
+
+
+def test_v2_static_parser_partial_keeps_target_point_insufficient(registry):
+    period_input = _input(
+        registry,
+        "2026-03",
+        [_row(1, 5)],
+        (
+            _record(
+                1,
+                tech_ids=("fastapi",),
+                artifact_status=TrendStatus.INSUFFICIENT_DATA,
+                artifact_reason="STATIC_PARSER_PARTIAL",
+            ),
+        ),
+        [_lineage(1)],
+    )
+
+    point = archive_historical_trend(
+        "fastapi",
+        (period_input,),
+        registry,
+        periods=("2026-03",),
+        granularity="MONTH",
+    ).points[0]
+
+    assert point.status is TrendStatus.INSUFFICIENT_DATA
+    assert point.unresolved_repo_count == 0
+    assert "PUBLIC_ANALYSIS_NOT_READY" in point.quality_reasons
+
+
+def test_v2_ambiguous_candidate_degrades_only_candidate_technology(registry):
+    period_input = _input(
+        registry,
+        "2026-03",
+        [_row(1, 5)],
+        (
+            _record(
+                1,
+                unresolved=True,
+                unresolved_candidates=("java", "kotlin"),
+            ),
+        ),
+        [_lineage(1)],
+    )
+
+    java = archive_historical_trend(
+        "java",
+        (period_input,),
+        registry,
+        periods=("2026-03",),
+        granularity="MONTH",
+    ).points[0]
+    react = archive_historical_trend(
+        "react",
+        (period_input,),
+        registry,
+        periods=("2026-03",),
+        granularity="MONTH",
+    ).points[0]
+
+    assert java.unresolved_repo_count == 1
+    assert "UNRESOLVED_TECHNOLOGY_OBSERVATIONS" in java.quality_reasons
+    assert react.status is TrendStatus.READY
+    assert react.unresolved_repo_count == 0
+    assert "UNRESOLVED_TECHNOLOGY_OBSERVATIONS" not in react.quality_reasons
+    assert "PUBLIC_ANALYSIS_NOT_READY" not in react.quality_reasons
