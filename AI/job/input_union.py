@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from registry.mapper import RegistryMapper
 
 from job.cohort import (
     CohortCriteria,
+    CohortPurpose,
     InputUnionBatch,
     InputUnionObservation,
     InputUnionProvenance,
@@ -16,12 +19,11 @@ from job.cohort import (
     build_cohort,
 )
 from job.contracts import JobAnalysisInputBatch
-from registry.mapper import RegistryMapper
 
 if TYPE_CHECKING:
     from worker.intake import JobOutput
 
-INPUT_UNION_VERSION = "c-job-input-union/v1"
+INPUT_UNION_VERSION = "c-job-input-union/v2"
 MAX_INPUT_RECORDS = 50_000
 MAX_INPUT_BYTES = 128 * 1024 * 1024
 
@@ -36,6 +38,7 @@ def build_input_union(
     Repeated delivery of the same bound batch is one input, not another observation.
     """
     criteria = CohortCriteria.model_validate_json(criteria.model_dump_json())
+    outputs, superseded_input_batches = _select_active_snapshots(outputs, criteria)
     inputs = {}
     input_records = input_bytes = 0
     for output in outputs:
@@ -152,6 +155,7 @@ def build_input_union(
                 {item.source_site for item in references} - {key[0] for key in groups}
             )
         ),
+        superseded_input_batch_count=superseded_input_batches,
     )
     identity = _stable_hash(
         {
@@ -183,3 +187,86 @@ def build_input_union(
     )
     payload["cohort_id"] = "cohort-" + _stable_hash(payload)
     return JobCohort.model_validate(payload)
+
+
+def selected_input_totals(
+    outputs: tuple[JobOutput, ...], criteria: CohortCriteria
+) -> tuple[int, int]:
+    """Return the records and bytes that one calculation can actually consume.
+
+    Completion manifests remain independently verified by intake. Capacity is a
+    calculation boundary, so superseded full-active snapshots do not exhaust it
+    before the same selection policy used by :func:`build_input_union` runs.
+    """
+
+    selected, _ = _select_active_snapshots(outputs, criteria)
+    records = size_bytes = 0
+    for output in selected:
+        source = getattr(output, "source_site", None)
+        if (
+            source
+            and criteria.sources
+            and source.strip().upper() not in criteria.sources
+        ):
+            continue
+        records += len(output.batch.records)
+        size_bytes += output.batch_size_bytes
+    return records, size_bytes
+
+
+def _select_active_snapshots(
+    outputs: tuple[JobOutput, ...], criteria: CohortCriteria
+) -> tuple[tuple[JobOutput, ...], int]:
+    """Keep one complete full-active observation per source/scope for matching.
+
+    Date-bounded and monthly-demand inputs retain the observed-union policy.
+    Equal-timestamp snapshots are retained together so content conflicts still
+    fail visibly instead of being decided by file ordering.
+    """
+
+    if criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
+        return outputs, 0
+    passthrough: list[JobOutput] = []
+    groups: dict[tuple[str, str], list[JobOutput]] = defaultdict(list)
+    for output in outputs:
+        mode = getattr(output, "snapshot_mode", None)
+        scope = getattr(output, "snapshot_scope_key", None)
+        complete = getattr(output, "snapshot_complete", False)
+        source = getattr(output, "source_site", None)
+        if (
+            source
+            and criteria.sources
+            and source.strip().upper() not in criteria.sources
+        ):
+            passthrough.append(output)
+            continue
+        if mode == "active_listing" and scope and complete and source:
+            groups[(source.strip().upper(), scope)].append(output)
+        else:
+            passthrough.append(output)
+    selected: list[JobOutput] = []
+    superseded = 0
+    baselines: dict[str, datetime] = {}
+    for candidates in groups.values():
+        observed = [item for item in candidates if item.occurred_at <= criteria.as_of]
+        future = [item for item in candidates if item.occurred_at > criteria.as_of]
+        if not observed:
+            selected.extend(future)
+            continue
+        chosen_at = max(item.occurred_at for item in observed)
+        chosen = [item for item in candidates if item.occurred_at == chosen_at]
+        selected.extend((*chosen, *future))
+        superseded += len(observed) - len(chosen)
+        source = chosen[0].source_site.strip().upper()
+        current = baselines.get(source)
+        if current is None or chosen_at > current:
+            baselines[source] = chosen_at
+    for output in passthrough:
+        source = getattr(output, "source_site", None)
+        source = source.strip().upper() if source else None
+        baseline = baselines.get(source) if source else None
+        if baseline is not None and output.occurred_at <= baseline:
+            superseded += 1
+            continue
+        selected.append(output)
+    return tuple(selected), superseded

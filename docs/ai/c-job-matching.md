@@ -36,8 +36,11 @@ B 귀속 상태가 COMPLETE이며 `assessment_ceiling >= required_level`일 때�
 personal level 이상), `LEVEL_BELOW_REQUIRED`(완결적인 보유 evidence는 있으나
 수준 부족), `TECHNOLOGY_NOT_HELD`(완결적인 부재),
 `EVIDENCE_SCOPE_INCOMPLETE`(범위·proof·personal level 미확정). 공고 문장 자체가
-미해석이면 기존 `unresolved`/outer UNKNOWN으로 보존한다. PREFERRED는 같은 방식으로
-보이되 REQUIRED eligibility를 탈락시키지 않는다.
+미해석이면 기존 `unresolved`에 보존한다. 다만 같은 REQUIRED 문장에서 확인된 기술
+clause를 사용자가 하나라도 충족하면 공고 전체를 UNKNOWN으로 숨기지 않고 outer
+PARTIAL로 표시한다. 확인된 clause가 하나도 충족되지 않았고 `unresolved` 때문에
+불충족도 확정할 수 없을 때만 outer UNKNOWN이다. PREFERRED는 같은 방식으로 보이되
+REQUIRED eligibility를 탈락시키지 않는다.
 
 v1/v2 Evidence 입력은 personal level 축이 없던 역사 입력이다. 이 경우 추천의 기존
 held-only 의미와 일치하도록 proof-supported HELD 조건을 `LEGACY_HELD_MATCH`로
@@ -63,8 +66,9 @@ assessment는 level field 자체가 없던 requirements v1만 legacy read로 허
 근거를 보존한다. 옛 COHORT의 필드 누락은 준비 안 됨이며 빈 모집단과 다르다.
 사용자 분석 완료 API는 기존 추천 계산과 함께 부분 부합을 계산한다.
 
-`job-matching/v2`는 중복 요구절과 원문 근거를 사용자 RECOMMENDATION마다 복제하지
-않는다. `002_job_matching_projection.sql`의 `matching_source`가
+`job-matching/v3`는 사용자 부합을 parser 완결성보다 먼저 보이도록 상태와 정렬 의미를
+명시한다. 중복 요구절과 원문 근거는 사용자 RECOMMENDATION마다 복제하지 않는다.
+`002_job_matching_projection.sql`의 `matching_source`가
 `(cohort_snapshot_id, job_id)`별 불변 `MatchingJobInput`을 한 번 보존하고,
 `matching_calculation`은 계산 ID·작은 metadata·전체/적격/조건부 count를,
 `matching_job`은 안정 position과 사용자별 held/missing/unknown 판정만 보존한다.
@@ -79,7 +83,7 @@ role에도 이 두 권한을 부여하지 않는다. 초기 행 수·hash·참�
 transaction이 완료되지 않으므로 child 유실을 축약된 정상 결과로 게시하지 않는다.
 게시 transaction은 부모 `job_matching_ref`와 calculation ID·cohort snapshot·job count,
 부모 recommendation의 analysis/cohort scope를 대조한 뒤 작은 전용 열에 결박한다. 이후
-v2 조회는 이 불변 header를 기준으로 하며 부모 payload를 매번 재검증하지 않는다.
+compact 조회는 이 불변 header를 기준으로 하며 부모 payload를 매번 재검증하지 않는다.
 trigger와 runtime 최소 권한은 정상 애플리케이션 경로의 불변 계약이지, table owner/DB
 관리자가 trigger를 비활성화하거나 직접 schema를 바꾸는 행위까지 막는 보안 경계는 아니다.
 
@@ -143,7 +147,7 @@ scope mismatch가 전역 ValueError handler에서 422 `INVALID_INPUT`으로 잘�
 |---|---|---|---|
 | Java 필수 | FULL | 1 / 0 / 0 | 1.0 |
 | Java, Docker 필수 · Docker 평가 완료/미관측 | PARTIAL | 1 / 1 / 0 | 0.5 |
-| Java 필수 + 별도 `Python, Docker 등을 활용` | UNKNOWN | 1 / 0 / 0 + 미해석 1개 | null |
+| Java 필수 + 별도 `Python, Docker 등을 활용` | PARTIAL | 1 / 0 / 0 + 미해석 1개 | null |
 | Java 또는 Python · 두 기술 모두 미평가 | UNKNOWN | 0 / 0 / 1 | null |
 | 기술 필수 조건 추출 없음 | NOT_APPLICABLE | 0 / 0 / 0 | null |
 
@@ -173,21 +177,27 @@ scope mismatch가 전역 ValueError handler에서 422 `INVALID_INPUT`으로 잘�
 `excluded_conditional_count`는 기본 false에서 `conditional_count`, true에서 0이다.
 예를 들어 적격 2·조건부 1이면 false는 total=2/conditional=1/excluded=1,
 true는 total=3/conditional=1/excluded=0이다. 페이지 경계는 이 반환 집합의 안정 position을
-따른다. 정렬은 적격 여부 → FULL/PARTIAL/NONE/UNKNOWN/
-NOT_APPLICABLE → 필수 충족률 → 우대 충족 수 → job_id 순으로 고정한다.
+따른다. 새 `job-matching/v3` 정렬은 적격 여부 →
+FULL/PARTIAL/UNKNOWN/NONE/NOT_APPLICABLE → 확정 미충족 수가 적은 순 → 확정 충족
+수가 많은 순 → 사용자 미확정과 원문 미해석 수가 적은 순 → 우대 충족 수 → job_id
+순으로 고정한다. 따라서 FULL이 20건보다 적으면 첫 페이지의 남는 자리를 사용자에게
+확인된 기술이 있는 PARTIAL이 채우며, 완전 해석됐지만 전부 미충족인 NONE이 앞서지 않는다.
+기존 v1/v2 저장 결과는 저장 당시 상태와 정렬을 그대로 읽는다.
 과거 Snapshot에는 새 결과를 덧붙이지 않으며 새 정책 계산은 새 완료 event ID를 사용한다.
 
 비율의 정본은 `satisfied_count`, `unsatisfied_count`, `unknown_count` 정수다. 확정 조건은
 정수에서 비율을 다시 만들고, JSON 경계에서 소수 6자리 반올림은 절대 오차 5e-7 이내만
 받은 뒤 정본 비율로 canonicalize한다. 그 밖의 오차, NaN/Infinity는 거절한다.
-UNKNOWN 또는 미해석 조건은 오차 범위와 무관하게 반드시 null이다. v2 compact 행에는
+UNKNOWN 또는 미해석 조건은 오차 범위와 무관하게 반드시 null이다. compact 행에는
 float 비율을 저장하지 않고 조회 시 정수 count에서 파생한다.
 
 입력 HTTP body는 기존 8 MiB 제한을 유지한다. matching 결과는 최대 50,000공고,
 shared source 1행 512 KiB, 사용자 assessment 1행 64 KiB, 논리 결과 전체 source+assessment
 64 MiB를 한도로 한다. 초과 시 일부 top-N을 정상 결과로 게시하지 않고 전체 계산을
 실패 처리하여 413 `RESULT_TOO_LARGE`를 반환한다. 자동 intake의 원본 50,000건/128 MiB
-예산은 별도 입력 검증이며, 둘 중 하나를 통과했다고 다른 예산 통과를 뜻하지 않는다.
+예산은 별도 입력 검증이며, ACTIVE_MATCHING에서는 최신 complete active snapshot 선택 후
+계산 대상에 적용한다. 과거 회차의 manifest·hash 무결성 검증은 생략하지 않는다.
+둘 중 하나를 통과했다고 다른 예산 통과를 뜻하지 않는다.
 
 ## 수집·정규화 변경과 기존 입력
 
@@ -201,10 +211,19 @@ shared source 1행 512 KiB, 사용자 assessment 1행 64 KiB, 논리 결과 전�
   `job-requirements/v2`에서 지원자 REQUIRED clause로 만들지 않는다. 회사소개·기업소개와
   일반 기술스택 나열도 마찬가지로 요구절이 아니다. 지원자격/자격요건 등 명시적 requirement
   surface의 근거만 levelled REQUIRED clause가 될 수 있다.
+- `ACTIVE_MATCHING`의 strict 공고도 같은 `job-requirements/v2` REQUIRED clause를
+  사용한다. 우대 조건의 미해석은 strict 판정을 막지 않지만, REQUIRED 일부가 미해석이면
+  확인된 기술을 보존하더라도 공고 전체를 확정 부합으로 올리지 않는다.
+- JobKorea의 `스킬`은 일반 기술 영역이며, 그 아래 `ㆍ필수`, `ㆍ우대`처럼 명시된 행만
+  각각 REQUIRED/PREFERRED로 해석한다. C 공고 추출기가 인식하는 표기 변형
+  (`SpringBoot`, `React.js`, `HTML5` 등)은 Registry 44의 정식 표시명으로 재확인하며
+  원문과 위치는 그대로 보존한다.
 - 새 입력 버전은 `worknet-collector/v2`, `saramin-collector/v2`,
-  `gamejob-collector/v2`, `jobkorea-crawler/v2`다. 기존 v1 데이터는 변경하지 않는다.
-- C 분류 `job-requirement-rules/v6`, 품질 `job-cohort-quality/v6`,
-  요구절 `job-requirements/v2`(v1 read 호환), 부분 평가 `job-matching/v2`, 저장 표현
+  `gamejob-collector/v2`, 기간 수집 `jobkorea-crawler/v2`, 전체 활성 스냅샷
+  `jobkorea-crawler/v3`다. 기존 v1/v2 데이터는 변경하지 않는다. v3의 16개 duty token은
+  쉼표·세미콜론·파이프로 분리한 exact category 단위에서만 다섯 서비스 직무로 매핑한다.
+- C 분류 `job-requirement-rules/v8`, 품질 `job-cohort-quality/v7`,
+  요구절 `job-requirements/v2`(v1 read 호환), 부분 평가 `job-matching/v3`, 저장 표현
   `job-matching-storage/v2`를 새 계산에 기록한다.
 
 ## 동일 표본 필터 영향 비교

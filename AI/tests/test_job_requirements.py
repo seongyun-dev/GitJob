@@ -20,7 +20,7 @@ from registry.contracts import load_registry
 from registry.mapper import RegistryMapper
 
 AI_ROOT = Path(__file__).resolve().parents[1]
-REGISTRY_PATH = AI_ROOT / "registry" / "data" / "technology_registry_v1.json"
+REGISTRY_PATH = AI_ROOT / "registry" / "data" / "technology_registry_20260911_4.json"
 
 
 def test_worknet_duty_heading_ends_navigation_sections():
@@ -29,6 +29,13 @@ def test_worknet_duty_heading_ends_navigation_sections():
     )
     assert result.required == ()
     assert not result.unresolved
+
+
+def test_general_body_heading_overrides_stale_required_source_marker():
+    result = _analyze("자격요건\nJava 경험\n복리후생\nAWS 교육 지원")
+
+    assert [clause.tech_ids for clause in result.required] == [("java",)]
+    assert result.unresolved == ()
 
 
 @pytest.mark.parametrize(
@@ -44,8 +51,12 @@ def test_duty_headings_do_not_make_technical_work_a_requirement(heading):
 
 def test_numbered_conditions_have_one_source_span_each():
     result = _analyze("자격요건\n1. Java 경험\n2. Python, Docker 등을 활용")
-    assert len(result.required) == 1
-    assert len(result.required[0].evidence_refs) == 1
+    assert [clause.tech_ids for clause in result.required] == [
+        ("docker",),
+        ("java",),
+        ("python",),
+    ]
+    assert all(len(clause.evidence_refs) == 1 for clause in result.required)
     assert len(result.unresolved) == 1
 
 
@@ -142,6 +153,72 @@ def test_required_and_preferred_or_groups_are_kept_separate() -> None:
     assert result.unresolved == ()
 
 
+def test_jobkorea_skill_section_preserves_inline_required_label() -> None:
+    result = _analyze("담당업무\n서비스 개발\n스킬\nㆍ필수 : React, Java")
+
+    assert [clause.tech_ids for clause in result.required] == [
+        ("java",),
+        ("react",),
+    ]
+    assert result.preferred == ()
+    assert result.unresolved == ()
+
+
+def test_same_line_known_requirements_survive_unknown_comma_operand() -> None:
+    result = _analyze("자격요건\nJava, Cobol, Python 개발 경험")
+
+    assert [clause.tech_ids for clause in result.required] == [
+        ("java",),
+        ("python",),
+    ]
+    assert len(result.unresolved) == 1
+    assert result.unresolved[0].reason is UnresolvedReason.TECHNOLOGY_MAPPING_UNRESOLVED
+    assert result.unresolved[0].known_tech_ids == ("java", "python")
+    assert result.unresolved[0].raw_operands == ("Cobol",)
+
+
+@pytest.mark.parametrize(
+    ("raw_technology", "tech_id"),
+    [
+        ("SpringBoot", "spring-boot"),
+        ("HTML5", "html"),
+        ("CSS3", "css"),
+        ("NodeJS", "nodejs"),
+        ("React.js", "react"),
+        ("Nest.js", "nestjs"),
+        ("NextJS", "nextjs"),
+    ],
+)
+def test_collector_owned_spelling_variants_map_to_registry_technology(
+    raw_technology: str, tech_id: str
+) -> None:
+    result = _analyze(f"자격요건\n{raw_technology} 개발 경험")
+
+    assert [clause.tech_ids for clause in result.required] == [(tech_id,)]
+    assert result.unresolved == ()
+
+
+def test_list_marker_is_not_part_of_short_language_mapping() -> None:
+    body = "자격요건\nㆍC 개발 경험"
+    result = _analyze(
+        body,
+        technology_mentions=[
+            {
+                "raw_technology": "ㆍC",
+                "technology_id": "c",
+                "requirement_type": "REQUIRED",
+                "source_surface": "BODY",
+                "evidence_section": "자격요건",
+                "evidence_text": "ㆍC 개발 경험",
+                "extraction_method": "RULE_BASED_V1",
+            }
+        ],
+    )
+
+    assert [clause.tech_ids for clause in result.required] == [("c",)]
+    assert result.unresolved == ()
+
+
 def test_repeated_logical_clause_merges_evidence_without_losing_mentions() -> None:
     result = _analyze(
         "자격요건\nJava 경험\n우대사항\nRedis 또는 Docker 경험\nRedis 또는 Docker 경험"
@@ -198,11 +275,28 @@ def test_multiline_classifier_evidence_is_split_into_independent_source_lines() 
         shared_evidence=True,
     )
 
-    assert [clause.tech_ids for clause in result.required] == [("java",)]
+    assert [clause.tech_ids for clause in result.required] == [
+        ("docker",),
+        ("java",),
+        ("python",),
+    ]
     assert len(result.unresolved) == 1
     assert result.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
     assert result.unresolved[0].known_tech_ids == ("docker", "python")
     assert result.unresolved[0].evidence.text == "Python, Docker 등을 활용"
+
+
+def test_simple_slash_preserves_known_technologies_without_inventing_logic() -> None:
+    result = _analyze("자격요건\nJava/Python 개발 경험")
+
+    assert [clause.tech_ids for clause in result.required] == [
+        ("java",),
+        ("python",),
+    ]
+    assert len(result.unresolved) == 1
+    assert result.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
+    assert result.unresolved[0].known_tech_ids == ("java", "python")
+    assert result.unresolved[0].evidence.text == "Java/Python 개발 경험"
 
 
 def test_company_introduction_and_general_skill_sections_are_not_requirements() -> None:
@@ -392,17 +486,41 @@ def test_level_signal_stays_bound_to_each_comma_separated_technology() -> None:
     }
 
 
-def test_calibrated_open_list_and_duty_examples_do_not_become_levelled_requirements():
+def test_calibrated_open_list_preserves_known_technologies_but_duty_does_not():
     open_list = _analyze("지원자격\nJava, React, JPA 등의 개발 경험")
+    parenthetical = _analyze(
+        "지원자격\n주요 백엔드 프레임워크(Spring, Django, Node.js 등) 활용 경험"
+    )
     duty = _analyze("담당업무\nJava Spring Boot REST API 설계 및 핵심 기능 개발")
     unrelated_optimization = _analyze("담당업무\nReact 이미지 최적화 경험")
 
-    assert open_list.required == ()
+    assert [clause.tech_ids for clause in open_list.required] == [
+        ("java",),
+        ("jpa",),
+        ("react",),
+    ]
     assert open_list.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
+    assert parenthetical.required == ()
+    assert parenthetical.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
     assert duty.required == ()
     assert duty.unresolved == ()
     assert unrelated_optimization.required == ()
     assert unrelated_optimization.unresolved == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Backend frameworks (Spring, Django, Node.js, etc.) experience",
+        "백엔드 프레임워크(Spring/Django 등) 활용 경험",
+    ],
+)
+def test_parenthetical_open_list_examples_are_not_promoted(text):
+    result = _analyze(f"지원자격\n{text}")
+
+    assert result.required == ()
+    assert len(result.unresolved) == 1
+    assert result.unresolved[0].reason is UnresolvedReason.LOGIC_UNSUPPORTED
 
 
 def test_calibrated_title_and_structured_skill_signals_do_not_create_requirements():

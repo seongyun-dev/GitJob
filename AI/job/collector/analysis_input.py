@@ -26,7 +26,7 @@ opinion about which record wins.
 ### The gate mirrors what C already refuses
 
 `worker.intake.load_job_output` rejects an input whose manifest reports an
-early stop, detail failures or invalid records, and refuses a manifest whose
+early stop, unreconciled detail failures or invalid records, and refuses a manifest whose
 `output_sha256` does not bind the batch bytes. Publishing such a run would put
 a file under `analysis_input` that C then declines — a promise broken at the
 only place that promise exists. The checks are restated here rather than
@@ -53,12 +53,14 @@ from common.webhdfs import (
     normalize_hdfs_path,
     parse_datanode_hosts,
 )
+
 from job.collector.raw_sink import (
     RUN_FILENAMES,
     RawUploadResult,
     require_single_segment,
     upload_run_files,
 )
+from job.jobkorea_contract import active_snapshot_metadata
 
 __all__ = [
     "ANALYSIS_INPUT_PUBLISH_RECORD",
@@ -167,6 +169,46 @@ def _count(manifest: Mapping[str, object], field_name: str) -> int:
     return value if type(value) is int else 0
 
 
+def _record_local_detail_errors(manifest: Mapping[str, object], batch: bytes) -> bool:
+    """Recognize the bounded JobKorea v3 partial-detail contract.
+
+    A detail error is publishable only when every reported failure remains as a
+    BLOCKED record in the bound batch.  This prevents a producer from declaring
+    errors while silently dropping the affected postings.
+    """
+
+    source = manifest.get("source")
+    if (
+        manifest.get("source_site") != "JOBKOREA"
+        or manifest.get("collector_version") != "jobkorea-crawler/v3"
+        or not isinstance(source, Mapping)
+        or source.get("mode") != "active_listing"
+    ):
+        return False
+    try:
+        payload = json.loads(batch)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return False
+    records = payload.get("records") if isinstance(payload, Mapping) else None
+    if not isinstance(records, list):
+        return False
+    detail_errors = _count(manifest, "detail_errors")
+    blocked = sum(
+        isinstance(record, Mapping) and record.get("body_status") == "BLOCKED"
+        for record in records
+    )
+    return (
+        detail_errors > 0
+        and detail_errors == blocked
+        and _count(manifest, "records") == len(records)
+    )
+
+
+def _complete_active_snapshot(manifest: Mapping[str, object]) -> bool:
+    snapshot = active_snapshot_metadata(manifest)
+    return snapshot is None or snapshot.complete
+
+
 def release_blockers(
     run_dir: Path,
     *,
@@ -201,6 +243,7 @@ def release_blockers(
         blockers.append("MANIFEST_OUTPUT_MISMATCH")
 
     declared = manifest.get("output_sha256")
+    batch_bytes: bytes | None = None
     if declared is None:
         # C treats an unbound manifest as "hold, do not auto-publish".
         blockers.append("UNBOUND_LEGACY_MANIFEST")
@@ -222,7 +265,11 @@ def release_blockers(
 
     if manifest.get("stopped_reason"):
         blockers.append("COLLECTOR_STOPPED_EARLY")
-    if _count(manifest, "detail_errors"):
+    if not _complete_active_snapshot(manifest):
+        blockers.append("COLLECTOR_STOPPED_EARLY")
+    if _count(manifest, "detail_errors") and not (
+        batch_bytes is not None and _record_local_detail_errors(manifest, batch_bytes)
+    ):
         blockers.append("DETAIL_COLLECTION_FAILED")
     if _count(manifest, "invalid_records"):
         blockers.append("INVALID_SOURCE_RECORDS")

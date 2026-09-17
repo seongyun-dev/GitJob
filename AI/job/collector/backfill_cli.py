@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="sources",
         choices=list(DEFAULT_SOURCES),
-        help="restrict to one source; repeat for several (default: all four)",
+        help="restrict to one source; repeat for several (default: all admitted sources)",
     )
     parser.add_argument(
         "--execute",
@@ -97,9 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {state:<20} {counts[state]}")
     for outcome in summary.outcomes:
         if outcome.state in {"BLOCKED", "FAILED"}:
-            print(
-                f"  - {outcome.run.key} {outcome.state}: {', '.join(outcome.detail)}"
-            )
+            print(f"  - {outcome.run.key} {outcome.state}: {', '.join(outcome.detail)}")
     return 0 if summary.ok else 1
 
 

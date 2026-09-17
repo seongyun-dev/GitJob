@@ -16,10 +16,12 @@ from threading import Event, RLock, Thread
 from typing import Literal
 
 import psycopg
+from job.cohort import CohortCriteria
+from job.contracts import BodyStatus, JobAnalysisInputBatch
+from job.input_union import selected_input_totals
+from job.jobkorea_contract import active_snapshot_metadata
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from job.cohort import CohortCriteria
-from job.contracts import JobAnalysisInputBatch
 from worker.job_hdfs_source import JobHdfsSourceConfig
 from worker.lease import LeaseHeartbeat
 from worker.store import ComputeStore, digest
@@ -28,6 +30,8 @@ LOGGER = logging.getLogger(__name__)
 INTAKE_VERSION = "c-completed-output-intake/v1"
 MAX_JOB_SET_BYTES = 128 * 1024 * 1024
 MAX_JOB_SET_RECORDS = 50_000
+MAX_JOB_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_JOB_BATCH_BYTES = 64 * 1024 * 1024
 COMMON_JOB_BATCH_FILENAME = "job_analysis_input.json"
 LEGACY_JOBKOREA_BATCH_FILENAME = "job_analysis_input_v1.json"
 
@@ -123,6 +127,9 @@ class JobOutput:
     mixed_date_semantics: bool = False
     source_site: str | None = None
     batch_size_bytes: int = 0
+    snapshot_mode: str | None = None
+    snapshot_scope_key: str | None = None
+    snapshot_complete: bool = False
 
 
 def _stamp(path: Path):
@@ -185,12 +192,33 @@ def _job_batch_layout(manifest: dict[str, object]) -> tuple[str, bool]:
     )
 
 
+def _jobkorea_v3_snapshot_metadata(
+    manifest: dict[str, object], batch: JobAnalysisInputBatch
+) -> tuple[str | None, str | None, bool, bool]:
+    """Return active-snapshot scope and record-local detail reconciliation.
+
+    Only the JobKorea v3 full active collector has this contract.  Older and
+    date-bounded producers keep the existing fail-closed detail-error gate.
+    """
+
+    snapshot = active_snapshot_metadata(manifest)
+    if snapshot is None:
+        return None, None, False, False
+    counts = manifest.get("counts")
+    detail_errors = counts.get("detail_errors", 0) if isinstance(counts, dict) else 0
+    blocked = sum(record.body_status is BodyStatus.BLOCKED for record in batch.records)
+    reconciled = (
+        type(detail_errors) is int and detail_errors > 0 and detail_errors == blocked
+    )
+    return "active_listing", snapshot.scope_key, snapshot.complete, reconciled
+
+
 def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
     manifest_path = _contained(manifest_path, root)
     if manifest_path.name != "manifest.json":
         raise ValueError("only the producer completion manifest is accepted")
     manifest_before = _stamp(manifest_path)
-    manifest_raw = _read(manifest_path, 1024 * 1024)
+    manifest_raw = _read(manifest_path, MAX_JOB_MANIFEST_BYTES)
     manifest = json.loads(manifest_raw)
     if not isinstance(manifest, dict):
         raise TypeError("manifest must be an object")
@@ -208,13 +236,13 @@ def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
     batch_name, legacy_jobkorea = _job_batch_layout(manifest)
     batch_path = _contained(manifest_path.parent / batch_name, root)
     before = manifest_before, _stamp(batch_path)
-    batch_raw = _read(batch_path, 32 * 1024 * 1024)
+    batch_raw = _read(batch_path, MAX_JOB_BATCH_BYTES)
     batch = JobAnalysisInputBatch.model_validate_json(batch_raw)
     if manifest.get("outputs", {}).get(batch_name) != batch_name:
         raise ValueError("manifest output must name the fixed sibling batch")
     if (
         before != (_stamp(manifest_path), _stamp(batch_path))
-        or _read(manifest_path, 1024 * 1024) != manifest_raw
+        or _read(manifest_path, MAX_JOB_MANIFEST_BYTES) != manifest_raw
     ):
         raise ValueError("producer output changed while being read")
     issues = []
@@ -246,12 +274,18 @@ def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
             raise ValueError("manifest dataset/schema does not match the batch")
         if manifest.get("stopped_reason"):
             issues.append("COLLECTOR_STOPPED_EARLY")
-        for field, code in (
-            ("detail_errors", "DETAIL_COLLECTION_FAILED"),
-            ("invalid_records", "INVALID_SOURCE_RECORDS"),
-        ):
-            if manifest["counts"].get(field, 0):
-                issues.append(code)
+        snapshot_mode, snapshot_scope_key, snapshot_complete, detail_reconciled = (
+            _jobkorea_v3_snapshot_metadata(manifest, batch)
+        )
+        if snapshot_mode and not snapshot_complete:
+            issues.append("COLLECTOR_STOPPED_EARLY")
+        if manifest["counts"].get("detail_errors", 0) and not detail_reconciled:
+            issues.append("DETAIL_COLLECTION_FAILED")
+        if manifest["counts"].get("invalid_records", 0):
+            issues.append("INVALID_SOURCE_RECORDS")
+    if legacy_jobkorea:
+        snapshot_mode = snapshot_scope_key = None
+        snapshot_complete = False
     for key in ("collector_version", "pipeline_run_id"):
         if metadata.get(key) != getattr(batch, key):
             raise ValueError("manifest identity does not match the batch")
@@ -278,6 +312,9 @@ def load_job_output(manifest_path: Path, root: Path) -> JobOutput:
         bool(manifest.get("listing_date_labels", {}).get("수정일", 0)),
         source,
         len(batch_raw),
+        snapshot_mode,
+        snapshot_scope_key,
+        snapshot_complete,
     )
 
 
@@ -334,6 +371,7 @@ def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
 
     from job.demand import aggregate_demand
     from job.input_union import build_input_union
+
     from worker.api import compute_versions
     from worker.jobs import job_review_records
     from worker.store import Artifact
@@ -538,6 +576,28 @@ class IntakeRunner:
                     )
             self._current_jobs = current
 
+    def _validate_job_set_capacity(self, outputs):
+        """Apply the input budget after active-snapshot selection.
+
+        Configured historical criteria keep their full observed union. A dynamic
+        selector always resolves the latest ACTIVE_MATCHING view, so validate that
+        view as well even when the configured calculations use an older cutoff.
+        """
+
+        criteria = {
+            digest(item.model_dump(mode="json")): item for item in self.config.criteria
+        }
+        if outputs:
+            current = CohortCriteria(
+                target_role=self.config.criteria[0].target_role,
+                as_of=max(output.occurred_at for output in outputs),
+            )
+            criteria.setdefault(digest(current.model_dump(mode="json")), current)
+        for item in criteria.values():
+            input_records, input_bytes = selected_input_totals(tuple(outputs), item)
+            if input_records > MAX_JOB_SET_RECORDS or input_bytes > MAX_JOB_SET_BYTES:
+                raise ValueError("job set record or byte limit exceeded")
+
     def _refresh_job_sources(self, report):
         """Stage published HDFS runs before discovery, if any are configured.
 
@@ -582,7 +642,6 @@ class IntakeRunner:
         self._refresh_job_sources(report)
         outputs = []
         input_bindings = {}
-        input_bytes = input_records = 0
         invalid_set = False
         try:
             manifests = self._manifests()
@@ -609,15 +668,6 @@ class IntakeRunner:
                     known = self._known_manifests.get((path, root))
                     if known is not None and known != binding:
                         raise ValueError("verified completion input was replaced")
-                    input_bytes += loaded.batch_size_bytes
-                    input_records += len(loaded.batch.records)
-                    if (
-                        input_bytes > MAX_JOB_SET_BYTES
-                        or input_records > MAX_JOB_SET_RECORDS
-                    ):
-                        report["failed"] += 1
-                        invalid_set = True
-                        break
                     outputs.append(loaded)
                     input_bindings[(path, root)] = binding
                     continue
@@ -655,6 +705,7 @@ class IntakeRunner:
                 )
         if self.job_set_sink and not self._stop.is_set() and not invalid_set:
             try:
+                self._validate_job_set_capacity(outputs)
                 if self.job_input_guard:
                     self.job_input_guard(
                         {
@@ -794,6 +845,7 @@ class _PublicSource:
     def __call__(self):
         from github.artifact_reader import ReadOnlyWebHdfsReader
         from github.snapshot_input import load_published_snapshot
+
         from worker.public_intake import PublicPipelineConsumer
 
         if self.consumer is None:

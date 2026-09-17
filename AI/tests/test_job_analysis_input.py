@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-
 from common.webhdfs import WebHdfsClient, WebHdfsResponse
 from job.collector.analysis_input import (
     ANALYSIS_INPUT_PUBLISH_RECORD,
@@ -29,6 +28,7 @@ from job.collector.analysis_input import (
     write_publish_record,
 )
 from job.collector.raw_sink import RUN_FILENAMES
+from job.jobkorea_contract import JOBKOREA_V3_DUTY_ROLE_PAIRS
 
 BASE_URL = "http://hdfs-namenode:9870/webhdfs/v1"
 DATANODE = "http://hdfs-datanode:9864/upload"
@@ -326,6 +326,79 @@ def test_release_blockers_accepts_a_complete_run(tmp_path):
     assert (
         release_blockers(_run_dir(tmp_path), source=SOURCE, pipeline_run_id=RUN_ID)
         == ()
+    )
+
+
+def _as_jobkorea_v3_active(run_dir: Path, *, body_status: str = "BLOCKED") -> None:
+    batch_path = run_dir / "job_analysis_input.json"
+    batch = json.dumps({"records": [{"body_status": body_status}]}).encode()
+    batch_path.write_bytes(batch)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        source_site="JOBKOREA",
+        collector_version="jobkorea-crawler/v3",
+        counts={"records": 1, "detail_errors": 1, "invalid_records": 0},
+        stats={"scan_stop_reason": "all_scopes_complete"},
+        source={
+            "site": "JOBKOREA",
+            "mode": "active_listing",
+            "duty_scopes": [
+                {
+                    "code": code,
+                    "name": f"duty-{code}",
+                    "target_role": role,
+                    "scan_stop_reason": "short_page",
+                }
+                for code, role in sorted(JOBKOREA_V3_DUTY_ROLE_PAIRS)
+            ],
+        },
+        output_sha256={"job_analysis_input.json": hashlib.sha256(batch).hexdigest()},
+    )
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+
+def test_jobkorea_v3_record_local_detail_failures_can_be_published(tmp_path):
+    run_dir = _run_dir(
+        tmp_path,
+        records=1,
+        detail_errors=1,
+        source_site="JOBKOREA",
+    )
+    _as_jobkorea_v3_active(run_dir)
+
+    assert release_blockers(run_dir, source="JOBKOREA", pipeline_run_id=RUN_ID) == ()
+
+
+def test_jobkorea_v3_detail_failures_must_remain_in_the_bound_batch(tmp_path):
+    run_dir = _run_dir(
+        tmp_path,
+        records=1,
+        detail_errors=1,
+        source_site="JOBKOREA",
+    )
+    _as_jobkorea_v3_active(run_dir, body_status="TEXT_AVAILABLE")
+
+    assert "DETAIL_COLLECTION_FAILED" in release_blockers(
+        run_dir, source="JOBKOREA", pipeline_run_id=RUN_ID
+    )
+
+
+def test_jobkorea_v3_full_snapshot_must_finish_every_scope(tmp_path):
+    run_dir = _run_dir(
+        tmp_path,
+        records=1,
+        detail_errors=1,
+        source_site="JOBKOREA",
+    )
+    _as_jobkorea_v3_active(run_dir)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["source"]["duty_scopes"][0]["scan_stop_reason"] = "max_pages"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert "COLLECTOR_STOPPED_EARLY" in release_blockers(
+        run_dir, source="JOBKOREA", pipeline_run_id=RUN_ID
     )
 
 

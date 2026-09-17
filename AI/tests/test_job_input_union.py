@@ -5,12 +5,11 @@ from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
-from test_job_cohort import batch, criteria, posting
-
 from job import input_union
 from job.cohort import JobCohort
 from job.demand import aggregate_demand
 from registry.mapper import RegistryMapper
+from test_job_cohort import batch, criteria, posting
 from worker.api import default_registry
 
 
@@ -202,6 +201,179 @@ def test_output_order_and_repeated_delivery_preserve_complete_identity(mapper):
         input_union.build_input_union((one, changed), criteria(), mapper).cohort_id
         != first.cohort_id
     )
+
+
+def test_active_matching_keeps_only_latest_complete_full_snapshot_before_bounds(mapper):
+    old = output(
+        posting("old", source_site="JOBKOREA", collected_at="2026-09-07T00:00:00Z"),
+        source="JOBKOREA",
+        run="old",
+        at=datetime(2026, 9, 7, tzinfo=UTC),
+        batch_size_bytes=80 * 1024 * 1024,
+        snapshot_mode="active_listing",
+        snapshot_scope_key="scope-a",
+        snapshot_complete=True,
+    )
+    latest = output(
+        posting("latest", source_site="JOBKOREA", collected_at="2026-09-08T00:00:00Z"),
+        source="JOBKOREA",
+        run="latest",
+        at=datetime(2026, 9, 8, tzinfo=UTC),
+        batch_size_bytes=80 * 1024 * 1024,
+        snapshot_mode="active_listing",
+        snapshot_scope_key="scope-a",
+        snapshot_complete=True,
+    )
+    cohort = input_union.build_input_union(
+        (old, latest), criteria(as_of="2026-09-09T00:00:00Z"), mapper
+    )
+
+    assert [item.pipeline_run_id for item in cohort.input_union.input_batches] == [
+        "latest"
+    ]
+    assert cohort.input_union.superseded_input_batch_count == 1
+
+
+def test_full_active_snapshot_replaces_older_legacy_source_batches(mapper):
+    legacy = output(
+        posting(
+            "legacy-only",
+            source_site="JOBKOREA",
+            collected_at="2026-09-07T00:00:00Z",
+        ),
+        source="JOBKOREA",
+        run="legacy-v2",
+        at=datetime(2026, 9, 7, tzinfo=UTC),
+    )
+    baseline = output(
+        posting(
+            "current",
+            source_site="JOBKOREA",
+            collected_at="2026-09-08T00:00:00Z",
+        ),
+        source="JOBKOREA",
+        run="full-v3",
+        at=datetime(2026, 9, 8, tzinfo=UTC),
+        snapshot_mode="active_listing",
+        snapshot_scope_key="jobkorea-16-duty-categories",
+        snapshot_complete=True,
+    )
+
+    cohort = input_union.build_input_union(
+        (legacy, baseline), criteria(as_of="2026-09-09T00:00:00Z"), mapper
+    )
+
+    assert [item.job_id for item in cohort.jobs] == ["JOBKOREA:current"]
+    assert [item.pipeline_run_id for item in cohort.input_union.input_batches] == [
+        "full-v3"
+    ]
+    assert cohort.input_union.superseded_input_batch_count == 1
+
+
+def test_source_delta_newer_than_full_active_snapshot_is_retained(mapper):
+    baseline = output(
+        posting(
+            "current",
+            source_site="JOBKOREA",
+            collected_at="2026-09-08T00:00:00Z",
+        ),
+        source="JOBKOREA",
+        run="full-v3",
+        at=datetime(2026, 9, 8, tzinfo=UTC),
+        snapshot_mode="active_listing",
+        snapshot_scope_key="jobkorea-16-duty-categories",
+        snapshot_complete=True,
+    )
+    delta = output(
+        posting(
+            "new-after-baseline",
+            source_site="JOBKOREA",
+            collected_at="2026-09-08T12:00:00Z",
+        ),
+        source="JOBKOREA",
+        run="delta-v2",
+        at=datetime(2026, 9, 8, 12, tzinfo=UTC),
+    )
+
+    cohort = input_union.build_input_union(
+        (baseline, delta), criteria(as_of="2026-09-09T00:00:00Z"), mapper
+    )
+
+    assert {item.job_id for item in cohort.jobs} == {
+        "JOBKOREA:current",
+        "JOBKOREA:new-after-baseline",
+    }
+    assert {item.pipeline_run_id for item in cohort.input_union.input_batches} == {
+        "full-v3",
+        "delta-v2",
+    }
+    assert cohort.input_union.superseded_input_batch_count == 0
+
+
+def test_future_full_snapshot_does_not_replace_legacy_state_at_as_of(mapper):
+    legacy = output(
+        posting(
+            "current-at-as-of",
+            source_site="JOBKOREA",
+            collected_at="2026-09-07T00:00:00Z",
+        ),
+        source="JOBKOREA",
+        run="legacy-v2",
+        at=datetime(2026, 9, 7, tzinfo=UTC),
+    )
+    future = output(
+        posting(
+            "future",
+            source_site="JOBKOREA",
+            collected_at="2026-09-10T00:00:00Z",
+        ),
+        source="JOBKOREA",
+        run="future-full-v3",
+        at=datetime(2026, 9, 10, tzinfo=UTC),
+        snapshot_mode="active_listing",
+        snapshot_scope_key="jobkorea-16-duty-categories",
+        snapshot_complete=True,
+    )
+
+    cohort = input_union.build_input_union(
+        (legacy, future), criteria(as_of="2026-09-09T00:00:00Z"), mapper
+    )
+
+    assert [item.job_id for item in cohort.jobs] == ["JOBKOREA:current-at-as-of"]
+    assert len(cohort.input_union.input_batches) == 2
+    assert cohort.input_union.after_as_of_record_count == 1
+    assert cohort.input_union.superseded_input_batch_count == 0
+
+
+def test_monthly_demand_does_not_apply_full_active_snapshot_retention(mapper):
+    old = output(
+        posting("old", source_site="JOBKOREA", collected_at="2026-09-07T00:00:00Z"),
+        source="JOBKOREA",
+        run="old",
+        snapshot_mode="active_listing",
+        snapshot_scope_key="scope-a",
+        snapshot_complete=True,
+    )
+    latest = output(
+        posting("latest", source_site="JOBKOREA", collected_at="2026-09-08T00:00:00Z"),
+        source="JOBKOREA",
+        run="latest",
+        at=datetime(2026, 9, 8, tzinfo=UTC),
+        snapshot_mode="active_listing",
+        snapshot_scope_key="scope-a",
+        snapshot_complete=True,
+    )
+    selected = criteria(
+        purpose="MONTHLY_DEMAND",
+        as_of="2026-10-01T00:00:00+09:00",
+        posted_from="2026-09-01T00:00:00+09:00",
+        posted_to="2026-10-01T00:00:00+09:00",
+    )
+
+    cohort = input_union.build_input_union((old, latest), selected, mapper)
+
+    assert len(cohort.input_union.input_batches) == 2
+    assert cohort.input_union.superseded_input_batch_count == 0
 
 
 @pytest.mark.parametrize(

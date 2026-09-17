@@ -37,7 +37,7 @@ from job.requirements import (
 if TYPE_CHECKING:
     from job.cohort import JobCohort
 
-JOB_MATCHING_VERSION = "job-matching/v2"
+JOB_MATCHING_VERSION = "job-matching/v3"
 JOB_MATCHING_STORAGE_VERSION = "job-matching-storage/v2"
 MAX_MATCHING_JOBS = 50_000
 MAX_MATCHING_RESULT_BYTES = 64 * 1024 * 1024
@@ -410,13 +410,15 @@ def _conditions(
 
 
 def _required_status(value: ConditionAssessment) -> str:
-    if value.unresolved or value.unknown_count:
-        return "UNKNOWN"
     if not value.clauses:
-        return "NOT_APPLICABLE"
-    if not value.unsatisfied_count:
+        return "UNKNOWN" if value.unresolved else "NOT_APPLICABLE"
+    if value.satisfied_count:
+        if value.unsatisfied_count or value.unknown_count or value.unresolved:
+            return "PARTIAL"
         return "FULL"
-    return "PARTIAL" if value.satisfied_count else "NONE"
+    if value.unknown_count or value.unresolved:
+        return "UNKNOWN"
+    return "NONE"
 
 
 class JobAssessment(MatchingModel):
@@ -427,7 +429,9 @@ class JobAssessment(MatchingModel):
 
     @model_validator(mode="after")
     def check_status(self):
-        if self.required_status != _required_status(self.required):
+        expected = _required_status(self.required)
+        legacy_unknown = self.required_status == "UNKNOWN" and expected == "PARTIAL"
+        if self.required_status != expected and not legacy_unknown:
             raise ValueError("required status mismatch")
         for kind, assessed, source in (
             (RequirementKind.REQUIRED, self.required, self.job.requirements.required),
@@ -449,6 +453,23 @@ class JobAssessment(MatchingModel):
 
 
 def _job_sort(row: JobAssessment):
+    # The user's observed match comes before parser completeness. A posting with
+    # one satisfied known clause plus an unresolved remainder is PARTIAL and
+    # must not be hidden below a fully parsed posting whose known clauses are
+    # all unsatisfied (NONE).
+    ranks = {"FULL": 0, "PARTIAL": 1, "UNKNOWN": 2, "NONE": 3, "NOT_APPLICABLE": 4}
+    return (
+        row.job.eligibility != "ELIGIBLE",
+        ranks[row.required_status],
+        row.required.unsatisfied_count,
+        -row.required.satisfied_count,
+        row.required.unknown_count + len(row.required.unresolved),
+        -row.preferred.satisfied_count,
+        row.job.job_id,
+    )
+
+
+def _legacy_job_sort(row: JobAssessment):
     ranks = {"FULL": 0, "PARTIAL": 1, "NONE": 2, "UNKNOWN": 3, "NOT_APPLICABLE": 4}
     return (
         row.job.eligibility != "ELIGIBLE",
@@ -460,7 +481,9 @@ def _job_sort(row: JobAssessment):
 
 
 class JobMatchingResult(MatchingModel):
-    schema_version: Literal["job-matching/v1", "job-matching/v2"] = JOB_MATCHING_VERSION
+    schema_version: Literal["job-matching/v1", "job-matching/v2", "job-matching/v3"] = (
+        JOB_MATCHING_VERSION
+    )
     evidence_input_version: EvidenceInputVersion | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -480,17 +503,25 @@ class JobMatchingResult(MatchingModel):
     @model_validator(mode="after")
     def check_jobs(self):
         if (
-            self.schema_version == "job-matching/v2"
+            self.schema_version in {"job-matching/v2", "job-matching/v3"}
             and self.evidence_input_version is None
         ):
-            raise ValueError("job matching v2 requires an evidence input version")
+            raise ValueError("current job matching requires an evidence input version")
         if len(self.jobs) > MAX_MATCHING_JOBS:
             raise MatchingResultTooLarge(
                 f"matching result exceeds {MAX_MATCHING_JOBS} jobs"
             )
         if len({item.job.job_id for item in self.jobs}) != len(self.jobs):
             raise ValueError("duplicate partial matching job")
-        if self.jobs != tuple(sorted(self.jobs, key=_job_sort)):
+        if self.schema_version == "job-matching/v3" and any(
+            item.required_status != _required_status(item.required)
+            for item in self.jobs
+        ):
+            raise ValueError("required status mismatch")
+        sort_key = (
+            _job_sort if self.schema_version == "job-matching/v3" else _legacy_job_sort
+        )
+        if self.jobs != tuple(sorted(self.jobs, key=sort_key)):
             raise ValueError("partial matching must have stable ordering")
         canonical = _matching_calculation_payload(self)
         expected = _calculation_id(canonical)

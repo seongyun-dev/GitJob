@@ -197,13 +197,16 @@ def test_a_source_that_never_collected_is_not_an_error():
     assert len(discover_raw_runs(_client(hdfs))) == 1
 
 
-def test_jobkorea_is_not_discovered():
-    """JobKorea publishes through its own writer, not the generic backfill."""
+def test_jobkorea_is_discovered_for_v3_analysis_input_promotion():
 
     hdfs = FakeHdfs()
     hdfs.seed_run("jobkorea", "dt=2026-09-09", "JOBKOREA-A")
 
-    assert discover_raw_runs(_client(hdfs)) == ()
+    runs = discover_raw_runs(_client(hdfs))
+
+    assert [(run.source, run.pipeline_run_id) for run in runs] == [
+        ("jobkorea", "JOBKOREA-A")
+    ]
 
 
 def test_listing_drops_files_and_keeps_directories():

@@ -22,6 +22,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from registry.contracts import TechId, load_registry
+from registry.mapper import RegistryMapper
 
 from job.classifier import (
     JobClassificationRecord,
@@ -39,14 +41,14 @@ from job.eligibility import FilterMatch, match_career_level, match_region
 from job.matching import MatchingJobInput
 from job.requirements import (
     JOB_REQUIREMENTS_SCHEMA_VERSION,
+    JobRequirements,
     RequirementClause,
+    RequirementKind,
     extract_job_requirements,
 )
-from registry.contracts import TechId, load_registry
-from registry.mapper import RegistryMapper
 
 JOB_COHORT_SCHEMA_VERSION = "job-cohort/v1"
-JOB_QUALITY_VERSION = "job-cohort-quality/v6"
+JOB_QUALITY_VERSION = "job-cohort-quality/v7"
 
 
 class CohortPurpose(StrEnum):
@@ -77,6 +79,7 @@ _ROLE_ALIASES = {
         "백엔드",
         "백엔드 개발",
         "백엔드 개발자",
+        "백엔드개발자",
         "백엔드/서버개발",
     ),
     "FRONTEND": (
@@ -85,6 +88,7 @@ _ROLE_ALIASES = {
         "프론트엔드",
         "프론트엔드 개발",
         "프론트엔드 개발자",
+        "프론트엔드개발자",
     ),
     "AI_DATA": (
         "AI_DATA",
@@ -93,6 +97,14 @@ _ROLE_ALIASES = {
         "AI/데이터",
         "데이터 엔지니어",
         "AI 개발자",
+        "데이터엔지니어",
+        "데이터사이언티스트",
+        "AI/ML엔지니어",
+        "AI/ML연구원",
+        "데이터분석가",
+        "프롬프트엔지니어",
+        "MLOps엔지니어",
+        "AI서비스개발자",
     ),
     "INFRASTRUCTURE": (
         "INFRASTRUCTURE",
@@ -101,8 +113,20 @@ _ROLE_ALIASES = {
         "인프라",
         "인프라 엔지니어",
         "데브옵스",
+        "시스템엔지니어",
+        "네트워크엔지니어",
+        "DBA",
+        "보안엔지니어",
+        "클라우드엔지니어",
     ),
-    "MOBILE": ("MOBILE", "MOBILE_ENGINEER", "모바일", "모바일 개발", "모바일 개발자"),
+    "MOBILE": (
+        "MOBILE",
+        "MOBILE_ENGINEER",
+        "모바일",
+        "모바일 개발",
+        "모바일 개발자",
+        "앱개발자",
+    ),
 }
 _ROLE_LOOKUP = {
     alias.casefold(): role
@@ -340,6 +364,9 @@ class InputUnionProvenance(CohortModel):
     superseded_record_count: StrictInt = Field(ge=0)
     after_as_of_record_count: StrictInt = Field(ge=0)
     sources_without_as_of_observations: tuple[StrictStr, ...]
+    superseded_input_batch_count: StrictInt = Field(
+        default=0, ge=0, exclude_if=lambda value: value == 0
+    )
 
     @model_validator(mode="after")
     def reconcile_observations(self) -> "InputUnionProvenance":
@@ -693,6 +720,40 @@ def _required_clauses(
     return tuple(sorted(clauses)), ()
 
 
+def _matching_required_clauses(
+    requirements: JobRequirements,
+    classification: JobClassificationRecord,
+) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]:
+    """Use the matching payload as the active strict cohort source of truth."""
+
+    unresolved = tuple(
+        item
+        for item in requirements.unresolved
+        if item.requirement_kind is RequirementKind.REQUIRED
+    )
+    if unresolved:
+        reason = (
+            "TECHNOLOGY_REVIEW_REQUIRED"
+            if any(
+                item.requirement_class is RequirementClass.REVIEW_REQUIRED
+                and item.input_requirement_type.value == "REQUIRED"
+                for item in classification.technologies
+            )
+            else "REQUIREMENT_LOGIC_UNRESOLVED"
+        )
+        return (), (reason,)
+    clauses = tuple(clause.tech_ids for clause in requirements.required)
+    if not clauses:
+        return (), ("NO_REQUIRED_TECHNOLOGY",)
+    if any(
+        item.requirement_class is RequirementClass.REVIEW_REQUIRED
+        and item.input_requirement_type.value == "MENTIONED"
+        for item in classification.technologies
+    ):
+        return clauses, ("TECHNOLOGY_REVIEW_REQUIRED",)
+    return clauses, ()
+
+
 def build_cohort(
     batch: JobAnalysisInputBatch,
     criteria: CohortCriteria,
@@ -746,7 +807,16 @@ def build_cohort(
         unique.items(), key=lambda pair: (pair[1][0].source_record_id, pair[0])
     ):
         excluded, review = _quality_reasons(record, criteria)
-        clauses, logic_reasons = _required_clauses(record, classification)
+        requirements = (
+            extract_job_requirements(record, classification)
+            if criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+            else None
+        )
+        clauses, logic_reasons = (
+            _matching_required_clauses(requirements, classification)
+            if requirements is not None
+            else _required_clauses(record, classification)
+        )
         review.extend(logic_reasons)
         if digest in conflicts:
             review.append("SOURCE_RECORD_CONFLICT")
@@ -755,7 +825,7 @@ def build_cohort(
             and not excluded
             and not {"BODY_UNAVAILABLE", "SOURCE_RECORD_CONFLICT"}.intersection(review)
         ):
-            requirements = extract_job_requirements(record, classification)
+            assert requirements is not None
             conditional = tuple(
                 sorted(
                     set(review).intersection(

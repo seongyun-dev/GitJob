@@ -414,6 +414,7 @@ _DUTY_EXPLICIT_L3_REQUIREMENT = re.compile(
 )
 _GENERAL_HEADINGS = frozenset(
     {
+        "스킬",
         "기술스택",
         "사용기술",
         "복리후생",
@@ -431,22 +432,36 @@ _GENERAL_HEADINGS = frozenset(
 def _heading_key(value: str | None) -> str:
     if value is None:
         return ""
-    label = value.casefold().strip().strip("[]()#*•-:：")
+    label = value.casefold().strip().strip("[]()#*•ㆍ-:：")
     label = re.sub(
         r"^(?:(?:[0-9]{1,2}[.)]|[0-9]\ufe0f?\u20e3|[📋🏠🎁🚀])\s*)+",
         "",
         label,
     )
-    return "".join(label.split()).strip("[]()#*•-:：")
+    return "".join(label.split()).strip("[]()#*•ㆍ-:：")
 
 
 def _requirement_kind(item: TechnologyClassification) -> RequirementKind | None:
     if item.location.source_surface is SourceSurface.TITLE:
         return None
+    source_heading = _heading_key(item.evidence_section)
     effective_section = item.parsed_section or item.evidence_section
     effective_heading = _heading_key(effective_section)
+    # The body parser has the most local section boundary. Collector metadata can
+    # still carry the previous requirement heading after the body has entered a
+    # general-information section such as benefits or company introduction.
     if effective_heading in _GENERAL_HEADINGS or effective_heading in _DUTY_HEADINGS:
         return None
+    if (
+        item.requirement_class is RequirementClass.REQUIRED
+        and source_heading in _REQUIRED_HEADINGS
+    ):
+        return RequirementKind.REQUIRED
+    if (
+        item.requirement_class is RequirementClass.PREFERRED
+        and source_heading in _PREFERRED_HEADINGS
+    ):
+        return RequirementKind.PREFERRED
     if item.requirement_class is RequirementClass.REQUIRED:
         return RequirementKind.REQUIRED
     if item.requirement_class is RequirementClass.PREFERRED:
@@ -818,6 +833,88 @@ def _unresolved_reason(
     return None
 
 
+def _comma_unknown_operands(
+    text: str,
+    spans: list[tuple[int, int, str, str | None]],
+    unknown_operands: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return only standalone unknown operands from a safe comma-separated list."""
+
+    if (
+        not re.search(r"[,，]", text)
+        or _NEGATION.search(text)
+        or _CARDINALITY.search(text)
+        or _GRADE_RANGE.search(text)
+        or _UNCERTAIN_EXAMPLE.search(text)
+        or _OR.search(text)
+        or "/" in text
+    ):
+        return ()
+    missing = list(unknown_operands)
+    for match in re.finditer(r"[^,，]+", text):
+        start, end = match.span()
+        if any(
+            start <= span_start and span_end <= end
+            for span_start, span_end, _, _ in spans
+        ):
+            continue
+        candidate = re.sub(
+            r"\s+(?:(?:개발|사용|운영|실무|관련)\s*)?(?:경험|역량|지식|능력).*$",
+            "",
+            match.group(0),
+            flags=re.IGNORECASE,
+        ).strip(" \t./:：()[]{}-*•ㆍ")
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9.+#-]{0,79}", candidate):
+            missing.append(candidate)
+    return tuple(dict.fromkeys(missing))
+
+
+def _known_partial_clauses(
+    items: list[TechnologyClassification],
+    known_ids: tuple[str, ...],
+    evidence: RequirementEvidence,
+) -> list[tuple[tuple[str, ...], RequirementEvidence]]:
+    clauses = []
+    for tech_id in known_ids:
+        mention_indices = tuple(
+            sorted(
+                item.mention_index
+                for item in items
+                if item.tech_id == tech_id
+                and item.mention_index in evidence.mention_indices
+            )
+        )
+        if mention_indices:
+            clauses.append(
+                (
+                    (tech_id,),
+                    evidence.model_copy(update={"mention_indices": mention_indices}),
+                )
+            )
+    return clauses
+
+
+def _parenthetical_open_list(text: str) -> bool:
+    """Keep examples under a named umbrella unresolved rather than mandatory.
+
+    ``Java, Python 등`` directly names usable requirement candidates. In
+    contrast, ``backend frameworks (Spring, Django, etc.)`` names examples of
+    a broader requirement whose omitted alternatives cannot be represented by
+    the registry. Those examples remain evidence only.
+    """
+    return (
+        re.search(
+            r"[\(\[][\s\S]*?(?:"
+            r"등(?:을|의|과|와|도|은|는|이|가)?|"
+            r"\betc\.?\b"
+            r")[\s\S]*?[\)\]]",
+            text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
 def _parse_segment(
     kind: RequirementKind,
     text: str,
@@ -844,6 +941,38 @@ def _parse_segment(
     )
     spans = _technology_spans(text, items)
     reason = _unresolved_reason(text, items)
+    comma_unknowns = _comma_unknown_operands(text, spans, unknown_operands)
+    if comma_unknowns and reason in (
+        None,
+        UnresolvedReason.TECHNOLOGY_MAPPING_UNRESOLVED,
+    ):
+        return [((tech_id,), evidence) for tech_id in known_ids], UnresolvedRequirement(
+            requirement_kind=kind,
+            reason=UnresolvedReason.TECHNOLOGY_MAPPING_UNRESOLVED,
+            known_tech_ids=known_ids,
+            raw_operands=comma_unknowns,
+            evidence=evidence,
+        )
+    if (
+        reason is UnresolvedReason.LOGIC_UNSUPPORTED
+        and known_ids
+        and not _parenthetical_open_list(text)
+        and (_UNCERTAIN_EXAMPLE.search(text) or "/" in text)
+    ):
+        # ``Java, Python 등`` and slash-separated stacks explicitly name
+        # technologies even though the omitted operands or boolean meaning are
+        # not recoverable. Preserve each named technology for user-level
+        # partial matching, but keep the whole source span unresolved so the
+        # result can never be promoted to FULL merely from these clauses.
+        return _known_partial_clauses(
+            items, known_ids, evidence
+        ), UnresolvedRequirement(
+            requirement_kind=kind,
+            reason=reason,
+            known_tech_ids=known_ids,
+            raw_operands=unknown_operands,
+            evidence=evidence,
+        )
     if reason is not None:
         return [], UnresolvedRequirement(
             requirement_kind=kind,
@@ -865,7 +994,17 @@ def _parse_segment(
     has_or = bool(_OR.search(masked) or _ONE_OF.search(masked))
     has_and = bool(_AND.search(masked))
     missing_fragments = _missing_operand_fragments(text, spans)
-    if "/" in masked or (has_or and has_and):
+    if "/" in masked:
+        return _known_partial_clauses(
+            items, known_ids, evidence
+        ), UnresolvedRequirement(
+            requirement_kind=kind,
+            reason=UnresolvedReason.LOGIC_UNSUPPORTED,
+            known_tech_ids=known_ids,
+            raw_operands=unknown_operands or missing_fragments,
+            evidence=evidence,
+        )
+    if has_or and has_and:
         return [], UnresolvedRequirement(
             requirement_kind=kind,
             reason=UnresolvedReason.LOGIC_UNSUPPORTED,

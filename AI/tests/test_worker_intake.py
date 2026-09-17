@@ -6,10 +6,18 @@ from hashlib import sha256
 from threading import Lock
 
 import pytest
+from job import input_union
+from job.contracts import BodyStatus
+from job.jobkorea_contract import JOBKOREA_V3_DUTY_ROLE_PAIRS
+from registry.mapper import RegistryMapper
 from test_job_cohort import batch, criteria, posting
-
-from worker.api import JobCohortResolveSelector
-from worker.intake import IntakeConfig, IntakeRunner, load_job_output
+from worker.api import JobCohortResolveSelector, default_registry
+from worker.intake import (
+    MAX_JOB_MANIFEST_BYTES,
+    IntakeConfig,
+    IntakeRunner,
+    load_job_output,
+)
 
 
 def output(root, *, name="run-1", mutate=None, collected_at=None):
@@ -55,12 +63,207 @@ def config(root):
     )
 
 
+def active_duty_scopes():
+    return [
+        {
+            "code": code,
+            "name": f"duty-{code}",
+            "target_role": role,
+            "scan_stop_reason": "short_page",
+        }
+        for code, role in sorted(JOBKOREA_V3_DUTY_ROLE_PAIRS)
+    ]
+
+
+def active_jobkorea_output(root, *, name, collected_at):
+    folder, value, manifest = output(root, name=name, collected_at=collected_at)
+    record = value.records[0].model_copy(update={"source_site": "JOBKOREA"})
+    value = value.model_copy(
+        update={
+            "collector_version": "jobkorea-crawler/v3",
+            "records": (record,),
+        }
+    )
+    batch_path = folder / "job_analysis_input.json"
+    batch_path.write_text(value.model_dump_json(), encoding="utf-8")
+    manifest.update(
+        collector_version="jobkorea-crawler/v3",
+        source_site="JOBKOREA",
+        counts={"records": 1, "detail_errors": 0, "invalid_records": 0},
+        stats={"scan_stop_reason": "all_scopes_complete"},
+        source={
+            "site": "JOBKOREA",
+            "mode": "active_listing",
+            "duty_scopes": active_duty_scopes(),
+        },
+        output_sha256={
+            "job_analysis_input.json": sha256(batch_path.read_bytes()).hexdigest()
+        },
+    )
+    (folder / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    return folder, value, manifest
+
+
 def test_load_only_matching_completed_pair(tmp_path):
     folder, value, _ = output(tmp_path)
     loaded = load_job_output(folder / "manifest.json", tmp_path)
     assert loaded.batch == value
     assert len(loaded.batch_sha256) == 64
     assert len(loaded.manifest_sha256) == 64
+
+
+def test_loader_accepts_v3_sized_manifest_but_keeps_a_hard_bound(tmp_path):
+    folder, _, manifest = output(tmp_path)
+    manifest["padding"] = "x" * (2 * 1024 * 1024)
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert load_job_output(folder / "manifest.json", tmp_path).batch.records
+
+    manifest["padding"] = "x" * MAX_JOB_MANIFEST_BYTES
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="size limit"):
+        load_job_output(folder / "manifest.json", tmp_path)
+
+
+def test_jobkorea_v3_reconciled_detail_failures_are_record_local(tmp_path):
+    folder, value, manifest = output(tmp_path)
+    blocked = value.records[0].model_copy(
+        update={
+            "body_status": BodyStatus.BLOCKED,
+            "source_site": "JOBKOREA",
+            "description_text": None,
+            "technology_mentions": (),
+        }
+    )
+    value = value.model_copy(
+        update={"collector_version": "jobkorea-crawler/v3", "records": (blocked,)}
+    )
+    batch_path = folder / "job_analysis_input.json"
+    batch_path.write_text(value.model_dump_json(), encoding="utf-8")
+    manifest.update(
+        collector_version="jobkorea-crawler/v3",
+        source_site="JOBKOREA",
+        counts={"records": 1, "detail_errors": 1, "invalid_records": 0},
+        stats={"scan_stop_reason": "all_scopes_complete"},
+        source={
+            "site": "JOBKOREA",
+            "mode": "active_listing",
+            "duty_scopes": active_duty_scopes(),
+        },
+        output_sha256={
+            "job_analysis_input.json": sha256(batch_path.read_bytes()).hexdigest()
+        },
+    )
+    (folder / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    loaded = load_job_output(folder / "manifest.json", tmp_path)
+
+    assert loaded.collection_issues == ()
+    assert loaded.snapshot_mode == "active_listing"
+    assert loaded.snapshot_complete is True
+    assert loaded.snapshot_scope_key is not None
+
+
+def test_jobkorea_v3_detail_count_must_equal_blocked_records(tmp_path):
+    folder, value, manifest = output(tmp_path)
+    value = value.model_copy(
+        update={
+            "collector_version": "jobkorea-crawler/v3",
+            "records": (
+                value.records[0].model_copy(update={"source_site": "JOBKOREA"}),
+            ),
+        }
+    )
+    batch_path = folder / "job_analysis_input.json"
+    batch_path.write_text(value.model_dump_json(), encoding="utf-8")
+    manifest.update(
+        collector_version="jobkorea-crawler/v3",
+        source_site="JOBKOREA",
+        counts={"records": 1, "detail_errors": 1, "invalid_records": 0},
+        stats={"scan_stop_reason": "all_scopes_complete"},
+        source={
+            "site": "JOBKOREA",
+            "mode": "active_listing",
+            "duty_scopes": active_duty_scopes(),
+        },
+        output_sha256={
+            "job_analysis_input.json": sha256(batch_path.read_bytes()).hexdigest()
+        },
+    )
+    (folder / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    assert load_job_output(folder / "manifest.json", tmp_path).collection_issues == (
+        "DETAIL_COLLECTION_FAILED",
+    )
+
+
+def test_active_snapshot_selection_precedes_job_set_capacity_limit(
+    tmp_path, monkeypatch
+):
+    for name, collected_at in (
+        ("old", "2026-09-06T00:00:00Z"),
+        ("latest", "2026-09-07T00:00:00Z"),
+    ):
+        active_jobkorea_output(tmp_path, name=name, collected_at=collected_at)
+
+    monkeypatch.setenv("C_REGISTRY_BACKEND", "file")
+    monkeypatch.setattr(input_union, "MAX_INPUT_RECORDS", 1)
+    monkeypatch.setattr("worker.intake.MAX_JOB_SET_RECORDS", 1)
+    mapper = RegistryMapper(default_registry())
+    cohorts = []
+
+    def sink(outputs, selected):
+        cohort = input_union.build_input_union(tuple(outputs), selected, mapper)
+        cohorts.append(cohort)
+        return {"status": "COMPLETED", "results": []}
+
+    report = IntakeRunner(
+        config(tmp_path), job_sink=sink, job_set_sink=sink
+    ).poll_once()
+
+    assert report["failed"] == 0
+    assert report["completed"] == 1
+    assert len(cohorts) == 1
+    assert [job.source_posting_id for job in cohorts[0].jobs] == ["one"]
+    assert [item.pipeline_run_id for item in cohorts[0].input_union.input_batches] == [
+        "latest"
+    ]
+
+
+def test_monthly_demand_capacity_still_counts_all_observed_snapshots(
+    tmp_path, monkeypatch
+):
+    for name, collected_at in (
+        ("old", "2026-09-06T00:00:00Z"),
+        ("latest", "2026-09-07T00:00:00Z"),
+    ):
+        active_jobkorea_output(tmp_path, name=name, collected_at=collected_at)
+
+    monthly = criteria(
+        purpose="MONTHLY_DEMAND",
+        as_of="2026-10-01T00:00:00+09:00",
+        posted_from="2026-09-01T00:00:00+09:00",
+        posted_to="2026-10-01T00:00:00+09:00",
+    )
+    selected_config = config(tmp_path).model_copy(update={"criteria": (monthly,)})
+    monkeypatch.setattr("worker.intake.MAX_JOB_SET_RECORDS", 1)
+    calls = []
+
+    def sink(outputs, selected):
+        calls.append((outputs, selected))
+        return {"status": "COMPLETED", "results": []}
+
+    report = IntakeRunner(selected_config, job_sink=sink, job_set_sink=sink).poll_once()
+
+    assert report["failed"] == 1
+    assert report["completed"] == 0
+    assert calls == []
 
 
 def test_unbound_legacy_manifest_is_inspectable_but_never_auto_published(tmp_path):
@@ -388,7 +591,6 @@ def test_actual_app_startup_consumes_to_postgres_and_restart_deduplicates(
 
     from fastapi.testclient import TestClient
     from test_compute_api import REGISTRY, TOKEN
-
     from worker import intake
     from worker.api import create_compute_app
     from worker.store import ComputeStore, apply_migration

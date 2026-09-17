@@ -19,7 +19,9 @@ Every rule `analysis_input` states applies here unchanged. This module adds a
 way to *find* runs and a way to *resume*, and nothing else. It does not
 deduplicate, choose a latest observation, or write a combined view —
 `job.input_union.build_input_union` owns that on C's side, and a second
-implementation would be a second opinion about which posting wins.
+implementation would be a second opinion about which posting wins. JobKorea
+v3 full-active runs are included; C later keeps the latest complete scope for
+active matching.
 
 The gate is not restated either: `analysis_input.release_blockers` decides what
 may be published, and a backfilled run is held back for exactly the reasons a
@@ -32,8 +34,8 @@ freshly collected one would be. An empty run, a stopped run, a manifest without
 the collector always has one. Rather than grow a second HDFS-shaped path
 through the gate — where the two could drift and the backfilled run would be
 checked less carefully than the live one — the three files are downloaded to a
-temp directory and handed to the same code. The batch is ~3 MB per run; the
-directory is removed as soon as the run is published.
+temp directory and handed to the same code. Batch size remains bounded by the
+consumer contract; the directory is removed as soon as the run is published.
 
 ### Resume
 
@@ -61,6 +63,7 @@ from common.webhdfs import (
     WebHdfsError,
     normalize_hdfs_path,
 )
+
 from job.collector.analysis_input import (
     AnalysisInputPublishResult,
     JobPostingAnalysisInputPublisher,
@@ -82,9 +85,15 @@ __all__ = [
 
 BACKFILL_CHECKPOINT = "analysis_input_backfill.json"
 
-# The four MVP collectors (S15P21E102-230). JobKorea is deliberately absent:
-# its runs stay in Raw and are not promoted to an analysis input.
-DEFAULT_SOURCES: tuple[str, ...] = ("worknet", "saramin", "career", "gamejob")
+# Sources admitted to C's shared job intake.  JobKorea v3 full-active runs use
+# the same immutable promotion path after their partial-detail counts reconcile.
+DEFAULT_SOURCES: tuple[str, ...] = (
+    "worknet",
+    "saramin",
+    "career",
+    "gamejob",
+    "jobkorea",
+)
 
 
 @dataclass(frozen=True)
@@ -287,10 +296,7 @@ def backfill_runs(
             outcomes.append(BackfillOutcome(run, "ALREADY_PUBLISHED"))
             continue
 
-        staging = Path(
-            workspace
-            or tempfile.mkdtemp(prefix=f"backfill-{run.source}-")
-        )
+        staging = Path(workspace or tempfile.mkdtemp(prefix=f"backfill-{run.source}-"))
         run_dir = staging if workspace is None else staging / run.pipeline_run_id
         try:
             missing = materialize_run(reader, run, run_dir)
@@ -326,9 +332,7 @@ def backfill_runs(
                     BackfillOutcome(
                         run,
                         "FAILED",
-                        tuple(
-                            str(entry.get("error", "")) for entry in result.failed
-                        ),
+                        tuple(str(entry.get("error", "")) for entry in result.failed),
                     )
                 )
         finally:

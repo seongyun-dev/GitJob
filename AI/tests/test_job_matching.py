@@ -580,8 +580,77 @@ def test_unresolved_sentence_retains_independent_clause_but_not_total_ratio():
     assert row.required.satisfied_count == 1
     assert row.required.unresolved
     assert row.required.fulfillment_ratio is None
-    assert row.required_status == "UNKNOWN"
+    assert row.required_status == "PARTIAL"
     assert not row.job.strict_match_eligible
+
+
+def test_personal_partial_match_ranks_above_fully_parsed_non_match():
+    cohort = build_cohort(
+        batch(
+            posting(
+                "partial-with-unresolved",
+                required=("Java", "Python", "Docker"),
+                required_text="Java 경험\nPython, Docker 등을 활용",
+            ),
+            posting("fully-parsed-none", required=("Docker",)),
+        ),
+        criteria(),
+    )
+
+    result = build_job_matching(
+        cohort, levelled_analysis("L3"), user_id="user-1", analysis_id="analysis-1"
+    )
+
+    assert [row.job.job_id for row in result.jobs] == [
+        "partial-with-unresolved",
+        "fully-parsed-none",
+    ]
+    assert [row.required_status for row in result.jobs] == ["PARTIAL", "NONE"]
+    assert result.jobs[0].required.unresolved
+
+
+def test_legacy_v2_unresolved_positive_status_remains_readable():
+    cohort = build_cohort(
+        batch(
+            posting(
+                required=("Java", "Python", "Docker"),
+                required_text="Java 경험\nPython, Docker 등을 활용",
+            )
+        ),
+        criteria(),
+    )
+    current = build_job_matching(
+        cohort, levelled_analysis("L3"), user_id="user-1", analysis_id="analysis-1"
+    )
+    payload = current.model_dump(mode="json")
+    payload["schema_version"] = "job-matching/v2"
+    payload.pop("calculation_snapshot_id")
+    payload["jobs"][0]["required_status"] = "UNKNOWN"
+
+    legacy = validate_job_matching(payload)
+
+    assert legacy.schema_version == "job-matching/v2"
+    assert legacy.jobs[0].required_status == "UNKNOWN"
+
+
+def test_current_matching_rejects_legacy_unknown_for_positive_partial_match():
+    cohort = build_cohort(
+        batch(
+            posting(
+                required=("Java", "Python", "Docker"),
+                required_text="Java 경험\nPython, Docker 등을 활용",
+            )
+        ),
+        criteria(),
+    )
+    payload = build_job_matching(
+        cohort, levelled_analysis("L3"), user_id="user-1", analysis_id="analysis-1"
+    ).model_dump(mode="json")
+    payload.pop("calculation_snapshot_id")
+    payload["jobs"][0]["required_status"] = "UNKNOWN"
+
+    with pytest.raises(ValueError, match="required status mismatch"):
+        validate_job_matching(payload)
 
 
 def test_no_required_is_not_perfect_and_no_preferred_is_not_zero():

@@ -14,6 +14,14 @@ from pydantic import (
     StrictStr,
     field_validator,
 )
+from registry.mapper import (
+    MapperInput,
+    MapperResult,
+    MapperSource,
+    MatchEvidence,
+    MatchStatus,
+    RegistryMapper,
+)
 
 from job.contracts import (
     BodyStatus,
@@ -24,17 +32,9 @@ from job.contracts import (
     SourceSurface,
     TechnologyMentionInput,
 )
-from registry.mapper import (
-    MapperInput,
-    MapperResult,
-    MapperSource,
-    MatchEvidence,
-    MatchStatus,
-    RegistryMapper,
-)
 
 JOB_CLASSIFICATION_SCHEMA_VERSION = "job-technology-classification/v1"
-JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v6"
+JOB_REQUIREMENT_PARSER_VERSION = "job-requirement-rules/v8"
 _ISO_8601_DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]")
 
 
@@ -156,6 +156,7 @@ _SECTION_HEADINGS = {
     "요구사항": RequirementClass.REQUIRED,
     "requirements": RequirementClass.REQUIRED,
     "required": RequirementClass.REQUIRED,
+    "스킬": RequirementClass.SKILL,
     "우대": RequirementClass.PREFERRED,
     "우대사항": RequirementClass.PREFERRED,
     "우대조건": RequirementClass.PREFERRED,
@@ -181,11 +182,11 @@ _TECHNOLOGY_MINIMUM_COUNT = re.compile(
 
 
 def _heading_key(value: str) -> str:
-    label = value.casefold().strip().strip("[]()#*•-:：")
+    label = value.casefold().strip().strip("[]()#*•ㆍ-:：")
     # These decorations occur on the saved public job pages. Remove only
     # leading list markers; the remaining label must still be an exact heading.
     label = re.sub(r"^(?:(?:[0-9]{1,2}[.)]|[📋🏠🎁🚀])\s*)+", "", label)
-    return "".join(label.split()).strip("[]()#*•-:：")
+    return "".join(label.split()).strip("[]()#*•ㆍ-:：")
 
 
 def _parse_section(text: str | None, location: ClassificationLocation) -> str | None:
@@ -216,6 +217,19 @@ _PREFERRED_SECTION_MARKERS = (
     "preferred",
     "nice to have",
 )
+
+_COLLECTOR_SPELLING_DISPLAY = {
+    "c": "C",
+    "springboot": "Spring Boot",
+    "html5": "HTML",
+    "css3": "CSS",
+    "nodejs": "Node.js",
+    "react.js": "React",
+    "reactjs": "React",
+    "nest.js": "NestJS",
+    "nestjs": "NestJS",
+    "nextjs": "Next.js",
+}
 
 
 def _section_requirement(section: str | None) -> RequirementClass | None:
@@ -338,6 +352,18 @@ def _map_job_mention(
                 source=MapperSource.DISPLAY_NAME,
                 raw_value=mention.raw_technology,
                 context=context,
+            )
+        )
+        attempts.append(result)
+    canonical_display = _COLLECTOR_SPELLING_DISPLAY.get(
+        "".join(mention.raw_technology.casefold().split()).strip("*•ㆍ·-")
+    )
+    if result.status is MatchStatus.UNKNOWN and canonical_display is not None:
+        result = mapper.map(
+            MapperInput(
+                source=MapperSource.DISPLAY_NAME,
+                raw_value=canonical_display,
+                context=context.replace(mention.raw_technology, canonical_display),
             )
         )
         attempts.append(result)

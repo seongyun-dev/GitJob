@@ -13,13 +13,12 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from test_compute_api import REGISTRY
-from test_job_cohort import batch, criteria, posting
-
 from common.webhdfs import WebHdfsError
 from job.input_union import build_input_union
 from registry.mapper import RegistryMapper
 from Saramin_Collector_V1.crawler import CrawlResult, write_outputs
+from test_compute_api import REGISTRY
+from test_job_cohort import batch, criteria, posting
 from worker.intake import IntakeConfig, IntakeRunner, load_job_output
 from worker.job_hdfs_source import (
     JobHdfsRunSource,
@@ -117,6 +116,13 @@ def source_config(tmp_path: Path, *, sources=SOURCES) -> JobHdfsSourceConfig:
         staging_dir=tmp_path / "staging",
         sources=tuple(sources),
     )
+
+
+def test_jobkorea_v3_transport_defaults_cover_observed_bounded_artifacts(tmp_path):
+    config = source_config(tmp_path)
+
+    assert config.max_manifest_bytes == 4 * 1024 * 1024
+    assert config.max_batch_bytes == 64 * 1024 * 1024
 
 
 @pytest.fixture

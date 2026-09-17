@@ -3,11 +3,10 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from job.cohort import CohortCriteria, JobCohort, build_cohort
 from job.collector.technology import extract_technology_mentions
 from job.contracts import JobAnalysisInputBatch, JobPostingInput
+from pydantic import ValidationError
 from registry.contracts import load_registry
 from registry.mapper import RegistryMapper
 
@@ -152,6 +151,56 @@ def test_empty_required_and_unknown_do_not_create_vacuously_matching_jobs():
         "TECHNOLOGY_REVIEW_REQUIRED",
     }
     assert cohort.exclusions[1].technologies[0].raw_technology == "Cobol"
+
+
+def test_active_matching_does_not_promote_duties_only_to_strict_requirements():
+    body = "담당업무\nJava 서비스 개발"
+    record = posting(
+        required=(),
+        description_text=body,
+        content_hash=sha256(body.encode()).hexdigest(),
+        technology_mentions=[
+            mention.model_dump(mode="json", by_alias=True)
+            for mention in extract_technology_mentions("백엔드 개발자", body)
+        ],
+    )
+
+    cohort = build_cohort(batch(record), criteria())
+
+    assert not cohort.jobs
+    assert len(cohort.matching_jobs) == 1
+    assert cohort.matching_jobs[0].requirements.required == ()
+    assert "NO_REQUIRED_TECHNOLOGY" in cohort.exclusions[0].reasons
+
+
+def test_unresolved_preferred_clause_does_not_block_resolved_required_strict_job():
+    cohort = build_cohort(
+        batch(posting(required=("Java",), preferred=("Cobol",))), criteria()
+    )
+
+    assert [job.required_clauses for job in cohort.jobs] == [(("java",),)]
+    assert len(cohort.matching_jobs) == 1
+    assert cohort.matching_jobs[0].strict_match_eligible is True
+    assert cohort.matching_jobs[0].requirements.unresolved[
+        0
+    ].requirement_kind.value == ("PREFERRED")
+
+
+def test_every_strict_active_job_uses_the_same_required_clauses_as_matching():
+    cohort = build_cohort(
+        batch(
+            posting("one", required=("Java", "Python")),
+            posting("two", required=("Docker",)),
+        ),
+        criteria(),
+    )
+    matching = {job.job_id: job for job in cohort.matching_jobs}
+
+    assert cohort.jobs
+    for job in cohort.jobs:
+        assert job.required_clauses == tuple(
+            clause.tech_ids for clause in matching[job.job_id].requirements.required
+        )
 
 
 def test_separate_word_evidence_still_uses_full_source_line_for_or():
@@ -471,10 +520,13 @@ def test_company_introduction_python_skill_does_not_inflate_java_requirement():
         for mention in extract_technology_mentions("백엔드 개발자", body)
     ]
     cohort = build_cohort(batch(JobPostingInput.model_validate(payload)), criteria())
-    assert cohort.jobs[0].required_clauses == (("java",),)
+    assert not cohort.jobs
+    assert cohort.matching_jobs[0].requirements.required == ()
+    assert cohort.matching_jobs[0].requirements.unresolved == ()
+    assert "NO_REQUIRED_TECHNOLOGY" in cohort.exclusions[0].reasons
     classes = {
         item.raw_technology: item.requirement_class.value
-        for item in cohort.jobs[0].technologies
+        for item in cohort.exclusions[0].technologies
     }
     assert classes == {"Java": "REQUIRED", "Python": "SKILL"}
 
@@ -586,3 +638,45 @@ def test_explicit_technology_role_titles_are_not_dropped(title, target_role):
     assert "ROLE_NOT_MATCHED" not in {
         reason for exclusion in cohort.exclusions for reason in exclusion.reasons
     }
+
+
+@pytest.mark.parametrize(
+    ("category", "target_role"),
+    [
+        ("백엔드개발자", "BACKEND"),
+        ("프론트엔드개발자", "FRONTEND"),
+        ("데이터엔지니어", "AI_DATA"),
+        ("데이터사이언티스트", "AI_DATA"),
+        ("AI/ML엔지니어", "AI_DATA"),
+        ("AI/ML연구원", "AI_DATA"),
+        ("데이터분석가", "AI_DATA"),
+        ("프롬프트엔지니어", "AI_DATA"),
+        ("MLOps엔지니어", "AI_DATA"),
+        ("AI서비스개발자", "AI_DATA"),
+        ("시스템엔지니어", "INFRASTRUCTURE"),
+        ("네트워크엔지니어", "INFRASTRUCTURE"),
+        ("DBA", "INFRASTRUCTURE"),
+        ("보안엔지니어", "INFRASTRUCTURE"),
+        ("클라우드엔지니어", "INFRASTRUCTURE"),
+        ("앱개발자", "MOBILE"),
+    ],
+)
+def test_jobkorea_duty_tokens_map_to_service_roles(category, target_role):
+    cohort = build_cohort(
+        batch(posting(raw_job_category=f"기타, {category}, 개발", title="개발자")),
+        criteria(target_role=target_role),
+    )
+
+    assert len(cohort.jobs) == 1
+
+
+@pytest.mark.parametrize(
+    "category", ["DBADMIN", "앱개발자교육", "보안엔지니어링팀", "백엔드개발자문"]
+)
+def test_jobkorea_duty_mapping_requires_an_exact_category_token(category):
+    cohort = build_cohort(
+        batch(posting(raw_job_category=category, title="일반 개발자")), criteria()
+    )
+
+    assert not cohort.jobs
+    assert "ROLE_NOT_MATCHED" in cohort.exclusions[0].reasons

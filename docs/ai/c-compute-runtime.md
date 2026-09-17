@@ -9,7 +9,7 @@
 이 문서의 변경은 서버 배포 완료를 의미하지 않는다.
 
 2026-09-09 -185 후속: 새 COHORT의 `matching_jobs`가 준비되어 있으면 분석 완료 시
-`job-matching/v2`도 원자적 저장 대상으로 계산한다. RECOMMENDATION에는 작은 reference만,
+현재 `job-matching/v3`도 원자적 저장 대상으로 계산한다. RECOMMENDATION에는 작은 reference만,
 공유 원본과 사용자별 평가는 002 projection에 분리한다. [부분 부합 계약](c-job-matching.md)에
 bounded 목록/상세 경로, 구 결과 호환/409, 예산과 무결성 오류 정책을 정의했다.
 
@@ -303,6 +303,11 @@ service-node DN4의 9864 origin을 사용했다. 운영 적용 전 각 advertise
 manifest가 batch 바이트를 묶지 못하면 받지 않는다. 이미 받은 회차는 다시 읽지 않으므로 반복
 poll이 비용을 만들지 않는다. WebHDFS 장애는 이미 staging된 회차에 영향을 주지 않는다.
 읽기 전용이며 C는 HDFS에 쓰지 않는다. 둘 중 하나만 써도 되고 둘 다 비우면 공고 입력이 없다.
+공고 manifest와 batch의 기본 상한은 각각 4 MiB와 64 MiB다. JobKorea `active_listing`
+전체 스냅샷은 같은 source·duty scope에서 기준 시각 이전의 최신 complete run만
+`ACTIVE_MATCHING` 합집합에 남긴다. 그 complete run 이전의 같은 source legacy/기간
+batch도 전체 활성 목록의 부재 판정을 존중해 제거하고, 이후 증분 batch는 유지한다. 월별 수요에는
+이 보존 정책을 적용하지 않는다.
 
 공고만 사용할 때는 `public_sources`를 생략한다. 공개 입력만 사용할 때는 `job_roots`와
 `criteria`를 함께 생략한다. 공개 입력은 명시한 불변 Snapshot만 읽으며 다른 root나
@@ -314,15 +319,18 @@ Top50k를 자동 탐색하지 않는다. `as_of`와 기간/직무는 재현 가�
 
 - 공고는 지정 root 또는 바로 아래 run 디렉터리의 `manifest.json`을 완료 신호로 사용한다.
   현재 Saramin/Worknet/JobKorea writer는 batch/CSV 다음에 manifest를 원자적으로 쓴다.
-  C는 고정 sibling(Saramin/Worknet `job_analysis_input.json`, JobKorea `job_analysis_input_v1.json`), manifest의 source/run/version/count/timestamp,
+  C는 고정 sibling(현재 공통 `job_analysis_input.json`, JobKorea legacy
+  `job_analysis_input_v1.json`), manifest의 source/run/version/count/timestamp,
   `output_sha256[고정 파일명]`, read 전후 파일 identity와 manifest 재읽기를 검증한다.
   세 writer는 직렬화한 batch bytes의 SHA-256을 마지막 manifest에 포함한다. 같은 run 재작성 중
   old manifest + new batch 조합은 해시 불일치로 거부한다. 링크·경로 이탈·크기 초과도 거부한다.
   해시 없는 기존 완료 파일은 `UNBOUND_LEGACY_MANIFEST`로 자동 게시를 보류한다. 원본을 임의로
   새 완료 파일로 승격하지 않는다. 이미 저장된 과거 입력은 명시적인 수동 품질 검증/기존 HTTP
   계약으로 분석할 수 있지만, 이를 자동 producer 연결 검증으로 보고하지 않는다.
-- 수집 중단/무효 기록/상세 수집 오류가 manifest에 있으면 자동 게시를 보류한다. 수정일이
-  섞인 입력에 게시일 기간 필터를 적용하는 것도 보류한다. 원본을 고치거나 지우지 않는다.
+- 수집 중단/무효 기록/해소되지 않은 상세 수집 오류가 manifest에 있으면 자동 게시를 보류한다.
+  JobKorea v3 `active_listing`은 `detail_errors`가 bound batch의 `BLOCKED` 공고 수와 정확히
+  일치하고 모든 duty scope가 끝까지 수집된 경우에만 공고 단위 `BODY_UNAVAILABLE`로 수용한다.
+  수정일이 섞인 입력에 게시일 기간 필터를 적용하는 것도 보류한다. 원본을 고치거나 지우지 않는다.
 - 자동 실행은 지정된 roots의 **검증된 완료 입력 관측 합집합**을 C에서 만든다. A에 새로운
   통합 batch를 요구하지 않는다. 출처/공고 ID별 `as_of` 이전 최신 관측을 선택한 뒤 기존
   품질·직무·기간·지역·경력 조건으로 같은 공고 집합을 확정하고 수요를 계산한다.
@@ -335,7 +343,10 @@ Top50k를 자동 탐색하지 않는다. `as_of`와 기간/직무는 재현 가�
   내역을 담는다. 수요는 동일 `cohort_id`에 연결되어 이 출처 정보를 재조회할 수 있다.
   이는 확보된 관측의 합집합이며 전체 시장을 빠짐없이 수집했다는 뜻이 아니다. 새 batch에서
   안 보이는 공고를 삭제/마감으로 추론하지 않는다. 운영자는 완료 입력을 보존된 전용 root에 공급한다.
-- 한 poll은 총 50,000개 원본 record와 batch bytes 128MiB 이내다. 초과나 발견/검증 실패,
+- 한 계산은 총 50,000개 원본 record와 batch bytes 128MiB 이내다. `ACTIVE_MATCHING`은
+  같은 scope의 최신 complete active snapshot을 고른 뒤 이 한도를 적용하고, 이전 회차의
+  manifest·batch hash 검증은 계속 수행한다. `MONTHLY_DEMAND`는 관측 회차를 제거하지 않고
+  전체 입력에 같은 한도를 적용한다. 초과나 발견/검증 실패,
   불완전 manifest가 있으면 축소된 입력을 완성 모집단으로 게시하지 않는다. 현재 resolve는
   COHORT_NOT_PREPARED이고 기존 불변 Snapshot ID 조회는 유지한다. 독립 공개 입력 처리는 계속한다.
   실행 중 한 번 검증한 manifest가 발견 목록에서 사라져도 축소 집합을 게시하지 않는다.

@@ -9,12 +9,11 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from job.cohort import JobCohort
+from job.matching import build_job_matching, restore_job_assessment
 from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
 from test_job_cohort import batch, criteria, posting
 from test_recommendation_engine import make_analysis
-
-from job.cohort import JobCohort
-from job.matching import build_job_matching, restore_job_assessment
 from worker.api import create_compute_app
 from worker.store import (
     Artifact,
@@ -371,7 +370,7 @@ def test_matching_result_budget_rejects_without_publishing_a_truncated_snapshot(
     assert response.json()["code"] == "RESULT_TOO_LARGE"
 
 
-def test_only_uncertain_conditions_still_produce_partial_view_when_strict_is_empty(
+def test_known_satisfaction_with_unresolved_conditions_is_partial_when_strict_is_empty(
     client,
 ):
     record = posting(
@@ -404,7 +403,7 @@ def test_only_uncertain_conditions_still_produce_partial_view_when_strict_is_emp
     item = result.json()["data"]["items"][0]
     assert item["required"]["satisfied_count"] == 1
     assert item["required"]["fulfillment_ratio"] is None
-    assert item["required_status"] == "UNKNOWN"
+    assert item["required_status"] == "PARTIAL"
 
 
 def test_matching_application_recreation_reads_same_saved_result(client):

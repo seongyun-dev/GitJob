@@ -1,10 +1,9 @@
 import pytest
-from pydantic import ValidationError
-from test_job_cohort import batch, criteria, posting
-
 from job.cohort import build_cohort
 from job.collector.technology import extract_technology_mentions
 from job.demand import DemandSnapshot, aggregate_demand
+from pydantic import ValidationError
+from test_job_cohort import batch, criteria, posting
 
 
 def test_distinct_counts_union_ratios_and_deterministic_ranks_match_hand_counts():
@@ -71,7 +70,7 @@ def test_demand_deserialization_rejects_a_forged_denominator_or_ready_empty_stat
 
 
 def test_decorated_real_site_sections_keep_preferred_out_of_required_demand():
-    body = "📋 주요업무\n- Java 서비스 개발\n📋 우대사항\n- Redis 검색 기능 경험"
+    body = "📋 자격요건\n- Java 서비스 개발\n📋 우대사항\n- Redis 검색 기능 경험"
     record = posting(
         description_text=body,
         technology_mentions=extract_technology_mentions("백엔드 개발자", body),

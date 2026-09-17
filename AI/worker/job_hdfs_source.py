@@ -50,9 +50,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from common.webhdfs import WebHdfsError
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -94,10 +93,10 @@ class JobHdfsSourceConfig(BaseModel):
     sources: tuple[str, ...] = Field(min_length=1, max_length=16)
     max_runs_per_source: int = Field(default=200, ge=1, le=10_000, strict=True)
     max_batch_bytes: int = Field(
-        default=32 * 1024 * 1024, ge=1, le=64 * 1024 * 1024, strict=True
+        default=64 * 1024 * 1024, ge=1, le=64 * 1024 * 1024, strict=True
     )
     max_manifest_bytes: int = Field(
-        default=1024 * 1024, ge=1, le=8 * 1024 * 1024, strict=True
+        default=4 * 1024 * 1024, ge=1, le=8 * 1024 * 1024, strict=True
     )
     max_requests: int = Field(default=8000, ge=1, le=100_000, strict=True)
 
