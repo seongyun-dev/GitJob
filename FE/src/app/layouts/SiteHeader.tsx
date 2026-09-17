@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
 import { HeaderAuthArea } from '@/features/auth/components/HeaderAuthArea'
+import { MAIN_PATH } from '@/features/landing/model/landingEntry'
 import { handleLandingTopClick } from '@/features/landing/scrollToHash'
 import {
   findActiveNav,
@@ -219,11 +220,24 @@ export function SiteHeader({ variant }: { variant: Variant }) {
             {PRIMARY_NAV.map((item) => (
               <li key={item.label} className="shrink-0">
                 {'kind' in item ? (
-                  // 서비스 소개는 메인(랜딩) 화면 자체다. 랜딩에서는 맨 위로 스크롤하고,
-                  // 내부 페이지에서는 랜딩으로 이동한다(새로 마운트돼 히어로부터 보인다).
+                  /*
+                   * 서비스 소개는 메인 화면을 처음부터 보여준다 · 티켓 246, 310.
+                   *
+                   * 특정 섹션이 아니라 화면 전체다. 메인의 첫 장(직무 선택)부터가 소개이고,
+                   * 아래 장들은 그 이어지는 설명이라 중간부터 시작하면 문맥이 잘린다.
+                   *
+                   * 스크롤 스토리(`/intro`)로도 보내지 않는다. 그 다섯 장은 처음 온 사람에게
+                   * 한 번 보여주는 도입부이고, 서비스를 쓰는 중에 "소개를 다시 보고 싶다"는
+                   * 것은 무엇을 해주는 화면인지 다시 읽고 싶다는 뜻이지 도입부를 처음부터
+                   * 재생하고 싶다는 뜻이 아니다. 헤더가 스토리로 되돌리면 "자동 노출은 최초
+                   * 1회"라는 규칙도 실질적으로 무너진다.
+                   *
+                   * 메인에 있으면 라우트 이동 없이 맨 위로 옮기고, 다른 화면에서는 메인으로
+                   * 간다 — 링크로 들어가면 `ScrollRestoration` 이 맨 위에서 시작한다.
+                   */
                   isLanding ? (
                     <a
-                      href="/"
+                      href={MAIN_PATH}
                       onClick={handleLandingTopClick}
                       className={`text-[15px] whitespace-nowrap transition-colors ${tone.base}`}
                     >
@@ -231,7 +245,7 @@ export function SiteHeader({ variant }: { variant: Variant }) {
                     </a>
                   ) : (
                     <Link
-                      to="/"
+                      to={MAIN_PATH}
                       className={`text-[15px] whitespace-nowrap transition-colors ${tone.base}`}
                     >
                       {item.label}

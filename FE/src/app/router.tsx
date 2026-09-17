@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router'
 import { AppLayout } from '@/app/layouts/AppLayout'
 import { RootLayout } from '@/app/layouts/RootLayout'
+import { EntryRoute } from '@/app/pages/EntryRoute'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { SystemStatesPage } from '@/app/pages/SystemStatesPage'
 import { TeamPage } from '@/features/about/pages/TeamPage'
@@ -65,9 +66,22 @@ export const router = createBrowserRouter([
   {
     element: <RootLayout />,
     children: [
-      // S1 Landing · 티켓 191. 배경이 화면 전체를 덮어야 해서 AppLayout 밖에 둔다.
-      // 정적 경로가 splat보다 먼저 매칭되므로 아래 `*`가 `/`를 가로채지 않는다.
-      { path: '/', element: <LandingPage /> },
+      /*
+       * 진입 갈림길 · 티켓 310. 화면을 그리지 않고 `/intro` 또는 `/main` 으로 보낸다.
+       * 소개를 본 사람에게 다섯 장을 다시 보여주지 않기 위한 것이고, 판정 근거는
+       * localStorage 표식 하나다(`features/landing/model/landingEntry`).
+       *
+       * 정적 경로가 splat보다 먼저 매칭되므로 아래 `*`가 `/`를 가로채지 않는다.
+       */
+      { path: '/', element: <EntryRoute /> },
+      /*
+       * S1 Landing · 티켓 191·298, 경로는 티켓 310에서 `/` 에서 옮겨 왔다. 배경이 화면
+       * 전체를 덮어야 해서 AppLayout 밖에 둔다.
+       *
+       * 여기서는 표식을 보지 않는다. 헤더의 "서비스 소개"로 명시적으로 들어오는 곳이라
+       * 자동으로 `/main` 에 보내면 누른 사람에게서 화면을 뺏는 동작이 된다.
+       */
+      { path: '/intro', element: <LandingPage /> },
       /*
        * 메인 화면 · 티켓 298. `/` 가 스크롤 스토리로 바뀌면서 직무 선택 화면이 갈 곳을
        * 잃었다. 스토리는 "무엇인가"를 말하고 이 화면은 "내 직무는 무엇을 요구하나"를

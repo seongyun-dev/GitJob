@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import { useStartPath } from '@/features/landing/story/useStartPath'
+import { useStartLink } from '@/features/landing/story/useStartLink'
 import { CountUp } from '@/features/landing/story/CountUp'
 import { Rise } from '@/features/landing/story/StoryScene'
 
@@ -15,7 +15,7 @@ import { Rise } from '@/features/landing/story/StoryScene'
  */
 
 export function ProblemScene() {
-  const start = useStartPath()
+  const start = useStartLink()
 
   return (
     <div className="mx-auto flex max-w-[1120px] flex-col items-center gap-7 text-center text-white">
@@ -59,16 +59,13 @@ export function ProblemScene() {
         무엇인지 아는 사람이 다섯 장을 지나가야 한다. 마지막 장의 CTA 는 "다 읽은 사람"
         을 위한 것이고 이것은 "이미 결정한 사람"을 위한 것이다.
       */}
-      <Rise delay={340} className="mt-2 flex flex-col items-center gap-3">
+      <Rise delay={340} className="mt-3">
         <Link
-          to={start}
+          {...start}
           className="inline-flex items-center gap-2.5 rounded-[14px] bg-white px-7 py-4 text-[16px] font-bold text-brand-ink shadow-[0_16px_36px_rgba(25,37,67,.22)] transition-transform hover:-translate-y-0.5"
         >
           <GithubMark className="h-5 w-5" />내 GitHub로 시작하기
         </Link>
-        <span className="text-[13px] text-white/70">
-          읽기 전용 · 선택한 저장소만 분석합니다
-        </span>
       </Rise>
     </div>
   )
@@ -272,7 +269,7 @@ export function WhatIfScene() {
         <h2 className="text-[clamp(38px,3.8vw,60px)] leading-[1.14] font-extrabold tracking-[-0.04em] break-keep [text-wrap:balance]">
           그렇다면,
           <br />
-          다음에는 무엇을 배우면 좋을까?
+          다음에 무엇을 배우면 좋을까요?
         </h2>
       </Rise>
 
@@ -343,7 +340,7 @@ export function WhatIfScene() {
 const JOURNEY = ['GITHUB', 'EVIDENCE', 'JOB MATCH', 'NEXT SKILL'] as const
 
 export function StartScene() {
-  const start = useStartPath()
+  const start = useStartLink()
 
   return (
     <div className="mx-auto flex w-[min(900px,88vw)] flex-col items-center gap-11 text-center text-white">
@@ -365,16 +362,13 @@ export function StartScene() {
         </h2>
       </Rise>
 
-      <Rise delay={420} className="flex flex-col items-center gap-4.5">
+      <Rise delay={420}>
         <Link
-          to={start}
+          {...start}
           className="inline-flex items-center gap-3 rounded-[16px] bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-9 py-5 text-[19px] font-bold text-white shadow-[0_18px_40px_rgba(47,94,235,.4)]"
         >
           <GithubMark className="h-6 w-6" />내 GitHub 분석 시작하기
         </Link>
-        <span className="text-[14px] text-white/60">
-          읽기 전용 · 선택한 저장소만 분석 · 코드 원문은 저장하지 않습니다
-        </span>
       </Rise>
     </div>
   )

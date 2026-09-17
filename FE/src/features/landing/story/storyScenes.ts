@@ -83,11 +83,8 @@ export const SCENES: readonly Scene[] = [
   },
 ]
 
-/**
- * 랜딩의 시작 버튼이 가는 곳 · 메인 화면.
- *
- * <p>GitHub OAuth 로 바로 나가지 않는다. 그러면 버튼을 누른 순간 우리 화면을 떠나
- * GitHub 권한 동의 화면이 뜬다 — 무엇을 얻는지 아직 보지 못한 사람에게 권한부터
- * 요구하는 순서가 된다. 메인 화면에서 직무별 판정 범위를 본 뒤에 로그인이 필요해진다.</p>
- */
-export const MAIN_PATH = '/main'
+/*
+  랜딩이 가는 곳(`MAIN_PATH`)과 랜딩 자신의 경로(`INTRO_PATH`)는
+  `features/landing/model/landingEntry` 로 옮겼다(티켓 S15P21E102-310). 둘은 `/` 진입
+  판정의 두 결과라, 그 판정과 같은 파일에 있어야 어디로 갈 수 있는지가 한눈에 읽힌다.
+*/

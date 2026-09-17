@@ -7,7 +7,7 @@ import {
 } from '@/features/landing/story/StoryContent'
 import { Link } from 'react-router'
 import { SCENES } from '@/features/landing/story/storyScenes'
-import { useStartPath } from '@/features/landing/story/useStartPath'
+import { useStartLink } from '@/features/landing/story/useStartLink'
 import { StoryScene } from '@/features/landing/story/StoryScene'
 import { useStoryScenes } from '@/features/landing/story/useStoryScenes'
 import { BrandSymbol } from '@/shared/ui/BrandSymbol'
@@ -29,7 +29,7 @@ const SCENE_VIEWS = [ProblemScene, EvidenceScene, JobMatchScene, WhatIfScene, St
 
 export function LandingStory() {
   const { active, seen, scrollRef, sceneRef, goTo } = useStoryScenes(SCENES.length)
-  const start = useStartPath()
+  const start = useStartLink()
   const onDark = SCENES[active]?.chrome !== 'onLight'
   const ink = onDark ? 'text-white' : 'text-brand-ink'
 
@@ -42,13 +42,13 @@ export function LandingStory() {
           로고는 어느 화면에서든 메인으로 간다. 이 화면에서만 "첫 장으로 스크롤"로
           두면 같은 로고가 화면마다 다르게 동작한다.
         */}
-        <Link to={start} aria-label="메인으로" className="flex items-center gap-2.5">
+        <Link {...start} aria-label="메인으로" className="flex items-center gap-2.5">
           <BrandSymbol className="h-[30px]" />
           <span className="text-[22px] font-extrabold tracking-[-0.04em]">GitJob</span>
         </Link>
 
         <Link
-          to={start}
+          {...start}
           className={`inline-flex items-center gap-2 rounded-xl border px-4.5 py-2.5 text-[14px] font-bold backdrop-blur-[14px] transition-colors duration-500 ${
             onDark
               ? 'border-white/20 bg-white/10 text-white'
