@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { logout } from '@/features/auth/api/me'
 import type { Me } from '@/features/auth/api/me'
+import { userMenuLinks } from '@/features/auth/model/userMenu'
 import { synchronizeSessionCache } from '@/features/auth/sessionSync'
 
 /**
@@ -184,17 +185,25 @@ export function UserMenu({ me, tone = 'dark' }: { me: Me; tone?: 'light' | 'dark
           <div className="border-t border-brand-line" />
 
           {/*
-            관리자 페이지 진입은 드롭다운이 아니라 헤더의 별도 "관리자" 버튼으로 뺐다
-            (HeaderAuthArea). ADMIN이 한 번에 이동하게 하려는 것 — 여기엔 두지 않는다.
+            이동 항목은 `model/userMenu`가 정한다 · 티켓 317. 관리자에게만 `모니터링`이
+            하나 더 붙는데, 누구에게 무엇이 보이는지는 화면을 띄우지 않고 확인할 수
+            있어야 하는 규칙이라 컴포넌트 밖에 뒀다.
+
+            관리자 진입로가 여기 생긴 이유는 그 전까지 로그인 직후 자동 이동이 유일한
+            길이어서다(`AuthCallbackPage`). 서비스 화면으로 한 번 나오면 주소를 직접
+            쳐야 콘솔로 돌아갈 수 있었다.
           */}
-          <Link
-            to="/mypage"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 text-[13.5px] text-brand-ink-soft transition-colors hover:bg-[#F6F8FC]"
-          >
-            마이페이지
-          </Link>
+          {userMenuLinks(me).map((link) => (
+            <Link
+              key={link.id}
+              to={link.to}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2.5 text-[13.5px] text-brand-ink-soft transition-colors hover:bg-[#F6F8FC]"
+            >
+              {link.label}
+            </Link>
+          ))}
 
           <div className="border-t border-brand-line" />
 

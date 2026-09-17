@@ -1,5 +1,6 @@
 import { NavLink, Outlet, Link, Navigate } from 'react-router'
 import { useMe } from '@/features/auth/hooks/useMe'
+import { MAIN_PATH } from '@/features/landing/model/landingEntry'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
@@ -40,15 +41,31 @@ const ADMIN_BACKDROP = [
 function AdminHeader() {
   return (
     <header className="sticky top-0 z-10 border-b border-[rgba(224,231,241,0.9)] bg-white/[0.62] backdrop-blur-[20px]">
-      {/* 71px + 아래 테두리 1px = 확정 디자인의 헤더 높이 72px. SiteHeader와 같다. */}
-      <div className="mx-auto flex h-[71px] w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
+      {/*
+        71px + 아래 테두리 1px = 확정 디자인의 헤더 높이 72px. SiteHeader와 같다.
+
+        폭은 관리자 본문(`.gj-shell-admin`)과 같은 토큰을 쓴다 · 티켓 317. 좌우 패딩은
+        이미 본문과 같은 단계(20/32/48px)였는데 max-width만 1520px(서비스 본문 폭)이라,
+        관리자 화면에서만 헤더가 본문보다 192px 넓어 로고가 본문 왼쪽 밖에서 시작했다.
+        숫자를 여기 다시 적지 않는 이유는 한쪽만 고쳐지는 것을 막기 위해서다.
+      */}
+      <div
+        className="mx-auto flex h-[71px] w-full items-center gap-6 px-5 sm:px-8 lg:px-12"
+        style={{ maxWidth: 'var(--gj-shell-admin-width)' }}
+      >
         <div className="flex shrink-0 items-center gap-3.5">
           {/*
-            관리자 콘솔 안에서는 로고가 관리자 홈으로 간다. 서비스 메인으로 보내면
-            운영 중에 한 번의 클릭으로 콘솔 밖으로 나가게 된다 — 돌아오려면 주소를
-            다시 쳐야 한다.
+            로고는 서비스 메인으로 간다 · 티켓 317.
+
+            이전에는 관리자 홈(`/admin`)으로 두었는데, 그 자리는 이미 아래 Monitoring
+            내비게이션이 갖고 있어 같은 곳으로 가는 길이 둘이었다. 반대로 콘솔에서
+            서비스 화면으로 나가는 길은 화면에 없어 주소를 직접 쳐야 했다.
+
+            `/`(진입 갈림길)도 `/intro`(소개 스토리)도 아니다 — 운영 중에 필요한 것은
+            서비스 화면 자체다. 세션은 그대로이고 로그아웃도 아니므로, 프로필 메뉴의
+            `모니터링`으로 한 번에 돌아올 수 있다.
           */}
-          <Link to="/admin" className="flex items-center" aria-label="관리자 홈으로">
+          <Link to={MAIN_PATH} className="flex items-center" aria-label="GitJob 메인으로">
             <BrandLogo className="h-[30px] lg:h-9" />
           </Link>
           <span className="rounded-[6px] border border-brand-line bg-[#F5F7FA] px-2 py-1 text-[11px] font-extrabold tracking-[0.1em] text-brand-muted">

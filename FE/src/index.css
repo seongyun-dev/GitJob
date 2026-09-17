@@ -97,6 +97,14 @@ html {
 :root {
   --gj-header-height: 71px; /* + 아래 테두리 1px = 확정 디자인의 72px */
   /*
+   * 관리자 화면 본문 폭 · 티켓 S15P21E102-317.
+   *
+   * `.gj-shell-admin`과 관리자 헤더가 같은 값을 써야 로고가 본문과 같은 선에서 시작한다.
+   * 헤더가 1520px(서비스 본문 폭)이던 동안 관리자 화면만 헤더가 본문보다 192px 넓어
+   * 로고가 본문 왼쪽 밖에 있었다. 두 곳이 같은 숫자를 각자 적으면 한쪽만 고쳐진다.
+   */
+  --gj-shell-admin-width: 1328px;
+  /*
    * 티켓 246: 메인·내부는 "같은 서비스의 다른 상태"다. 메인 헤더는 원래대로 투명
    * (hero와 섞임, 흰 글씨)이라 배경 토큰이 없다. 내부만 옅은 blue-gray 불투명 배경을
    * 쓴다 — 거의 흰색이되 순백은 아니고, 은은한 테두리·그림자로 콘텐츠와 구분한다.
@@ -364,7 +372,7 @@ html {
   .gj-shell-admin {
     width: 100%;
     margin-inline: auto;
-    max-width: 1328px;
+    max-width: var(--gj-shell-admin-width);
     padding: 1.75rem 1.25rem 3.5rem;
   }
   @media (width >= 640px) {
