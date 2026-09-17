@@ -1,5 +1,6 @@
 import { Link, useSearchParams } from 'react-router'
-import { githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
+import { githubLoginUrl } from '@/features/auth/api/authUrls'
+import { browserReturnToStorage, rememberReturnTo } from '@/features/auth/returnTo'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { BrandSymbol } from '@/shared/ui/BrandSymbol'
 
@@ -21,7 +22,25 @@ import { BrandSymbol } from '@/shared/ui/BrandSymbol'
  */
 export function LoginPage() {
   const [params] = useSearchParams()
-  const target = safeRedirect(params.get('redirectTo'))
+
+  /*
+    돌아갈 자리는 FE가 들고 있는다 · 티켓 303.
+
+    `?redirectTo=`를 OAuth 시작 URL에 그대로 싣지 않는다. BE의
+    `OAUTH_ALLOWED_REDIRECT_PATHS`는 정확히 일치하는 경로만 통과시켜 `/jobs/123` 같은
+    동적 경로를 왕복에 나를 수 없고, 실으면 `AUTH-400-1`로 끊긴다. 목적지는
+    sessionStorage에 적어 두고(`returnTo.ts`) 콜백 화면이 한 번 꺼내 쓴다.
+
+    가드(`RequireAuth`)는 쿼리 없이 이 화면으로 보내고 자기가 직접 적는다. 여기서
+    쿼리를 다시 보는 것은 손으로 URL을 만들어 오는 경우까지 같은 규칙으로 받기 위해서다.
+
+    렌더 중에 적는 것은 아래 버튼이 라우터가 아니라 브라우저 최상위 이동(`<a href>`)
+    이기 때문이다. 안전하지 않은 값은 `rememberReturnTo`가 걸러 낸다.
+  */
+  const redirectTo = params.get('redirectTo')
+  if (redirectTo !== null) {
+    rememberReturnTo(browserReturnToStorage(), { pathname: redirectTo, search: '', hash: '' })
+  }
 
   return (
     <section className="relative flex min-h-dvh flex-col overflow-hidden bg-[radial-gradient(780px_560px_at_92%_0%,rgba(158,184,221,.38),transparent_62%),radial-gradient(620px_460px_at_2%_100%,rgba(186,170,159,.3),transparent_62%),linear-gradient(118deg,#F1EEEB_0%,#EEEDEE_50%,#E7EDF7_100%)]">
@@ -48,7 +67,7 @@ export function LoginPage() {
           </p>
 
           <a
-            href={githubLoginUrl(target)}
+            href={githubLoginUrl()}
             className="mt-6 flex items-center justify-center gap-2.5 rounded-xl bg-[#24292F] px-[22px] py-3.5 text-[14px] font-bold text-white shadow-[0_10px_22px_rgba(20,24,31,0.2)] transition-colors hover:bg-[#1B1F24]"
           >
             <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden>

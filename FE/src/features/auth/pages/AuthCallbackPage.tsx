@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { DEFAULT_REDIRECT, githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
 import { useMe } from '@/features/auth/hooks/useMe'
+import { browserReturnToStorage, consumeReturnTo } from '@/features/auth/returnTo'
 import { PageHero } from '@/shared/ui/PageHero'
 
 /**
@@ -42,14 +43,30 @@ export function AuthCallbackPage() {
       // 아직 /me 확인 중. 역할을 알아야 목적지를 정하므로 결과를 기다린다.
       return
     }
+    /*
+      가려던 자리를 꺼낸다 · 티켓 303. 꺼내는 순간 지워진다 — 다음 로그인이 지난
+      목적지를 다시 만나면 안 된다.
+
+      관리자로 갈라지는 경우에도 꺼낸다. 쓰지는 않지만 남겨 두면 그 값이 다음 로그인까지
+      살아남는다. 이동이 확정된 이 자리에서 한 번만 꺼내는 이유이기도 하다 — 렌더 중에
+      꺼내면 이동 전 재렌더에서 값을 잃는다.
+    */
+    const remembered = consumeReturnTo(browserReturnToStorage())
+
     // 관리자 계정은 목적지와 무관하게 곧바로 관리자 화면으로 보낸다.
     // replace가 아니면 뒤로 가기가 이 콜백 URL로 돌아온다. 쿼리는 1회용이다.
     if (me?.role === 'ADMIN') {
       navigate('/admin', { replace: true })
       return
     }
-    // 관리자가 아니면 `/admin`으로 보내지 않는다(관리자 로그인 링크로 들어온 일반 계정 방지).
-    navigate(target === '/admin' ? DEFAULT_REDIRECT : target, { replace: true })
+    /*
+      FE가 적어 둔 자리가 먼저다. BE가 실어 보낸 `redirectTo`는 허용 목록을 통과한
+      값이라 가드에 막힌 원래 목적지가 아니라 기본 경로인 경우가 대부분이다.
+
+      관리자가 아니면 `/admin`으로 보내지 않는다(관리자 로그인 링크로 들어온 일반 계정 방지).
+    */
+    const fallback = target === '/admin' ? DEFAULT_REDIRECT : target
+    navigate(remembered ?? fallback, { replace: true })
   }, [succeeded, me, target, navigate])
 
   if (succeeded) {

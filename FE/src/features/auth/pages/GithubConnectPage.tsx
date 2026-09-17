@@ -1,5 +1,6 @@
 import { Link, useSearchParams } from 'react-router'
-import { githubLoginUrl, safeRedirect } from '@/features/auth/api/authUrls'
+import { githubLoginUrl } from '@/features/auth/api/authUrls'
+import { browserReturnToStorage, rememberReturnTo } from '@/features/auth/returnTo'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
@@ -40,8 +41,19 @@ const REQUESTED_SCOPES = [
 
 export function GithubConnectPage() {
   const [params] = useSearchParams()
-  const target = safeRedirect(params.get('redirectTo'))
   const code = params.get('code')
+
+  /*
+    돌아갈 자리는 FE가 들고 있는다 · 티켓 303.
+
+    전역 가드가 `?redirectTo=<끊긴 화면>`을 달아 이리로 보낸다(`app/providers.tsx`).
+    그 값을 OAuth 시작 URL에 그대로 실으면 안 된다 — BE의 `OAUTH_ALLOWED_REDIRECT_PATHS`는
+    정확히 일치하는 경로만 통과시키므로 `/jobs/123` 같은 동적 경로는 `AUTH-400-1`로 끊긴다.
+
+    그래서 목적지는 sessionStorage에 적어 두고(`returnTo.ts`) OAuth는 기본 진입점으로
+    시작한다. 콜백 화면이 그 값을 한 번 꺼내 쓴다.
+  */
+  rememberReturnToParam(params.get('redirectTo'))
 
   return (
     <section className="relative min-h-dvh overflow-hidden bg-[radial-gradient(780px_560px_at_92%_0%,rgba(158,184,221,.38),transparent_62%),radial-gradient(620px_460px_at_2%_100%,rgba(186,170,159,.3),transparent_62%),linear-gradient(118deg,#F1EEEB_0%,#EEEDEE_50%,#E7EDF7_100%)]">
@@ -88,7 +100,7 @@ export function GithubConnectPage() {
           </div>
 
           <a
-            href={githubLoginUrl(target)}
+            href={githubLoginUrl()}
             className="mt-6 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-[22px] py-[15px] text-center text-[14px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
           >
             GitHub 권한 다시 허용
@@ -106,4 +118,21 @@ export function GithubConnectPage() {
       </div>
     </section>
   )
+}
+
+/**
+ * 쿼리로 받은 돌아갈 자리를 sessionStorage로 옮긴다 · 티켓 303.
+ *
+ * 렌더 중에 적는 것은 이 화면의 버튼이 라우터가 아니라 브라우저 최상위 이동(`<a href>`)
+ * 이기 때문이다. 효과로 미루면 이동이 먼저 일어날 수 있다. 같은 값을 여러 번 적어도
+ * 결과가 같은 쓰기라 안전하다.
+ *
+ * 쿼리 값은 이미 `pathname + search + hash` 한 덩어리라 그대로 넘긴다. 안전하지 않은
+ * 값(바깥 주소·인증 왕복 경로)은 `rememberReturnTo`가 걸러 내고 아무것도 적지 않는다.
+ */
+function rememberReturnToParam(redirectTo: string | null): void {
+  if (redirectTo === null) {
+    return
+  }
+  rememberReturnTo(browserReturnToStorage(), { pathname: redirectTo, search: '', hash: '' })
 }
