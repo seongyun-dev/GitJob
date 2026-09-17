@@ -364,6 +364,125 @@ def test_redis_failures_are_fail_open() -> None:
     )
 
 
+def test_redis_metrics_distinguish_hit_validation_and_durable_fallback() -> None:
+    redis = FakeRedis()
+    index = RedisArtifactIndex(
+        redis,
+        materialization_context="file:///artifacts",
+        monotonic=iter([0.0, 0.010]).__next__,
+    )
+    index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(artifact(),),
+    )
+
+    assert (
+        index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(valid=False),
+        )
+        is None
+    )
+
+    assert index.metrics.lookup_count == 1
+    assert index.metrics.hit_count == 1
+    assert index.metrics.miss_count == 0
+    assert index.metrics.durable_validation_count == 1
+    assert index.metrics.durable_fallback_count == 1
+    assert index.metrics.error_count == 0
+    assert index.metrics.fail_open_count == 0
+    assert index.metrics.percentile_ms(0.50) == 10.0
+
+
+def test_redis_metrics_count_miss_and_error_fail_open() -> None:
+    miss_index = RedisArtifactIndex(
+        FakeRedis(),
+        materialization_context="file:///artifacts",
+        monotonic=iter([0.0, 0.002]).__next__,
+    )
+    assert (
+        miss_index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(),
+        )
+        is None
+    )
+    assert miss_index.metrics.lookup_count == 1
+    assert miss_index.metrics.miss_count == 1
+    assert miss_index.metrics.error_count == 0
+
+    class BrokenRedis:
+        def get(self, key: str):
+            raise TimeoutError(key)
+
+    error_index = RedisArtifactIndex(
+        BrokenRedis(),
+        materialization_context="file:///artifacts",
+        monotonic=iter([0.0, 0.003]).__next__,
+    )
+    assert (
+        error_index.lookup(
+            cache_policy_version="weekly-policy-v1",
+            repo_id=7,
+            pinned_commit_sha=COMMIT,
+            sha_source="CURRENT_DEFAULT_HEAD",
+            artifact_store=FakeArtifactStore(),
+        )
+        is None
+    )
+    assert error_index.metrics.lookup_count == 1
+    assert error_index.metrics.miss_count == 1
+    assert error_index.metrics.error_count == 1
+    assert error_index.metrics.fail_open_count == 1
+
+
+def test_redis_metrics_handle_malformed_entry_and_latency_percentiles() -> None:
+    redis = FakeRedis()
+    index = RedisArtifactIndex(
+        redis,
+        materialization_context="file:///artifacts",
+        monotonic=iter([0.0, 0.010, 0.010, 0.060]).__next__,
+    )
+    index.put(
+        cache_policy_version="weekly-policy-v1",
+        repo_id=7,
+        pinned_commit_sha=COMMIT,
+        sha_source="CURRENT_DEFAULT_HEAD",
+        artifacts=(artifact(),),
+    )
+    key = next(iter(redis.values))
+    redis.values[key] = ("not-json", redis.values[key][1])
+
+    for _ in range(2):
+        assert (
+            index.lookup(
+                cache_policy_version="weekly-policy-v1",
+                repo_id=7,
+                pinned_commit_sha=COMMIT,
+                sha_source="CURRENT_DEFAULT_HEAD",
+                artifact_store=FakeArtifactStore(),
+            )
+            is None
+        )
+
+    assert index.metrics.lookup_count == 2
+    assert index.metrics.miss_count == 2
+    assert index.metrics.error_count == 2
+    assert index.metrics.fail_open_count == 2
+    assert index.metrics.percentile_ms(0.50) == 10.0
+    assert index.metrics.percentile_ms(0.95) == 50.0
+    assert index.metrics.hit_rate == 0.0
+
+
 def test_empty_or_historical_results_are_not_indexed() -> None:
     redis = FakeRedis()
     index = RedisArtifactIndex(redis, materialization_context="file:///artifacts")
@@ -540,6 +659,36 @@ def test_new_extraction_publishes_positive_artifact_index_entry(tmp_path: Path) 
     assert len(redis.values) == 1
 
 
+def test_run_summary_includes_additive_redis_metrics(tmp_path: Path) -> None:
+    store = FileArtifactStore(tmp_path / "artifacts")
+    index = RedisArtifactIndex(
+        FakeRedis(), materialization_context=store.materialization_context
+    )
+    transport = ScriptedTransport(
+        [rate_control(), metadata(), head(), tree(), response(b'{"name":"repo"}')]
+    )
+
+    summary = make_orchestrator(
+        tmp_path,
+        transport,
+        artifact_store=store,
+        redis_index=index,
+    ).run([weekly_repo_candidate()]).summary()
+
+    assert summary["schema_version"] == "github-repo-fetch-run-summary/v1"
+    assert summary["redis_enabled"] is True
+    assert summary["redis_lookup_count"] == 1
+    assert summary["redis_hit_count"] == 0
+    assert summary["redis_miss_count"] == 1
+    assert summary["redis_hit_rate"] == 0.0
+    assert summary["redis_lookup_latency_p50_ms"] is not None
+    assert summary["redis_lookup_latency_p95_ms"] is not None
+    assert summary["redis_error_count"] == 0
+    assert summary["redis_fail_open_count"] == 0
+    assert summary["redis_durable_validation_count"] == 0
+    assert summary["redis_durable_fallback_count"] == 0
+
+
 def test_redis_write_failure_does_not_change_durable_publication(
     tmp_path: Path,
 ) -> None:
@@ -569,6 +718,8 @@ def test_redis_write_failure_does_not_change_durable_publication(
     assert result.status is RepoExecutionStatus.COMPLETE
     assert result.record is not None
     assert len(result.record.artifacts) == 1
+    assert index.metrics.error_count == 1
+    assert index.metrics.fail_open_count == 1
 
 
 def test_redis_factory_defaults_to_db_one_and_configured_ttl(monkeypatch) -> None:

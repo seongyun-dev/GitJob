@@ -34,7 +34,7 @@ from github.contracts import (
     RepoCollectionStatus,
     RepoLanguageMetadata,
 )
-from github.redis_artifact_index import RedisArtifactIndex
+from github.redis_artifact_index import RedisArtifactIndex, RedisArtifactMetrics
 from github.repo_fetch_policy import (
     RepoFetchPolicy,
     devops_artifact_category,
@@ -172,6 +172,7 @@ class RepoFetchRun:
     rate_limit_after: RateLimitState | None = None
     active_runtime_seconds: float = 0.0
     lookup_metrics: DurableLookupMetrics | None = None
+    redis_metrics: RedisArtifactMetrics | None = None
 
     def summary(self) -> dict[str, Any]:
         statuses = Counter(str(row["status"]) for row in self.checkpoint_rows)
@@ -222,6 +223,7 @@ class RepoFetchRun:
             "language_metadata_repo_count": language_repos,
             "devops_artifact_counts": dict(sorted(artifact_categories.items())),
             **self._baseline_metrics(statuses),
+            **self._redis_metrics_payload(),
         }
 
     def _baseline_metrics(self, statuses: Counter[str]) -> dict[str, Any]:
@@ -252,6 +254,38 @@ class RepoFetchRun:
             "repos_per_second": (
                 round(len(self.checkpoint_rows) / elapsed, 4) if elapsed > 0 else None
             ),
+        }
+
+    def _redis_metrics_payload(self) -> dict[str, Any]:
+        """Return additive Redis metrics without changing summary schema v1."""
+
+        metrics = self.redis_metrics
+        if metrics is None:
+            return {
+                "redis_enabled": False,
+                "redis_lookup_count": 0,
+                "redis_hit_count": 0,
+                "redis_miss_count": 0,
+                "redis_hit_rate": None,
+                "redis_lookup_latency_p50_ms": None,
+                "redis_lookup_latency_p95_ms": None,
+                "redis_error_count": 0,
+                "redis_fail_open_count": 0,
+                "redis_durable_validation_count": 0,
+                "redis_durable_fallback_count": 0,
+            }
+        return {
+            "redis_enabled": True,
+            "redis_lookup_count": metrics.lookup_count,
+            "redis_hit_count": metrics.hit_count,
+            "redis_miss_count": metrics.miss_count,
+            "redis_hit_rate": metrics.hit_rate,
+            "redis_lookup_latency_p50_ms": metrics.percentile_ms(0.50),
+            "redis_lookup_latency_p95_ms": metrics.percentile_ms(0.95),
+            "redis_error_count": metrics.error_count,
+            "redis_fail_open_count": metrics.fail_open_count,
+            "redis_durable_validation_count": metrics.durable_validation_count,
+            "redis_durable_fallback_count": metrics.durable_fallback_count,
         }
 
 
@@ -426,6 +460,9 @@ class RepoFetchOrchestrator:
             checkpoint_rows=self.checkpoint.summary_rows(),
             active_runtime_seconds=max(0.0, self.monotonic() - started),
             lookup_metrics=self.lookup_metrics,
+            redis_metrics=(
+                self.redis_index.metrics if self.redis_index is not None else None
+            ),
         )
 
     def fetch_repo(self, candidate: RepoActivityCandidate) -> RepoExecution:

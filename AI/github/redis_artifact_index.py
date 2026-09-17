@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,6 +35,38 @@ class RedisArtifactIndexHit:
     artifacts: tuple[RepoArtifact, ...]
 
 
+@dataclass
+class RedisArtifactMetrics:
+    """Additive metrics for the optional Redis accelerator."""
+
+    lookup_count: int = 0
+    hit_count: int = 0
+    miss_count: int = 0
+    error_count: int = 0
+    fail_open_count: int = 0
+    durable_validation_count: int = 0
+    durable_fallback_count: int = 0
+    latencies_ms: list[float] = field(default_factory=list)
+
+    def record_latency(self, elapsed_ms: float) -> None:
+        self.latencies_ms.append(max(0.0, elapsed_ms))
+
+    def percentile_ms(self, fraction: float) -> float | None:
+        """Return a nearest-rank percentile, or ``None`` with no samples."""
+
+        if not self.latencies_ms:
+            return None
+        ordered = sorted(self.latencies_ms)
+        index = max(0, math.ceil(fraction * len(ordered)) - 1)
+        return round(ordered[index], 3)
+
+    @property
+    def hit_rate(self) -> float | None:
+        if not self.lookup_count:
+            return None
+        return round(self.hit_count / self.lookup_count, 6)
+
+
 class RedisArtifactIndex:
     """Index durable artifact references without becoming their source of truth.
 
@@ -48,6 +82,8 @@ class RedisArtifactIndex:
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
         namespace: str = DEFAULT_NAMESPACE,
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
+        monotonic: Callable[[], float] = time.perf_counter,
+        metrics: RedisArtifactMetrics | None = None,
     ) -> None:
         if not materialization_context.strip():
             raise ValueError("materialization_context must not be blank")
@@ -60,6 +96,8 @@ class RedisArtifactIndex:
         self.ttl_seconds = ttl_seconds
         self.namespace = namespace.rstrip(":")
         self.now = now
+        self.monotonic = monotonic
+        self.metrics = metrics or RedisArtifactMetrics()
 
     def put(
         self,
@@ -105,6 +143,8 @@ class RedisArtifactIndex:
                 ex=self.ttl_seconds,
             )
         except Exception:  # noqa: BLE001 - Redis is an optional accelerator.
+            self.metrics.error_count += 1
+            self.metrics.fail_open_count += 1
             return False
         return True
 
@@ -125,6 +165,8 @@ class RedisArtifactIndex:
             self.materialization_context
         ):
             return None
+        self.metrics.lookup_count += 1
+        lookup_started = self.monotonic()
         try:
             raw = self.client.get(
                 self._key(
@@ -134,11 +176,13 @@ class RedisArtifactIndex:
                 )
             )
             if raw is None:
+                self.metrics.miss_count += 1
                 return None
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             payload = json.loads(raw)
             if not isinstance(payload, Mapping):
+                self._record_miss(error=True)
                 return None
             if not self._matches(
                 payload,
@@ -147,16 +191,29 @@ class RedisArtifactIndex:
                 pinned_commit_sha=pinned_commit_sha,
                 sha_source=sha_source,
             ):
+                self.metrics.miss_count += 1
                 return None
             raw_artifacts = payload.get("artifacts")
             if not isinstance(raw_artifacts, list) or not raw_artifacts:
+                self._record_miss(error=True)
                 return None
             artifacts = tuple(
                 RepoArtifact.model_validate(value) for value in raw_artifacts
             )
-            if not all(
-                artifact_store.validate_artifact(artifact) for artifact in artifacts
-            ):
+            self.metrics.hit_count += 1
+            self.metrics.durable_validation_count += 1
+            try:
+                valid = all(
+                    artifact_store.validate_artifact(artifact)
+                    for artifact in artifacts
+                )
+            except Exception:  # noqa: BLE001 - durable failure is fail-open.
+                self.metrics.error_count += 1
+                self.metrics.fail_open_count += 1
+                self.metrics.durable_fallback_count += 1
+                return None
+            if not valid:
+                self.metrics.durable_fallback_count += 1
                 return None
             return RedisArtifactIndexHit(
                 cache_policy_version=cache_policy_version,
@@ -167,7 +224,18 @@ class RedisArtifactIndex:
                 artifacts=artifacts,
             )
         except Exception:  # noqa: BLE001 - invalid/unavailable index is a miss.
+            self._record_miss(error=True)
             return None
+        finally:
+            self.metrics.record_latency(
+                (self.monotonic() - lookup_started) * 1000.0
+            )
+
+    def _record_miss(self, *, error: bool) -> None:
+        self.metrics.miss_count += 1
+        if error:
+            self.metrics.error_count += 1
+            self.metrics.fail_open_count += 1
 
     def _matches(
         self,

@@ -136,6 +136,17 @@ def test_additive_metrics_preserve_summary_schema_and_consumer_compatibility(
     )
 
     assert summary["schema_version"] == "github-repo-fetch-run-summary/v1"
+    assert summary["redis_enabled"] is False
+    assert summary["redis_lookup_count"] == 0
+    assert summary["redis_hit_count"] == 0
+    assert summary["redis_miss_count"] == 0
+    assert summary["redis_hit_rate"] is None
+    assert summary["redis_lookup_latency_p50_ms"] is None
+    assert summary["redis_lookup_latency_p95_ms"] is None
+    assert summary["redis_error_count"] == 0
+    assert summary["redis_fail_open_count"] == 0
+    assert summary["redis_durable_validation_count"] == 0
+    assert summary["redis_durable_fallback_count"] == 0
     loaded = _Summary.model_validate(summary)
     assert loaded.schema_version == summary["schema_version"]
     assert summary["github_api_total"] == (
