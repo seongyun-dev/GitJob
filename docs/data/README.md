@@ -1102,6 +1102,16 @@ C조 범위다.
 - [병목 판정 기준 · 튜닝 후보 · 발표 템플릿](2026-09-12-bottleneck-analysis-template.md) — 증가배수 R 기준, 원인별 조절 지점, "문제 발견 → 원인 → 개선 → 결과" 한 장 템플릿
 - 측정 제약: HDFS·Spark 지표는 Prometheus exporter가 없어 CLI·Spark UI 수동 수집이다(`docs/be/admin-monitoring-api.md` §7). Spark job이 stdout에 내는 summary JSON이 1차 데이터다
 
+## 2026-09 Weekly Streaming backlog 복구 실행계획 (S15P21E102-296)
+
+- Jira: S15P21E102-296
+- 대상: WEEK A(`week_start=2026-08-31`) Streaming **20h**, WEEK B(`week_start=2026-09-07`) **63h** — 그중 `2026-09-13T23` 1건만 redownload
+- local source 82개 전부 `gzip -t` PASS, 합계 4,633,571,666 B
+- `--expected-counts` 기준값을 gz 줄 수로 생성했고 발행된 229시간 전량에서 publisher checkpoint와 **delta 0**
+- 복구 전용 checkpoint를 분리하고 기존 backlog checkpoint는 읽기만 한다. HDFS 사전 cleanup은 하지 않는다 (`DEDUP_KEYS`가 흡수)
+- WEEK A도 **publish와 검증까지는 `S15P21E102-295` 없이 진행 가능**하며, 막히는 것은 aggregation부터다
+- 상세: [2026-09 Weekly Streaming backlog 복구 실행계획](2026-09-17-weekly-backlog-recovery-plan.md)
+
 ## Kafka retention 정책과 Connect 로그 상한 (S15P21E102-258)
 
 - Jira: S15P21E102-258
