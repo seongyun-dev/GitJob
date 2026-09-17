@@ -18,6 +18,10 @@ export interface ServiceHealthEvidence {
   liveDataNodes: number | null
   /** 살아 있는 Spark Worker 수. 아직 재보지 않았으면 `null` (`0` 과 다르다). */
   aliveWorkers: number | null
+  /** BE 프로세스 자신의 Actuator 집계(DB·디스크 contributor 포함) · 티켓 -321. */
+  backendUp: boolean | null
+  /** Grafana 가 스스로 내는 `/metrics` 의 scrape 도달 여부 · 티켓 -321. */
+  grafanaUp: boolean | null
 }
 
 /**
@@ -50,13 +54,21 @@ function liveCountState(count: number | null): boolean | null {
  * 서비스에 물려주면 죽은 컨테이너가 초록으로 보이고, 그것은 운영 화면에서 가장 나쁜
  * 거짓이다.
  *
- * <h2>지금 근거가 없는 것들</h2>
+ * <h2>Backend 와 Grafana · 티켓 -321</h2>
  *
- * Backend · Redis · Grafana · Collector · C1 Archiver 는 `GET /admin/monitoring/overview`
- * 에 해당 필드가 없다(2026-09-18 확인 · 최상위 키는 `prometheus · servers · kafka · hdfs ·
- * spark · dataStore · coverage · links` 뿐). Spring Actuator 는 의존성만 있고 운영에서
- * `/actuator/health` 가 노출되지 않으며, `coverage.collector` 는 Data Platform 의 DB 집계
- * 상태이지 Collector 컨테이너의 health 가 아니다. 근거가 생기면 여기에 한 줄씩 는다.
+ * 남아 있던 다섯 칩 중 둘에 근거가 생겼다. `overview.services` 가 준다 — Backend 는 BE
+ * 프로세스 자신의 Actuator 집계(DB·디스크 contributor 가 실제로 포함된다), Grafana 는
+ * Grafana 가 스스로 내는 `/metrics` 의 scrape 도달 여부다. 둘은 같은 점으로 그려지지만
+ * 근거가 같지 않다.
+ *
+ * <h2>아직 근거가 없는 것들</h2>
+ *
+ * Redis · Collector · C1 Archiver 는 여전히 `null` 이고 회색으로 남는다. 각각 exporter
+ * 추가 · 수집 컨테이너 재기동 · json-exporter 규칙 실행 검증이 남아 후속 작업으로
+ * 분리했다. 붙이지 않은 것을 죽은 것으로 바꿔 말하지 않는다.
+ *
+ * `coverage.collector` 는 여전히 쓰지 않는다. 그것은 Data Platform 의 DB 집계 상태이지
+ * Collector 컨테이너의 health 가 아니다.
  */
 export function serviceUpState(
   serviceId: string,
@@ -79,9 +91,13 @@ export function serviceUpState(
       return liveCountState(evidence.liveDataNodes)
     case 'spark-worker':
       return liveCountState(evidence.aliveWorkers)
+    case 'backend':
+      return evidence.backendUp
+    case 'grafana':
+      return evidence.grafanaUp
     default:
-      // Backend · Redis · Grafana · Collector · C1 Archiver 는 개별 source 가 없다.
-      // 호스트나 집계 지표로 대신 칠하지 않는다.
+      // Redis · Collector · C1 Archiver 는 아직 개별 source 가 없다. 호스트나 집계 지표로
+      // 대신 칠하지 않는다.
       return null
   }
 }

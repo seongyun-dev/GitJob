@@ -120,6 +120,8 @@ function ServerCard({ view, server }: { view: MonitoringView; server: ServerView
     sparkUp: view.spark.up,
     liveDataNodes: view.hdfs.liveDataNodes,
     aliveWorkers: view.spark.aliveWorkers,
+    backendUp: view.services.backend,
+    grafanaUp: view.services.grafana,
   } as const
   const metrics = server.metrics
 

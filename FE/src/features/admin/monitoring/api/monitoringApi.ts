@@ -91,6 +91,27 @@ export interface MonitoringOverview {
     memoryUsedMb: number | null
   }
   /**
+   * 자체 수치가 없던 서비스들의 살아 있음 · 티켓 S15P21E102-321.
+   *
+   * 나머지 필드가 수치를 싣는 것과 달리 여기는 "지금 살아 있는가" 하나뿐이다. 화면에서도
+   * 카드가 아니라 Infrastructure Map 의 점 하나로 그려진다.
+   *
+   * 세 상태를 구분한다. `true` 는 성공 근거를 봤다, `false` 는 health 실패를 봤다,
+   * `null` 은 근거가 없다(scrape config 미반영 등)는 뜻이다. `null` 을 `false` 로 접으면
+   * 아직 붙이지 않은 source 가 화면에서 "죽은 서비스"가 된다.
+   *
+   * source 가 서로 다르다 — `backend` 는 BE 프로세스 자신의 Actuator 집계(DB·디스크
+   * contributor 가 실제로 포함된다), `grafana` 는 Grafana 가 스스로 내는 `/metrics` 의
+   * scrape 도달 여부다.
+   *
+   * Redis · Collector · C1 Archiver 는 아직 여기 없다. 각자 운영 rollout 이나 실행 검증이
+   * 남아 후속 작업으로 분리했고, 그동안 그 칩들은 UNKNOWN 으로 남는다.
+   */
+  services: {
+    backend: boolean | null
+    grafana: boolean | null
+  }
+  /**
    * DB 적재 현황 · 티켓 S15P21E102-261 Phase 4.
    *
    * 수집 파이프라인이 Postgres에 쌓은 것(기술 목록·기술 후보·분석 요청 건수). HDFS/Spark/

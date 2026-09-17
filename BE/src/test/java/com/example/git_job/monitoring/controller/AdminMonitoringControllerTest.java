@@ -21,6 +21,7 @@ import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.Links;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.PrometheusStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServerMetrics;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServicesStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringTimeseriesResponse;
 import com.example.git_job.monitoring.controller.dto.PrometheusState;
 import com.example.git_job.monitoring.service.MetricKind;
@@ -76,6 +77,7 @@ class AdminMonitoringControllerTest {
                 new HdfsStatus(true, 86016L, 3_243_303_530_496L, 0L, 3, 0,
                         3_243_303_444_480L, 2L),
                 new SparkStatus(true, 1, 2, 0, 2048L, 0L),
+                new ServicesStatus(true, false),
                 new DataStoreStatus(61L, 5L, 4L),
                 new Coverage(CoverageState.COLLECTED, CoverageState.COLLECTED,
                         CoverageState.COLLECTED, CoverageState.COLLECTED),
@@ -127,7 +129,10 @@ class AdminMonitoringControllerTest {
                         .value("https://grafana.example.internal"))
                 // 미설정 링크는 빈 문자열이 아니라 null이어야 한다. 화면이 눌러도 아무 일
                 // 없는 링크를 그리지 않기 위해서다.
-                .andExpect(jsonPath("$.data.links.prometheusUrl").value(nullValue()));
+                .andExpect(jsonPath("$.data.links.prometheusUrl").value(nullValue()))
+                // S15P21E102-321. 두 상태가 그대로 실려야 한다.
+                .andExpect(jsonPath("$.data.services.backend").value(true))
+                .andExpect(jsonPath("$.data.services.grafana").value(false));
     }
 
     @Test
@@ -140,6 +145,7 @@ class AdminMonitoringControllerTest {
                 KafkaStatus.unknown(),
                 HdfsStatus.unknown(),
                 SparkStatus.unknown(),
+                ServicesStatus.backendOnly(true),
                 DataStoreStatus.unknown(),
                 Coverage.current(),
                 new Links(null, null)));
@@ -151,7 +157,11 @@ class AdminMonitoringControllerTest {
                 // 0이 아니라 없어야 한다. 0은 "target이 하나도 없다"는 다른 사실이다.
                 .andExpect(jsonPath("$.data.prometheus.targetsUp").value(nullValue()))
                 .andExpect(jsonPath("$.data.servers").isEmpty())
-                .andExpect(jsonPath("$.data.kafka.up").value(nullValue()));
+                .andExpect(jsonPath("$.data.kafka.up").value(nullValue()))
+                // Prometheus가 끊겨도 BE 자신의 상태는 안다. source가 없는 자리는 false가
+                // 아니라 null이어야 화면이 회색으로 그린다.
+                .andExpect(jsonPath("$.data.services.backend").value(true))
+                .andExpect(jsonPath("$.data.services.grafana").value(nullValue()));
     }
 
     @Test

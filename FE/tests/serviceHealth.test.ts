@@ -11,7 +11,19 @@ const connected: ServiceHealthEvidence = {
   sparkUp: true,
   liveDataNodes: 4,
   aliveWorkers: 2,
+  backendUp: true,
+  grafanaUp: true,
 }
+
+/** source 가 아직 운영에 붙지 않은 상태. BE 가 두 자리를 모두 `null` 로 준다. */
+const withoutServiceSources: ServiceHealthEvidence = {
+  ...connected,
+  backendUp: null,
+  grafanaUp: null,
+}
+
+/** 아직 개별 source 가 없어 후속 작업으로 분리한 칩들. */
+const STILL_UNKNOWN = ['redis', 'collector', 'spark-c1-archiver'] as const
 
 test('uses real per-service sources instead of host UP', () => {
   assert.equal(serviceUpState('prometheus', connected), true)
@@ -56,11 +68,75 @@ test('one live DataNode is enough for the chip', () => {
   프로세스를 정상으로 칠하지 않는다.
 */
 test('keeps services without an individual source unknown', () => {
-  assert.equal(serviceUpState('backend', connected), null)
-  assert.equal(serviceUpState('redis', connected), null)
-  assert.equal(serviceUpState('grafana', connected), null)
-  assert.equal(serviceUpState('collector', connected), null)
-  assert.equal(serviceUpState('spark-c1-archiver', connected), null)
+  for (const id of STILL_UNKNOWN) {
+    assert.equal(serviceUpState(id, connected), null, id)
+  }
+})
+
+/*
+  티켓 -321. Backend 와 Grafana 는 근거가 서로 다르지만 화면에서는 같은 점 하나다.
+  값이 오면 그대로 옮기고, 여기서 다시 판정하지 않는다.
+*/
+test('paints Backend and Grafana from their own sources', () => {
+  assert.equal(serviceUpState('backend', connected), true)
+  assert.equal(serviceUpState('grafana', connected), true)
+})
+
+test('reports a failing Backend or Grafana as down', () => {
+  assert.equal(serviceUpState('backend', { ...connected, backendUp: false }), false)
+  assert.equal(serviceUpState('grafana', { ...connected, grafanaUp: false }), false)
+})
+
+/*
+  Grafana 의 scrape config 가 아직 운영에 반영되지 않았으면 BE 가 `null` 을 준다. 그것은
+  "Grafana 가 죽었다"가 아니라 "아직 재본 적이 없다"이므로 회색이어야 한다. 반영 전 상태를
+  DOWN 으로 그리면 운영자를 헛되이 부른다.
+*/
+test('a Grafana source that does not exist yet is unknown, not down', () => {
+  assert.equal(serviceUpState('grafana', { ...connected, grafanaUp: null }), null)
+})
+
+test('an Actuator that cannot tell leaves Backend unknown', () => {
+  assert.equal(serviceUpState('backend', { ...connected, backendUp: null }), null)
+})
+
+/*
+  한 칩의 source 가 비어도 다른 칩은 영향을 받지 않는다. 같은 묶음으로 오지만 근거는
+  서로 다르다.
+*/
+test('one missing source does not grey out the other', () => {
+  const onlyGrafanaMissing = { ...connected, grafanaUp: null }
+
+  assert.equal(serviceUpState('grafana', onlyGrafanaMissing), null)
+  assert.equal(serviceUpState('backend', onlyGrafanaMissing), true)
+})
+
+/*
+  -319 가 붙인 여섯 칩은 -321 의 값과 무관해야 한다. services 가 통째로 비어도
+  Prometheus·Kafka·HDFS·Spark 칩은 그대로다.
+*/
+test('does not regress the six chips connected earlier', () => {
+  for (const id of [
+    'prometheus',
+    'kafka',
+    'hdfs-namenode',
+    'hdfs-datanode',
+    'spark-master',
+    'spark-worker',
+  ]) {
+    assert.equal(serviceUpState(id, withoutServiceSources), true, id)
+  }
+})
+
+/*
+  후속 작업으로 분리한 셋은 services 값과 무관하게 계속 회색이다. 이번 티켓이 그 셋을
+  실수로 칠하지 않는지 고정한다.
+*/
+test('the deferred three stay unknown whatever the rest says', () => {
+  for (const id of STILL_UNKNOWN) {
+    assert.equal(serviceUpState(id, withoutServiceSources), null, `${id} without sources`)
+    assert.equal(serviceUpState(id, connected), null, `${id} with sources`)
+  }
 })
 
 test('preserves unavailable and not-configured Prometheus states', () => {
@@ -73,4 +149,8 @@ test('preserves unavailable and not-configured Prometheus states', () => {
     null,
   )
   assert.equal(serviceUpState('kafka', { ...connected, kafkaUp: null }), null)
+})
+
+test('an unknown chip id is never painted', () => {
+  assert.equal(serviceUpState('mystery-service', connected), null)
 })

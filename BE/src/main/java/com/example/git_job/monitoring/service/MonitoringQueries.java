@@ -151,6 +151,21 @@ public class MonitoringQueries {
         return "max(spark_memory_used_mb{" + clusterSelector() + "})";
     }
 
+    /**
+     * Grafana 도달 여부 (S15P21E102-321).
+     *
+     * <p>Grafana가 스스로 내는 {@code /metrics}를 Prometheus가 scrape 한 결과다. 그 안의
+     * 지표는 하나도 저장하지 않는다(prometheus.yml이 전부 drop 한다) — 필요한 것은
+     * Prometheus가 직접 붙이는 {@code up} 하나뿐이다.</p>
+     *
+     * <p>job이 아직 등록되지 않았으면 결과가 <em>비어</em> 온다. 0이 아니라 빈 결과라는 것이
+     * 중요하다 — 빈 결과는 "모른다", 0은 "재봤더니 닿지 않았다"다. 부르는 쪽이 둘을
+     * 구분한다.</p>
+     */
+    public String grafanaUp() {
+        return "max(up{job=\"grafana\"," + clusterSelector() + "})";
+    }
+
     public String cpuPercent() {
         return "100 - (avg by (cluster, role, instance) (rate(node_cpu_seconds_total{"
                 + clusterSelector() + ",mode=\"idle\"}[" + RATE_WINDOW + "])) * 100)";

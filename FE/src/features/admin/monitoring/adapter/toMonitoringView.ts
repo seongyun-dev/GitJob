@@ -56,6 +56,8 @@ export interface MonitoringView {
   hdfs: MonitoringOverview['hdfs']
   /** Spark 현황(Worker·Core·Memory). Data Platform의 Spark 카드가 쓴다. */
   spark: MonitoringOverview['spark']
+  /** 자체 수치가 없는 서비스들의 살아 있음. Infrastructure Map의 칩이 쓴다. */
+  services: MonitoringOverview['services']
   /** DB 적재 현황(기술·후보·분석 건수). Data Platform의 "데이터 적재" 카드가 쓴다. */
   dataStore: MonitoringOverview['dataStore']
   coverage: MonitoringOverview['coverage']
@@ -84,6 +86,12 @@ function findMetrics(
  */
 function isResolvable(connection: Connection, knownIds: ReadonlySet<string>): boolean {
   return knownIds.has(connection.from) && knownIds.has(connection.to)
+}
+
+/** 근거가 하나도 없는 상태. 없는 응답을 0이나 false 로 채우지 않기 위한 기본값이다. */
+const SERVICES_UNKNOWN: MonitoringOverview['services'] = {
+  backend: null,
+  grafana: null,
 }
 
 export function toMonitoringView(
@@ -127,6 +135,9 @@ export function toMonitoringView(
     kafka: overview.kafka,
     hdfs: overview.hdfs,
     spark: overview.spark,
+    // BE 가 이 필드를 아직 주지 않아도 화면은 떠야 한다(배포 순서 · 구버전 BE 대상 QA).
+    // 없으면 두 칩 모두 회색이며, 그것이 정확한 표시다.
+    services: overview.services ?? SERVICES_UNKNOWN,
     dataStore: overview.dataStore,
     coverage: overview.coverage,
     links: overview.links,

@@ -21,6 +21,7 @@ public record MonitoringOverviewResponse(
         KafkaStatus kafka,
         HdfsStatus hdfs,
         SparkStatus spark,
+        ServicesStatus services,
         DataStoreStatus dataStore,
         Coverage coverage,
         Links links
@@ -154,6 +155,41 @@ public record MonitoringOverviewResponse(
     ) {
         public static SparkStatus unknown() {
             return new SparkStatus(null, null, null, null, null, null);
+        }
+    }
+
+    /**
+     * 자체 exporter 지표가 없던 서비스들의 살아 있음 (S15P21E102-321).
+     *
+     * <p>{@code servers}·{@code kafka}·{@code hdfs}·{@code spark}가 수치를 싣는 것과 달리 이
+     * 둘은 화면이 물어보는 것이 "지금 살아 있는가" 하나뿐이다. 수치가 없어 카드가 아니라
+     * Infrastructure Map의 점 하나로 그려지고, 그래서 값도 {@code Boolean} 하나다.</p>
+     *
+     * <p>세 가지 상태를 구분한다. {@code true}는 성공 근거를 실제로 봤다는 뜻,
+     * {@code false}는 health 실패를 봤다는 뜻, {@code null}은 <strong>근거가 없다</strong>는
+     * 뜻이다. {@code null}을 {@code false}로 접으면 화면이 "아직 안 붙였다"를 "죽었다"로
+     * 바꿔 말하게 되고, 그것은 운영자를 헛되이 부르는 거짓말이다. scrape job이 아직 없어
+     * 시계열이 통째로 없는 경우가 정확히 여기에 해당한다.</p>
+     *
+     * <p>호스트 상태를 물려받지 않는다. node-exporter가 UP이라는 것은 두 <em>호스트</em>가
+     * 살아 있다는 뜻이지 그 안의 Grafana가 살아 있다는 뜻이 아니다.</p>
+     *
+     * <p>Redis·Collector·C1 Archiver는 아직 여기 없다. 각자 운영 rollout이나 실행 검증이
+     * 남아 있어 후속 작업으로 분리했고, 그동안 화면은 UNKNOWN으로 남는다 — 그것이 정확한
+     * 표시다. 근거가 생기면 여기에 한 줄씩 는다.</p>
+     */
+    public record ServicesStatus(
+            /** BE 프로세스 자신의 Actuator 집계. Prometheus와 무관하다. */
+            Boolean backend,
+            Boolean grafana
+    ) {
+        public static ServicesStatus unknown() {
+            return new ServicesStatus(null, null);
+        }
+
+        /** Prometheus가 끊겨도 BE 자신의 상태는 안다. 나머지는 물어볼 곳이 없다. */
+        public static ServicesStatus backendOnly(Boolean backend) {
+            return new ServicesStatus(backend, null);
         }
     }
 

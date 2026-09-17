@@ -11,6 +11,7 @@ import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.Links;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.PrometheusStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServerMetrics;
+import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.ServicesStatus;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.SparkStatus;
 import com.example.git_job.monitoring.controller.dto.CoverageState;
 import com.example.git_job.monitoring.controller.dto.MonitoringTimeseriesResponse;
@@ -57,6 +58,7 @@ public class MonitoringService {
     private final MonitoringQueries queries;
     private final MonitoringProperties properties;
     private final DataStoreMetrics dataStoreMetrics;
+    private final BackendHealth backendHealth;
 
     public MonitoringOverviewResponse overview() {
         // DB 적재 현황은 Prometheus와 무관하다(BE 자기 DB). Prometheus가 끊겨도 이 카드는
@@ -154,9 +156,33 @@ public class MonitoringService {
                 kafka,
                 hdfs,
                 spark,
+                servicesStatus(),
                 dataStore,
                 coverageFor(kafka, hdfs, spark, dataStore),
                 links());
+    }
+
+    /**
+     * 자체 지표가 없던 서비스들의 살아 있음 (S15P21E102-321).
+     *
+     * <p>둘의 source가 다르다. Backend는 자기 프로세스 안에서, Grafana는 Prometheus의
+     * {@code up}에서 나온다. 같은 자리에 그려지지만 근거가 같지 않다는 것이 이 메서드가 한
+     * 곳에 모여 있는 이유다 — 어떤 칩이 무슨 근거로 초록인지 여기 한 화면에서 읽힌다.</p>
+     */
+    private ServicesStatus servicesStatus() {
+        return new ServicesStatus(backendHealth.upOrNull(), exporterUp(queries.grafanaUp()));
+    }
+
+    /**
+     * scrape job 하나의 도달 여부.
+     *
+     * <p>결과가 비어 있으면 그 job이 Prometheus에 아직 없다는 뜻이라 {@code null}이다.
+     * 값이 왔으면 1/0이 곧 UP/DOWN이다. 빈 결과를 {@code false}로 접으면 아직 반영하지 않은
+     * scrape config가 화면에서 "죽은 서비스"가 된다.</p>
+     */
+    private Boolean exporterUp(String query) {
+        Double value = firstValue(prometheus.instant(query));
+        return value == null ? null : value > 0;
     }
 
     /**
@@ -313,6 +339,8 @@ public class MonitoringService {
                 kafka,
                 hdfs,
                 spark,
+                // Prometheus가 끊겨도 BE 자신의 상태는 자기 프로세스 안에서 알 수 있다.
+                ServicesStatus.backendOnly(backendHealth.upOrNull()),
                 dataStore,
                 coverageFor(kafka, hdfs, spark, dataStore),
                 links());

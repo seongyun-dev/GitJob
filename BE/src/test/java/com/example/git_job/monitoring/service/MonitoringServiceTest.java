@@ -43,6 +43,7 @@ class MonitoringServiceTest {
     private PrometheusClient prometheus;
     private MonitoringQueries queries;
     private DataStoreMetrics dataStoreMetrics;
+    private BackendHealth backendHealth;
 
     @BeforeEach
     void setUp() {
@@ -50,6 +51,9 @@ class MonitoringServiceTest {
         dataStoreMetrics = mock(DataStoreMetrics.class);
         // 기본은 DB 미도달(모두 null) — 개별 테스트가 필요하면 실수치로 덮어쓴다.
         when(dataStoreMetrics.current()).thenReturn(DataStoreStatus.unknown());
+        backendHealth = mock(BackendHealth.class);
+        // 기본은 판정 불가 — Actuator 집계를 보는 테스트만 실제 값으로 덮어쓴다.
+        when(backendHealth.upOrNull()).thenReturn(null);
         queries = new MonitoringQueries(configured());
     }
 
@@ -75,7 +79,8 @@ class MonitoringServiceTest {
 
     private MonitoringService service(MonitoringProperties properties) {
         return new MonitoringService(
-                prometheus, new MonitoringQueries(properties), properties, dataStoreMetrics);
+                prometheus, new MonitoringQueries(properties), properties, dataStoreMetrics,
+                backendHealth);
     }
 
     private static PrometheusClient.Sample node(String instance, String role, double up) {
@@ -234,7 +239,8 @@ class MonitoringServiceTest {
                 .thenThrow(PrometheusUnavailableException.invalidResponse("형식 이상"));
         MonitoringProperties properties = configured();
         MonitoringOverviewResponse overview = new MonitoringService(
-                other, new MonitoringQueries(properties), properties, dataStoreMetrics).overview();
+                other, new MonitoringQueries(properties), properties, dataStoreMetrics,
+                backendHealth).overview();
         assertThat(overview.prometheus().state()).isEqualTo(PrometheusState.INVALID_RESPONSE);
         assertThat(overview.servers()).isEmpty();
     }
@@ -450,5 +456,79 @@ class MonitoringServiceTest {
         assertThat(response.state()).isEqualTo(PrometheusState.UNREACHABLE);
         assertThat(response.series()).isEmpty();
         assertThat(response.stepSeconds()).isEqualTo(300);
+    }
+
+    /*
+      아래는 S15P21E102-321 — 자체 지표가 없던 Backend·Grafana 의 상태다. 여기서 지키는
+      계약은 하나다: 근거를 본 것만 단정한다. scrape config 가 아직 운영에 반영되지 않아
+      시계열이 통째로 비어 있는 것은 "죽었다"가 아니라 "모른다"다.
+    */
+
+    @Test
+    @DisplayName("Grafana job이 아직 없으면 죽었다고 말하지 않는다")
+    void grafanaStaysUnknownUntilTheScrapeConfigLands() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+
+        assertThat(service(configured()).overview().services().grafana()).isNull();
+    }
+
+    @Test
+    @DisplayName("Grafana job이 붙어 있으면 그 up 값이 곧 상태다")
+    void grafanaFollowsItsScrapeTarget() {
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(7, 7));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+        when(prometheus.instant(queries.grafanaUp())).thenReturn(List.of(value(SERVICE, 1)));
+
+        assertThat(service(configured()).overview().services().grafana()).isTrue();
+
+        // 0은 빈 결과와 다르다 — 재봤는데 닿지 않았다는 뜻이라 DOWN이 맞다.
+        when(prometheus.instant(queries.grafanaUp())).thenReturn(List.of(value(SERVICE, 0)));
+
+        assertThat(service(configured()).overview().services().grafana()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Backend는 Prometheus가 끊겨도 자기 상태를 안다")
+    void backendHealthSurvivesPrometheusOutage() {
+        when(backendHealth.upOrNull()).thenReturn(true);
+        when(prometheus.targets())
+                .thenThrow(new PrometheusUnavailableException(
+                        PrometheusState.UNREACHABLE, "connect timed out"));
+
+        MonitoringOverviewResponse overview = service(configured()).overview();
+
+        assertThat(overview.prometheus().reachable()).isFalse();
+        assertThat(overview.services().backend()).isTrue();
+        // Grafana는 Prometheus를 거치므로 물어볼 곳이 없다.
+        assertThat(overview.services().grafana()).isNull();
+    }
+
+    @Test
+    @DisplayName("Actuator가 DOWN이면 Backend도 DOWN이다")
+    void backendReportsItsOwnFailure() {
+        when(backendHealth.upOrNull()).thenReturn(false);
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+
+        assertThat(service(configured()).overview().services().backend()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Actuator가 판정하지 못하면 Backend도 UNKNOWN이다")
+    void backendStaysUnknownWhenActuatorCannotTell() {
+        when(backendHealth.upOrNull()).thenReturn(null);
+        when(prometheus.targets()).thenReturn(new PrometheusClient.TargetHealth(6, 6));
+        when(prometheus.instant(anyString())).thenReturn(List.of());
+        when(prometheus.instant(queries.nodeUp()))
+                .thenReturn(List.of(node(SERVICE, "service", 1)));
+
+        assertThat(service(configured()).overview().services().backend()).isNull();
     }
 }
