@@ -24,14 +24,22 @@ import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 type Variant = 'app' | 'landing'
 
+/*
+  현재 메뉴는 **색으로만** 구분한다. 굵기를 함께 올리면 그 항목의 글자 폭이 늘어나
+  메뉴가 이동할 때마다 헤더가 몇 px 흔들린다 — 메뉴가 가운데 정렬이라 늘어난 폭이
+  양옆으로 퍼져 더 눈에 띈다. 한글은 500과 600의 폭 차이가 특히 크다.
+
+  확정 디자인도 메뉴 네 개가 모두 `font-weight:500`이고 활성 굵기 구분이 없다.
+  굵기를 포기해도 색 대비(faint → 600)만으로 현재 위치는 충분히 읽힌다.
+*/
 const NAV_TONE = {
   landing: {
     base: 'font-medium text-white/85 hover:text-white',
-    active: 'font-semibold text-white',
+    active: 'font-medium text-white',
   },
   app: {
     base: 'font-medium text-brand-faint hover:text-brand-ink',
-    active: 'font-semibold text-brand-600',
+    active: 'font-medium text-brand-600',
   },
 } as const
 
