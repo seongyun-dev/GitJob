@@ -21,6 +21,7 @@ import { SkillGapPage } from '@/features/matching/pages/SkillGapPage'
 import { TargetRolePage } from '@/features/matching/pages/TargetRolePage'
 import { WhatIfPage } from '@/features/matching/pages/WhatIfPage'
 import { JobMatchPage } from '@/features/matching/pages/JobMatchPage'
+import { JobPostingDetailPage } from '@/features/matching/pages/JobPostingDetailPage'
 import { RecommendationPage } from '@/features/matching/pages/RecommendationPage'
 import { MyPage } from '@/features/mypage/pages/MyPage'
 import { TechnologyDetailPage } from '@/features/technology/pages/TechnologyDetailPage'
@@ -116,6 +117,8 @@ export const router = createBrowserRouter([
           // 티켓 204 · Final v2 16. Evidence → 직무 선택 → 공고 매칭 순서다.
           { path: 'roles', element: <TargetRolePage /> },
           { path: 'jobs', element: <JobMatchPage /> },
+          // 티켓 291. 공고 한 건의 상세. 주소로 바로 들어와야 해서 드로어가 아니라 라우트다.
+          { path: 'jobs/:jobId', element: <JobPostingDetailPage /> },
           // 티켓 204 · Final v2 17. 공고 매칭 다음, 추천 이전에 온다.
           { path: 'skill-gap', element: <SkillGapPage /> },
           { path: 'recommendations', element: <RecommendationPage /> },

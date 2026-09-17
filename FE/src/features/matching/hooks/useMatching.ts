@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchJobDemands,
+  fetchJobMatch,
   fetchJobMatches,
   fetchRecommendations,
   fetchSkillGap,
@@ -82,6 +83,26 @@ export function useJobMatches(
     queryKey: queryKeys.matchingPostings(targetKey ?? '', params),
     queryFn: () => fetchJobMatches(params),
     enabled: targetKey !== undefined,
+    refetchInterval: (query) => pollInterval(query.state.data),
+  })
+}
+
+/**
+ * 공고 한 건의 상세 · 티켓 S15P21E102-291.
+ *
+ * 목록(`useJobMatches`)과 같은 `JobMatchItemDto` 를 한 건만 받는다. 목록에서 들고
+ * 넘어가지 않고 다시 부르는 이유는 주소로 바로 들어올 수 있어야 하기 때문이다 —
+ * 공고 링크를 공유하거나 새로고침해도 같은 화면이 떠야 한다.
+ *
+ * `jobId` 가 라우트 파라미터라 없을 수 있다. 없으면 부르지 않는다. 캐시 키에
+ * `targetKey` 가 함께 들어가는 것은 목록과 같은 이유다 — 목표 직무가 바뀌면 같은
+ * 공고라도 대조 결과가 달라진다.
+ */
+export function useJobMatch(targetKey: string | undefined, jobId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.matchingPosting(targetKey ?? '', jobId ?? ''),
+    queryFn: () => fetchJobMatch(jobId as string),
+    enabled: targetKey !== undefined && jobId !== undefined && jobId !== '',
     refetchInterval: (query) => pollInterval(query.state.data),
   })
 }

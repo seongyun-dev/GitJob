@@ -46,6 +46,16 @@ export interface JobPostingView {
   sourceUrl: string | null
   /** `FULL`만 "필수 전체 충족"이다. 나머지는 배지를 붙이지 않는다. */
   requiredStatus: string
+  /**
+   * 필수 요건 충족률 · **C가 계산한 값이다** (`JobMatchItemDto.fulfillmentRatio`).
+   *
+   * 대시보드가 공고를 늘어놓는 순서가 이 값이다. 화면은 이 수를 만들지 않고 받아서
+   * 정렬에만 쓴다 — 칩을 세어 비율을 구하면 미판정 절을 어떻게 세느냐에 따라 답이
+   * 달라지고, 그건 부합 판정을 화면에서 다시 하는 것이다.
+   *
+   * C가 주지 않으면 `null`이고, 그때는 순서를 주장하지 않는다.
+   */
+  fulfillmentRatio: number | null
   required: JobRequirement[]
   preferred: JobRequirement[]
   /** 해석하지 못한 요구. 부족으로 세지 않고 따로 보여 준다. */

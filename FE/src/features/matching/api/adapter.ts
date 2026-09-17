@@ -72,6 +72,7 @@ export function toJobPosting(item: JobMatchItemDto): JobPostingView {
     sourceSite: item.sourceSite,
     sourceUrl: item.sourceUrl,
     requiredStatus: item.requiredStatus ?? 'UNKNOWN',
+    fulfillmentRatio: item.fulfillmentRatio,
     required: toRequirements(item.required),
     preferred: toRequirements(item.preferred),
     unresolved: [...(item.required?.unresolved ?? []), ...(item.preferred?.unresolved ?? [])],

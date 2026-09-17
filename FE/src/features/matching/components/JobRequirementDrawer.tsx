@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import type { JobPostingView, JobRequirement } from '@/features/matching/model/view'
 import { MeterBar } from '@/shared/ui/MeterBar'
 
@@ -188,6 +189,20 @@ export function JobRequirementDrawer({
         </div>
 
         <div className="border-t border-brand-line px-6 py-4">
+          {/*
+            공고 상세 화면으로 · 티켓 S15P21E102-291.
+            드로어는 요건 대조만 빠르게 보여 준다. 수집기가 남기는 나머지 값(회사·지역·
+            경력·마감·출처)과 해석하지 못한 요구는 폭이 모자라 여기 다 두지 못한다.
+          */}
+          {posting !== null && (
+            <Link
+              to={`/jobs/${encodeURIComponent(posting.id)}`}
+              onClick={onClose}
+              className="mb-3 block rounded-xl bg-brand-600 px-4 py-2.5 text-center text-[13px] font-[750] text-white hover:bg-brand-400"
+            >
+              공고 상세 보기 →
+            </Link>
+          )}
           {posting?.sourceUrl != null && (
             <a
               href={posting.sourceUrl}

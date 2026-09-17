@@ -1,7 +1,13 @@
-import { Link, NavLink } from 'react-router'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { Link, NavLink, useLocation } from 'react-router'
 import { HeaderAuthArea } from '@/features/auth/components/HeaderAuthArea'
 import { handleLandingTopClick } from '@/features/landing/scrollToHash'
-import { PRIMARY_NAV } from '@/shared/config/primaryNav'
+import {
+  findActiveNav,
+  isNavChildActive,
+  PRIMARY_NAV,
+  type PrimaryNavItem,
+} from '@/shared/config/primaryNav'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 /**
@@ -43,9 +49,119 @@ const NAV_TONE = {
   },
 } as const
 
+/**
+ * 서브 내비게이션 · 티켓 S15P21E102-291.
+ *
+ * 지금 단계에 속한 화면을 헤더 바로 아래 한 줄로 편다. 상단이 "어느 단계인가"를,
+ * 이 줄이 "그 안 어디인가"를 말한다.
+ *
+ * 헤더가 `sticky top-0` 이므로 이 줄도 그 아래에 붙는다(`top-[72px]`). 72px 은 헤더
+ * 높이(71px + 아래 테두리 1px)이고 `AppLayout` 이 본문 오프셋에 쓰는 값과 같다.
+ * 한쪽만 바뀌면 스크롤할 때 두 줄 사이로 본문이 비친다.
+ *
+ * 랜딩에서는 그리지 않는다. 로그인 전에는 들어갈 수 있는 화면이 트렌드뿐이라
+ * 단계 안을 나눌 것이 없다.
+ */
+function SubNav({
+  item,
+  pathname,
+  offsetLeft,
+}: {
+  item: PrimaryNavItem
+  pathname: string
+  /** 활성 상단 메뉴의 왼쪽 x. 재지 못했으면 `null` 이고 그때는 가운데로 둔다. */
+  offsetLeft: number | null
+}) {
+  if ('kind' in item || item.children === undefined || item.children.length < 2) {
+    return null
+  }
+
+  return (
+    <nav
+      aria-label={`${item.label} 하위 화면`}
+      className="sticky top-[72px] z-[19] border-b border-brand-line bg-white/85 backdrop-blur-[10px]"
+    >
+      {/*
+        `.gj-shell` 을 쓰지 않는다. 그 클래스는 본문용이라 위아래 패딩(40px/96px)을
+        갖고 있어 한 줄짜리 띠에 붙이면 빈 공간이 그만큼 생긴다. 여기서 필요한 것은
+        가로 정렬뿐이라 max-width 와 좌우 패딩만 같은 값으로 맞춘다.
+
+        **누른 메뉴 아래에 붙인다.** 왼쪽 끝에 붙여 두었을 때는 위 메뉴와 눈이 좌우로
+        크게 오갔고, 가운데로 모았을 때는 어느 메뉴에 속한 줄인지가 흐렸다. 활성 메뉴의
+        x 를 재서 그 자리에서 시작하게 하면 두 줄이 하나의 덩어리로 읽힌다.
+
+        재지 못했으면(`null`) 가운데로 둔다 — 상단 메뉴가 감춰지는 좁은 폭이 그렇다.
+        그때는 기준이 될 버튼 자체가 없다.
+
+        안쪽이 `w-max` 인 이유는 넘칠 때다. 스크롤 컨테이너에 `justify-center` 를 걸면
+        내용이 넘쳤을 때 앞쪽이 잘린 채 스크롤로도 닿지 않는다.
+      */}
+      <div className="w-full overflow-x-auto">
+        <div
+          className={`flex h-11 w-max items-center gap-1 ${
+            offsetLeft === null ? 'mx-auto px-5 sm:px-8 lg:px-12' : ''
+          }`}
+          style={offsetLeft === null ? undefined : { marginLeft: offsetLeft }}
+        >
+          {item.children.map((child) => {
+            const active = isNavChildActive(child, pathname)
+            return (
+              <Link
+                key={child.to}
+                to={child.to}
+                aria-current={active ? 'page' : undefined}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-[13.5px] whitespace-nowrap transition-colors ${
+                  active
+                    ? 'bg-tone-accent-bg font-[750] text-brand-600'
+                    : 'font-medium text-brand-muted hover:bg-tone-neutral-bg hover:text-brand-ink'
+                }`}
+              >
+                {child.label}
+              </Link>
+            )
+          })}
+        </div>
+      </div>
+    </nav>
+  )
+}
+
 export function SiteHeader({ variant }: { variant: Variant }) {
   const isLanding = variant === 'landing'
   const tone = NAV_TONE[variant]
+  const { pathname } = useLocation()
+  /*
+    상단에서 켜야 할 단계를 경로로 직접 찾는다. `NavLink` 의 기본 판정은 자기 `to` 만
+    보기 때문에 공고 상세(`/jobs/:jobId`)나 판정 근거(`/evidence/:techId`) 에서 상단이
+    전부 꺼진다 — 어느 단계에 있는지 모르는 화면이 된다.
+  */
+  const activeItem = findActiveNav(pathname)
+
+  /*
+    활성 상단 메뉴의 x 를 재서 서브 줄을 그 아래에 붙인다.
+
+    `useLayoutEffect` 인 이유는 그린 뒤에 재면 한 프레임 동안 서브 줄이 다른 자리에
+    있다가 튀기 때문이다. 폭이 바뀌면 메뉴 위치도 바뀌므로 resize 에서 다시 잰다.
+  */
+  const navRef = useRef<HTMLElement>(null)
+  const [offsetLeft, setOffsetLeft] = useState<number | null>(null)
+
+  const measure = useCallback(() => {
+    const nav = navRef.current
+    const active = nav?.querySelector<HTMLElement>('[data-nav-active="true"]')
+    // 상단 메뉴가 감춰지는 폭에서는 `offsetParent` 가 없다. 기준이 없으니 가운데로 둔다.
+    if (active === null || active === undefined || active.offsetParent === null) {
+      setOffsetLeft(null)
+      return
+    }
+    setOffsetLeft(active.getBoundingClientRect().left)
+  }, [])
+
+  useLayoutEffect(() => {
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [measure, pathname, activeItem])
 
   /*
     랜딩 헤더는 hero 컨테이너(`px-5 sm:px-8 lg:px-14`) 안에 있으므로, 음수 마진으로
@@ -56,7 +172,7 @@ export function SiteHeader({ variant }: { variant: Variant }) {
     ? 'relative z-[5] -mx-5 sm:-mx-8 lg:-mx-14'
     : 'sticky top-0 z-20 border-b backdrop-blur-[10px]'
 
-  return (
+  const bar = (
     <header
       className={`gj-header-bar flex items-center select-none ${shell}`}
       style={
@@ -97,7 +213,7 @@ export function SiteHeader({ variant }: { variant: Variant }) {
           들어가지 않는 좁은 폭에서는 **가로 스크롤 대신 감춘다** — 스크롤바가 보이고
           로고·로그인이 밀려 헤더가 깨져 보였다(랜딩이 쓰던 규칙으로 통일).
         */}
-        <nav aria-label="주요 화면" className="hidden min-w-0 flex-1 lg:block">
+        <nav ref={navRef} aria-label="주요 화면" className="hidden min-w-0 flex-1 lg:block">
           <ul className="flex items-center justify-center gap-5 lg:gap-8">
             {PRIMARY_NAV.map((item) => (
               <li key={item.label} className="shrink-0">
@@ -123,12 +239,11 @@ export function SiteHeader({ variant }: { variant: Variant }) {
                 ) : (
                   <NavLink
                     to={item.to}
-                    className={({ isActive }) =>
-                      // active 는 색+굵기로만 표시한다. background pill 은 쓰지 않는다.
-                      `text-[15px] whitespace-nowrap transition-colors ${
-                        isActive ? tone.active : tone.base
-                      }`
-                    }
+                    data-nav-active={item === activeItem ? 'true' : undefined}
+                    // active 는 색+굵기로만 표시한다. background pill 은 쓰지 않는다.
+                    className={`text-[15px] whitespace-nowrap transition-colors ${
+                      item === activeItem ? tone.active : tone.base
+                    }`}
                   >
                     {item.label}
                   </NavLink>
@@ -148,5 +263,16 @@ export function SiteHeader({ variant }: { variant: Variant }) {
         </div>
       </div>
     </header>
+  )
+
+  return isLanding ? (
+    bar
+  ) : (
+    <>
+      {bar}
+      {activeItem !== undefined && (
+        <SubNav item={activeItem} pathname={pathname} offsetLeft={offsetLeft} />
+      )}
+    </>
   )
 }

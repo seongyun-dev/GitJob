@@ -64,6 +64,37 @@ function toStats(
   ]
 }
 
+/**
+ * 충족률 높은 순으로 늘어놓는다 · 티켓 S15P21E102-291.
+ *
+ * **비율을 화면이 만들지 않는다.** `fulfillmentRatio` 는 C가 계산해 준 값이고
+ * (`JobMatchItemDto`), 여기서는 그 값으로 순서만 정한다. 칩을 세어 비율을 구하면
+ * 미판정 절을 어떻게 세느냐에 따라 답이 달라지고, 그건 부합 판정을 화면에서 다시
+ * 하는 일이다.
+ *
+ * C가 비율을 주지 않은 공고(`null`)는 **맨 뒤로 보내되 서로의 순서는 건드리지 않는다**.
+ * 판정하지 못한 것을 0으로 취급해 "가장 안 맞는 공고"로 보이게 하면 안 된다.
+ *
+ * **이 정렬은 받아 온 페이지 안에서만 유효하다.** `GET /me/job-matches` 에 정렬
+ * 파라미터가 없어 서버가 어떤 순서로 주는지 알 수 없고, 페이지를 넘기면 다음 묶음이
+ * 다시 자기들끼리 정렬된다. 전체에서 충족률이 가장 높은 공고를 앞에 세우려면 서버가
+ * 정렬해 줘야 한다 — BE 에 요청할 항목이다.
+ */
+function sortByFulfillment(postings: readonly JobPostingView[]): JobPostingView[] {
+  return [...postings].sort((a, b) => {
+    if (a.fulfillmentRatio === null && b.fulfillmentRatio === null) {
+      return 0
+    }
+    if (a.fulfillmentRatio === null) {
+      return 1
+    }
+    if (b.fulfillmentRatio === null) {
+      return -1
+    }
+    return b.fulfillmentRatio - a.fulfillmentRatio
+  })
+}
+
 export function JobMatchPage() {
   const [page, setPage] = useState(1)
   const [openPosting, setOpenPosting] = useState<JobPostingView | null>(null)
@@ -76,7 +107,7 @@ export function JobMatchPage() {
   })
 
   const data = matches.data
-  const postings = data?.items.map(toJobPosting) ?? []
+  const postings = sortByFulfillment(data?.items.map(toJobPosting) ?? [])
   const basis = data?.basis
   const scopeText =
     basis === undefined
