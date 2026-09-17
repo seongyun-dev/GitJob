@@ -130,5 +130,7 @@ B 레벨, 검증 상태, 기술 관측, 참여, SELF 귀속을 따로 보존한�
 LLM 은 여전히 수준을 판정하지 않고 이미 정해진 판정을 문장으로 쓸 뿐이다.
 구현은 `AI/llm/`, 실행은 [AI/README.md](../../AI/README.md) 의
 "Technology summary generation" 을 본다.
+BE 연동을 실제 모델로 끝까지 돌린 실측과 확인 요청은
+[BE 연동 실측 보고](2026-09-16-technology-summary-be-integration.md)에 있다.
 
 Notion 출처와 정확한 정책/기능 ID는 각 상세 계약에 연결되어 있다. 이 문서는 C 구현 안내이며 다른 조의 미게시 로컬 코드나 전체 서비스 완료를 확인한 보고서가 아니다.

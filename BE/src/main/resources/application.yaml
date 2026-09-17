@@ -88,6 +88,14 @@ gitjob:
       send-timeout: ${ANALYSIS_OUTBOX_SEND_TIMEOUT:10s}
       retry-delay: ${ANALYSIS_OUTBOX_RETRY_DELAY:5s}
       max-retry-delay: ${ANALYSIS_OUTBOX_MAX_RETRY_DELAY:5m}
+  llm:
+    summary:
+      # 노트북 GPU 위의 요약 서비스. 비워 두면 아예 부르지 않는다 -- 기본이
+      # 꺼짐이어야 서비스를 띄우지 않은 환경에서 화면이 매번 timeout 을
+      # 기다리지 않는다.
+      base-url: ${LLM_SUMMARY_BASE_URL:}
+      # cold start 가 1분에 가깝다. 연결 자체는 5초 안에 갈린다.
+      timeout: ${LLM_SUMMARY_TIMEOUT:120s}
   kafka:
     topics:
       repository-analysis:

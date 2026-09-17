@@ -2,6 +2,7 @@ package com.example.git_job.analysis.query;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -26,12 +27,15 @@ import org.springframework.stereotype.Repository;
  *
  * <p>{@code rule_type} 은 L0..L3 문자열이라 사전순 최대가 곧 최고 Level 이다.</p>
  *
- * <h2>Personal Level 은 여기서 구하지 않는다</h2>
+ * <h2>Personal Level 은 따로 구한다</h2>
  *
- * <p>"본인 Commit 이 확인된 범위"를 알려면 근거 라인마다 작성자를 봐야 하는데,
- * {@code analysis_evidence_commit} 은 아직 아무도 채우지 않는다. 워커가 blame 을
- * 하지 않기 때문이다. 없는 값을 Repository Level 로 대신 채우면 화면이 "본인이
- * 썼다"고 말하게 되므로, 미판정으로 둔다.</p>
+ * <p>{@link #personalLevels(long)} 가 본인이 쓴 근거만으로 같은 규칙을 다시
+ * 평가한다. 한 질의로 합치지 않는 이유는 두 판정의 대상이 다르기 때문이다 --
+ * Repository 는 모든 근거, Personal 은 본인 근거만이다.</p>
+ *
+ * <p>기여 판정이 아직 없는 기술은 Personal 이 비어 있다. 그것은 "본인이 안
+ * 썼다"가 아니라 "확인되지 않았다"이며, Repository Level 로 대신 채우면 화면이
+ * "본인이 썼다"고 말하게 된다.</p>
  */
 @Repository
 public class TechnologyProfileStore {
@@ -72,6 +76,29 @@ public class TechnologyProfileStore {
      * 이름이 어긋난다.</p>
      */
     public List<TechnologyVerdict> verdicts(long userId) {
+        return verdicts(userId, null);
+    }
+
+    /**
+     * 기술 하나의 판정.
+     *
+     * <p>{@link #verdicts(long)} 를 부른 뒤 하나만 고르는 것과 결과는 같지만, 그
+     * 경로는 사용자의 모든 기술을 집계한다. 요약은 카드 한 장마다 이 값을 필요로
+     * 하므로 열두 장이면 전체 집계를 열두 번 하게 된다.</p>
+     */
+    public Optional<TechnologyVerdict> verdict(long userId, String techId) {
+        return verdicts(userId, techId).stream().findFirst();
+    }
+
+    /**
+     * @param techId {@code null} 이면 모든 기술. 필터는 SQL 로 건다 -- 가져와서
+     *               버리면 집계 비용이 그대로 남는다.
+     */
+    private List<TechnologyVerdict> verdicts(long userId, String techId) {
+        String filter = techId == null ? "" : "WHERE r.tech_id = ?\n";
+        Object[] args = techId == null
+                ? new Object[] {userId}
+                : new Object[] {userId, techId};
         return jdbc.query(LATEST_PER_REPOSITORY + """
                 -- 기술은 근거가 아니라 규칙에 붙어 있다. analysis_evidence 에는
                 -- rule_id 만 있고 tech_id 가 없다.
@@ -87,9 +114,10 @@ public class TechnologyProfileStore {
                   ON r.rule_id = e.rule_id AND r.registry_version = e.registry_version
                 JOIN technology t
                   ON t.tech_id = r.tech_id AND t.registry_version = e.registry_version
+                """ + filter + """
                 GROUP BY r.tech_id
                 ORDER BY max(r.rule_type) DESC, count(*) DESC, r.tech_id
-                """, VERDICT, userId);
+                """, VERDICT, args);
     }
 
     /**
@@ -160,6 +188,31 @@ public class TechnologyProfileStore {
      * 파일을 만졌다는 것은 레벨의 근거가 아니라 화면에 보여줄 사실이다.</p>
      */
     public List<TechnologyLevel> personalLevels(long userId) {
+        return personalLevels(userId, null);
+    }
+
+    /**
+     * 기술 하나의 Personal Level.
+     *
+     * <p>{@link #verdict(long, String)} 와 같은 이유로 따로 둔다. 요약은 카드마다
+     * 이 값을 물으므로, 전체를 판정한 뒤 하나만 고르면 열두 장에 열두 번이다.</p>
+     *
+     * @return 본인 근거로 성립하는 규칙이 없으면 비어 있다. "본인이 안 썼다"가
+     *         아니라 "확인된 범위가 없다"는 뜻이다
+     */
+    public Optional<String> personalLevel(long userId, String techId) {
+        return personalLevels(userId, techId).stream()
+                .map(TechnologyLevel::level)
+                .findFirst();
+    }
+
+    /** @param techId {@code null} 이면 모든 기술. */
+    private List<TechnologyLevel> personalLevels(long userId, String techId) {
+        String filter = techId == null ? "" : "      AND r.tech_id = ?\n";
+        Object[] args = techId == null
+                // LATEST_PER_REPOSITORY 에 하나, mine CTE 에 하나.
+                ? new Object[] {userId, userId}
+                : new Object[] {userId, userId, techId};
         return jdbc.query(LATEST_PER_REPOSITORY + """
                 , mine AS (
                     SELECT DISTINCT e.analysis_id, e.rule_id, e.fact_type
@@ -178,6 +231,7 @@ public class TechnologyProfileStore {
                       ON cl.rule_id = r.rule_id AND cl.registry_version = r.registry_version
                     JOIN mine ON mine.rule_id = r.rule_id
                     WHERE cl.role = 'REQUIRED'
+                """ + filter + """
                     GROUP BY mine.analysis_id, r.tech_id, r.rule_id, r.rule_type
                     HAVING count(DISTINCT cl.fact_type)
                          = count(DISTINCT cl.fact_type) FILTER (
@@ -190,8 +244,7 @@ public class TechnologyProfileStore {
                 FROM holds GROUP BY tech_id
                 """, (rs, row) -> new TechnologyLevel(
                         rs.getString("tech_id"), rs.getString("level")),
-                // LATEST_PER_REPOSITORY 에 하나, mine CTE 에 하나.
-                userId, userId);
+                args);
     }
 
     /** 화면 상단 지표. 기술 수·L2 이상·저장소 수·마지막 분석 시각. */
