@@ -59,8 +59,11 @@ public record AnalysisStatusResponse(
      * <p>{@code CANCELED}가 실패로 접히는 것은 다섯 값에 취소가 없기 때문이다.
      * 티켓이 실패를 "분석 작업이 정상적으로 완료되지 못한 경우"로 정의하므로 그
      * 안에 든다. 취소 기능이 생기면 상태 집합부터 다시 정해야 한다.</p>
+     *
+     * <p>공개인 이유는 분석 이력 목록(B-FN-009)도 같은 어휘로 내려야 하기 때문이다.
+     * 두 응답이 같은 열을 다르게 접으면 같은 분석이 화면마다 다른 상태로 보인다.</p>
      */
-    private static String normalize(String status) {
+    public static String normalize(String status) {
         if (status == null) {
             return STATUS_FAILED;
         }
