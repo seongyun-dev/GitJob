@@ -81,6 +81,54 @@ monitoring 작업은 별도 계약으로 **허용**한다. monitoring overlay가
 - `--no-deps`, `--no-recreate`
 - base는 `compose.ec2-data-cluster.yaml`
 
+### B-2. Observability remediation mode (S15P21E102-304)
+
+`--no-recreate`는 monitoring 실행이 reconcile로 변질되는 것을 막는다. 그런데 그
+요구가 monitoring 작업이 가끔 해야 하는 **정당한 수리 하나**도 막는다 — bind
+mount가 잘못된 checkout을 가리키는 컨테이너의 교체다. mount는 컨테이너 생성
+시점에 고정되므로 config reload로는 바뀌지 않고 recreate만이 바꾼다.
+
+`S15P21E102-292`가 확인한 Production Prometheus가 정확히 이 모양이다.
+
+```
+현재 mount   : /home/ubuntu/workspace/S15P21E102-monitoring/Infra/monitoring/prometheus/prometheus.yml
+canonical    : /home/ubuntu/workspace/S15P21E102/Infra/monitoring/prometheus/prometheus.yml
+```
+
+`--remediation` 은 **`--no-recreate` 요구만** 면제한다. 나머지는 그대로다.
+
+| 조건 | normal | remediation |
+|---|---|---|
+| explicit target | 필수 | 필수 |
+| monitoring 서비스만 target | 필수 | 필수 |
+| `--profile observability` | 필수 | 필수 |
+| `--no-deps` | 필수 | 필수 |
+| canonical cluster base | 필수 | 필수 |
+| `--no-recreate` | **필수** | **면제** |
+| canonical checkout에서 실행 | — | **필수** |
+| `REMEDIATION_SERVICES` 소속 | — | **필수** |
+
+```python
+REMEDIATION_SERVICES = ("prometheus",)
+```
+
+**모드가 계약을 느슨하게 하는 것이 아니라 allowlist가 대상을 좁힌다.** monitoring
+서비스라는 이유만으로 자격이 생기지 않는다 — `node-exporter` / `grafana` /
+`kafka-exporter` 는 remediation으로 recreate할 수 없다.
+
+checkout을 선언하지 않으면 fail-closed다. "선언되지 않음"은 "canonical임"이
+아니다.
+
+#### json-exporter는 remediation이 필요 없다
+
+`up -d --no-deps --no-recreate json-exporter` 는 **없는 컨테이너를 생성한다.**
+`--no-recreate` 는 이미 있는 컨테이너의 recreate만 막지 생성을 막지 않는다.
+따라서 json-exporter는 normal mode로 처리되고 allowlist에 넣지 않는다 —
+`test_json_exporter_needs_no_remediation_to_be_created` 가 이것을 고정한다.
+
+실행 순서도 이쪽이 맞다. Prometheus가 json-exporter를 scrape하므로 json-exporter를
+먼저 만들고 그다음 Prometheus를 canonical config로 recreate한다.
+
 ### C. Service-aware 검증 — 프로젝트 전체 동일성 비교를 하지 않는다
 
 "같은 프로젝트의 모든 컨테이너 `config_files`가 동일해야 한다"는 규칙은 **틀렸고,

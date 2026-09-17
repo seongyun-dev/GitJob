@@ -23,6 +23,7 @@ from deploy_guard import (
     DATA_CLUSTER_OVERRIDE,
     LEGACY_DATA_OVERRIDE,
     MONITORING_OVERLAY,
+    REMEDIATION_SERVICES,
     check_deploy_checkout,
     check_full_data_deploy,
     check_observability_deploy,
@@ -475,3 +476,221 @@ def test_cli_exits_non_zero_on_the_incident_arguments():
 
     assert result.returncode == 1
     assert LEGACY_DATA_OVERRIDE in result.stdout
+
+
+# --------------------------------------------------------------------------
+# S15P21E102-304 -- observability remediation mode
+#
+# `-300` made `--no-recreate` mandatory so a monitoring run could not become an
+# untargeted reconcile.  That is still right, and it also blocks the one
+# legitimate thing a monitoring run sometimes has to do: replace a container
+# whose bind mount points at the wrong checkout.  A mount is fixed when the
+# container is created, so no amount of config reload moves it.
+#
+# The exception is deliberately narrow: an explicit allowlist, on the canonical
+# checkout, with every other condition of the normal contract still in force.
+# --------------------------------------------------------------------------
+
+
+def remediation_files():
+    return observability_files()
+
+
+def test_prometheus_mount_drift_remediation_passes():
+    """The -292 case: Prometheus bind-mounted from the stale checkout."""
+
+    assert (
+        check_observability_deploy(
+            compose_files=remediation_files(),
+            profiles=["core", "data", "observability"],
+            target_services=["prometheus"],
+            flags=["--no-deps", "--no-build"],
+            remediation=True,
+            deploy_path=PRODUCTION,
+            production_path=PRODUCTION,
+        )
+        == []
+    )
+
+
+def test_json_exporter_needs_no_remediation_to_be_created():
+    """`--no-recreate` stops a recreate, not a create.
+
+    `json-exporter` does not exist in production, so the normal contract
+    already creates it.  Keeping it out of the remediation allowlist is the
+    point of this test: the exception stays as small as the evidence requires.
+    """
+
+    assert (
+        check_observability_deploy(
+            compose_files=observability_files(),
+            profiles=["core", "data", "observability"],
+            target_services=["json-exporter"],
+            flags=["--no-deps", "--no-recreate", "--no-build"],
+        )
+        == []
+    )
+    assert "json-exporter" not in REMEDIATION_SERVICES
+
+
+def test_recreate_without_remediation_mode_is_refused():
+    errors = check_observability_deploy(
+        compose_files=observability_files(),
+        profiles=["observability"],
+        target_services=["prometheus"],
+        flags=["--no-deps"],
+    )
+
+    assert any("--no-recreate" in error for error in errors)
+
+
+@pytest.mark.parametrize("service", ["node-exporter", "grafana", "kafka-exporter"])
+def test_remediation_outside_the_allowlist_is_refused(service):
+    """A monitoring service is not automatically a remediation target."""
+
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["observability"],
+        target_services=[service],
+        flags=["--no-deps"],
+        remediation=True,
+        deploy_path=PRODUCTION,
+        production_path=PRODUCTION,
+    )
+
+    assert any(service in error for error in errors)
+
+
+def test_remediation_from_a_stale_checkout_is_refused():
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["observability"],
+        target_services=["prometheus"],
+        flags=["--no-deps"],
+        remediation=True,
+        deploy_path=MONITORING_CHECKOUT,
+        production_path=PRODUCTION,
+    )
+
+    assert any("canonical production checkout" in error for error in errors)
+
+
+def test_remediation_without_a_declared_checkout_is_refused():
+    """Fail closed: an unstated checkout is not a canonical one."""
+
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["observability"],
+        target_services=["prometheus"],
+        flags=["--no-deps"],
+        remediation=True,
+    )
+
+    assert errors
+
+
+def test_remediation_still_requires_no_deps():
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["observability"],
+        target_services=["prometheus"],
+        flags=[],
+        remediation=True,
+        deploy_path=PRODUCTION,
+        production_path=PRODUCTION,
+    )
+
+    assert any("--no-deps" in error for error in errors)
+
+
+def test_remediation_still_requires_explicit_targets():
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["observability"],
+        target_services=[],
+        flags=["--no-deps"],
+        remediation=True,
+        deploy_path=PRODUCTION,
+        production_path=PRODUCTION,
+    )
+
+    assert any("name its target services" in error for error in errors)
+
+
+def test_remediation_still_requires_the_observability_profile():
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["data"],
+        target_services=["prometheus"],
+        flags=["--no-deps"],
+        remediation=True,
+        deploy_path=PRODUCTION,
+        production_path=PRODUCTION,
+    )
+
+    assert any("observability" in error for error in errors)
+
+
+def test_remediation_still_refuses_the_legacy_base():
+    errors = check_observability_deploy(
+        compose_files=[
+            *legacy_files(),
+            f"{PRODUCTION}/Infra/compose/{MONITORING_OVERLAY}",
+        ],
+        profiles=["observability"],
+        target_services=["prometheus"],
+        flags=["--no-deps"],
+        remediation=True,
+        deploy_path=PRODUCTION,
+        production_path=PRODUCTION,
+    )
+
+    assert any(LEGACY_DATA_OVERRIDE in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "service", ["hdfs-namenode", "spark-master", "kafka", "backend"]
+)
+def test_remediation_may_not_target_data_or_service_containers(service):
+    errors = check_observability_deploy(
+        compose_files=remediation_files(),
+        profiles=["observability"],
+        target_services=[service],
+        flags=["--no-deps"],
+        remediation=True,
+        deploy_path=PRODUCTION,
+        production_path=PRODUCTION,
+    )
+
+    assert any(service in error for error in errors)
+
+
+def test_cli_allows_the_prometheus_remediation():
+    result = run_guard(
+        "observability",
+        *[f"--compose-file={path}" for path in remediation_files()],
+        "--profile=observability",
+        "--target-service=prometheus",
+        "--flag=--no-deps",
+        "--remediation",
+        f"--deploy-path={PRODUCTION}",
+        f"--production-path={PRODUCTION}",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cli_refuses_remediation_of_an_unlisted_service():
+    result = run_guard(
+        "observability",
+        *[f"--compose-file={path}" for path in remediation_files()],
+        "--profile=observability",
+        "--target-service=grafana",
+        "--flag=--no-deps",
+        "--remediation",
+        f"--deploy-path={PRODUCTION}",
+        f"--production-path={PRODUCTION}",
+    )
+
+    assert result.returncode == 1
+    assert "grafana" in result.stdout

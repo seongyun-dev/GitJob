@@ -85,6 +85,21 @@ OBSERVABILITY_SERVICES = (
 # data override was named, so its `config_files` label carries no signal.
 OVERRIDE_INDEPENDENT_SERVICES = ("analysis-worker",)
 
+# S15P21E102-304.  `--no-recreate` is what stops a monitoring run turning into a
+# reconcile, and it also stops the one repair a monitoring run sometimes needs:
+# a container whose bind mount points at the wrong checkout.  A mount is fixed
+# when the container is created, so no config reload moves it -- only a
+# recreate does.  `-292` found production Prometheus mounted from
+# `S15P21E102-monitoring` instead of the canonical checkout, which is exactly
+# that shape.
+#
+# The exception is an allowlist rather than a mode that relaxes the contract:
+# every other condition still holds, and a service is not eligible merely
+# because it is a monitoring service.  `json-exporter` is deliberately absent —
+# it does not exist in production yet, and `--no-recreate` permits a *create*,
+# so the normal contract already covers it.
+REMEDIATION_SERVICES = ("prometheus",)
+
 
 class GuardFailure(Exception):
     """A deploy precondition that did not hold.  Always fail-closed."""
@@ -153,6 +168,9 @@ def check_observability_deploy(
     profiles: Sequence[str],
     target_services: Sequence[str],
     flags: Sequence[str],
+    remediation: bool = False,
+    deploy_path: str | None = None,
+    production_path: str | None = None,
 ) -> list[str]:
     """Contract B: a targeted monitoring run beside a live Data project.
 
@@ -160,11 +178,40 @@ def check_observability_deploy(
     an explicit service.  This holds it that way, and refuses the one thing it
     must never become: an untargeted reconcile wearing the observability
     profile.
+
+    `remediation` waives *only* the `--no-recreate` requirement, and only for
+    `REMEDIATION_SERVICES` on the canonical checkout.  Everything else -- the
+    explicit targets, `--no-deps`, the observability profile, the cluster base,
+    the refusal of Data and service containers -- is unchanged, because none of
+    those were what stood between an operator and a correct mount.
     """
 
     errors: list[str] = []
     names = _normalize(compose_files)
     flag_set = set(flags)
+
+    if remediation:
+        # Fail closed on an unstated checkout: "not declared" is not "canonical".
+        if not deploy_path or not production_path:
+            errors.append(
+                "a remediation deploy must declare its checkout and the "
+                "canonical production checkout"
+            )
+        elif deploy_path.rstrip("/") != production_path.rstrip("/"):
+            errors.append(
+                "a remediation deploy must run from the canonical production "
+                f"checkout: {deploy_path!r} != {production_path!r}"
+            )
+        outside = [
+            service
+            for service in target_services
+            if service not in set(REMEDIATION_SERVICES)
+        ]
+        if outside:
+            errors.append(
+                "a remediation deploy may only recreate "
+                f"{list(REMEDIATION_SERVICES)}; refused: {outside}"
+            )
 
     if MONITORING_OVERLAY not in names:
         errors.append(f"an observability deploy must include {MONITORING_OVERLAY}")
@@ -186,7 +233,8 @@ def check_observability_deploy(
         errors.append(
             f"an observability deploy may only target monitoring services: {unexpected}"
         )
-    for required in ("--no-deps", "--no-recreate"):
+    required_flags = ("--no-deps",) if remediation else ("--no-deps", "--no-recreate")
+    for required in required_flags:
         if required not in flag_set:
             errors.append(
                 f"{required} is required so a monitoring run cannot touch"
@@ -349,6 +397,17 @@ def build_parser() -> argparse.ArgumentParser:
     obs.add_argument("--profile", action="append", default=[])
     obs.add_argument("--target-service", action="append", default=[])
     obs.add_argument("--flag", action="append", default=[])
+    obs.add_argument(
+        "--remediation",
+        action="store_true",
+        help=(
+            "waive --no-recreate for "
+            "REMEDIATION_SERVICES on the canonical checkout, for a verified "
+            "mount or config drift that a reload cannot fix"
+        ),
+    )
+    obs.add_argument("--deploy-path", help="remediation only")
+    obs.add_argument("--production-path", help="remediation only")
 
     checkout = sub.add_parser("checkout", help="contract D")
     checkout.add_argument("--head")
@@ -380,6 +439,9 @@ def main(argv: list[str] | None = None) -> int:
                 profiles=arguments.profile,
                 target_services=arguments.target_service,
                 flags=arguments.flag,
+                remediation=arguments.remediation,
+                deploy_path=arguments.deploy_path,
+                production_path=arguments.production_path,
             ),
         )
     return _emit(
