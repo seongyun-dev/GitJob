@@ -23,7 +23,11 @@ from urllib.parse import urlsplit
 
 EXPORT_SCHEMA_VERSION = "c-archive-activity-export/v1"
 METADATA_SCHEMA_VERSION = "repo-activity/v1"
-MAX_ID_FILE_BYTES = 32 * 1024 * 1024
+# A compact Top-10k c-public-repo-analysis/v2 result can exceed 60 MiB because
+# it carries per-repository evidence and quality provenance.  The input remains
+# a trusted local file, is row-bounded separately, and stays fail-closed at a
+# fixed ceiling rather than accepting an unbounded JSON document.
+MAX_ID_FILE_BYTES = 128 * 1024 * 1024
 MAX_EXPORT_BYTES = 32 * 1024 * 1024
 PUBLISHED_DIRECTORY_MODE = 0o555
 PUBLISHED_FILE_MODE = 0o444

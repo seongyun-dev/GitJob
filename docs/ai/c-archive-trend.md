@@ -59,7 +59,9 @@ CSV/NDJSON에 쓴다. 출력에는 `metadata.json`, 그 hash와 data hash를 가
 이동한다. CLI stdout의 `metadata`는 이 최종 `metadata.json`과 같으며 상류 hash를
 `source_hash`로 잘못 전달하지 않는다. Linux 게시 경로는 디렉터리 `0555`, 세 파일
 `0444`로 확정해 Spark와 UID가 다른 read-only Worker도 경로를 통과해 읽을 수 있게
-한다. 원본 전체의
+한다. repository ID 입력 JSON은 실제 Top-10k PUBLIC v2 결과를 수용하는 고정 128 MiB
+상한과 별도의 `max_rows` 상한을 함께 적용하며, 상한을 1 byte라도 넘으면 파싱 전에
+거절한다. 원본 전체의
 repo/event 분모는 Spark aggregate scalar만 Driver로 가져온다.
 
 Exporter는 요청 `--period`를 무조건 붙이지 않는다. MONTH는 source의 유일한 `period`

@@ -40,6 +40,27 @@ def test_candidate_ids_are_strict_bounded_and_sorted(tmp_path):
         load_repo_ids(path, max_rows=2)
 
 
+def test_public_result_input_bound_covers_real_top10k_payloads_and_stays_closed(
+    tmp_path, monkeypatch
+):
+    assert exporter.MAX_ID_FILE_BYTES == 128 * 1024 * 1024
+
+    monkeypatch.setattr(exporter, "MAX_ID_FILE_BYTES", 256)
+    path = tmp_path / "public.json"
+    payload = {
+        "schema_version": "c-public-repo-analysis/v2",
+        "records": [{"github_repo_id": 1, "included_in_denominator": True}],
+        "padding": "x" * 64,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert path.stat().st_size <= 256
+    assert load_repo_ids(path, max_rows=1) == (1,)
+
+    path.write_bytes(b" " * 257)
+    with pytest.raises(ValueError, match="bounded file limit"):
+        load_repo_ids(path, max_rows=1)
+
+
 @pytest.mark.parametrize("bad_id", [None, True, "1", 0])
 def test_candidate_ids_reject_null_and_coercion(tmp_path, bad_id):
     payload = _candidate_payload()
