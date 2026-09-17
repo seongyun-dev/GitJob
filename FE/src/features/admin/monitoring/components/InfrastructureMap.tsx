@@ -1,3 +1,4 @@
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { serverUpState } from '@/features/admin/monitoring/adapter/toMonitoringView'
 import type { MonitoringView, ServerView } from '@/features/admin/monitoring/adapter/toMonitoringView'
 import type { Connection, ServerNode } from '@/features/admin/monitoring/model/topology'
@@ -37,8 +38,20 @@ const STREAM_TYPES = ['KAFKA_STREAM', 'HDFS_REPLICATION', 'SPARK_CONTROL'] as co
 const CARD =
   'overflow-hidden rounded-[18px] border border-brand-line bg-white shadow-[0_10px_28px_rgba(25,47,81,0.07)]'
 
-/** 디자인 파일 `mapLines()`의 좌표. 카드 380px 두 장이 1174px 박스 양 끝에 있을 때만 맞는다. */
-const MAP = { W: 1174, H: 372, cy: 132, lx: 380, rx: 794, cardBottom: 237, promTop: 300 } as const
+/**
+ * 디자인 파일 `mapLines()`의 좌표. 카드 380px 두 장이 1174px 박스 양 끝에 있을 때만 맞는다.
+ *
+ * `cardBottom`·`promTop`은 여기 없다. 카드 높이는 서비스 칩 수에 따라 바뀌고(티켓 313에서
+ * 데이터 서버가 6개가 되며 한 줄 늘었다), 고정 좌표로 두면 수집 점이 카드 **안쪽**에 박힌다.
+ * 아래 세 값은 실제로 잰 카드 높이에서 만든다.
+ */
+const MAP = { W: 1174, cy: 132, lx: 380, rx: 794, cardTop: 34 } as const
+
+/** 디자인의 세로 여백 — 카드 아래에서 수집 바 위까지, 그리고 바 높이. */
+const GAP = { cardToBar: 62, barHeight: 73 } as const
+
+/** 디자인 기본값(카드 203px)일 때 원래 좌표가 나오는 최소 높이. */
+const MIN_MAP_HEIGHT = 372
 
 /** 디자인 파일의 DOT 팔레트. */
 const DOT = { ok: '#219A67', down: '#D05D6D', unknown: '#B9C2CF' } as const
@@ -268,6 +281,85 @@ function ScrapeBar({ view }: { view: MonitoringView }) {
   )
 }
 
+/** 잰 카드 높이에서 만든 지도 좌표 · 티켓 S15P21E102-313. */
+interface MapGeometry {
+  height: number
+  promTop: number
+  leftBottom: number
+  rightBottom: number
+}
+
+/**
+ * 두 카드의 실제 높이를 재서 지도 좌표를 만든다.
+ *
+ * 카드 높이는 서비스 칩 수와 줄바꿈에 따라 바뀐다. 고정 좌표(디자인의 `cardBottom: 237`)를
+ * 그대로 두면 카드가 그보다 길어지는 순간 수집 점이 카드 안쪽에 박히고, 점선 곡선도 카드
+ * 뒤로 숨는다 — 데이터 서버 칩이 여섯 개가 되면서 실제로 그렇게 됐다.
+ *
+ * `useLayoutEffect`로 재는 이유는 그린 뒤에 재면 한 프레임 동안 선이 엉뚱한 자리에 있다가
+ * 튀기 때문이다. 폭이 바뀌면 칩 줄바꿈이 달라져 높이도 바뀌므로 `ResizeObserver`로 따라간다.
+ */
+function useMapGeometry(): {
+  geometry: MapGeometry
+  leftRef: (node: HTMLDivElement | null) => void
+  rightRef: (node: HTMLDivElement | null) => void
+} {
+  const nodes = useRef<{ left: HTMLDivElement | null; right: HTMLDivElement | null }>({
+    left: null,
+    right: null,
+  })
+  const [heights, setHeights] = useState({ left: 0, right: 0 })
+
+  const measure = useCallback(() => {
+    setHeights((previous) => {
+      const left = nodes.current.left?.offsetHeight ?? 0
+      const right = nodes.current.right?.offsetHeight ?? 0
+      return previous.left === left && previous.right === right ? previous : { left, right }
+    })
+  }, [])
+
+  const observer = useRef<ResizeObserver | null>(null)
+  useLayoutEffect(() => {
+    // 두 카드를 함께 본다. 한쪽만 줄바꿈이 달라져도 좌표가 바뀐다.
+    const instance = new ResizeObserver(measure)
+    observer.current = instance
+    for (const node of [nodes.current.left, nodes.current.right]) {
+      if (node !== null) {
+        instance.observe(node)
+      }
+    }
+    measure()
+    return () => {
+      instance.disconnect()
+      observer.current = null
+    }
+  }, [measure])
+
+  const attach = useCallback(
+    (side: 'left' | 'right') => (node: HTMLDivElement | null) => {
+      nodes.current[side] = node
+      if (node !== null) {
+        observer.current?.observe(node)
+      }
+      measure()
+    },
+    [measure],
+  )
+
+  const leftBottom = MAP.cardTop + heights.left
+  const rightBottom = MAP.cardTop + heights.right
+  const height = Math.max(
+    MIN_MAP_HEIGHT,
+    Math.max(leftBottom, rightBottom) + GAP.cardToBar + GAP.barHeight,
+  )
+
+  return {
+    geometry: { height, promTop: height - GAP.barHeight, leftBottom, rightBottom },
+    leftRef: attach('left'),
+    rightRef: attach('right'),
+  }
+}
+
 /**
  * 디자인 파일 `mapLines()`의 포팅. 좌표·두께·색·점선 간격·애니메이션까지 그대로다.
  * 바뀐 것은 mock 바인딩만 — 점 색은 실제 서버 UP 상태, 수집 간격 문구는 실제 값.
@@ -278,12 +370,15 @@ function MapLines({
   leftUp,
   rightUp,
   scrapeInterval,
+  geometry,
 }: {
   leftUp: boolean | null
   rightUp: boolean | null
   scrapeInterval: string | null
+  geometry: MapGeometry
 }) {
-  const { W, H, cy, lx, rx, cardBottom, promTop } = MAP
+  const { W, cy, lx, rx } = MAP
+  const { height: H, promTop, leftBottom, rightBottom } = geometry
   const scrapeStroke = (up: boolean | null) => (up === false ? DOT.down : DOT.unknown)
 
   return (
@@ -336,24 +431,24 @@ function MapLines({
 
       {/* Prometheus 수집 (점선): 바 상단에서 각 카드 아래 틈으로 */}
       <path
-        d={`M${W / 2 - 150},${promTop} C${W / 2 - 150},266 190,290 190,${cardBottom + 8}`}
+        d={`M${W / 2 - 150},${promTop} C${W / 2 - 150},${promTop - 34} 190,${promTop - 10} 190,${leftBottom + 8}`}
         fill="none"
         stroke={scrapeStroke(leftUp)}
         strokeWidth={1.5}
         strokeDasharray="4 5"
       />
       <path
-        d={`M${W / 2 + 150},${promTop} C${W / 2 + 150},266 984,290 984,${cardBottom + 8}`}
+        d={`M${W / 2 + 150},${promTop} C${W / 2 + 150},${promTop - 34} 984,${promTop - 10} 984,${rightBottom + 8}`}
         fill="none"
         stroke={scrapeStroke(rightUp)}
         strokeWidth={1.5}
         strokeDasharray="4 5"
       />
-      <circle cx={190} cy={cardBottom + 8} r={4.5} fill="#fff" stroke={dotColor(leftUp)} strokeWidth={2} />
-      <circle cx={984} cy={cardBottom + 8} r={4.5} fill="#fff" stroke={dotColor(rightUp)} strokeWidth={2} />
+      <circle cx={190} cy={leftBottom + 8} r={4.5} fill="#fff" stroke={dotColor(leftUp)} strokeWidth={2} />
+      <circle cx={984} cy={rightBottom + 8} r={4.5} fill="#fff" stroke={dotColor(rightUp)} strokeWidth={2} />
       <text
         x={W / 2}
-        y={282}
+        y={promTop - 18}
         textAnchor="middle"
         fontSize={11}
         fontWeight={600}
@@ -367,6 +462,7 @@ function MapLines({
 }
 
 export function InfrastructureMap({ view }: { view: MonitoringView }) {
+  const { geometry, leftRef, rightRef } = useMapGeometry()
   const streams = view.connections.filter((connection) =>
     STREAM_TYPES.some((type) => type === connection.type),
   )
@@ -422,17 +518,21 @@ export function InfrastructureMap({ view }: { view: MonitoringView }) {
         {twoServerFlow ? (
           <>
             {/* 디자인형 — 1174×372 절대좌표 박스. 박스가 들어가는 폭(xl)에서만. */}
-            <div className="relative mx-auto hidden h-[372px] w-[1174px] xl:block">
-              <div className="absolute top-[34px] left-0 w-[380px]">
+            <div
+              className="relative mx-auto hidden w-[1174px] xl:block"
+              style={{ height: geometry.height }}
+            >
+              <div ref={leftRef} className="absolute top-[34px] left-0 w-[380px]">
                 <ServerCard view={view} server={left} />
               </div>
-              <div className="absolute top-[34px] right-0 w-[380px]">
+              <div ref={rightRef} className="absolute top-[34px] right-0 w-[380px]">
                 <ServerCard view={view} server={right} />
               </div>
               <MapLines
                 leftUp={serverUpState(view, left)}
                 rightUp={serverUpState(view, right)}
                 scrapeInterval={scrapeInterval}
+                geometry={geometry}
               />
               <div className="absolute top-[58px] left-1/2 z-[2] -translate-x-1/2">
                 <StreamPill connection={stream} view={view} withArrow={false} />

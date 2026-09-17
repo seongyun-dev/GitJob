@@ -116,7 +116,7 @@ function CoverageBadge({ state }: { state: CoverageState }) {
 /** 값이 들어오지 않은 카드의 자리. 점선 테두리가 "아직 없음"을 말한다. */
 function EmptyMetric() {
   return (
-    <div className="mt-3.5 rounded-[12px] border border-dashed border-brand-box px-4 py-4 text-center">
+    <div className="mt-3.5 grid flex-1 place-content-center rounded-[12px] border border-dashed border-brand-box px-4 py-4 text-center">
       <div className="inline-flex gap-1">
         {[0, 1, 2].map((index) => (
           <span key={index} className="h-1.5 w-4.5 rounded-sm bg-[#E4E9F1]" />
@@ -127,12 +127,22 @@ function EmptyMetric() {
   )
 }
 
-/** 라벨 · 값 · 단위 한 줄. COLLECTED 카드가 세 줄로 쓴다. */
+/**
+ * 라벨 · 값 · 단위 한 줄. COLLECTED 카드가 세 줄에서 다섯 줄로 쓴다.
+ *
+ * 값이 줄바꿈하지 않는 것이 이 줄의 규칙이다 · 티켓 S15P21E102-313. 열 폭이 200px 남짓이라
+ * `233,655개`·`2 / 3core`처럼 긴 값이 들어오면 두 줄이 되어 줄 높이가 카드마다 달라졌다.
+ * 값은 붙여 두고, 자리가 모자라면 **라벨**이 줄어든다 — 라벨은 무엇을 재는지 알려 주는
+ * 말이라 잘려도 읽히지만, 숫자는 잘리면 다른 값이 된다.
+ *
+ * 높이를 못 박는 이유도 같다. 값이 길어지거나 `—`로 비어도 줄 높이가 흔들리지 않아야
+ * 카드 네 장의 눈금이 서로 맞는다.
+ */
 function StatRow({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-2 rounded-[10px] bg-[#F6F8FC] px-3 py-2">
-      <span className="text-[12px] font-medium text-brand-muted">{label}</span>
-      <span className="text-[15px] font-extrabold tracking-[-0.02em] text-brand-ink tabular-nums">
+    <div className="flex h-[39px] items-center justify-between gap-2 rounded-[10px] bg-[#F6F8FC] px-3">
+      <span className="min-w-0 truncate text-[12px] font-medium text-brand-muted">{label}</span>
+      <span className="shrink-0 text-[15px] font-extrabold tracking-[-0.02em] whitespace-nowrap text-brand-ink tabular-nums">
         {value}
         <span className="ml-1 text-[10px] font-semibold text-brand-faint">{unit}</span>
       </span>
@@ -143,7 +153,7 @@ function StatRow({ label, value, unit }: { label: string; value: string; unit: s
 /** Kafka 실지표(Phase 1). 개별 값이 `null`이면 그 줄만 `—`. */
 function KafkaMetrics({ kafka }: { kafka: MonitoringOverview['kafka'] }) {
   return (
-    <div className="mt-3.5 space-y-2">
+    <div className="mt-3.5 flex-1 space-y-2">
       <StatRow label="처리량" value={formatRate(kafka.messagesInPerSecond)} unit="msg/s" />
       <StatRow label="Consumer lag" value={formatInt(kafka.consumerLagTotal)} unit="msg" />
       <StatRow label="Topic" value={formatInt(kafka.topicCount)} unit="개" />
@@ -168,7 +178,7 @@ function SparkMetrics({ spark }: { spark: MonitoringOverview['spark'] }) {
       ? '—'
       : `${mbToGb(spark.memoryUsedMb)} / ${mbToGb(spark.memoryTotalMb)}`
   return (
-    <div className="mt-3.5 space-y-2">
+    <div className="mt-3.5 flex-1 space-y-2">
       <StatRow label="Worker" value={formatInt(spark.aliveWorkers)} unit="개" />
       <StatRow label="Core" value={cores} unit="core" />
       <StatRow label="Memory" value={memory} unit="GB" />
@@ -179,7 +189,7 @@ function SparkMetrics({ spark }: { spark: MonitoringOverview['spark'] }) {
 /** DB 적재 현황(Phase 4). BE가 Postgres를 직접 센 건수 — Prometheus 경유 아님. */
 function DataStoreMetrics({ dataStore }: { dataStore: MonitoringOverview['dataStore'] }) {
   return (
-    <div className="mt-3.5 space-y-2">
+    <div className="mt-3.5 flex-1 space-y-2">
       <StatRow label="기술" value={formatInt(dataStore.technologyCount)} unit="개" />
       <StatRow label="기술 후보" value={formatInt(dataStore.technologyCandidateCount)} unit="개" />
       <StatRow label="분석 요청" value={formatInt(dataStore.analysisJobCount)} unit="건" />
@@ -195,7 +205,7 @@ function HdfsMetrics({ hdfs }: { hdfs: MonitoringOverview['hdfs'] }) {
       ? `개 · ${hdfs.deadDataNodes} down`
       : '개 정상'
   return (
-    <div className="mt-3.5 space-y-2">
+    <div className="mt-3.5 flex-1 space-y-2">
       <StatRow
         label="용량"
         value={capacityPercent(hdfs.capacityUsedBytes, hdfs.capacityTotalBytes)}
@@ -248,11 +258,31 @@ export function DataPlatformCards({
           return (
             <div
               key={platform.key}
-              className="rounded-[18px] border border-brand-line bg-white px-[22px] py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
+              /*
+                세로 flex 인 것은 카드마다 지표 줄 수가 다르기 때문이다 · 티켓 S15P21E102-313.
+                HDFS 는 다섯 줄, 나머지는 세 줄, PREPARING 은 `N/A` 블록 하나다. 지표 블록이
+                남는 높이를 먹어야 수집원 각주가 네 장 모두 카드 바닥에 맞춰 선다 — 그러지
+                않으면 각주가 카드마다 다른 높이에 떠서 네 장이 서로 다른 물건처럼 보인다.
+                카드 높이 자체는 grid 가 이미 맞춘다.
+              */
+              className="flex flex-col rounded-[18px] border border-brand-line bg-white px-[22px] py-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
             >
-              <div className="flex items-center justify-between gap-2.5">
-                <span className="text-[14px] font-[750] text-brand-ink">{platform.name}</span>
-                <CoverageBadge state={state} />
+              {/*
+                머리 높이를 두 줄로 못 박는다. 열 폭이 200px 남짓이라 배지(86px)를 빼면 이름에
+                70px 남짓만 남고, `데이터 적재`·`Kafka Topic` 만 두 줄이 되어 카드마다 머리
+                높이가 27px 과 42px 로 갈렸다. 항상 두 줄 자리를 두면 이름이 길어져도 아래
+                지표가 밀리지 않는다.
+
+                이름을 자르지 않는 이유는 그것이 카드의 정체이기 때문이다. 대신 배지를
+                `shrink-0` 으로 고정해 이름이 먼저 접히게 한다.
+              */}
+              <div className="flex min-h-[42px] items-start justify-between gap-2.5">
+                <span className="text-[14px] leading-[1.5] font-[750] break-keep text-brand-ink">
+                  {platform.name}
+                </span>
+                <span className="shrink-0">
+                  <CoverageBadge state={state} />
+                </span>
               </div>
 
               {collected && platform.key === 'kafkaBusiness' ? (

@@ -46,7 +46,24 @@ export const GITJOB_TOPOLOGY: TopologyConfig = {
         { id: 'hdfs-datanode', label: 'HDFS DataNode', tag: 'hdfs' },
         { id: 'spark-master', label: 'Spark Master', tag: 'spark' },
         { id: 'spark-worker', label: 'Spark Worker', tag: 'spark' },
-        { id: 'collector', label: 'Collector', tag: 'kafka→hdfs' },
+        /*
+         * 두 컴포넌트를 나눠 적는다 · 티켓 S15P21E102-313.
+         *
+         * 한 칩에 `Collector / kafka→hdfs` 로 묶여 있었는데, 실제로는 서로 다른 서비스이고
+         * Kafka 를 읽는 쪽은 Collector 가 아니다.
+         *
+         *   collector          외부 소스 수집기. GitHub API · GH Archive 를 읽어 WebHDFS 로
+         *                      RAW 를 적재한다(`RAW_ROOT=hdfs:///gitjob/raw`). 상시 프로세스는
+         *                      health 서버이고 수집은 `AI/collector/gharchive` 배치가 한다.
+         *   spark-c1-archiver  C1 Archiver(티켓 112·228). Spark Structured Streaming 으로
+         *                      `github.events`·`so.raw` 를 읽어 HDFS 에 적재한다. 이쪽이
+         *                      말 그대로 Kafka → HDFS 다.
+         *
+         * `id` 는 compose 서비스명을 그대로 쓴다. 화면에 보이는 이름만 사람이 읽기 좋게
+         * 줄인다 — 운영 명칭을 화면이 새로 만들지 않는다.
+         */
+        { id: 'collector', label: 'Collector', tag: 'gh-archive→hdfs' },
+        { id: 'spark-c1-archiver', label: 'C1 Archiver', tag: 'kafka→hdfs' },
       ],
     },
   ],
@@ -56,11 +73,24 @@ export const GITJOB_TOPOLOGY: TopologyConfig = {
       from: 'service',
       to: 'data',
       type: 'KAFKA_STREAM',
-      label: 'Kafka Streaming',
+      /*
+       * `Kafka Streaming` 이 아니라 `Kafka` 다 · 티켓 S15P21E102-313.
+       *
+       * 이 값 하나를 제목(`Service Server → ? → Data Server`)과 가운데 필이 함께 쓴다.
+       * 길게 적으면 두 서버 사이에 세 번째 서버가 있는 것처럼 읽히는데, broker 는
+       * 서비스 서버(J15E102) 한 곳에만 있다 — 데이터 호스트는 broker 를 돌리지 않는다
+       * (`Infra/compose/compose.ec2.yaml`, `compose.yaml` 의 kafka 주석).
+       *
+       * broker 라는 사실은 서비스 서버 카드의 `Kafka / broker` 칩과 아래 caption 이 말한다.
+       */
+      label: 'Kafka',
       // 토픽 이름과 partition 수는 적지 않는다. 확정 디자인의 `job-postings · 3 partitions`는
       // mock이고, 실제 토픽은 `gitjob.*`(루트 `.env.example`)이며 partition 수를 주는 API가
       // 없다. 확인된 뒤에 이 caption에 넣는다.
-      caption: 'Producer → Consumer · Collector 적재',
+      //
+      // Producer 를 적지 않는 이유는 위치가 하나로 특정되지 않기 때문이다 — Backend 도
+      // 배치 수집기도 produce 한다. 대신 broker 가 어디 있고 누가 받아 적재하는지를 적는다.
+      caption: 'Kafka Broker → C1 Archiver · HDFS 적재',
     },
     {
       id: 'scrape-service',
