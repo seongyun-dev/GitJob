@@ -10,7 +10,6 @@ import json
 from hashlib import sha256
 
 import pytest
-
 from analysis.claim import Claim, ClaimStatus
 from analysis.clone import (
     CloneResult,
@@ -19,6 +18,7 @@ from analysis.clone import (
     TransientCloneError,
 )
 from analysis.consumer import AnalysisConsumer, ClaimBusyError, ClaimLostError
+from analysis.judge import Candidate, Judgement
 from analysis.parse import ImportOccurrence, ParseReport
 from analysis.publish import ResultPublisher
 from analysis.results import SCHEMA_VERSION, SCHEMA_VERSION_V2
@@ -153,6 +153,55 @@ class BatchTransport:
         self.closed = True
 
 
+class BusyRetryTransport:
+    """One delivery that becomes available without advancing its offset."""
+
+    def __init__(self, message: ConsumedMessage) -> None:
+        self.message = message
+        self.delivered = False
+        self.commits = 0
+        self.closed = False
+        self.paused = 0
+        self.resumed = 0
+        self.consumer: AnalysisConsumer | None = None
+
+    def poll(self, _timeout_ms: int) -> list[ConsumedMessage]:
+        if self.delivered:
+            return []
+        self.delivered = True
+        return [self.message]
+
+    def commit(self) -> None:
+        self.commits += 1
+        assert self.consumer is not None
+        self.consumer.stop()
+
+    def pause_all(self) -> None:
+        self.paused += 1
+
+    def heartbeat(self, _timeout_ms: int) -> None:
+        return None
+
+    def resume_all(self) -> None:
+        self.resumed += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class BusyThenAcquiredClaims(FakeClaims):
+    def __init__(self) -> None:
+        super().__init__(ClaimStatus.BUSY)
+        self.calls = 0
+
+    def claim(self, event_id: str, analysis_id: str) -> Claim:
+        self.calls += 1
+        if self.calls == 1:
+            return super().claim(event_id, analysis_id)
+        self.status = ClaimStatus.ACQUIRED
+        return super().claim(event_id, analysis_id)
+
+
 class FakeResults:
     def __init__(self, fail: bool = False) -> None:
         self.published: list = []
@@ -217,6 +266,46 @@ def test_clone_is_pinned_to_the_commit_not_the_branch(tmp_path):
 
     assert outcome.action == "parsed"
     assert cloner.calls == [("octocat/gitjob", SHA, work_target(), None)]
+
+
+def test_busy_redelivery_is_retried_without_terminating_the_consumer(tmp_path):
+    claims = BusyThenAcquiredClaims()
+    transport = BusyRetryTransport(message(event()))
+    consumer = AnalysisConsumer(
+        transport=transport, claims=claims, cloner=FakeCloner(tmp_path)
+    )
+    transport.consumer = consumer
+
+    consumer.run()
+
+    assert claims.calls == 2
+    assert transport.commits == 1
+    assert transport.paused == transport.resumed == 1
+    assert transport.closed is True
+
+
+def test_result_contract_validation_is_terminal_and_does_not_leave_a_lease(tmp_path):
+    claims, dlq, results = FakeClaims(), FakeDlq(), FakeResults()
+    consumer = build(
+        tmp_path,
+        claims=claims,
+        dlq=dlq,
+        results=results.publisher(),
+    )
+    invalid = Judgement(
+        verdicts=(),
+        evidence=(),
+        candidates=(Candidate("PYPI", "broken", "x" * 41, 1),),
+    )
+    consumer._judge = lambda *_args: invalid
+
+    outcome = consumer.handle(message(event()))
+
+    assert outcome.action == "failed"
+    assert outcome.error_code == "RESULT_CONTRACT_INVALID"
+    assert claims.finished == [("ev_1", 1, "FAILED", "RESULT_CONTRACT_INVALID")]
+    assert len(results.published) == 1
+    assert len(dlq.sent) == 1
 
 
 def test_private_repository_retries_the_same_pinned_commit_with_broker_token(tmp_path):

@@ -147,7 +147,7 @@ class AnalysisConsumer:
         try:
             while not self._stopped:
                 for message in self.transport.poll(self.poll_timeout_ms):
-                    self.handle(message)
+                    self._handle_with_busy_retry(message)
                     # Committing per message is affordable because the consumer
                     # is configured for one record per poll, and it keeps the
                     # redelivery window to a single job.
@@ -157,6 +157,42 @@ class AnalysisConsumer:
         finally:
             self.transport.close()
             log.info("analysis consumer stopped")
+
+    def _handle_with_busy_retry(self, message: ConsumedMessage) -> Outcome:
+        """Wait for an active lease without advancing this partition.
+
+        A duplicate delivery is expected after a worker handoff.  Raising
+        ``ClaimBusyError`` from the top-level loop used to terminate the
+        process, leaving the same record to trigger a restart loop.  Pausing
+        assigned partitions prevents a later record from being committed past
+        the busy one; heartbeat polling keeps the Kafka group alive until the
+        lease can be taken over.
+        """
+        try:
+            return self.handle(message)
+        except ClaimBusyError:
+            if self._stopped:
+                raise
+            self.transport.pause_all()
+            try:
+                log.warning(
+                    "claim busy; waiting for lease expiry: topic=%s partition=%s offset=%s",
+                    message.topic,
+                    message.partition,
+                    message.offset,
+                )
+                while not self._stopped:
+                    self.transport.heartbeat(self.poll_timeout_ms)
+                    try:
+                        return self.handle(message)
+                    except ClaimBusyError:
+                        continue
+            finally:
+                self.transport.resume_all()
+            raise ClaimBusyError(
+                f"event at {message.topic}-{message.partition}-{message.offset} "
+                "remained busy during shutdown"
+            )
 
     def handle(self, message: ConsumedMessage) -> Outcome:
         """Process one message. Raising means "do not commit"."""
@@ -308,8 +344,8 @@ class AnalysisConsumer:
                 # leaves a terminal claim with nothing sent, and the redelivery
                 # skips it. This way the bad case is a duplicate, which the
                 # consumer already tolerates.
-                result_publisher.publish(
-                    completed_result(
+                try:
+                    completed = completed_result(
                         request,
                         judgement,
                         report,
@@ -322,7 +358,31 @@ class AnalysisConsumer:
                         attributed_evidence=attributed_evidence,
                         personal_assessments=personal_assessments,
                     )
-                )
+                except ValidationError as invalid:
+                    error_code = "RESULT_CONTRACT_INVALID"
+                    self._report_failure(
+                        request,
+                        error_code,
+                        f"result contract validation failed ({invalid.error_count()} errors)",
+                        force_v1=True,
+                    )
+                    if not self.claims.finish(
+                        request.event_id, token, "FAILED", error_code
+                    ):
+                        raise ClaimLostError(
+                            f"event {request.event_id} lease was taken over before "
+                            "result contract failure recording"
+                        ) from invalid
+                    self._to_dlq(message, error_code)
+                    log.error(
+                        "result contract validation failed: analysisId=%s errors=%s",
+                        payload.analysis_id,
+                        invalid.error_count(),
+                    )
+                    return Outcome(
+                        "failed", event_id=request.event_id, error_code=error_code
+                    )
+                result_publisher.publish(completed)
 
             if not self.claims.finish(request.event_id, token, "CLONED"):
                 raise ClaimLostError(

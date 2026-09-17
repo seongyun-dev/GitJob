@@ -17,14 +17,13 @@ from uuid import uuid4
 
 import psycopg
 import pytest
-from kafka import KafkaAdminClient, KafkaProducer
-from kafka.admin import NewTopic
-
 from analysis.claim import ClaimStatus, ClaimStore
 from analysis.clone import RepositoryCloner
-from analysis.consumer import AnalysisConsumer, ClaimBusyError
+from analysis.consumer import AnalysisConsumer
 from analysis.parse import RepositoryParser
 from common.kafka import KafkaPythonConsumer
+from kafka import KafkaAdminClient, KafkaProducer
+from kafka.admin import NewTopic
 
 TEST_DSN = os.getenv("ANALYSIS_TEST_POSTGRES_DSN")
 TEST_BROKER = os.getenv("ANALYSIS_TEST_KAFKA_BOOTSTRAP")
@@ -138,6 +137,15 @@ class BoundedConsumerTransport:
             assert self.owner is not None
             self.owner.stop()
 
+    def pause_all(self) -> None:
+        self.inner.pause_all()
+
+    def heartbeat(self, timeout_ms: int) -> None:
+        self.inner.heartbeat(timeout_ms)
+
+    def resume_all(self) -> None:
+        self.inner.resume_all()
+
     def close(self) -> None:
         self.inner.close()
 
@@ -249,18 +257,10 @@ def test_busy_redelivery_survives_until_lease_takeover_and_preserves_order(tmp_p
         assert not killed_process.is_alive()
         assert killed_process.exitcode != 0
 
-        before_expiry, first_transport = _consumer(topic, group, claims, cloner)
-        with pytest.raises(ClaimBusyError):
-            before_expiry.run()
-        assert first_transport.commits == 0
-        assert cloner.calls == []
-
-        redelivered, second_transport = _consumer(topic, group, claims, cloner)
-        with pytest.raises(ClaimBusyError):
-            redelivered.run()
-        assert second_transport.commits == 0
-        assert cloner.calls == []
-
+        # The production loop now waits on an active lease instead of exiting.
+        # Move the test claim past its lease before starting the bounded
+        # recovery run so this integration test remains fast; the no-crash
+        # busy path is covered by the deterministic unit test.
         with psycopg.connect(TEST_DSN) as connection:
             connection.execute(
                 """

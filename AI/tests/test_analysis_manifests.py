@@ -12,9 +12,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from depth_helpers import evaluate_depth_files
-
 from analysis.manifests import ManifestScanner, normalize_coordinate
+from depth_helpers import evaluate_depth_files
 
 
 def repository(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -313,12 +312,14 @@ def test_requirements_strips_extras_specifiers_and_comments(tmp_path):
         },
     )
 
-    assert coordinates(ManifestScanner().scan(root)) == {
+    report = ManifestScanner().scan(root)
+    assert coordinates(report) == {
         "PYPI:fastapi",
         "PYPI:psycopg",
         "PYPI:tzdata",
         "PYPI:kafka-python",
     }
+    assert {item.scope for item in report.occurrences} == {None}
 
 
 def test_requirements_skips_includes_editables_and_urls(tmp_path):

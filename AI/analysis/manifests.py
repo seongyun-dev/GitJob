@@ -405,7 +405,11 @@ class ManifestScanner:
                 DependencyOccurrence(
                     ecosystem="PYPI",
                     coordinate=coordinate,
-                    scope=relative,
+                    # A requirements file is the declaration source, not a
+                    # dependency scope.  Keep its path in ``file``; putting
+                    # the path in ``scope`` creates an invalid result candidate
+                    # for nested files and loses the semantic distinction.
+                    scope=None,
                     file=relative,
                     line=number,
                 )

@@ -321,13 +321,22 @@ class ConsumedMessage:
 
 @runtime_checkable
 class ConsumerTransport(Protocol):
-    """The three calls a consumer loop needs."""
+    """The calls a consumer loop needs."""
 
     def poll(self, timeout_ms: int) -> list[ConsumedMessage]:
         """Return the messages ready now, or an empty list."""
 
     def commit(self) -> None:
         """Commit the offsets of everything returned so far."""
+
+    def pause_all(self) -> None:
+        """Pause assigned partitions without changing their offsets."""
+
+    def heartbeat(self, timeout_ms: int) -> None:
+        """Poll for group liveness without advancing fetched offsets."""
+
+    def resume_all(self) -> None:
+        """Resume partitions paused by :meth:`pause_all`."""
 
     def close(self) -> None:
         """Leave the group and release the connection."""
@@ -418,6 +427,38 @@ class KafkaPythonConsumer:
             # Losing a commit means redelivery, which the handler is built to
             # absorb. Losing it silently would not be.
             raise KafkaError(f"commit on {self.topic} failed: {error}") from error
+
+    def pause_all(self) -> None:
+        consumer = self._ensure_consumer()
+        try:
+            partitions = consumer.assignment()  # type: ignore[attr-defined]
+            if partitions:
+                consumer.pause(*partitions)  # type: ignore[attr-defined]
+        except Exception as error:  # pragma: no cover - broker/client specific
+            raise KafkaError(f"could not pause {self.topic}: {error}") from error
+
+    def heartbeat(self, timeout_ms: int) -> None:
+        """Keep a busy claim's group membership without moving its offset.
+
+        ``update_offsets=False`` is the kafka-python poll mode intended for
+        iterator implementations.  Here it is deliberately used while all
+        assigned partitions are paused: a prefetched record must not advance
+        the local position and later get included in the eventual commit.
+        """
+        consumer = self._ensure_consumer()
+        try:
+            consumer.poll(timeout_ms=timeout_ms, update_offsets=False)  # type: ignore[attr-defined]
+        except Exception as error:  # pragma: no cover - broker/client specific
+            raise KafkaError(f"heartbeat on {self.topic} failed: {error}") from error
+
+    def resume_all(self) -> None:
+        consumer = self._ensure_consumer()
+        try:
+            paused = consumer.paused()  # type: ignore[attr-defined]
+            if paused:
+                consumer.resume(*paused)  # type: ignore[attr-defined]
+        except Exception as error:  # pragma: no cover - broker/client specific
+            raise KafkaError(f"could not resume {self.topic}: {error}") from error
 
     def close(self) -> None:
         consumer, self._consumer = self._consumer, None
