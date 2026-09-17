@@ -318,7 +318,9 @@ Compose의 `data` profile은 `C_WEEKLY_EXPORT_DIR`을 read-only로 mount한다.
 `WEEKLY_ACTIVITY_CONSUMER_GROUP`, `C_WEEKLY_HDFS_ROOT`,
 `C_WEEKLY_INCLUDE_PARTIAL`, PostgreSQL/Registry 설정을 Worker와 동일하게 제공한다.
 재시도 간격은 `WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS`와
-`WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS`로 조정한다. Docker readiness는 정상 poll을
-`READY`, 재시도 대기를 `BLOCKED`로 구분하므로 입력이 준비될 때까지 `unhealthy`를
-유지하고 짧은 running 구간을 복구로 오판하지 않는다.
+`WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS`로 조정한다. 상태 파일은 정상 poll을
+`READY`, 재시도 대기를 `BLOCKED`로 구분한다. Docker healthcheck는 초기화가 끝난
+`READY`와 `BLOCKED`를 모두 정상 실행으로 판정한다. 외부 입력의 준비 지연은 Consumer
+장애가 아니므로 배포를 실패시키지 않되, `BLOCKED` 사유는 상태 파일과 로그에 유지한다.
+상태 파일이 없거나 손상됐거나 `STARTING`에 머무르면 정상으로 판정하지 않는다.
 코드·fixture 검증과 실제 Kafka/HDFS/DB 운영 E2E는 별도 상태로 기록한다.

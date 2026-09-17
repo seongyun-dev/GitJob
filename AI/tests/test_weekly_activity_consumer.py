@@ -1,5 +1,4 @@
 import pytest
-
 from common.kafka import KafkaError, consumer_from_env
 from worker.weekly_activity_intake import Outcome
 
@@ -104,20 +103,33 @@ def test_retry_delay_is_exponential_and_capped(monkeypatch, tmp_path):
     assert sleeps == [3, 5, 5]
 
 
-def test_readiness_reports_ready_and_blocked(monkeypatch, tmp_path):
+def test_runtime_health_accepts_ready_and_retry_backoff(monkeypatch, tmp_path):
     from worker import weekly_activity_consumer as entry
     from worker import weekly_activity_health as health
 
     path = tmp_path / "status.json"
     monkeypatch.setenv("WEEKLY_ACTIVITY_STATUS_FILE", str(path))
     assert health.main() == 1
-    entry._write_status("BLOCKED", reason="PUBLIC_GITHUB_NOT_READY")
+    entry._write_status("STARTING")
     assert health.main() == 1
+    entry._write_status("BLOCKED", reason="PUBLIC_GITHUB_NOT_READY")
+    assert health.main() == 0
     entry._write_status("READY")
     assert health.main() == 0
 
 
-def test_base_compose_configures_retry_backoff_and_readiness():
+def test_runtime_health_rejects_unknown_or_malformed_status(monkeypatch, tmp_path):
+    from worker import weekly_activity_health as health
+
+    path = tmp_path / "status.json"
+    monkeypatch.setenv("WEEKLY_ACTIVITY_STATUS_FILE", str(path))
+    path.write_text('{"state":"UNKNOWN"}\n', encoding="utf-8")
+    assert health.main() == 1
+    path.write_text("not-json\n", encoding="utf-8")
+    assert health.main() == 1
+
+
+def test_base_compose_configures_retry_backoff_and_runtime_health():
     from pathlib import Path
 
     compose = (
