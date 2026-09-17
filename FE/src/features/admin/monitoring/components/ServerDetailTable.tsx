@@ -9,8 +9,9 @@ import {
 import type { UsageLevel } from '@/features/admin/monitoring/model/thresholds'
 import {
   formatCapacity,
-  megabytesPerSecond,
+  formatThroughput,
   percentNumber,
+  throughput,
   totalThroughput,
 } from '@/features/admin/monitoring/ui/formatMetric'
 import { AdminTable } from '@/features/admin/monitoring/ui/AdminTable'
@@ -49,7 +50,7 @@ function MetricCell({
   caption,
   label,
 }: {
-  /** 단위 없는 숫자 문자열. `percentNumber`·`megabytesPerSecond`가 만든다. */
+  /** 단위 없는 숫자 문자열. `percentNumber`·`throughput`이 만든다. */
   value: string | null
   /** 숫자 옆에 작게 붙는 단위. 디자인의 `23 %` · `6.2 MB/s`. */
   unit: string
@@ -81,6 +82,7 @@ function ServerRow({ view, server }: { view: MonitoringView; server: ServerView 
   const diskPercent = metrics?.diskPercent ?? null
   const receive = metrics?.networkReceiveBytesPerSecond ?? null
   const transmit = metrics?.networkTransmitBytesPerSecond ?? null
+  const networkRate = throughput(totalThroughput(receive, transmit))
   const name = server.node.displayName
 
   return (
@@ -130,8 +132,8 @@ function ServerRow({ view, server }: { view: MonitoringView; server: ServerView 
         label={`${name} DISK`}
       />
       <MetricCell
-        value={megabytesPerSecond(totalThroughput(receive, transmit))}
-        unit="MB/s"
+        value={networkRate?.value ?? null}
+        unit={networkRate?.unit ?? 'MB/s'}
         // 처리량에는 상한이 없어 비율 바를 만들 수 없다. 임의의 최대값으로 채우면
         // 그 눈금이 무엇을 뜻하는지 아무도 모른다.
         percent={null}
@@ -139,8 +141,8 @@ function ServerRow({ view, server }: { view: MonitoringView; server: ServerView 
         caption={
           receive === null || transmit === null
             ? null
-            : `In ${megabytesPerSecond(receive) ?? '—'} · Out ${
-                megabytesPerSecond(transmit) ?? '—'
+            : `In ${formatThroughput(receive) ?? '—'} · Out ${
+                formatThroughput(transmit) ?? '—'
               }`
         }
         label={`${name} NETWORK`}

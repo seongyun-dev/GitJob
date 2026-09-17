@@ -13,6 +13,7 @@
 
 const GIGA = 1_000_000_000
 const MEGA = 1_000_000
+const KILO = 1_000
 
 /** `23.4` → `23%`. 소수점을 버리는 것은 디자인의 표기(`23%`)에 맞춘 것이다. */
 export function formatPercent(value: number | null): string | null {
@@ -57,12 +58,36 @@ function trimZero(text: string): string {
   return text.endsWith('.0') ? text.slice(0, -2) : text
 }
 
-/** `6200000` → `6.2`. 단위(`MB/s`)는 호출부가 붙인다. */
-export function megabytesPerSecond(bytesPerSecond: number | null): string | null {
+/**
+ * 처리량 표기 · 티켓 S15P21E102-292. 숫자와 단위를 함께 돌려준다 — 값에 따라 단위가
+ * 바뀌므로 호출부가 `MB/s`를 고정으로 붙일 수 없다.
+ *
+ * 실측 관리망 트래픽은 수 KB/s 대역이라 MB/s 고정 · 소수 한 자리로는 전부 `0.0`으로
+ * 주저앉는다. 이 화면에서 가장 위험한 버그는 조용한 0이다(`MetricValue` 참고). 그래서
+ * 1 MB/s 미만은 KB/s로 내리고, KB/s로도 반올림이 `0.0`이 되는 0이 아닌 값은
+ * `<0.1`로 적는다. 진짜 0만 `0.0 KB/s`다.
+ */
+export function throughput(
+  bytesPerSecond: number | null,
+): { value: string; unit: string } | null {
   if (bytesPerSecond === null) {
     return null
   }
-  return (bytesPerSecond / MEGA).toFixed(1)
+  if (Math.abs(bytesPerSecond) >= MEGA) {
+    return { value: (bytesPerSecond / MEGA).toFixed(1), unit: 'MB/s' }
+  }
+  const kilo = bytesPerSecond / KILO
+  const rounded = kilo.toFixed(1)
+  if (bytesPerSecond !== 0 && Number(rounded) === 0) {
+    return { value: bytesPerSecond > 0 ? '<0.1' : '>-0.1', unit: 'KB/s' }
+  }
+  return { value: rounded, unit: 'KB/s' }
+}
+
+/** `throughput`을 한 줄로. 단위를 따로 놓을 자리가 없는 보조 설명용이다. */
+export function formatThroughput(bytesPerSecond: number | null): string | null {
+  const rate = throughput(bytesPerSecond)
+  return rate === null ? null : `${rate.value} ${rate.unit}`
 }
 
 /**

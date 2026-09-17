@@ -32,16 +32,21 @@ scrape_configs:
   # HDFS NameNode /jmx → json-exporter 변환 (S15P21E102-261 Phase 2). multi-target 패턴:
   # target(=NameNode /jmx URL)을 __param_target으로 옮기고 실제 scrape 주소는 json-exporter로
   # 바꾼다. 지표에 cluster 라벨을 붙여 BE PromQL(cluster="gitjob")과 맞춘다.
+  #
+  # NameNode는 data server에 있고 json-exporter는 service server에 있다. Compose 이름
+  # `hdfs-namenode`는 다른 호스트의 네트워크라 여기서 해석되지 않아 이 job이 한 번도 붙은
+  # 적이 없다 (S15P21E102-292). 관리자망 주소는 targets/node-exporter.yml의 data server
+  # 항목과 같은 값이며, 호스트 주소를 적는 곳을 그 파일과 여기 두 군데로 유지한다.
   - job_name: hdfs
     metrics_path: /probe
     params:
       module: [hdfs_fsnamesystem]
     static_configs:
       - targets:
-          - "http://hdfs-namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState"
+          - "http://100.70.66.38:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState"
         labels:
           cluster: gitjob
-          host: service-server
+          host: data-server
           role: data
           instance: hdfs-namenode
     relabel_configs:
@@ -52,16 +57,19 @@ scrape_configs:
 
   # Spark Master /json/ → json-exporter 변환 (S15P21E102-261 Phase 3). HDFS와 같은
   # multi-target 패턴. spark-master 컨테이너는 건드리지 않는다.
+  #
+  # HDFS와 같은 이유로 주소를 data server로 바꾸고, 포트도 고친다. Master UI는 8080이
+  # 아니라 8083에서 응답한다 — 8080은 404다 (S15P21E102-292).
   - job_name: spark
     metrics_path: /probe
     params:
       module: [spark_master]
     static_configs:
       - targets:
-          - "http://spark-master:8080/json/"
+          - "http://100.70.66.38:8083/json/"
         labels:
           cluster: gitjob
-          host: service-server
+          host: data-server
           role: data
           instance: spark-master
     relabel_configs:

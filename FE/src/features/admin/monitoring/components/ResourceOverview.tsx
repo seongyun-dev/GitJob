@@ -8,7 +8,7 @@ import {
 import type { MonitoringTimeseries } from '@/features/admin/monitoring/api/monitoringApi'
 import { cpuMemoryLevel } from '@/features/admin/monitoring/model/thresholds'
 import { LineChart, TimeAxis } from '@/features/admin/monitoring/ui/LineChart'
-import { formatClock, formatPercent, megabytesPerSecond } from '@/features/admin/monitoring/ui/formatMetric'
+import { formatClock, formatPercent, throughput } from '@/features/admin/monitoring/ui/formatMetric'
 import { MetricValue } from '@/features/admin/monitoring/ui/MetricValue'
 import { DisconnectedStateCard } from '@/features/admin/monitoring/ui/StatusBadge'
 import type { DisconnectedState } from '@/features/admin/monitoring/model/monitoringState'
@@ -132,6 +132,10 @@ export function ResourceOverview({
   const usageHasPoints = cpuData.values.length > 0 || memoryData.values.length > 0
   const networkHasPoints = receive.values.length > 0 || transmit.values.length > 0
   const networkMax = niceMax([...receive.values, ...transmit.values])
+  // 단위는 값에 따라 MB/s·KB/s로 바뀜다. 그래서 범례 값이 자기 단위를 직접 달고,
+  // caption은 더 이상 단위를 주장하지 않는다 (S15P21E102-292).
+  const receiveRate = throughput(receive.latest)
+  const transmitRate = throughput(transmit.latest)
 
   return (
     <div className="gj-mon-charts">
@@ -194,18 +198,30 @@ export function ResourceOverview({
 
       <ChartCard
         title="Network I/O"
-        caption="전체 서버 합산 · 최근 60분 · MB/s"
+        caption="전체 서버 합산 · 최근 60분"
         legend={
           <div className="flex gap-4">
             <LegendValue
               swatch={blockSwatch(IN_COLOR)}
               label="IN"
-              value={<MetricValue text={megabytesPerSecond(receive.latest)} size="md" />}
+              value={
+                <MetricValue
+                  text={receiveRate?.value ?? null}
+                  unit={receiveRate?.unit}
+                  size="md"
+                />
+              }
             />
             <LegendValue
               swatch={blockSwatch(OUT_COLOR)}
               label="OUT"
-              value={<MetricValue text={megabytesPerSecond(transmit.latest)} size="md" />}
+              value={
+                <MetricValue
+                  text={transmitRate?.value ?? null}
+                  unit={transmitRate?.unit}
+                  size="md"
+                />
+              }
             />
           </div>
         }
