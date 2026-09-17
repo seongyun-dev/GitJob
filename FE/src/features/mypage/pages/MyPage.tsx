@@ -1,16 +1,20 @@
 import { Link } from 'react-router'
+import { useMe } from '@/features/auth/hooks/useMe'
+import { useTechnologyProfile } from '@/features/evidence/hooks/useTechnologyProfile'
+import { useTarget } from '@/features/matching/hooks/useMatching'
+import {
+  normalizeTargetRole,
+  targetRoleDisplayName,
+} from '@/features/matching/model/targetOptions'
 import { useAnalysisHistory } from '@/features/mypage/hooks/useAnalysisHistory'
 import type { AnalysisHistory, AnalysisHistoryStatus } from '@/features/mypage/api/types'
+import { accountName, analysisSettingsRows } from '@/features/mypage/model/analysisSettings'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
-import {
-  ACCOUNT_CONNECTIONS,
-  ANALYSIS_HISTORY,
-} from '@/mocks/fixtures/analysisFlow'
+import { ANALYSIS_HISTORY } from '@/mocks/fixtures/analysisFlow'
 import type { AnalysisHistoryFixture } from '@/mocks/types'
 import { DataRegion } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
-import { StateCard } from '@/shared/ui/StateCard'
 
 /**
  * 마이페이지 · 티켓 S15P21E102-212 (확정 디자인 `Final v2`의 `14 My Page`).
@@ -18,26 +22,26 @@ import { StateCard } from '@/shared/ui/StateCard'
  * v2 구조: hero(+재분석 CTA) → `372 / 956` split → 이력 표 → 각주.
  * 다른 화면과 달리 **패널이 왼쪽**이다. 계정·연결이 맥락이고 이력이 본문이기 때문이다.
  *
- * `GET /me`와 이력 조회 API가 develop에 없어 값은 디자인 fixture에서 온다
- * (`VITE_DESIGN_FIXTURES=on`). v2 아트보드도 프로필 영역에 `DESIGN MOCK`이라고 직접
- * 적어 두었으므로 화면에 그 배지를 남긴다 — `dev-user` · `SSAFY 12기 · 백엔드`는
- * 레이아웃 검증용 값이다.
+ * 왼쪽 두 카드는 티켓 S15P21E102-318에서 다시 짰다. v2 아트보드가 SSAFY 로그인을
+ * 전제해 `내 계정`(소속)과 `계정 연결`(SSAFY · GitHub) 두 축을 그렸는데, SSAFY 로그인은
+ * MVP에서 쓰지 않기로 했고 소속·연결 상세를 주는 조회도 없어 기본 상태가 `PREPARING`
+ * 이었다. 정상 로그인한 사람이 자기 계정 화면에서 "불러올 수 없다"를 보는 상태였다.
+ *
+ * 지금은 있는 값만 그린다 — `ACCOUNT`는 `/auth/me`의 넷, `ANALYSIS SETTINGS`는
+ * `/me/target`과 두 이동 버튼이다. 저장소 수는 `GET /me/technologies`의
+ * `summary.repositoryCount`이며 선택이 아니라 **분석** 기준이다(`model/analysisSettings` 주석).
+ *
+ * 이력 표는 조회 API가 없어 값이 디자인 fixture에서 온다(`VITE_DESIGN_FIXTURES=on`).
+ * 화면의 `DESIGN MOCK` 배지가 그 사실을 말한다.
  *
  * **`연결 해제`는 버튼으로 두지 않는다.** 되돌릴 수 없는 동작이라 눌러도 아무 일이
- * 없는 버튼으로 미리 만들면 위험하다. fixture가 켜져 있어도 마찬가지다 — 값이 있는
- * 것과 동작이 있는 것은 다르다. 해당 API가 생길 때 같은 자리에 추가한다.
+ * 없는 버튼으로 미리 만들면 위험하다. 해당 API가 생길 때 같은 자리에 추가한다.
  *
  * 이력 표의 상태 넷이 서로 다른 색인 것이 중요하다(SUCCEEDED · PARTIAL · FAILED).
  * 실패와 부분 완료를 같은 색으로 칠하지 않는다는 것이 화면 15의 규칙이다.
  */
 const HISTORY_COLUMNS = ['일시', '저장소', '결과', '상태'] as const
 const HISTORY_TEMPLATE = '170px minmax(0,1fr) minmax(0,1fr) 90px'
-
-/** v2가 나열하는 연결 축. 상태 값은 조회 API가 준다. */
-const CONNECTIONS = [
-  { name: 'SSAFY 계정', description: '로그인 · 서비스 접근' },
-  { name: 'GitHub', description: '분석할 저장소 연결' },
-] as const
 
 /**
  * 이력 한 줄의 표시 모양 · 티켓 S15P21E102-281.
@@ -100,11 +104,6 @@ const HISTORY_STATUS_LABEL: Readonly<Record<HistoryStatus, string>> = {
   CANCELED: '취소',
 }
 
-const CONNECTION_STATUS_LABEL: Readonly<Record<string, string>> = {
-  'SIGNED IN': '로그인됨',
-  CONNECTED: '연결됨',
-}
-
 function userFacingText(value: string): string {
   return value
     .replaceAll('Repository', '저장소')
@@ -165,25 +164,42 @@ function toHistoryRows(history: AnalysisHistory | undefined): HistoryRow[] {
 
 export function MyPage() {
   /*
-   * 계정·연결 카드와 최근 분석 요약은 아직 붙이지 않았다 · 티켓 S15P21E102-281.
+   * 계정 카드는 인증이 이미 쓰는 값으로 그린다 · 티켓 S15P21E102-318.
    *
-   * 값이 **모자라서**이지 엔드포인트가 없어서가 아니다.
+   * 이전 판은 여기에 `PREPARING` 을 그렸다. 확정 디자인의 카드가 소속(`SSAFY 12기 ·
+   * 백엔드`)과 연결 상세를 함께 요구했는데 그 값을 주는 조회가 없었기 때문이다. 그런데
+   * SSAFY 로그인은 MVP 에서 쓰지 않기로 했고, 결과적으로 GitHub 으로 정상 로그인한
+   * 사람이 자기 계정 화면에서 "계정 정보를 아직 불러올 수 없어요"를 봤다.
    *
-   *   - 계정·연결: `GET /auth/me`(티켓 246, BE 구현됨)가 주는 것은 `displayName`·
-   *     `avatarUrl`·`githubConnected`·`role` 넷이다. 이 카드는 소속(`SSAFY 12기 ·
-   *     백엔드`)과 연결 상세(`@handle · 읽기 전용 · Repository 4개 접근`)를 함께
-   *     그리는데 그 값을 주는 조회가 없다.
-   *   - 최근 분석 요약: 저장소 수·기술 수·L2 이상 수는 `GET /me/profile`의 `summary`가
-   *     주지만 `snapshotDate`에 해당하는 값이 없다.
+   * `useMe` 는 헤더가 이미 구독하고 있어 여기서 부른다고 요청이 늘지 않는다. 주는 값은
+   * `displayName`·`avatarUrl`·`githubConnected`·`role` 넷이고 그 넷만 그린다.
    *
-   * 있는 값만으로 채우고 나머지를 지어내면 화면이 사실이 아닌 것을 주장한다. 두 카드는
-   * 값이 없으면 `StateCard`를 그리도록 되어 있어 지금 상태가 정확하다. 모자란 필드는
-   * 계약 문서 미결에 올렸다.
+   * GitHub 핸들을 따로 적지 않는 이유는 `/auth/me` 에 그 필드가 없기 때문이다 —
+   * `displayName` 자체가 프로필 이름이 없을 때 핸들로 접힌 값이라(`MeResponse` 주석),
+   * 이름과 핸들을 두 줄로 나누면 같은 값이 두 번 보이거나 없는 값을 지어내게 된다.
    */
-  const account = withDesignFixture<typeof ACCOUNT_CONNECTIONS | null>(
-    null,
-    () => ACCOUNT_CONNECTIONS,
-  )
+  const { data: me } = useMe()
+
+  /*
+   * 분석 설정 · 목표 직무는 `GET /me/target`, 저장소 수는 `GET /me/technologies` 다.
+   *
+   * 저장소 쪽이 **선택**이 아니라 **분석** 기준인 것에 유의한다. 현재 선택 개수를 주는
+   * 조회는 없고(`GET /me/repositories/selection` 은 BE 에 매핑이 없다), 있는 것은 저장소별
+   * 최신 완료 분석을 센 `summary.repositoryCount` 다. 그래서 문구도 `분석한 저장소`다 —
+   * Evidence 개요가 같은 값을 부르는 이름과 맞췄다.
+   *
+   * 훅은 Evidence 화면이 쓰는 것을 그대로 쓴다. 같은 키라 캐시를 공유해 조회가 늘지 않는다.
+   */
+  const targetQuery = useTarget()
+  const profileQuery = useTechnologyProfile()
+  const settings = analysisSettingsRows({
+    targetRoleLabel:
+      normalizeTargetRole(targetQuery.data?.targetRole) === null
+        ? null
+        : targetRoleDisplayName(targetQuery.data?.targetRole),
+    analyzedRepositoryCount: profileQuery.data?.summary.repositoryCount ?? null,
+  })
+
   const historyQuery = useAnalysisHistory()
   const history = withDesignFixture<readonly HistoryRow[]>(toHistoryRows(historyQuery.data), () =>
     ANALYSIS_HISTORY.map((item: AnalysisHistoryFixture, index) => ({
@@ -216,82 +232,116 @@ export function MyPage() {
       {/* v2는 패널을 왼쪽에 둔다. 계정이 맥락, 이력이 본문이다. */}
       <div className="mt-7 grid grid-cols-1 gap-4 lg:grid-cols-[372px_minmax(0,1fr)]">
         <div className="grid gap-4">
-          <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
-            <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">내 계정</p>
-            {account === null ? (
-              <>
-                <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
-                  내 계정
-                </h2>
-                <div className="mt-4">
-                  <StateCard
-                    kind="PREPARING"
-                    title="계정 정보를 아직 불러올 수 없어요"
-                    description="로그인 계정 정보를 표시할 수 없습니다."
-                  />
-                </div>
-              </>
+          {/*
+            ACCOUNT · 인증이 아는 것만 그린다.
+
+            `min-w-0` 이 없으면 긴 이름에서 가로 스크롤이 생긴다. 이 카드는 grid item 이라
+            기본 `min-width: auto` 로 내용보다 작아지지 않고, 그러면 안쪽 `truncate` 가
+            잘라 낼 폭을 못 받는다(2026-09-18 390px 확인). 아바타가 없으면 이름 첫 글자로 대신한다
+            (`UserMenu` 와 같은 규칙) — 가짜 GitHub 아바타를 만들지 않는다.
+          */}
+          <section className="min-w-0 rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+            <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">ACCOUNT</p>
+            <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
+              내 GitHub 계정
+            </h2>
+
+            {me === undefined ? (
+              /*
+                확인 중. 카드 골격을 유지한 채 자리만 비운다 — 여기서 상태 카드를 그리면
+                새로고침마다 계정 화면이 한 번씩 "없음"을 주장한다.
+              */
+              <div className="mt-4 flex items-center gap-3.5" aria-busy="true">
+                <span className="size-11 shrink-0 animate-pulse rounded-full bg-[#EEF2F8]" />
+                <span className="h-4 w-28 animate-pulse rounded bg-[#EEF2F8]" />
+              </div>
+            ) : me === null ? (
+              // 가드가 이미 로그인 화면으로 보내므로 사실상 지나가지 않는 갈래다.
+              <p className="mt-4 text-[13px] text-brand-faint">로그인이 필요합니다.</p>
             ) : (
-              <>
-                <h2 className="mt-1.5 text-[20px] leading-[1.25] font-[750] tracking-[-0.03em] text-brand-ink">
-                  {account.displayName}
-                </h2>
-                <p className="mt-1 text-[12.5px] text-brand-muted">{account.affiliation}</p>
-              </>
+              <div className="mt-4 flex items-center gap-3.5">
+                {me.avatarUrl === null ? (
+                  <span
+                    aria-hidden
+                    className="grid size-11 shrink-0 place-items-center rounded-full bg-tone-accent-bg text-[16px] font-extrabold text-brand-600"
+                  >
+                    {accountName(me.displayName).charAt(0).toUpperCase()}
+                  </span>
+                ) : (
+                  <img
+                    src={me.avatarUrl}
+                    alt=""
+                    className="size-11 shrink-0 rounded-full object-cover"
+                    style={{ border: '1px solid rgba(0, 0, 0, 0.06)' }}
+                  />
+                )}
+                {/* `min-w-0` 이 없으면 긴 이름이 카드를 밀어 넓힌다. */}
+                <div className="min-w-0">
+                  <p className="truncate text-[16px] font-[750] tracking-[-0.02em] text-brand-ink">
+                    {accountName(me.displayName)}
+                  </p>
+                  {/* 연결 여부는 실제 값이 참일 때만 말한다. */}
+                  {me.githubConnected && (
+                    <p className="mt-1 flex items-center gap-1.5 text-[12.5px] text-brand-muted">
+                      <span aria-hidden className="size-1.5 rounded-full bg-tone-success" />
+                      GitHub 연결됨
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
           </section>
 
-          <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+          {/*
+            ANALYSIS SETTINGS · 무엇을 기준으로 분석하고 비교하는지.
+
+            상단 `GitHub 다시 분석` 과 뜻이 겹치지 않게 둔다 — 저장소는 **분석 대상**을,
+            목표 직무는 **공고 비교 기준**을 바꾸고, 재분석은 지금 대상을 다시 읽는다.
+          */}
+          <section className="min-w-0 rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
             <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
-              연결된 계정
+              ANALYSIS SETTINGS
             </p>
             <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
-              계정 연결
+              분석 설정
             </h2>
 
-            <ul className="mt-4 grid gap-2">
-              {CONNECTIONS.map((connection, index) => {
-                const live = account === null ? null : index === 0 ? account.ssafy : account.github
-                return (
-                  <li
-                    key={connection.name}
-                    className="rounded-[14px] border border-brand-line bg-white/70 px-4 py-3.5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-[13px] font-[750] text-brand-ink">
-                          {connection.name}
-                        </p>
-                        <p className="mt-0.5 text-[11.5px] leading-[1.5] text-brand-muted">
-                          {userFacingText(live?.detail ?? connection.description)}
-                        </p>
-                      </div>
-                      {/*
-                        `SIGNED IN`·`CONNECTED`는 사실을 주장하는 값이라 조회 없이
-                        쓰지 않는다. 값이 없으면 배지를 그리지 않는다.
-                      */}
-                      {live !== null && (
-                        <span className="shrink-0 rounded-full bg-tone-success-bg px-2.5 py-1 text-[10.5px] font-extrabold tracking-[0.06em] text-tone-success">
-                          {CONNECTION_STATUS_LABEL[live.status] ?? '연결됨'}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
+            <dl className="mt-4 grid gap-2">
+              {[
+                { term: '저장소', value: settings.repository },
+                { term: '목표 직무', value: settings.targetRole },
+              ].map((row) => (
+                <div
+                  key={row.term}
+                  className="flex items-baseline justify-between gap-3 rounded-[14px] border border-brand-line bg-white/70 px-4 py-3"
+                >
+                  <dt className="shrink-0 text-[12.5px] text-brand-muted">{row.term}</dt>
+                  {/* 값이 길어도 라벨을 밀지 않는다. */}
+                  <dd className="min-w-0 truncate text-[13px] font-[750] text-brand-ink">
+                    {row.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
 
-            <Link
-              to="/onboarding/repositories"
-              className="mt-4 block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
-            >
-              저장소 다시 선택
-            </Link>
-
-            <p className="mt-4 text-[11.5px] leading-[1.65] text-brand-faint">
-              {account?.note ??
-                'SSAFY 계정과 GitHub 계정은 별도로 연결됩니다. GitHub 연결을 해제하면 새 분석은 중단되지만 기존 이력은 유지됩니다.'}
-            </p>
+            {/*
+              카드 폭이 372px 이라 두 버튼을 한 줄에 두면 글자가 접힌다. 세로로 쌓고
+              둘 다 전체 폭을 쓴다. 목적지는 기존 화면 그대로다 — 새 라우트를 만들지 않는다.
+            */}
+            <div className="mt-4 grid gap-2">
+              <Link
+                to="/onboarding/repositories"
+                className="block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+              >
+                저장소 다시 선택
+              </Link>
+              <Link
+                to="/roles"
+                className="block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+              >
+                목표 직무 변경
+              </Link>
+            </div>
           </section>
         </div>
 
