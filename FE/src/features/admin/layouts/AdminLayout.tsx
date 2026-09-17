@@ -43,7 +43,12 @@ function AdminHeader() {
       {/* 71px + 아래 테두리 1px = 확정 디자인의 헤더 높이 72px. SiteHeader와 같다. */}
       <div className="mx-auto flex h-[71px] w-full max-w-[1520px] items-center gap-6 px-5 sm:px-8 lg:px-12">
         <div className="flex shrink-0 items-center gap-3.5">
-          <Link to="/" className="flex items-center" aria-label="GitJob 홈으로">
+          {/*
+            관리자 콘솔 안에서는 로고가 관리자 홈으로 간다. 서비스 메인으로 보내면
+            운영 중에 한 번의 클릭으로 콘솔 밖으로 나가게 된다 — 돌아오려면 주소를
+            다시 쳐야 한다.
+          */}
+          <Link to="/admin" className="flex items-center" aria-label="관리자 홈으로">
             <BrandLogo className="h-[30px] lg:h-9" />
           </Link>
           <span className="rounded-[6px] border border-brand-line bg-[#F5F7FA] px-2 py-1 text-[11px] font-extrabold tracking-[0.1em] text-brand-muted">

@@ -16,6 +16,7 @@ import { LoginPage } from '@/features/auth/pages/LoginPage'
 import { EvidenceDetailPage } from '@/features/evidence/pages/EvidenceDetailPage'
 import { EvidenceOverviewPage } from '@/features/evidence/pages/EvidenceOverviewPage'
 import { LandingPage } from '@/features/landing/pages/LandingPage'
+import { MainPage } from '@/features/landing/pages/MainPage'
 import { PrivacyPolicyPage } from '@/features/legal/pages/PrivacyPolicyPage'
 import { SkillGapPage } from '@/features/matching/pages/SkillGapPage'
 import { TargetRolePage } from '@/features/matching/pages/TargetRolePage'
@@ -67,6 +68,12 @@ export const router = createBrowserRouter([
       // S1 Landing · 티켓 191. 배경이 화면 전체를 덮어야 해서 AppLayout 밖에 둔다.
       // 정적 경로가 splat보다 먼저 매칭되므로 아래 `*`가 `/`를 가로채지 않는다.
       { path: '/', element: <LandingPage /> },
+      /*
+       * 메인 화면 · 티켓 298. `/` 가 스크롤 스토리로 바뀌면서 직무 선택 화면이 갈 곳을
+       * 잃었다. 스토리는 "무엇인가"를 말하고 이 화면은 "내 직무는 무엇을 요구하나"를
+       * 보여주므로 둘 다 필요하다. 로그인 전에도 보이는 화면이라 AppLayout 밖에 둔다.
+       */
+      { path: '/main', element: <MainPage /> },
       // 로그인 전용 화면. 헤더 "로그인"이 곧바로 GitHub으로 302하던 것을, 이 화면을
       // 거쳐 GitHub 진입점을 여는 흐름으로 바꾼다. 로그인 전 화면이라 AppLayout 밖에 둔다.
       { path: '/login', element: <LoginPage /> },

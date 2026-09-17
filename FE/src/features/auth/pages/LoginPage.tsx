@@ -26,7 +26,7 @@ export function LoginPage() {
   return (
     <section className="relative flex min-h-dvh flex-col overflow-hidden bg-[radial-gradient(780px_560px_at_92%_0%,rgba(158,184,221,.38),transparent_62%),radial-gradient(620px_460px_at_2%_100%,rgba(186,170,159,.3),transparent_62%),linear-gradient(118deg,#F1EEEB_0%,#EEEDEE_50%,#E7EDF7_100%)]">
       <header className="relative z-[5] flex h-20 items-center justify-between px-6 lg:px-14">
-        <Link to="/" aria-label="GitJob 홈으로" className="flex items-center">
+        <Link to="/main" aria-label="GitJob 메인으로" className="flex items-center">
           <BrandLogo className="h-[30px] lg:h-9" />
         </Link>
         {/* 도움말 화면이 없어 링크로 만들지 않는다. 연결 화면과 같은 판단. */}

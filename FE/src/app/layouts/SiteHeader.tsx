@@ -203,7 +203,8 @@ export function SiteHeader({ variant }: { variant: Variant }) {
             <BrandLogo className="h-[30px] lg:h-9" />
           </a>
         ) : (
-          <Link to="/" className="flex shrink-0 items-center" aria-label="GitJob 홈으로">
+          // 메인은 `/main` 이다 — `/` 는 스크롤 스토리 랜딩이다(티켓 298).
+          <Link to="/main" className="flex shrink-0 items-center" aria-label="GitJob 메인으로">
             <BrandLogo className="h-[30px] lg:h-9" />
           </Link>
         )}

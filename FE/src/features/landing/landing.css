@@ -304,6 +304,31 @@
   block-size: 100dvh;
   overflow-y: auto;
   overflow-x: hidden;
+
+  /*
+    스크롤바를 숨긴다. 장면이 스냅으로 한 장씩 넘어가는 구조라 스크롤바가 "얼마나
+    남았는지"를 알려주지 않고, 오른쪽 장면 인디케이터가 그 역할을 대신한다.
+  */
+  scrollbar-width: none;
+}
+
+.lp-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 아래로 내려가라는 표시. 확정 디자인의 `gj-bob`. */
+@keyframes lp-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+
+.lp-bob {
+  animation: lp-bob 1.6s ease-in-out infinite;
 }
 
 @media (min-width: 1024px) and (min-height: 640px) {
@@ -362,4 +387,23 @@
     scroll-behavior: auto;
     scroll-snap-type: y proximity;
   }
+}
+
+/*
+ * 선이 가운데에서 좌우로 그어진다. What-if 장에서 "현재"와 "L2 확보 시"를 잇는 선이고,
+ * 그 인과가 화면에서 실제로 이어지는 동작이어야 한다 — 이미 그어진 선을 보여주면
+ * 두 숫자가 그냥 나란히 놓인 것으로 읽힌다.
+ */
+@keyframes lp-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.lp-draw {
+  animation: lp-draw 0.7s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--lp-delay, 0ms);
 }
