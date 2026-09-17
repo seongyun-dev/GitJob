@@ -122,10 +122,12 @@ public class ComputeSnapshotStore {
      * 분석 완료 event를 놓쳐 계산 결과도 attempt도 생기지 않은 사용자.
      *
      * <p>V22 배포 전에 이미 분석이 끝난 사용자나, 분석 결과 저장 직후 프로세스가
-     * 종료된 사용자가 대상이다. 최신 성공 분석 모두가 기여 판정과 Rule Pack 계보를
-     * 갖춰야 한다. 계산 불가능한 v1 사용자를 SQL에서 제외해야 LIMIT 앞의 20명이 매
-     * 주기 같은 자리를 차지하지 않는다. snapshot 또는 attempt가 하나라도 있으면 기존
-     * 결과 조회·재시도 경로가 소유하므로 여기서 다시 시작하지 않는다.</p>
+     * 종료된 사용자가 대상이다. 최신 성공 분석의 기여 판정은 모두 끝나야 하지만,
+     * 계보가 없는 구형 저장소는 조립기가 data gap으로 제외하므로 복구를 막지 않는다.
+     * 대신 계보가 있는 최신 분석이 하나 이상이고 모두 같은 Rule Pack이어야 한다.
+     * 계산 불가능한 v1 전용 사용자나 혼합 Rule Pack 사용자를 SQL에서 제외해야 LIMIT
+     * 앞의 20명이 매 주기 같은 자리를 차지하지 않는다. snapshot 또는 attempt가 하나라도
+     * 있으면 기존 결과 조회·재시도 경로가 소유하므로 여기서 다시 시작하지 않는다.</p>
      */
     public List<Long> usersMissingComputeState(int limit) {
         return jdbc.queryForList("""
@@ -150,9 +152,25 @@ public class ComputeSnapshotStore {
                         ORDER BY candidate.completed_at DESC NULLS LAST
                         LIMIT 1
                       )
-                      AND (latest.compute_ready_at IS NULL
-                           OR nullif(btrim(latest.registry_version), '') IS NULL
-                           OR nullif(btrim(latest.rule_pack_version), '') IS NULL)
+                      AND latest.compute_ready_at IS NULL
+                  )
+                  AND 1 = (
+                    SELECT count(DISTINCT
+                        (latest.registry_version, latest.rule_pack_version))
+                    FROM analysis_job latest
+                    WHERE latest.user_id = ut.user_id
+                      AND latest.status = 'SUCCEEDED'
+                      AND latest.analysis_id = (
+                        SELECT candidate.analysis_id
+                        FROM analysis_job candidate
+                        WHERE candidate.user_id = latest.user_id
+                          AND candidate.repository_id = latest.repository_id
+                          AND candidate.status = 'SUCCEEDED'
+                        ORDER BY candidate.completed_at DESC NULLS LAST
+                        LIMIT 1
+                      )
+                      AND nullif(btrim(latest.registry_version), '') IS NOT NULL
+                      AND nullif(btrim(latest.rule_pack_version), '') IS NOT NULL
                   )
                   AND NOT EXISTS (
                     SELECT 1

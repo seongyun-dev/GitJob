@@ -209,6 +209,21 @@ class ComputeStoreIntegrationTest {
                     java.sql.Timestamp.from(now.plusSeconds(1)), "analysis-recovery");
             assertThat(store.usersMissingComputeState(20)).containsExactly(userId);
 
+            // 사용자의 다른 저장소에 계보 없는 구형 분석이 남아 있어도, 조립기는 그
+            // 저장소를 data gap으로 제외하고 계보가 있는 최신 분석으로 PARTIAL 계산한다.
+            // 복구 조회도 같은 계약을 따라야 기존 사용자 하나가 영구 PREPARING에 갇히지
+            // 않는다.
+            jdbc.update("""
+                    INSERT INTO analysis_job
+                        (analysis_id, user_id, repository_id, branch_name, commit_sha,
+                         status, current_stage, requested_at, completed_at, compute_ready_at)
+                    VALUES (?, ?, ?, 'main', ?, 'SUCCEEDED', 'DONE', ?, ?, ?)
+                    """, "analysis-legacy-sibling", userId, "repository-legacy",
+                    "c".repeat(40), java.sql.Timestamp.from(now.minusSeconds(120)),
+                    java.sql.Timestamp.from(now.minusSeconds(90)),
+                    java.sql.Timestamp.from(now.minusSeconds(89)));
+            assertThat(store.usersMissingComputeState(20)).containsExactly(userId);
+
             // 계보가 없는 v1 분석은 synchronize()가 attempt를 만들지 못한다. LIMIT 앞의
             // 20명을 이들이 차지해도 뒤의 정상 사용자가 영구 기아 상태가 되면 안 된다.
             for (int index = 0; index < 20; index++) {

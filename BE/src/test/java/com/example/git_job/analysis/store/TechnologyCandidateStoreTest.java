@@ -109,6 +109,26 @@ class TechnologyCandidateStoreTest {
     }
 
     @Test
+    @DisplayName("중첩된 requirements 경로를 40자에서 자르지 않고 저장한다")
+    void aNestedRequirementsPathFitsCandidateScope() {
+        givenJob("an_long_scope", 102L, "repo_long_scope");
+        String scope = "services/" + "nested-component/".repeat(4)
+                + "requirements-production.txt";
+
+        store.record("an_long_scope", 102L, "repo_long_scope",
+                List.of(candidate("fastapi", scope, 1)), SEEN);
+
+        assertTrue(scope.length() > 40);
+        assertEquals(scope, jdbc.queryForObject("""
+                SELECT scope FROM technology_candidate WHERE coordinate = 'fastapi'
+                """, String.class));
+        assertEquals(scope, jdbc.queryForObject("""
+                SELECT scope FROM technology_candidate_observation
+                WHERE analysis_id = 'an_long_scope'
+                """, String.class));
+    }
+
+    @Test
     @DisplayName("사용자 수로 세지, occurrence 수로 세지 않는다")
     void rankingCountsPeopleNotLines() {
         // 관리자가 답할 질문은 "몇 명에게 영향이 있는가"다. occurrence로 세면

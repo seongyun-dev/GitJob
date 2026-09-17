@@ -160,7 +160,10 @@ class TechnologyCandidate(BaseModel):
     ecosystem: Ecosystem
     #: Version stripped. `jjwt-api:0.12.6` and `:0.12.7` are one candidate, not two.
     coordinate: str = Field(min_length=1, max_length=300)
-    scope: str | None = Field(default=None, max_length=40)
+    # Maven/NPM scopes are short labels, while PyPI uses the repository-relative
+    # requirements file path so an admin can trace the observation. Keep the same
+    # bound as evidence paths; a monorepo path is not safely representable in 40 chars.
+    scope: str | None = Field(default=None, max_length=1024)
     occurrence_count: int = Field(ge=1)
 
 

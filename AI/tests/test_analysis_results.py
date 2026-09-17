@@ -200,6 +200,20 @@ def test_a_candidate_keeps_its_scope_so_test_only_use_stays_distinguishable():
     assert candidate.scope == "testImplementation"
 
 
+def test_a_candidate_accepts_a_nested_requirements_path_as_scope():
+    scope = "services/" + ("nested-component/" * 4) + "requirements-production.txt"
+
+    candidate = TechnologyCandidate(
+        ecosystem="PYPI",
+        coordinate="fastapi",
+        scope=scope,
+        occurrence_count=1,
+    )
+
+    assert len(scope) > 40
+    assert candidate.scope == scope
+
+
 def test_stats_default_to_zero_rather_than_missing():
     # An absent count and a count of zero read the same in a dashboard, so the
     # model does not leave the difference to the producer.
