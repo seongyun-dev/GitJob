@@ -1,9 +1,10 @@
 import pytest
+from pydantic import ValidationError
+from test_job_cohort import batch, criteria, posting
+
 from job.cohort import build_cohort
 from job.collector.technology import extract_technology_mentions
 from job.demand import DemandSnapshot, aggregate_demand
-from pydantic import ValidationError
-from test_job_cohort import batch, criteria, posting
 
 
 def test_distinct_counts_union_ratios_and_deterministic_ranks_match_hand_counts():
@@ -21,6 +22,8 @@ def test_distinct_counts_union_ratios_and_deterministic_ranks_match_hand_counts(
     demand = aggregate_demand(cohort)
     technologies = {item.tech_id: item for item in demand.technologies}
     assert demand.denominator == 3
+    assert demand.matching_count == 4
+    assert demand.input_count == 4
     assert demand.review_count == 1
     assert technologies["java"].required_count == 2
     assert technologies["java"].preferred_count == 1

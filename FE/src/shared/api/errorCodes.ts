@@ -9,7 +9,7 @@
  */
 
 export type ErrorAction =
-  /** 세션 없음·만료 → 온보딩으로 이동 */
+  /** 세션 없음·만료 → 사용자 캐시를 비우고 로그인으로 이동 */
   | 'REDIRECT_TO_ONBOARDING'
   /** GitHub 권한 거부·토큰 폐기 → 재연결 안내 */
   | 'RECONNECT_GITHUB'

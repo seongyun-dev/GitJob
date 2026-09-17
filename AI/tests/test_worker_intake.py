@@ -6,11 +6,12 @@ from hashlib import sha256
 from threading import Lock
 
 import pytest
+from test_job_cohort import batch, criteria, posting
+
 from job import input_union
 from job.contracts import BodyStatus
 from job.jobkorea_contract import JOBKOREA_V3_DUTY_ROLE_PAIRS
 from registry.mapper import RegistryMapper
-from test_job_cohort import batch, criteria, posting
 from worker.api import JobCohortResolveSelector, default_registry
 from worker.intake import (
     MAX_JOB_MANIFEST_BYTES,
@@ -228,12 +229,16 @@ def test_active_snapshot_selection_precedes_job_set_capacity_limit(
     ).poll_once()
 
     assert report["failed"] == 0
-    assert report["completed"] == 1
-    assert len(cohorts) == 1
-    assert [job.source_posting_id for job in cohorts[0].jobs] == ["one"]
-    assert [item.pipeline_run_id for item in cohorts[0].input_union.input_batches] == [
-        "latest"
-    ]
+    assert report["completed"] == 2
+    assert len(cohorts) == 2
+    assert all(
+        [job.source_posting_id for job in cohort.jobs] == ["one"] for cohort in cohorts
+    )
+    assert all(
+        [item.pipeline_run_id for item in cohort.input_union.input_batches]
+        == ["latest"]
+        for cohort in cohorts
+    )
 
 
 def test_monthly_demand_capacity_still_counts_all_observed_snapshots(
@@ -340,7 +345,7 @@ def test_dynamic_selector_reuses_the_verified_input_set_and_cached_result(tmp_pa
         return {"status": "COMPLETED", "results": []}
 
     runner = IntakeRunner(config(tmp_path), job_sink=sink, job_set_sink=sink)
-    assert runner.poll_once()["completed"] == 1
+    assert runner.poll_once()["completed"] == 2
     selector = JobCohortResolveSelector(
         schema_version="job-cohort-resolve-selector/v1",
         target_role="FRONTEND",
@@ -356,7 +361,7 @@ def test_dynamic_selector_reuses_the_verified_input_set_and_cached_result(tmp_pa
     assert first_criteria.as_of > config(tmp_path).criteria[0].as_of
     assert first_criteria.target_role == "FRONTEND"
     assert first_criteria.regions == ("서울",)
-    assert len(calls) == 2  # one configured cohort plus one dynamic selector
+    assert len(calls) == 3  # configured, latest prewarm, and one dynamic selector
 
 
 def test_concurrent_dynamic_selector_computes_one_result_for_one_input_signature(
@@ -384,8 +389,8 @@ def test_concurrent_dynamic_selector_computes_one_result_for_one_input_signature
 
     assert all(result == results[0] for result in results)
     assert (
-        len(calls) == 2
-    )  # configured calculation plus one serialized dynamic calculation
+        len(calls) == 3
+    )  # configured, latest prewarm, and one serialized dynamic calculation
 
 
 def test_dynamic_selector_preserves_retryable_preparing_receipt(tmp_path):
@@ -409,7 +414,7 @@ def test_dynamic_selector_preserves_retryable_preparing_receipt(tmp_path):
 
     assert selected.target_role == "FRONTEND"
     assert receipt == {"status": "PREPARING", "results": []}
-    assert calls == 2
+    assert calls == 3
 
 
 def test_invalid_poll_clears_dynamic_selector_inputs_instead_of_serving_stale(tmp_path):
@@ -591,6 +596,7 @@ def test_actual_app_startup_consumes_to_postgres_and_restart_deduplicates(
 
     from fastapi.testclient import TestClient
     from test_compute_api import REGISTRY, TOKEN
+
     from worker import intake
     from worker.api import create_compute_app
     from worker.store import ComputeStore, apply_migration

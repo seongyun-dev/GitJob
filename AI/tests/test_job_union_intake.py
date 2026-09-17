@@ -13,7 +13,7 @@ from test_job_cohort import batch, criteria, posting
 from job import requirements
 from registry.mapper import RegistryMapper
 from Saramin_Collector_V1.crawler import CrawlResult, write_outputs
-from worker.api import create_compute_app
+from worker.api import JobCohortResolveSelector, create_compute_app
 from worker.intake import (
     IntakeConfig,
     IntakeRunner,
@@ -85,6 +85,97 @@ def resolve(client, query):
     assert demand["kind"] == "DEMAND"
     assert demand["payload"]["cohort_id"] == value["payload"]["cohort_id"]
     return identifier, value["payload"]
+
+
+def test_poll_prewarms_latest_selector_scope_before_first_http_request():
+    configured = criteria(
+        as_of="2026-09-08T00:00:00Z", sources=("SARAMIN",), min_jobs=20
+    )
+    saramin = batch(
+        posting(
+            "saramin-latest",
+            source_site="SARAMIN",
+            collected_at="2026-09-15T20:00:00Z",
+        )
+    )
+    worknet = batch(
+        posting(
+            "worknet-latest",
+            source_site="WORKNET",
+            collected_at="2026-09-15T22:30:04Z",
+        )
+    )
+    outputs = (
+        JobOutput(
+            batch=saramin,
+            occurred_at=saramin.records[0].collected_at,
+            batch_sha256="a" * 64,
+            manifest_sha256="b" * 64,
+            collection_issues=(),
+            source_site="SARAMIN",
+            batch_size_bytes=len(saramin.model_dump_json().encode()),
+        ),
+        JobOutput(
+            batch=worknet,
+            occurred_at=worknet.records[0].collected_at,
+            batch_sha256="c" * 64,
+            manifest_sha256="d" * 64,
+            collection_issues=(),
+            source_site="WORKNET",
+            batch_size_bytes=len(worknet.model_dump_json().encode()),
+        ),
+    )
+    calls = []
+
+    def publish(_outputs, selected):
+        calls.append(selected)
+        return {"status": "COMPLETED", "results": []}
+
+    runner = IntakeRunner(
+        IntakeConfig.model_construct(
+            schema_version="c-intake-config/v1",
+            job_roots=(),
+            job_hdfs_sources=(),
+            criteria=(configured,),
+            public_sources=(),
+        ),
+        job_sink=publish,
+        job_set_sink=publish,
+    )
+
+    runner._publish_input_set(outputs, {"completed": 0, "failed": 0, "pending": 0})
+
+    # BE는 min_jobs를 보내지 않으므로 1이 계약 기본값이다. source를 고르면 그
+    # source의 최신 시각, 생략하면 전체 source의 최신 시각을 써야 한다.
+    source_latest = [
+        item for item in calls if item.sources == ("SARAMIN",) and item.min_jobs == 1
+    ]
+    all_latest = [item for item in calls if not item.sources and item.min_jobs == 1]
+    assert len(source_latest) == 1
+    assert source_latest[0].as_of == saramin.records[0].collected_at
+    assert len(all_latest) == 1
+    assert all_latest[0].as_of == worknet.records[0].collected_at
+
+    before_resolve = len(calls)
+    selected, result = runner.resolve_job_selector(
+        JobCohortResolveSelector(
+            schema_version="job-cohort-resolve-selector/v1",
+            target_role="BACKEND",
+            sources=("SARAMIN",),
+        )
+    )
+    assert selected == source_latest[0]
+    assert result["status"] == "COMPLETED"
+    assert len(calls) == before_resolve
+
+    selected, result = runner.resolve_job_selector(
+        JobCohortResolveSelector(
+            schema_version="job-cohort-resolve-selector/v1", target_role="BACKEND"
+        )
+    )
+    assert selected == all_latest[0]
+    assert result["status"] == "COMPLETED"
+    assert len(calls) == before_resolve
 
 
 def test_review_preparation_failure_after_claim_is_heartbeated_and_failed(
@@ -216,7 +307,7 @@ def test_configured_union_combines_sources_and_source_filter_cannot_be_masked(ru
     completed(root, "WORKNET", "same-local-id", at="2026-09-07T01:00:00Z")
     with open_runtime()[0] as client:
         runner = client.app.state.intake_runner
-        assert runner.poll_once()["completed"] == 1
+        assert runner.poll_once()["completed"] == 2
         _, cohort = resolve(client, query)
         assert len(cohort["jobs"]) == 2
         assert len({job["job_id"] for job in cohort["jobs"]}) == 2
@@ -396,6 +487,32 @@ def test_union_record_bound_stops_before_sink_without_stopping_public(
     assert calls == [True]
 
 
+def test_source_limited_config_still_checks_unfiltered_selector_capacity(
+    tmp_path, monkeypatch
+):
+    from worker import intake
+
+    completed(tmp_path, "SARAMIN", "one")
+    completed(tmp_path, "WORKNET", "two")
+    monkeypatch.setattr(intake, "MAX_JOB_SET_RECORDS", 1)
+    selected = criteria(sources=("SARAMIN",))
+
+    def forbidden(*_args):
+        raise AssertionError("unfiltered oversized selector reached the sink")
+
+    runner = IntakeRunner(
+        IntakeConfig(
+            schema_version="c-intake-config/v1",
+            job_roots=(tmp_path,),
+            criteria=(selected,),
+        ),
+        job_sink=forbidden,
+        job_set_sink=forbidden,
+    )
+
+    assert runner.poll_once()["failed"] == 1
+
+
 def test_empty_input_directory_is_pending_not_empty_market(tmp_path):
     calls = []
     runner = IntakeRunner(
@@ -438,16 +555,16 @@ def test_previously_consumed_manifest_missing_from_discovery_is_not_a_deletion(
         public_sinks=(public,),
     )
     manifests = runner._manifests()
-    assert runner.poll_once()["completed"] == 1
+    assert runner.poll_once()["completed"] == 2
     monkeypatch.setattr(runner, "_manifests", lambda: manifests[:1])
     assert runner.poll_once()["failed"] == 1
     assert runner.current_job_result(criteria()) is None
-    assert published == [2]
+    assert published == [2, 2]
     assert len(public_calls) == 2
     monkeypatch.setattr(runner, "_manifests", lambda: manifests)
     runner.poll_once()
     assert runner.current_job_result(criteria())["status"] == "COMPLETED"
-    assert published == [2]
+    assert published == [2, 2]
 
 
 def republish(root, value):
@@ -485,11 +602,11 @@ def test_republished_completion_never_replaces_verified_input(tmp_path, change):
         job_sink=publish,
         job_set_sink=publish,
     )
-    assert runner.poll_once()["completed"] == 1
+    assert runner.poll_once()["completed"] == 2
     # Byte-identical publisher retry is still an idempotent delivery.
     republish(tmp_path, value)
     assert runner.poll_once()["failed"] == 0
-    assert published == [2]
+    assert published == [2, 2]
     if change == "manifest_only":
         manifest = json.loads(paths["manifest"].read_bytes())
         manifest["review_note"] = "replaced"
@@ -503,13 +620,13 @@ def test_republished_completion_never_replaces_verified_input(tmp_path, change):
         republish(tmp_path, value.model_copy(update={"records": records}))
     assert runner.poll_once()["failed"] == 1
     assert runner.current_job_result(criteria()) is None
-    assert published == [2]
+    assert published == [2, 2]
     # Restoring the original verified bytes recovers the existing result.
     for name, raw in original.items():
         paths[name].write_bytes(raw)
     assert runner.poll_once()["failed"] == 0
     assert runner.current_job_result(criteria())["status"] == "COMPLETED"
-    assert published == [2]
+    assert published == [2, 2]
 
 
 def test_replaced_input_is_rejected_after_worker_restart(runtime):
@@ -518,7 +635,7 @@ def test_replaced_input_is_rejected_after_worker_restart(runtime):
     republish(root, value)
     with open_runtime()[0] as client:
         runner = client.app.state.intake_runner
-        assert runner.poll_once()["completed"] == 1
+        assert runner.poll_once()["completed"] == 2
         old_id, cohort = resolve(client, query)
         assert len(cohort["jobs"]) == 2
     republish(root, value.model_copy(update={"records": (posting("one"),)}))

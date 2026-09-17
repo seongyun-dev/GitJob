@@ -73,6 +73,11 @@ public class RepositoryAnalysisResultConsumer {
                     job.getAnalysisId(), unavailable.toString());
         }
 
+        // SUCCEEDED는 Evidence 저장 완료일 뿐 기여 판정 완료가 아니다. 이 marker를
+        // 먼저 커밋해야 복구 스케줄러가 중간 상태를 C에 보내지 않는다. 저장이 실패하면
+        // 예외를 올려 Kafka가 재배달하고, ALREADY_TERMINAL 경로가 후처리를 재개한다.
+        results.markComputeReady(job.getAnalysisId());
+
         // 기여 판정 뒤에 부른다. C 는 개인 Level 을 top-level personal_assessments 로 받는데,
         // 판정이 붙기 전에 보내면 아무도 본인 근거가 없는 Evidence 로 추천이 계산된다.
         //

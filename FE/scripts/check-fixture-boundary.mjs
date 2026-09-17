@@ -16,7 +16,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 /** 연결이 끝난 영역. 여기서 fixture를 부르면 실패다. */
-const CONNECTED = ['src/features/matching', 'src/features/trend']
+const CONNECTED = ['src/features/evidence', 'src/features/matching', 'src/features/trend']
 
 const FIXTURE_IMPORT = /from\s+['"]@\/mocks(?:\/[^'"]*)?['"]/
 

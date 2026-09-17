@@ -155,7 +155,7 @@ export function toSkillGapSummary(dto: SkillGapDto): SkillGapSummaryView | null 
   const jobCount = dto.basis.jobCount
   const role = dto.basis.targetRole ?? '선택한 직무'
   return {
-    basisText: jobCount === null ? role : `${role} · 공고 ${jobCount}건`,
+    basisText: jobCount === null ? role : `${role} · 수요 산정 공고 ${jobCount}건`,
     requiredTechCount: dto.summary.requiredTechCount,
     metCount: dto.summary.metCount,
     gapCount: dto.summary.gapCount,

@@ -22,11 +22,17 @@ public record Basis(
         List<String> regions,
         List<String> careerLevels,
         String asOf,
-        Integer jobCount
+        Integer jobCount,
+        Integer inputJobCount,
+        Integer duplicateJobCount,
+        Integer excludedJobCount,
+        Integer reviewJobCount,
+        Integer matchingJobCount
 ) {
 
     public static Basis of(Target target) {
-        return new Basis(target.targetRole(), target.regions(), target.careerLevels(), null, null);
+        return new Basis(target.targetRole(), target.regions(), target.careerLevels(), null, null,
+                null, null, null, null, null);
     }
 
     /** C가 정규화한 조건과 실제 분모를 얹는다. */
@@ -39,7 +45,12 @@ public record Basis(
                 target.regions(),
                 target.careerLevels(),
                 criterion(demand.criteria(), "as_of", null),
-                demand.denominator());
+                demand.denominator(),
+                demand.inputCount(),
+                demand.duplicateCount(),
+                demand.excludedCount(),
+                demand.reviewCount(),
+                demand.matchingCount());
     }
 
     private static String criterion(Map<String, Object> criteria, String key, String fallback) {

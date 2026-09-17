@@ -1,9 +1,16 @@
-import { QueryCache, QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import { createAppQueryClient } from '@/app/queryClient'
 import { router } from '@/app/router'
 import { fetchMe } from '@/features/auth/api/me'
-import { isSessionChangeEvent, refreshSessionCache } from '@/features/auth/sessionSync'
+import {
+  AUTH_SESSION_EXPIRED_EVENT,
+  expireSessionCache,
+  expiredSessionLoginPath,
+  isSessionChangeEvent,
+  refreshSessionCache,
+} from '@/features/auth/sessionSync'
 import { ApiError } from '@/shared/api/client'
 
 /** GitHub 재연결 안내 화면. 라우터 정의와 같은 경로다. */
@@ -19,10 +26,15 @@ const GITHUB_CONNECT_PATH = '/onboarding/github'
  * 페이지마다 처리하면 새 화면에서 빠뜨리기 쉬워 전역에 둔다. 어느 화면에서 걸리든
  * 사용자는 같은 안내를 본다.
  */
-function handleQueryError(error: unknown): void {
-  if (!(error instanceof ApiError) || error.action !== 'RECONNECT_GITHUB') {
+function handleRequestError(error: unknown): void {
+  if (!(error instanceof ApiError)) {
     return
   }
+  if (error.action === 'REDIRECT_TO_ONBOARDING') {
+    window.dispatchEvent(new Event(AUTH_SESSION_EXPIRED_EVENT))
+    return
+  }
+  if (error.action !== 'RECONNECT_GITHUB') return
   const current = router.state.location.pathname
   if (current === GITHUB_CONNECT_PATH) {
     return
@@ -40,20 +52,11 @@ function handleQueryError(error: unknown): void {
  * 일반 실패로 보고 재시도한다.
  */
 function createQueryClient() {
-  return new QueryClient({
-    queryCache: new QueryCache({ onError: handleQueryError }),
-    defaultOptions: {
-      queries: {
-        retry: (failureCount, error) => {
-          if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-            return false
-          }
-          return failureCount < 2
-        },
-        refetchOnWindowFocus: false,
-      },
-      mutations: { retry: false },
-    },
+  return createAppQueryClient(handleRequestError, (failureCount, error) => {
+    if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+      return false
+    }
+    return failureCount < 2
   })
 }
 
@@ -69,8 +72,24 @@ function AuthSessionSync() {
       void refreshSessionCache(queryClient, fetchMe)
     }
 
+    async function onSessionExpired() {
+      const applied = await expireSessionCache(queryClient, window.localStorage)
+      if (!applied) return
+
+      const destination = expiredSessionLoginPath(
+        router.state.location.pathname,
+        router.state.location.search,
+      )
+      if (destination === null) return
+      await router.navigate(destination, { replace: true })
+    }
+
     window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, onSessionExpired)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, onSessionExpired)
+    }
   }, [queryClient])
 
   return null

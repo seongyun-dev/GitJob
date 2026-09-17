@@ -1,7 +1,7 @@
 import type {
-  AnalysisContextRepoFixture,
-  ReinforcementFixture,
-} from '@/mocks/fixtures/evidenceScreen'
+  AnalysisContextRepository,
+  ReinforcementItem,
+} from '@/features/evidence/model/overview'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
 import { StateCard } from '@/shared/ui/StateCard'
 
@@ -24,7 +24,7 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 것은 기술이 없다는 뜻이 아니라 **판정 범위가 다르다**는 뜻이라, 부족한 기술과
  * 섞어 보여주면 사용자가 자기 상태를 잘못 읽는다.
  */
-export function ReinforcementPanel({ items }: { items?: readonly ReinforcementFixture[] }) {
+export function ReinforcementPanel({ items }: { items?: readonly ReinforcementItem[] }) {
   return (
     <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
       <div className="flex items-start justify-between gap-3">
@@ -49,6 +49,12 @@ export function ReinforcementPanel({ items }: { items?: readonly ReinforcementFi
             kind="PREPARING"
             title="아직 판정 결과가 없어요"
             description="Personal Level이 Repository Level보다 낮은 기술이 이 자리에 모입니다. 부족한 기술과는 구분해 표시합니다."
+          />
+        ) : items.length === 0 ? (
+          <StateCard
+            kind="EMPTY"
+            title="보강이 필요한 기술이 없어요"
+            description="Personal Level이 판정된 기술 중 Repository Level보다 낮은 항목이 없습니다."
           />
         ) : (
           <ul className="grid gap-2">
@@ -92,7 +98,7 @@ export function AnalysisContextPanel({
   repositories,
   footer,
 }: {
-  repositories?: readonly AnalysisContextRepoFixture[]
+  repositories?: readonly AnalysisContextRepository[]
   /** 분석 시각 · 상태 · Snapshot 기준 한 줄. */
   footer?: string
 }) {
@@ -110,22 +116,30 @@ export function AnalysisContextPanel({
           <StateCard
             kind="NO_DATA"
             title="아직 분석한 저장소가 없어요"
-            description="분석에 포함된 저장소와 저장소별 본인 Commit 비중이 여기에 표시됩니다."
+            description="분석에 포함된 저장소와 저장소별 본인 Commit 수, 근거 수가 여기에 표시됩니다."
+          />
+        ) : repositories.length === 0 ? (
+          <StateCard
+            kind="NO_DATA"
+            title="아직 분석한 저장소가 없어요"
+            description="저장소 분석이 완료되면 기준 커밋과 근거 수가 표시됩니다."
           />
         ) : (
           <ul className="grid gap-2">
             {repositories.map((repo) => (
               <li
-                key={repo.name}
+                key={repo.repositoryId}
                 className="rounded-[14px] border border-brand-line bg-white/70 px-4 py-3"
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <p className="truncate text-[13px] font-[750] text-brand-ink">{repo.name}</p>
-                  <p className="shrink-0 text-[11.5px] text-brand-faint">기술 {repo.techCount}</p>
+                  <p className="shrink-0 text-[11.5px] text-brand-faint">
+                    근거 {repo.evidenceCount.toLocaleString('ko-KR')}건
+                  </p>
                 </div>
-                <p className="mt-1 truncate text-[11.5px] text-brand-muted">{repo.languages}</p>
-                <p className="mt-1 text-[11.5px] font-semibold text-brand-faint">
-                  {repo.ownCommitText}
+                <p className="mt-1 truncate text-[11.5px] text-brand-muted">
+                  <span className="font-mono">{repo.commitSha.slice(0, 7)}</span> ·{' '}
+                  {new Date(repo.analyzedAt).toLocaleString('ko-KR')}
                 </p>
               </li>
             ))}
@@ -134,7 +148,7 @@ export function AnalysisContextPanel({
       </div>
 
       <p className="mt-4 text-[12.5px] leading-[1.6] text-brand-faint">
-        {footer ?? '분석 시각과 Snapshot 기준은 결과가 생기면 이 아래에 남습니다.'}
+        {footer ?? '저장소별 최신 성공 분석의 기준 커밋과 분석 시각입니다.'}
       </p>
     </section>
   )

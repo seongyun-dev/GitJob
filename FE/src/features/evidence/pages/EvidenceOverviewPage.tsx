@@ -14,6 +14,7 @@ import {
   profileErrorMessage,
   useTechnologyProfile,
 } from '@/features/evidence/hooks/useTechnologyProfile'
+import { buildEvidenceOverviewPanels } from '@/features/evidence/model/overview'
 import { LEVEL_STEPS } from '@/shared/constants/evidenceLevel'
 import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
 import { PageFootnote } from '@/shared/ui/DataRegion'
@@ -61,6 +62,7 @@ export function EvidenceOverviewPage() {
   const summary = profile.data?.summary
   const technologies = profile.data?.technologies ?? []
   const repositories = profile.data?.repositories ?? []
+  const panels = buildEvidenceOverviewPanels(technologies, repositories)
   const analyzedNothing = repositories.length === 0
 
   /** 어느 지표의 목록이 열려 있는지. 한 번에 하나만 연다. */
@@ -153,8 +155,12 @@ export function EvidenceOverviewPage() {
         </EvidenceTable>
 
         <div className="grid gap-4">
-          <ReinforcementPanel />
-          <AnalysisContextPanel />
+          <ReinforcementPanel
+            items={profile.data === undefined ? undefined : panels.reinforcements}
+          />
+          <AnalysisContextPanel
+            repositories={profile.data === undefined ? undefined : panels.repositories}
+          />
         </div>
       </div>
 

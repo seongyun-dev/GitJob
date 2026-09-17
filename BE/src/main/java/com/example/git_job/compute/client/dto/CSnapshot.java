@@ -77,9 +77,20 @@ public record CSnapshot(String snapshotId, String kind, Recommendation payload) 
             String cohortId,
             String status,
             int denominator,
+            Integer inputCount,
+            Integer duplicateCount,
+            Integer excludedCount,
+            Integer reviewCount,
+            Integer matchingCount,
             Map<String, Object> criteria,
             List<TechnologyDemand> technologies
     ) {
+        /** 기존 테스트와 recommendation snapshot v2의 최소 payload 호환. */
+        public Demand(String cohortId, String status, int denominator,
+                      Map<String, Object> criteria, List<TechnologyDemand> technologies) {
+            this(cohortId, status, denominator, null, null, null, null, null,
+                    criteria, technologies);
+        }
     }
 
     public record TechnologyDemand(

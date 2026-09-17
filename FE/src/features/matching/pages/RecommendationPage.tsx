@@ -46,7 +46,7 @@ export function RecommendationPage() {
             <div className="rounded-[14px] border border-brand-line bg-white px-5 py-3.5">
               <p className="text-[12px] text-brand-faint">비교 집합</p>
               <p className="mt-1 text-[13.5px] font-[750] text-brand-ink-soft">
-                {basis.targetRole ?? '선택한 직무'} 공고 {basis.jobCount}건
+                {basis.targetRole ?? '선택한 직무'} 수요 산정 공고 {basis.jobCount}건
               </p>
             </div>
           )}

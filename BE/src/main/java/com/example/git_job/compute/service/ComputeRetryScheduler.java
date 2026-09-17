@@ -38,4 +38,22 @@ public class ComputeRetryScheduler {
             }
         }
     }
+
+    /**
+     * 배포 전 완료 사용자와 완료 event 유실 사용자의 최초 계산 상태를 복구한다.
+     * 기존 attempt는 {@link #retryDue()}가, 이후 정상 완료 event는 consumer가 맡는다.
+     */
+    @Scheduled(fixedDelayString = "${gitjob.compute.recovery.poll-interval:5m}",
+            initialDelayString = "${gitjob.compute.recovery.initial-delay:15s}")
+    public void recoverMissing() {
+        for (Long userId : attempts.usersMissingComputeState(BATCH_SIZE)) {
+            try {
+                sync.synchronize(userId);
+            } catch (RuntimeException failure) {
+                // synchronize가 attempt 상태를 먼저 저장한다. 같은 batch의 복구를 계속한다.
+                log.warn("C compute initial recovery deferred: userId={}, reason={}",
+                        userId, failure.toString());
+            }
+        }
+    }
 }

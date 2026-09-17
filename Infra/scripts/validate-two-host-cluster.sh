@@ -136,6 +136,12 @@ assert any(
     and mount["read_only"]
     for mount in dn4["volumes"]
 )
+dn4_health = dn4["healthcheck"]["test"][1]
+assert "\n" not in dn4_health
+assert (
+    'awk -v expected_hostname="$${SERVICE_TS_IP}" -v expected_port=9866 '
+    '-f /opt/gitjob/hadoop/check-datanode-live.awk'
+) in dn4_health
 assert sw2["environment"]["SPARK_MASTER_URL"] == f"spark://{data_ip}:7077"
 assert worker["volumes"]["hdfs-datanode4-data"]["name"] == "gitjob-cluster-worker-hdfs-datanode4-data"
 print("two-host cluster Compose assertions: PASS")

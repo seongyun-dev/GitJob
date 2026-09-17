@@ -33,7 +33,7 @@ payload = demand.model_dump(mode="json")
 | 결과 | schema_version | 계산 버전 |
 |---|---|---|
 | JobCohort | `job-cohort/v1` | `job-cohort-quality/v5` |
-| DemandSnapshot | `job-demand-snapshot/v1` | `job-demand-aggregation/v1` |
+| DemandSnapshot | `job-demand-snapshot/v1` | `job-demand-aggregation/v2` |
 
 DTO는 Pydantic의 `extra="forbid", frozen=True`와 tuple 필드를 사용한다.
 `model_dump_json()` / `model_validate_json()`으로 저장·복원한다. 입력 snapshot/run,
@@ -205,6 +205,10 @@ DTO 복원 시에도 분모, 합집합 수 경계, 비율과 중복 기술 ID를
 실행기 상태이며 이 집계 함수가 EMPTY나 수요 0으로 변환하지 않는다.
 관측된 비어 있지 않은 코호트에서 특정 기술이 없을 때의 관측 0과 코호트 EMPTY는
 별개다. `input_count = denominator + duplicate_count + excluded_count + review_count`이다.
+`ACTIVE_MATCHING` 결과의 `matching_count`는 직무·상태·지역·경력 필터를 통과해
+상세 비교 후보로 남은 수이며 `denominator <= matching_count <= input_count`다.
+`denominator`는 그중 요구 기술 논리까지 엄격히 해석된 수요 산정 모집단이다. 과거
+Snapshot과 `MONTHLY_DEMAND`에는 `matching_count`가 없을 수 있다.
 
 ## 검증과 출처
 

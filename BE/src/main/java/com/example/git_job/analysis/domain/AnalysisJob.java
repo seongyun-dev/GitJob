@@ -98,6 +98,10 @@ public class AnalysisJob implements Persistable<String> {
     @Column(name = "error_code", length = 64)
     private String errorCode;
 
+    /** GitHub 기여 판정 시도가 끝나 C 계산이 이 분석을 읽어도 되는 시각. */
+    @Column(name = "compute_ready_at")
+    private Instant computeReadyAt;
+
     /**
      * With an assigned ID Spring Data would treat every instance as detached and call
      * merge(), costing a SELECT before each insert. Persistable states the truth instead.
@@ -151,6 +155,19 @@ public class AnalysisJob implements Persistable<String> {
     public boolean fail(String errorCode, Instant completedAt) {
         return finish(STATUS_FAILED, STAGE_FAILED,
                 Objects.requireNonNull(errorCode, "errorCode must not be null"), completedAt);
+    }
+
+    /**
+     * 기여 판정 성공·실패와 무관하게 시도가 끝난 뒤 호출한다.
+     *
+     * <p>중복 event가 이 경계를 다시 지나도 처음 기록한 시각을 보존한다.</p>
+     */
+    public boolean markComputeReady(Instant readyAt) {
+        if (!STATUS_SUCCEEDED.equals(status) || computeReadyAt != null) {
+            return false;
+        }
+        computeReadyAt = Objects.requireNonNull(readyAt, "readyAt must not be null");
+        return true;
     }
 
     private boolean finish(String status, String stage, String errorCode, Instant completedAt) {

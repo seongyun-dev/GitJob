@@ -171,6 +171,22 @@ class AnalysisResultServiceTest {
     }
 
     @Test
+    @DisplayName("중복 결과라도 기여 판정이 끝나지 않은 성공 분석은 후처리를 재개한다")
+    void duplicateResultResumesPendingPostProcessing() {
+        AnalysisJob job = queuedJob();
+        job.succeed(Instant.now());
+        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+
+        assertEquals(job, service.attributionTarget(completed(), Applied.ALREADY_TERMINAL));
+
+        service.markComputeReady("an_1");
+
+        assertTrue(job.getComputeReadyAt() != null);
+        assertNull(service.attributionTarget(completed(), Applied.ALREADY_TERMINAL));
+        verify(jobs).save(job);
+    }
+
+    @Test
     @DisplayName("취소된 job은 결과가 도착해도 다시 열리지 않는다")
     void aResultDoesNotReopenACancelledJob() {
         // The job status is the idempotency marker, and this case comes with it

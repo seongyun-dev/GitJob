@@ -9,6 +9,8 @@ import {
   sessionIdentity,
   storeSessionIdentity,
   replaceSessionCache,
+  expireSessionCache,
+  expiredSessionLoginPath,
   refreshSessionCache,
   synchronizeSessionCache,
 } from '../src/features/auth/sessionSync.ts'
@@ -117,6 +119,32 @@ test('known session replacement cancels pending requests before removing prior-u
   assert.deepEqual(client.calls, ['cancel', 'clear', `set:${ME_QUERY_KEY.join('/')}`])
   assert.equal(client.data.has('me/technologies'), false)
   assert.equal(client.data.get(ME_QUERY_KEY.join('/')), userB)
+})
+
+test('expired session clears user-scoped data and publishes anonymous identity', async () => {
+  const storage = new MemoryStorage()
+  const client = new FakeQueryClient()
+  client.data.set('matching/postings', { dataStatus: 'PREPARING' })
+
+  await expireSessionCache(client, storage)
+
+  assert.deepEqual(client.calls, ['cancel', 'clear', `set:${ME_QUERY_KEY.join('/')}`])
+  assert.equal(client.data.has('matching/postings'), false)
+  assert.equal(client.data.get(ME_QUERY_KEY.join('/')), null)
+  assert.equal(storage.getItem(AUTH_SESSION_STORAGE_KEY), 'anonymous')
+})
+
+test('expired admin session returns to the admin credential login', () => {
+  assert.equal(expiredSessionLoginPath('/admin/technology-candidates', '?page=2'), '/admin/login')
+  assert.equal(expiredSessionLoginPath('/admin/login', ''), null)
+})
+
+test('expired user session keeps its original destination for GitHub login', () => {
+  assert.equal(
+    expiredSessionLoginPath('/matching/recommendations', '?tab=skills'),
+    '/login?redirectTo=%2Fmatching%2Frecommendations%3Ftab%3Dskills',
+  )
+  assert.equal(expiredSessionLoginPath('/login', ''), null)
 })
 
 test('missed storage event still clears stale cache when me changes to another user', async () => {

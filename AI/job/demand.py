@@ -7,7 +7,7 @@ from pydantic import Field, StrictInt, StrictStr, model_validator
 from job.cohort import CohortCriteria, CohortModel, CohortStatus, JobCohort
 from registry.contracts import TechId
 
-JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v1"
+JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v2"
 
 
 class TechnologyDemand(CohortModel):
@@ -33,6 +33,11 @@ class DemandSnapshot(CohortModel):
     status: CohortStatus
     criteria: CohortCriteria
     denominator: StrictInt = Field(ge=0)
+    # ACTIVE_MATCHING에서 직무·상태·지역·경력 필터를 통과해 상세 비교에 남은 공고.
+    # 과거 snapshot과 MONTHLY_DEMAND에는 필드가 없으므로 additive nullable이다.
+    matching_count: StrictInt | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
     input_count: StrictInt = Field(ge=0)
     duplicate_count: StrictInt = Field(ge=0)
     excluded_count: StrictInt = Field(ge=0)
@@ -60,6 +65,10 @@ class DemandSnapshot(CohortModel):
             + self.review_count
         ):
             raise ValueError("demand counts do not reconcile")
+        if self.matching_count is not None and not (
+            self.denominator <= self.matching_count <= self.input_count
+        ):
+            raise ValueError("matching count must contain the strict denominator")
         if len({item.tech_id for item in self.technologies}) != len(self.technologies):
             raise ValueError("demand technology IDs must be unique")
         for item in self.technologies:
@@ -153,4 +162,11 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
     metadata = cohort.model_dump(
         exclude={"schema_version", "jobs", "exclusions", "input_union", "matching_jobs"}
     )
-    return DemandSnapshot(**metadata, denominator=denominator, technologies=tuple(rows))
+    return DemandSnapshot(
+        **metadata,
+        denominator=denominator,
+        matching_count=(
+            len(cohort.matching_jobs) if cohort.matching_jobs is not None else None
+        ),
+        technologies=tuple(rows),
+    )

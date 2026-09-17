@@ -2,9 +2,28 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  formatDemandBasis,
   formatCollectedAt,
   summarizeDataGaps,
 } from '../src/features/matching/model/presentation.ts'
+
+test('demand basis distinguishes observed, comparable, and strict denominator counts', () => {
+  assert.equal(
+    formatDemandBasis({
+      targetRole: 'BACKEND',
+      regions: [],
+      careerLevels: [],
+      asOf: '2026-09-15T22:30:04Z',
+      jobCount: 13,
+      inputJobCount: 1_744,
+      duplicateJobCount: 0,
+      excludedJobCount: 1_452,
+      reviewJobCount: 279,
+      matchingJobCount: 253,
+    }),
+    '관측 1,744건 · 상세 비교 후보 253건 · 수요 산정 13건',
+  )
+})
 
 test('collection timestamp is rendered in fixed Korean time', () => {
   assert.equal(formatCollectedAt('2026-09-15T22:30:04.308945Z'), '2026.09.16 07:30')

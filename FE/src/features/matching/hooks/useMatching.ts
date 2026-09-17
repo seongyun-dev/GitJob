@@ -9,7 +9,7 @@ import {
   fetchWhatIf,
   saveTarget,
 } from '@/features/matching/api/matchingApi'
-import type { ComputeStateFields } from '@/features/matching/api/types'
+import { pollInterval } from '@/features/matching/model/polling'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 /**
@@ -27,29 +27,6 @@ import { queryKeys } from '@/shared/api/queryKeys'
  * 계산 대기는 오류가 아니라 곧 값이 생기는 상태다. 사용자가 새로고침해야만 결과가
  * 보이면 그건 화면이 상태를 표시만 하고 다루지는 않은 것이다.
  */
-
-/** 계산 중일 때의 기본 폴링 간격. 서버가 `retryAfterSec`을 주면 그쪽을 따른다. */
-const DEFAULT_POLL_MS = 5_000
-
-/** 준비되지 않은 입력을 기다릴 때. 짧게 물으면 의미 없이 서버만 때린다. */
-const SLOW_POLL_MS = 30_000
-
-/**
- * 다음 조회까지의 간격.
- *
- * `PREPARING`이 아니면 폴링하지 않는다. 표본 부족이나 미보유는 기다린다고 달라지지
- * 않으므로, 계속 물으면 서버만 때리고 화면은 그대로다.
- */
-function pollInterval(state: ComputeStateFields | undefined): number | false {
-  if (state === undefined || state.dataStatus !== 'PREPARING') {
-    return false
-  }
-  if (state.retryAfterSec !== null) {
-    return Math.max(state.retryAfterSec, 1) * 1000
-  }
-  // 공고 모집단 자체가 아직 없는 경우는 우리 쪽 계산이 아니라 수집을 기다리는 것이다.
-  return state.statusReason === 'COHORT_NOT_PREPARED' ? SLOW_POLL_MS : DEFAULT_POLL_MS
-}
 
 export function useTarget() {
   return useQuery({
@@ -83,7 +60,7 @@ export function useJobMatches(
     queryKey: queryKeys.matchingPostings(targetKey ?? '', params),
     queryFn: () => fetchJobMatches(params),
     enabled: targetKey !== undefined,
-    refetchInterval: (query) => pollInterval(query.state.data),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
 
@@ -103,7 +80,7 @@ export function useJobMatch(targetKey: string | undefined, jobId: string | undef
     queryKey: queryKeys.matchingPosting(targetKey ?? '', jobId ?? ''),
     queryFn: () => fetchJobMatch(jobId as string),
     enabled: targetKey !== undefined && jobId !== undefined && jobId !== '',
-    refetchInterval: (query) => pollInterval(query.state.data),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
 
@@ -112,7 +89,7 @@ export function useSkillGap(targetKey: string | undefined) {
     queryKey: queryKeys.matchingSkillGap(targetKey ?? ''),
     queryFn: fetchSkillGap,
     enabled: targetKey !== undefined,
-    refetchInterval: (query) => pollInterval(query.state.data),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
 
@@ -121,7 +98,7 @@ export function useRecommendations(targetKey: string | undefined) {
     queryKey: queryKeys.matchingRecommendations(targetKey ?? ''),
     queryFn: fetchRecommendations,
     enabled: targetKey !== undefined,
-    refetchInterval: (query) => pollInterval(query.state.data),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
 
@@ -140,7 +117,7 @@ export function useWhatIf(
     queryKey: queryKeys.matchingWhatIf(targetKey ?? '', techId ?? '', params),
     queryFn: () => fetchWhatIf(techId as string, params),
     enabled: targetKey !== undefined && techId !== undefined && techId !== '',
-    refetchInterval: (query) => pollInterval(query.state.data),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
 
@@ -163,6 +140,6 @@ export function useJobDemands(params: {
         careerLevels: params.careerLevels,
       }),
     enabled: params.targetRole !== undefined && params.targetRole !== '',
-    refetchInterval: (query) => pollInterval(query.state.data),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }

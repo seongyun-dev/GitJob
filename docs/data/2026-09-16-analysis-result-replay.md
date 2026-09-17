@@ -17,7 +17,8 @@
 
 문제는 그다음이었다. **recoverer가 없어서 그 레코드는 로그 한 줄만 남기고
 커밋됐다.** 오프셋은 끝까지 진행돼 컨슈머 lag는 0이고, 컨테이너는 건강하고,
-화면만 5초마다 `QUEUED`를 다시 물었다. 저장소 4개의 판정과 근거가 그렇게 사라졌다.
+화면만 `QUEUED`에 남았다. 최초 장애 당시 확인한 4건 이후에도 대상 수는 바뀔 수
+있으므로 실행 때마다 DB와 토픽을 다시 대조한다.
 
 ### 0.1 그래서 이 절차가 필요한 이유
 
@@ -61,7 +62,8 @@ bash Infra/scripts/verify-deployment.sh
 잡 상태를 멱등성 마커로 쓰기 때문에, 이미 끝난 분석에 결과가 또 오면
 `ALREADY_TERMINAL`로 건너뛴다.
 
-지금 대상 4건은 `QUEUED`이므로 재발행된 결과가 그대로 적용된다.
+재발행 직전에도 대상이 비종료 상태인지 확인해야 한다. 이미 종료된 결과는 멱등하게
+건너뛰지만, 실행 목록을 넓게 잡는 근거로 사용하지 않는다.
 
 ---
 
@@ -76,7 +78,9 @@ SELECT analysis_id, user_id, repository_full_name, status, current_stage, reques
  ORDER BY requested_at;
 ```
 
-`analysis_id` 목록을 적어 둔다. 이 값이 곧 Kafka 레코드의 **키**다
+결과가 실제로 발행된 것으로 별도 확인한 `analysis_id`만 한 줄에 하나씩
+`/tmp/replay-analysis-ids.txt`에 적는다. 감사 시점의 "11건" 같은 개수만 믿고 전체
+비종료 행을 자동 재생하지 않는다. 이 값이 곧 Kafka 레코드의 **키**다
 (`AI/analysis/publish.py`: `key=result.payload.analysis_id`).
 
 ### 3.2 토픽에서 원본 추출
@@ -96,11 +100,13 @@ docker compose --project-directory . --env-file .env -f Infra/compose/compose.ya
     --property print.key=true > /tmp/results-all.tsv
 ```
 
-대상만 남긴다. `<ID1>` 자리에 §3.1의 `analysis_id`를 넣는다.
+대상만 남긴다. 이 단계는 토픽을 바꾸지 않는 dry-run이다.
 
 ```bash
-grep -E '^(<ID1>|<ID2>|<ID3>|<ID4>)[[:space:]]' /tmp/results-all.tsv > /tmp/replay.tsv
+awk -F '\t' 'NR==FNR { wanted[$1]=1; next } ($1 in wanted) { print }' \
+  /tmp/replay-analysis-ids.txt /tmp/results-all.tsv > /tmp/replay.tsv
 wc -l /tmp/replay.tsv
+cut -f1 /tmp/replay.tsv | sort | uniq -c
 ```
 
 **줄 수가 대상 수와 같은지 확인한다.** 적으면 그 분석은 결과가 발행된 적이 없다는
@@ -127,15 +133,30 @@ docker compose --project-directory . --env-file .env -f Infra/compose/compose.ya
 ```sql
 SELECT analysis_id, status, current_stage, completed_at, result_schema_version
   FROM analysis_job
- WHERE analysis_id IN ('<ID1>', '<ID2>', '<ID3>', '<ID4>');
+ WHERE analysis_id IN ('<ID1>', '<ID2>', '<ID-N>');
 ```
 
 `SUCCEEDED`로 바뀌어야 한다. 근거도 들어왔는지 본다.
 
 ```sql
 SELECT analysis_id, count(*) FROM analysis_evidence
- WHERE analysis_id IN ('<ID1>', '<ID2>', '<ID3>', '<ID4>')
+ WHERE analysis_id IN ('<ID1>', '<ID2>', '<ID-N>')
  GROUP BY analysis_id;
+```
+
+v3 결과라면 사용자별 C 계산 상태도 이어서 확인한다. 새 복구 스케줄러는
+snapshot과 attempt가 모두 없는 사용자를 제한된 배치로 시작하지만, replay 직후
+아래 상태가 생기는지 확인해야 분석 완료와 추천 복구를 구분할 수 있다.
+
+```sql
+SELECT user_id, target_key, status, reason, attempt_count, updated_at
+  FROM user_c_compute_attempt
+ WHERE user_id IN (<USER_ID_LIST>);
+
+SELECT user_id, target_key, evidence_version, computed_at
+  FROM user_c_snapshot
+ WHERE user_id IN (<USER_ID_LIST>)
+ ORDER BY user_id, computed_at DESC;
 ```
 
 여전히 `QUEUED`면 **DLQ를 본다.** 이제는 실패가 조용히 사라지지 않는다.

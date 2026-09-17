@@ -4,6 +4,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.client.dto.CTrend;
 import com.example.git_job.compute.config.CComputeProperties;
 import com.sun.net.httpserver.HttpExchange;
@@ -97,6 +98,30 @@ class CComputeClientTest {
 
         assertThat(ready.status()).isEqualTo("READY");
         assertThat(ready.registryVersion()).isEqualTo("registry-20260911.4");
+    }
+
+    @Test
+    @DisplayName("수요 Snapshot의 입력·비교·엄격 분모를 서로 다른 필드로 읽는다")
+    void readsDemandPopulationFunnel() {
+        responses.put("/internal/v1/c/snapshots/snapshot-1", Response.of(200,
+                "{\"message\":\"ok\",\"data\":{"
+                        + "\"snapshot_id\":\"snapshot-1\","
+                        + "\"kind\":\"RECOMMENDATION\","
+                        + "\"payload\":{\"current_count\":0,\"demand\":{"
+                        + "\"cohort_id\":\"cohort-1\",\"status\":\"READY\","
+                        + "\"denominator\":13,\"input_count\":1744,"
+                        + "\"duplicate_count\":0,\"excluded_count\":1452,"
+                        + "\"review_count\":279,\"matching_count\":253,"
+                        + "\"criteria\":{},\"technologies\":[]}}}}"));
+
+        CSnapshot snapshot = client().get("/internal/v1/c/snapshots/snapshot-1",
+                Map.of(), CSnapshot.class);
+
+        assertThat(snapshot.payload().demand().denominator()).isEqualTo(13);
+        assertThat(snapshot.payload().demand().inputCount()).isEqualTo(1_744);
+        assertThat(snapshot.payload().demand().matchingCount()).isEqualTo(253);
+        assertThat(snapshot.payload().demand().excludedCount()).isEqualTo(1_452);
+        assertThat(snapshot.payload().demand().reviewCount()).isEqualTo(279);
     }
 
     @Test

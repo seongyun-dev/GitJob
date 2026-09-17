@@ -27,8 +27,15 @@ export interface Basis {
   careerLevels: string[]
   /** 공고 수집 기준 시각. C가 정한 값이다. */
   asOf: string | null
-  /** 비교 대상 공고 수. 모든 비율의 분모다. */
+  /** 엄격한 수요 산정에 포함된 공고 수. 모든 수요 비율의 분모다. */
   jobCount: number | null
+  /** 중복·품질·직무 필터 전 관측 입력. 채용시장 전체 규모는 아니다. */
+  inputJobCount: number | null
+  duplicateJobCount: number | null
+  excludedJobCount: number | null
+  reviewJobCount: number | null
+  /** 직무·상태·지역·경력 필터를 통과해 상세 비교 후보로 남은 공고. */
+  matchingJobCount: number | null
 }
 
 export interface TargetDto {

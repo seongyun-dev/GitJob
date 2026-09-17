@@ -181,11 +181,20 @@ matchingWhatIf:  (targetKey: string, techId: string) =>
   "dataStatus": "PREPARING",
   "statusReason": "COHORT_NOT_PREPARED",
   "retryAfterSec": 2,
-  "basis": { "targetRole": "BACKEND", "regions": ["서울"], "careerLevels": ["신입"],
-             "asOf": "2026-09-15T01:30:00Z", "jobCount": 87 },
+  "basis": { "targetRole": "BACKEND", "regions": [], "careerLevels": [],
+             "asOf": "2026-09-15T22:30:04Z", "jobCount": 13,
+             "inputJobCount": 1744, "matchingJobCount": 253,
+             "duplicateJobCount": 0, "excludedJobCount": 1452,
+             "reviewJobCount": 279 },
   "...": "기능별 payload"
 }
 ```
+
+`jobCount`는 요구 기술을 엄격히 해석할 수 있어 수요 비율의 분모가 된 공고 수다.
+`inputJobCount`는 중복·품질·직무 필터 전 관측 입력이고, `matchingJobCount`는
+직무·상태·지역·경력 필터를 통과해 상세 비교 후보로 남은 수다. 셋을 모두
+"비교 대상 공고"라고 부르지 않는다. 과거 C snapshot에는 뒤의 다섯 필드가 없어
+`null`일 수 있다.
 
 `statusReason` 값: `NONE` `COMPUTING` `COMPUTE_PENDING` `COMPUTE_RETRYING`
 `COMPUTE_INVALID_INPUT` `COMPUTE_IDEMPOTENCY_CONFLICT` `COMPUTE_RETRY_EXHAUSTED`
@@ -245,7 +254,8 @@ FE [`errorCodes.ts`](../../FE/src/shared/api/errorCodes.ts)에 붙일 매핑:
 
 ```text
 저장소 분석 종료(SUCCEEDED 또는 허용된 부분 성공)
-  → 기여 판정(EvidenceAuthorshipService) 완료
+  → 기여 판정(EvidenceAuthorshipService) 시도 종료
+  → analysis_job.compute_ready_at 기록
   → 사용자 Evidence 버전 재계산
   → 목표 직무가 있으면 C 동기화 큐에 적재
 ```
@@ -253,6 +263,13 @@ FE [`errorCodes.ts`](../../FE/src/shared/api/errorCodes.ts)에 붙일 매핑:
 기여 판정 **뒤에** 부르는 이유는 `personal_assessments` 때문이다. 기여 판정은 GitHub를
 호출하므로 결과 저장 트랜잭션 밖에서 돈다(`AnalysisResultService`의 주석). 그전에 C를
 부르면 개인 판정이 비어 있는 Evidence로 추천이 계산된다.
+
+`SUCCEEDED`는 Evidence 저장 완료이고 기여 판정 완료가 아니다. 둘은 서로 다른
+트랜잭션이므로 V23부터 `compute_ready_at`을 별도 marker로 저장한다. 복구 스케줄러는
+최신 성공 분석 모두에 이 값과 Rule Pack 계보가 있을 때만 사용자를 선택한다. consumer가
+두 단계 사이에서 종료되면 미커밋 Kafka event가 재배달되고, 이미 `SUCCEEDED`인 잡이라도
+`compute_ready_at IS NULL`이면 기여 판정부터 재개한다. GitHub 장애로 판정이 실패한 경우도
+시도 종료를 기록한 뒤 미확인 근거로 계산한다.
 
 부분 성공 판정: `RepositoryEvidence.status`가 `COMPLETE`인 저장소가 하나 이상 있으면
 `EvidenceAnalysis.status = PARTIAL`로 보낸다. 하나도 없으면 C를 부르지 않는다. BE에는
@@ -355,19 +372,35 @@ POST /internal/v1/c/analyses/completed      (c-compute-event/v1 + evidence-consu
   terminal 상태로 저장한다. 공개 GET은 각각의 안정적인 `COMPUTE_*` 사유를 200 응답의
   `FAILED` 상태로 노출하고 자동 계산을 시작하지 않는다.
 
-### V22 배포 전 기존 미완료 사용자 확인
+### V22/V23 기존 미완료 사용자 복구
 
-V22는 기존 실패를 추측해 attempt 행으로 만들지 않는다. 배포 전에 아래 진단으로
-목표와 성공 분석은 있지만 최신 입력 이후 C Snapshot이나 attempt가 없는 사용자를 확인한다.
+V22 attempt가 없더라도, V23 복구 스케줄러는 목표와 성공 분석은 있지만 Snapshot과
+attempt가 없는 사용자를 제한된 배치로 시작한다. 단 최신 성공 분석이 모두
+`compute_ready_at IS NOT NULL`이고 Registry/Rule Pack 계보가 있어야 한다. 계보 없는 v1
+사용자는 재분석이 필요하므로 LIMIT 후보에서 제외되어 뒤의 정상 사용자를 막지 않는다.
+아래 진단은 배포 전후 대상 확인용이다.
 
 ```sql
-WITH latest_input AS (
+WITH latest_analysis AS (
+    SELECT DISTINCT ON (a.user_id, a.repository_id)
+           a.user_id, a.repository_id, a.completed_at, a.compute_ready_at,
+           a.registry_version, a.rule_pack_version
+    FROM analysis_job a
+    WHERE a.status = 'SUCCEEDED'
+    ORDER BY a.user_id, a.repository_id, a.completed_at DESC NULLS LAST
+), ready_user AS (
+    SELECT user_id, max(completed_at) AS completed_at
+    FROM latest_analysis
+    GROUP BY user_id
+    HAVING bool_and(compute_ready_at IS NOT NULL)
+       AND bool_and(nullif(btrim(registry_version), '') IS NOT NULL)
+       AND bool_and(nullif(btrim(rule_pack_version), '') IS NOT NULL)
+), latest_input AS (
     SELECT t.user_id,
            t.target_role || '|' || t.regions || '|' || t.career_levels AS target_key,
-           greatest(t.updated_at, max(a.completed_at)) AS input_at
+           greatest(t.updated_at, r.completed_at) AS input_at
     FROM user_target t
-    JOIN analysis_job a ON a.user_id = t.user_id AND a.status = 'SUCCEEDED'
-    GROUP BY t.user_id, t.target_role, t.regions, t.career_levels, t.updated_at
+    JOIN ready_user r ON r.user_id = t.user_id
 )
 SELECT i.user_id, i.target_key, i.input_at
 FROM latest_input i
@@ -382,9 +415,10 @@ WHERE NOT EXISTS (
 ORDER BY i.user_id;
 ```
 
-결과가 있으면 배포 후 해당 사용자의 최신 분석 완료 event를 기존 replay 절차로 다시
-전달하거나 목표 직무 저장 경로를 다시 실행해 write-side 계산을 시작한다. GET 호출로
-복구하지 않는다. 운영 DB에서 이 목록이 비어 있는지는 배포 승인 전에 별도로 확인한다.
+결과가 있으면 먼저 최신 분석의 `compute_ready_at`, `registry_version`,
+`rule_pack_version`을 함께 확인한다. 준비된 사용자는 스케줄러가 시작하고, 계보 없는
+사용자는 재분석 대상으로 남긴다. GET 호출로 복구하지 않는다. 운영 DB에서 이 목록이
+비어 있는지는 배포 승인 전에 별도로 확인한다.
 
 ## 4. 공개 API
 
@@ -416,10 +450,13 @@ C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-postings
 ```json
 {
   "dataStatus": "READY", "statusReason": "NONE", "retryAfterSec": null,
-  "basis": { "targetRole": "BACKEND", "regions": ["서울"], "careerLevels": ["신입"],
-             "asOf": "2026-09-15T01:30:00Z", "jobCount": 87 },
+  "basis": { "targetRole": "BACKEND", "regions": [], "careerLevels": [],
+             "asOf": "2026-09-15T22:30:04Z", "jobCount": 13,
+             "inputJobCount": 1744, "matchingJobCount": 253,
+             "duplicateJobCount": 0, "excludedJobCount": 1452,
+             "reviewJobCount": 279 },
   "summary": {
-    "totalCount": 87,
+    "totalCount": 253,
     "fullMatchCount": 12,
     "nearMatchCount": null,
     "lowMatchCount": null,
@@ -470,7 +507,10 @@ C 원천: `job-cohorts/resolve` → `GET /internal/v1/c/snapshots/{demandSnapsho
 ```json
 {
   "dataStatus": "READY", "statusReason": "NONE",
-  "basis": { "targetRole": "BACKEND_ENGINEER", "asOf": "...", "denominator": 87 },
+  "basis": { "targetRole": "BACKEND", "asOf": "2026-09-15T22:30:04Z",
+             "jobCount": 13, "inputJobCount": 1744, "matchingJobCount": 253,
+             "duplicateJobCount": 0, "excludedJobCount": 1452,
+             "reviewJobCount": 279 },
   "technologies": [{
     "techId": "spring", "rank": 1,
     "requiredCount": 54, "preferredCount": 12, "generalCount": 3, "totalCount": 69,

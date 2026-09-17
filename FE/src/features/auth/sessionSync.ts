@@ -2,7 +2,19 @@ import type { Me } from '@/features/auth/api/me'
 
 /** 다른 탭까지 공유하는 현재 세션 소유자 표식. 토큰이나 프로필 정보는 저장하지 않는다. */
 export const AUTH_SESSION_STORAGE_KEY = 'gitjob.auth.session-identity.v1'
+export const AUTH_SESSION_EXPIRED_EVENT = 'gitjob:auth-session-expired'
 export const ME_QUERY_KEY = ['auth', 'me'] as const
+
+/** 관리자와 일반 사용자는 서로 다른 인증 수단을 사용한다. */
+export function expiredSessionLoginPath(pathname: string, search: string): string | null {
+  if (pathname === '/login' || pathname === '/admin/login') {
+    return null
+  }
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    return '/admin/login'
+  }
+  return `/login?redirectTo=${encodeURIComponent(`${pathname}${search}`)}`
+}
 
 interface IdentityStorage {
   getItem(key: string): string | null
@@ -98,6 +110,18 @@ export async function replaceSessionCache(
   clearSessionQueries(queryClient)
   queryClient.setQueryData(ME_QUERY_KEY, me)
   return true
+}
+
+/** 만료된 현재 세션의 사용자 범위 캐시를 지우고 다른 탭에도 익명 전환을 알린다. */
+export async function expireSessionCache(
+  queryClient: SessionQueryClient,
+  storage: IdentityStorage,
+): Promise<boolean> {
+  const applied = await replaceSessionCache(queryClient, null)
+  if (applied) {
+    storeSessionIdentity(storage, null)
+  }
+  return applied
 }
 
 /**

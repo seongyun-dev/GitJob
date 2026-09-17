@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useJobDemands, useSaveTarget, useTarget } from '@/features/matching/hooks/useMatching'
-import { formatCollectedAt } from '@/features/matching/model/presentation'
+import { formatCollectedAt, formatDemandBasis } from '@/features/matching/model/presentation'
 import { ApiError } from '@/shared/api/client'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
@@ -222,7 +222,7 @@ export function TargetRolePage() {
                 ) : (
                   <>
                     <p className="text-[12px] text-brand-faint">
-                      비교 대상 공고 {preview.data.basis.jobCount ?? 0}건 ·{' '}
+                      {formatDemandBasis(preview.data.basis)} ·{' '}
                       {formatCollectedAt(preview.data.basis.asOf)}
                     </p>
                     <ol className="mt-3 grid gap-3">
@@ -268,9 +268,9 @@ export function TargetRolePage() {
       </div>
 
       <PageFootnote>
-        직무는 비교 기준일 뿐 사용자를 분류하지 않습니다. 공고 수는 현재 수집된 공고 집합의
-        크기이며 채용시장 전체 규모가 아닙니다. 지원하는 직무 목록은 계산 서버가 정하며 화면이
-        복제하지 않습니다.
+        관측은 수집 입력, 상세 비교 후보는 직무·상태·지역·경력 필터 통과 건수, 수요 산정은
+        요구 기술을 엄격히 해석할 수 있는 공고 수입니다. 어느 수도 채용시장 전체 규모는
+        아닙니다. 지원하는 직무 목록은 계산 서버가 정하며 화면이 복제하지 않습니다.
       </PageFootnote>
     </div>
   )

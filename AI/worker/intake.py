@@ -16,12 +16,12 @@ from threading import Event, RLock, Thread
 from typing import Literal
 
 import psycopg
-from job.cohort import CohortCriteria
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+
+from job.cohort import CohortCriteria, CohortPurpose
 from job.contracts import BodyStatus, JobAnalysisInputBatch
 from job.input_union import selected_input_totals
 from job.jobkorea_contract import active_snapshot_metadata
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
-
 from worker.job_hdfs_source import JobHdfsSourceConfig
 from worker.lease import LeaseHeartbeat
 from worker.store import ComputeStore, digest
@@ -371,7 +371,6 @@ def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
 
     from job.demand import aggregate_demand
     from job.input_union import build_input_union
-
     from worker.api import compute_versions
     from worker.jobs import job_review_records
     from worker.store import Artifact
@@ -530,16 +529,16 @@ class IntakeRunner:
         with self._job_set_lock:
             if not self._verified_job_outputs or self._verified_job_signature is None:
                 return None
-            relevant = tuple(
-                output
-                for output in self._verified_job_outputs
-                if not selector.sources or output.source_site in selector.sources
+            criteria = self._selector_criteria(
+                self._verified_job_outputs,
+                target_role=selector.target_role,
+                sources=selector.sources or (),
+                regions=selector.regions,
+                career_levels=selector.career_levels,
+                min_jobs=1 if selector.min_jobs is None else selector.min_jobs,
             )
-            if not relevant:
+            if criteria is None:
                 return None
-            criteria = selector.criteria_at(
-                max(output.occurred_at for output in relevant)
-            )
             result, _ = self._resolve_verified_job_locked(criteria)
             return (criteria, result) if result is not None else None
 
@@ -551,7 +550,17 @@ class IntakeRunner:
             self._verified_job_outputs = tuple(outputs)
             self._verified_job_signature = signature
             current = {}
-            for criteria in self.config.criteria:
+            criteria_by_key = {
+                digest(criteria.model_dump(mode="json")): criteria
+                for criteria in self.config.criteria
+            }
+            criteria_by_key.update(
+                {
+                    digest(criteria.model_dump(mode="json")): criteria
+                    for criteria in self._latest_selector_criteria(outputs)
+                }
+            )
+            for criteria in criteria_by_key.values():
                 if self._stop.is_set():
                     return
                 key = digest(criteria.model_dump(mode="json"))
@@ -576,6 +585,63 @@ class IntakeRunner:
                     )
             self._current_jobs = current
 
+    def _latest_selector_criteria(self, outputs):
+        """Build the live selector scopes that HTTP callers are expected to request.
+
+        Configured criteria can retain a historical cutoff for reproducibility. B's selector,
+        however, binds the same role and filters to the newest verified observation cutoff.
+        Precomputing that additive scope during intake keeps the first browser request from
+        paying the full cohort build cost after every Worker restart.
+        """
+        selectors = []
+        for template in self.config.criteria:
+            if template.purpose is not CohortPurpose.ACTIVE_MATCHING:
+                continue
+            # 설정 criteria는 월별 계산과 검증용으로 min_jobs/as_of를 고정할 수 있다.
+            # BE selector는 min_jobs를 보내지 않아 1이고 sources도 생략한다. 설정에
+            # source가 있으면 그 exact selector와 BE의 전체-source selector를 모두
+            # 준비해야 첫 HTTP 요청이 다른 key로 다시 계산하지 않는다.
+            source_scopes = (template.sources, ()) if template.sources else ((),)
+            for sources in source_scopes:
+                current = self._selector_criteria(
+                    outputs,
+                    target_role=template.target_role,
+                    sources=sources,
+                    regions=template.regions,
+                    career_levels=template.career_levels,
+                    min_jobs=1,
+                )
+                if current is not None:
+                    selectors.append(current)
+        return tuple(
+            {digest(item.model_dump(mode="json")): item for item in selectors}.values()
+        )
+
+    @staticmethod
+    def _selector_criteria(
+        outputs,
+        *,
+        target_role,
+        sources,
+        regions,
+        career_levels,
+        min_jobs,
+    ):
+        """Use one identity rule for poll prewarm, capacity and HTTP resolution."""
+        relevant = tuple(
+            output for output in outputs if not sources or output.source_site in sources
+        )
+        if not relevant:
+            return None
+        return CohortCriteria(
+            target_role=target_role,
+            as_of=max(output.occurred_at for output in relevant),
+            sources=sources,
+            regions=regions,
+            career_levels=career_levels,
+            min_jobs=min_jobs,
+        )
+
     def _validate_job_set_capacity(self, outputs):
         """Apply the input budget after active-snapshot selection.
 
@@ -587,11 +653,7 @@ class IntakeRunner:
         criteria = {
             digest(item.model_dump(mode="json")): item for item in self.config.criteria
         }
-        if outputs:
-            current = CohortCriteria(
-                target_role=self.config.criteria[0].target_role,
-                as_of=max(output.occurred_at for output in outputs),
-            )
+        for current in self._latest_selector_criteria(outputs):
             criteria.setdefault(digest(current.model_dump(mode="json")), current)
         for item in criteria.values():
             input_records, input_bytes = selected_input_totals(tuple(outputs), item)
@@ -845,7 +907,6 @@ class _PublicSource:
     def __call__(self):
         from github.artifact_reader import ReadOnlyWebHdfsReader
         from github.snapshot_input import load_published_snapshot
-
         from worker.public_intake import PublicPipelineConsumer
 
         if self.consumer is None:

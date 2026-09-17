@@ -32,6 +32,20 @@ class ComputeRetrySchedulerTest {
         verify(sync).synchronizeDue(second);
     }
 
+    @Test
+    @DisplayName("분석은 성공했지만 계산 상태가 없는 사용자를 독립적으로 복구한다")
+    void recoversEveryMissingComputeUserIndependently() {
+        ComputeSnapshotStore attempts = mock(ComputeSnapshotStore.class);
+        CComputeSyncService sync = mock(CComputeSyncService.class);
+        when(attempts.usersMissingComputeState(anyInt())).thenReturn(List.of(7L, 8L));
+        when(sync.synchronize(7L)).thenThrow(new IllegalStateException("down"));
+
+        new ComputeRetryScheduler(attempts, sync).recoverMissing();
+
+        verify(sync).synchronize(7L);
+        verify(sync).synchronize(8L);
+    }
+
     private static ComputeAttempt attempt(long userId) {
         return new ComputeAttempt(userId, "BACKEND||", "f".repeat(64), "RETRYING",
                 "COMPUTE_RETRYING", 1, UUID.randomUUID(), Instant.EPOCH, Instant.EPOCH);

@@ -114,6 +114,15 @@ hash 검증을 통과한 마지막 불변 입력으로 계속 응답하며, 응�
 }
 ```
 
+intake poll은 설정된 `ACTIVE_MATCHING` 직무·필터를 고정 기준 시각으로 계산하는 것과
+별도로, 최신 검증 입력의 `occurred_at`에 바인딩한 selector 범위도 미리 계산한다. 이때
+HTTP selector와 같은 규칙을 사용한다. `sources`가 있으면 그 source들만의 최신 시각,
+없으면 전체 source의 최신 시각을 쓰고, BE가 `min_jobs`를 생략하므로 기본값 1로 계산한다.
+설정 criteria가 source를 제한해도 BE가 보내는 전체-source selector를 추가로 준비하고
+용량 검사한다.
+따라서 Worker 재시작 뒤 해당 범위의 첫 HTTP 요청이 전체 cohort 계산 시간을 떠안지
+않는다. 설정에 없는 직무·필터 조합은 여전히 최초 요청에서 멱등 계산될 수 있다.
+
 공용 Trend resolve는 저장 시 사용한 source별 stream identity를 그대로 계산해 `head`를
 읽는다. `WEEKLY_REPO_ACTIVITY`는 주차를 누적하는 head이므로 `periods`와 `granularity`를
 받지 않는다. `GH_ARCHIVE`는 명시한 `periods`와 `MONTH|WEEK`,

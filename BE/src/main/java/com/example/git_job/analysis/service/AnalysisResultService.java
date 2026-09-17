@@ -112,9 +112,23 @@ public class AnalysisResultService {
      * 되돌릴 이유가 없다.</p>
      */
     public AnalysisJob attributionTarget(RepositoryAnalysisResultEvent event, Applied applied) {
-        if (applied != Applied.SUCCEEDED) {
+        if (applied != Applied.SUCCEEDED && applied != Applied.ALREADY_TERMINAL) {
             return null;
         }
-        return jobs.findById(event.payload().analysisId()).orElse(null);
+        AnalysisJob job = jobs.findById(event.payload().analysisId()).orElse(null);
+        if (job == null || !AnalysisJob.STATUS_SUCCEEDED.equals(job.getStatus())
+                || job.getComputeReadyAt() != null) {
+            return null;
+        }
+        return job;
+    }
+
+    /** 기여 판정 시도가 끝나 C 계산이 읽어도 되는 분석으로 전환한다. */
+    @Transactional
+    public void markComputeReady(String analysisId) {
+        AnalysisJob job = jobs.findById(analysisId).orElse(null);
+        if (job != null && job.markComputeReady(Instant.now())) {
+            jobs.save(job);
+        }
     }
 }

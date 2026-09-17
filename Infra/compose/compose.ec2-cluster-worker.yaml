@@ -55,9 +55,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          hdfs dfsadmin -report 2>/dev/null
-          | awk -v expected_hostname="$${SERVICE_TS_IP}" -v expected_port=9866
-          -f /opt/gitjob/hadoop/check-datanode-live.awk
+          hdfs dfsadmin -report 2>/dev/null | awk -v expected_hostname="$${SERVICE_TS_IP}" -v expected_port=9866 -f /opt/gitjob/hadoop/check-datanode-live.awk
       interval: 15s
       timeout: 10s
       retries: 20

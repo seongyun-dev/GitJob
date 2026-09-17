@@ -1,3 +1,5 @@
+import type { Basis } from '@/features/matching/api/types'
+
 const KOREAN_NUMBER = new Intl.NumberFormat('ko-KR')
 
 /** API의 ISO 시각을 공고 화면에서 쓰는 고정 KST 표기로 바꾼다. */
@@ -80,4 +82,19 @@ export function summarizeDataGaps(gaps: readonly string[]): string[] {
   }
 
   return messages
+}
+/** 서로 다른 공고 모집단을 한 숫자인 것처럼 보이지 않게 단계별로 표시한다. */
+export function formatDemandBasis(basis: Basis): string {
+  const format = (value: number) => value.toLocaleString('ko-KR')
+  const parts: string[] = []
+  if (basis.inputJobCount != null) {
+    parts.push(`관측 ${format(basis.inputJobCount)}건`)
+  }
+  if (basis.matchingJobCount != null) {
+    parts.push(`상세 비교 후보 ${format(basis.matchingJobCount)}건`)
+  }
+  if (basis.jobCount != null) {
+    parts.push(`수요 산정 ${format(basis.jobCount)}건`)
+  }
+  return parts.join(' · ')
 }

@@ -183,6 +183,65 @@ class ComputeStoreIntegrationTest {
         });
     }
 
+    @Test
+    @DisplayName("기여 판정과 계보가 준비된 사용자만 복구하고 구형 사용자가 배치를 막지 않는다")
+    void findsUsersMissingComputeState() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            UserTargetStore targets = new UserTargetStore(jdbc);
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            String targetKey = targets.save(userId, "BACKEND", List.of("서울"),
+                    List.of("신입"), now).targetKey();
+            jdbc.update("""
+                    INSERT INTO analysis_job
+                        (analysis_id, user_id, repository_id, branch_name, commit_sha,
+                         status, current_stage, requested_at, completed_at,
+                         registry_version, rule_pack_version, compute_ready_at)
+                    VALUES (?, ?, ?, 'main', ?, 'SUCCEEDED', 'DONE', ?, ?,
+                            'registry-20260911.4', 'rule-pack-20260911.4', NULL)
+                    """, "analysis-recovery", userId, "repository-1", "a".repeat(40),
+                    java.sql.Timestamp.from(now.minusSeconds(60)), java.sql.Timestamp.from(now));
+
+            // SUCCEEDED 저장과 기여 판정 사이에는 실제로 시간이 있다. 그 구간의 분석을
+            // 먼저 계산하면 개인 판정 없는 Snapshot이 결정론적 event ID로 고정된다.
+            assertThat(store.usersMissingComputeState(20)).isEmpty();
+            jdbc.update("UPDATE analysis_job SET compute_ready_at = ? WHERE analysis_id = ?",
+                    java.sql.Timestamp.from(now.plusSeconds(1)), "analysis-recovery");
+            assertThat(store.usersMissingComputeState(20)).containsExactly(userId);
+
+            // 계보가 없는 v1 분석은 synchronize()가 attempt를 만들지 못한다. LIMIT 앞의
+            // 20명을 이들이 차지해도 뒤의 정상 사용자가 영구 기아 상태가 되면 안 된다.
+            for (int index = 0; index < 20; index++) {
+                Long legacyUser = jdbc.queryForObject("""
+                        INSERT INTO "user" (github_id, github_login, name)
+                        VALUES (?, ?, ?) RETURNING user_id
+                        """, Long.class, 10_000L + index, "legacy-" + index,
+                        "Legacy " + index);
+                targets.save(legacyUser, "BACKEND", List.of(), List.of(),
+                        now.minusSeconds(3_600L + index));
+                jdbc.update("""
+                        INSERT INTO analysis_job
+                            (analysis_id, user_id, repository_id, branch_name, commit_sha,
+                             status, current_stage, requested_at, completed_at, compute_ready_at)
+                        VALUES (?, ?, ?, 'main', ?, 'SUCCEEDED', 'DONE', ?, ?, ?)
+                        """, "legacy-analysis-" + index, legacyUser,
+                        "legacy-repository-" + index, "b".repeat(40),
+                        java.sql.Timestamp.from(now.minusSeconds(7_200L + index)),
+                        java.sql.Timestamp.from(now.minusSeconds(3_600L + index)),
+                        java.sql.Timestamp.from(now.minusSeconds(3_599L + index)));
+            }
+            assertThat(store.usersMissingComputeState(20)).containsExactly(userId);
+
+            ComputeAttempt attempt = store.tryStartAttempt(userId, targetKey, EVIDENCE_VERSION,
+                    now, now.plusSeconds(30), 3).orElseThrow();
+            assertThat(store.usersMissingComputeState(20)).isEmpty();
+
+            store.clearAttempt(attempt);
+            store.save(snapshot(userId, EVIDENCE_VERSION, "ev-recovered", now.plusSeconds(1)));
+            assertThat(store.usersMissingComputeState(20)).isEmpty();
+        });
+    }
+
     private static ComputeSnapshot snapshot(long userId, String evidenceVersion, String eventId,
                                             Instant computedAt) {
         return new ComputeSnapshot(userId, evidenceVersion, COHORT, DEMAND, RECOMMENDATION,
