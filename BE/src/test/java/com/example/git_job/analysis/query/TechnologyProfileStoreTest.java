@@ -6,11 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.example.git_job.compute.query.UserEvidenceStore;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -85,6 +87,7 @@ class TechnologyProfileStoreTest {
 
     @BeforeEach
     void clearAnalyses() {
+        jdbc.update("DELETE FROM analysis_technology_support");
         jdbc.update("DELETE FROM analysis_evidence_commit");
         jdbc.update("DELETE FROM analysis_evidence");
         jdbc.update("DELETE FROM analysis_outbox");
@@ -157,6 +160,36 @@ class TechnologyProfileStoreTest {
 
         assertEquals(1, verdicts.size());
         assertEquals("lombok", verdicts.getFirst().techId());
+    }
+
+    @Test
+    @DisplayName("C Evidence 조회는 처음 선택한 analysis ID를 최신 재조회 없이 유지한다")
+    void cEvidenceReadsTheSelectedAnalysisIdsDirectly() {
+        job("an_old", USER, "111", "octocat/app", "SUCCEEDED", NOW.minusSeconds(3600));
+        job("an_new", USER, "111", "octocat/app", "SUCCEEDED", NOW);
+        jdbc.update("""
+                UPDATE analysis_job
+                SET registry_version = ?, rule_pack_version = 'rule-pack/test',
+                    rule_pack_content_sha256 = ?
+                WHERE analysis_id IN ('an_old', 'an_new')
+                """, registry, "c".repeat(64));
+        evidence("an_old", USER, ruleOf("junit", "L1"), "Old.java", 1);
+        evidence("an_new", USER, ruleOf("lombok", "L1"), "New.java", 2);
+        jdbc.update("""
+                INSERT INTO analysis_technology_support
+                    (analysis_id, tech_id, evaluation_scope, max_supported_level,
+                     coverage, required_fact_types)
+                VALUES
+                    ('an_old', 'junit', 'REPOSITORY', 'L1', 'SUPPORTED', ARRAY['IMPORT']),
+                    ('an_new', 'lombok', 'REPOSITORY', 'L1', 'SUPPORTED', ARRAY['IMPORT'])
+                """);
+
+        UserEvidenceStore cStore = new UserEvidenceStore(jdbc);
+
+        assertEquals(List.of("junit"), cStore.evidence(USER, Set.of("an_old")).stream()
+                .map(UserEvidenceStore.EvidenceRow::techId).toList());
+        assertEquals(List.of("junit"), cStore.technologySupport(USER, Set.of("an_old")).stream()
+                .map(UserEvidenceStore.TechnologySupport::techId).toList());
     }
 
     @Test
@@ -283,6 +316,19 @@ class TechnologyProfileStoreTest {
         mine("an_a", ruleOf("junit", "L1"), "T.java", 1);
 
         assertEquals(List.of("L1"), store.personalLevels(USER).stream()
+                .map(TechnologyProfileStore.TechnologyLevel::level).toList());
+    }
+
+    @Test
+    @DisplayName("조립기가 선택한 분석 ID만으로 Personal Level을 계산한다")
+    void selectedAnalysisIdsFreezeThePersonalLevelLineage() {
+        job("an_old", USER, "111", "octocat/a", "SUCCEEDED", NOW.minusSeconds(1));
+        evidence("an_old", USER, ruleOf("junit", "L1"), "Old.java", 1);
+        mine("an_old", ruleOf("junit", "L1"), "Old.java", 1);
+        job("an_new", USER, "111", "octocat/a", "SUCCEEDED", NOW);
+
+        assertTrue(store.personalLevels(USER).isEmpty());
+        assertEquals(List.of("L1"), store.personalLevels(USER, Set.of("an_old")).stream()
                 .map(TechnologyProfileStore.TechnologyLevel::level).toList());
     }
 

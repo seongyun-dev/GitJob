@@ -14,6 +14,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -53,6 +54,9 @@ public class UserEvidenceAssembler {
 
     /** C의 {@code LEVEL_POLICY_VERSION}. 다르면 C가 모든 Level 판정을 미확인으로 돌린다. */
     public static final String LEVEL_POLICY_VERSION = "level-policy/v2";
+
+    /** Evidence 선택·개인 판정 정책. 이 값이 바뀌면 같은 원천 자료도 새 event가 된다. */
+    public static final String ASSEMBLY_POLICY_VERSION = "evidence-assembly/v2";
 
     /** 직접 의존성 근거가 되는 fact. Rule Pack의 fact type 중 이것만 MANIFEST다. */
     private static final String DEPENDENCY_FACT = "DEPENDENCY";
@@ -155,12 +159,21 @@ public class UserEvidenceAssembler {
         String rulePackVersion = rulePacks.iterator().next();
         String registryVersion = registries.iterator().next();
 
-        List<EvidenceRow> rows = evidence.evidence(userId);
-        Map<String, List<EvidenceRow>> byRepository = rows.stream()
-                .collect(Collectors.groupingBy(EvidenceRow::repositoryId,
+        Map<String, RepositoryAnalysis> selectedByAnalysis = analyses.stream()
+                .collect(Collectors.toMap(RepositoryAnalysis::analysisId, item -> item));
+        Set<String> selectedAnalysisIds = selectedByAnalysis.keySet();
+        // latestAnalyses 뒤에 새 분석이 끝나도 처음 선택한 ID를 SQL에 직접 전달한다.
+        // 최신 행을 다시 읽고 사후 필터링하면 선택한 분석의 근거가 통째로 사라진다.
+        List<EvidenceRow> rows = evidence.evidence(userId, selectedAnalysisIds).stream()
+                .filter(row -> matchesLineage(row, selectedByAnalysis.get(row.analysisId())))
+                .toList();
+        Map<String, List<EvidenceRow>> byAnalysis = rows.stream()
+                .collect(Collectors.groupingBy(EvidenceRow::analysisId,
                         TreeMap::new, Collectors.toList()));
-        Map<String, List<TechnologySupport>> supportByAnalysis = evidence.technologySupport(userId)
+        Map<String, List<TechnologySupport>> supportByAnalysis = evidence
+                .technologySupport(userId, selectedAnalysisIds)
                 .stream()
+                .filter(item -> selectedByAnalysis.containsKey(item.analysisId()))
                 .collect(Collectors.groupingBy(TechnologySupport::analysisId,
                         TreeMap::new, Collectors.toList()));
 
@@ -171,7 +184,7 @@ public class UserEvidenceAssembler {
         List<EvidencePayload.Repository> repositories = new ArrayList<>();
         for (RepositoryAnalysis analysis : analyses) {
             repositories.add(repository(userIdText, analysisId, analysis, rulePackVersion,
-                    byRepository.getOrDefault(analysis.repositoryId(), List.of()),
+                    byAnalysis.getOrDefault(analysis.analysisId(), List.of()),
                     supportByAnalysis.getOrDefault(analysis.analysisId(), List.of())));
         }
 
@@ -202,7 +215,7 @@ public class UserEvidenceAssembler {
                 rulePackVersion,
                 complete ? "COMPLETE" : "PARTIAL",
                 repositories,
-                personalAssessments(userId, rows, supportByAnalysis),
+                personalAssessments(userId, selectedAnalysisIds, rows, supportByAnalysis),
                 dataGaps);
         return Assembled.of(version, payload);
     }
@@ -260,7 +273,8 @@ public class UserEvidenceAssembler {
         boolean selfImplementation = rows.stream()
                 .filter(row -> !DEPENDENCY_FACT.equals(row.factType()))
                 .anyMatch(UserEvidenceAssembler::isSelfAuthored);
-        long attributed = rows.stream().filter(row -> row.contributionType() != null).count();
+        long attributed = rows.stream().filter(UserEvidenceAssembler::hasResolvedAttribution)
+                .count();
 
         List<EvidencePayload.Proof> proofs = rows.stream()
                 .map(row -> proof(userId, analysisId, analysis, rulePackVersion, techId, row))
@@ -337,21 +351,28 @@ public class UserEvidenceAssembler {
      * 때문이다 -- 같은 질문에 답이 둘이면 어느 쪽도 근거가 되지 못한다.</p>
      */
     private List<EvidencePayload.PersonalAssessment> personalAssessments(long userId,
-            List<EvidenceRow> rows, Map<String, List<TechnologySupport>> supportByAnalysis) {
-        Map<String, String> personal = profiles.personalLevels(userId).stream()
+            Set<String> selectedAnalysisIds, List<EvidenceRow> rows,
+            Map<String, List<TechnologySupport>> supportByAnalysis) {
+        Map<String, String> personal = profiles.personalLevels(userId, selectedAnalysisIds).stream()
                 .collect(Collectors.toMap(TechnologyProfileStore.TechnologyLevel::techId,
-                        TechnologyProfileStore.TechnologyLevel::level, (first, second) -> first));
+                        TechnologyProfileStore.TechnologyLevel::level, (first, second) -> first,
+                        TreeMap::new));
         Map<String, String> supported = supportedCeilings(supportByAnalysis);
 
         Map<String, List<EvidenceRow>> byTech = rows.stream()
                 .collect(Collectors.groupingBy(EvidenceRow::techId, TreeMap::new,
                         Collectors.toList()));
         List<EvidencePayload.PersonalAssessment> assessments = new ArrayList<>();
-        for (Map.Entry<String, List<EvidenceRow>> entry : byTech.entrySet()) {
-            List<EvidenceRow> techRows = entry.getValue();
-            String level = personal.getOrDefault(entry.getKey(), "L0");
+        for (Map.Entry<String, String> entry : personal.entrySet()) {
+            List<EvidenceRow> techRows = byTech.getOrDefault(entry.getKey(), List.of());
+            // Personal Level 쿼리가 HELD를 돌려줘도 이 payload 안에 C가 인정할 SELF proof가
+            // 없다면 개인 보유로 보내지 않는다. OTHER/UNKNOWN이나 임의 L0를 만들지 않는다.
+            if (techRows.stream().noneMatch(UserEvidenceAssembler::isAcceptedSelfProof)) {
+                continue;
+            }
+            String level = entry.getValue();
             long attributed = techRows.stream()
-                    .filter(row -> row.contributionType() != null).count();
+                    .filter(UserEvidenceAssembler::hasResolvedAttribution).count();
             String status = attributionStatus(attributed, techRows.size());
             assessments.add(new EvidencePayload.PersonalAssessment(
                     entry.getKey(), level,
@@ -403,7 +424,7 @@ public class UserEvidenceAssembler {
     /** 기여 판정이 없는 저장소. 불완전 판정은 무엇을 못 봤는지 함께 적어야 C가 받는다. */
     private List<String> missingScope(List<EvidenceRow> rows) {
         List<String> scope = rows.stream()
-                .filter(row -> row.contributionType() == null)
+                .filter(row -> !hasResolvedAttribution(row))
                 .map(row -> "repository:" + row.repositoryId())
                 .distinct()
                 .sorted()
@@ -426,11 +447,18 @@ public class UserEvidenceAssembler {
      */
     private String evidenceVersion(long userId, List<RepositoryAnalysis> analyses,
             String registryVersion, String rulePackVersion) {
+        return evidenceVersion(userId, analyses, registryVersion, rulePackVersion,
+                ASSEMBLY_POLICY_VERSION);
+    }
+
+    static String evidenceVersion(long userId, List<RepositoryAnalysis> analyses,
+            String registryVersion, String rulePackVersion, String assemblyPolicyVersion) {
         StringBuilder canonical = new StringBuilder()
                 .append(userId).append('')
                 .append(registryVersion).append('')
                 .append(rulePackVersion).append('')
-                .append(LEVEL_POLICY_VERSION);
+                .append(LEVEL_POLICY_VERSION).append('')
+                .append(assemblyPolicyVersion);
         analyses.stream()
                 .sorted(Comparator.comparing(RepositoryAnalysis::repositoryId))
                 .forEach(analysis -> canonical.append('')
@@ -453,6 +481,27 @@ public class UserEvidenceAssembler {
 
     private static boolean isSelfAuthored(EvidenceRow row) {
         return row.contributionType() != null && SELF_CONTRIBUTIONS.contains(row.contributionType());
+    }
+
+    private static boolean isAcceptedSelfProof(EvidenceRow row) {
+        return isSelfAuthored(row)
+                && normalizeSha(row.blameCommitSha()) != null
+                && normalizePath(row.filePath()) != null;
+    }
+
+    private static boolean hasResolvedAttribution(EvidenceRow row) {
+        return row.contributionType() != null
+                && (SELF_CONTRIBUTIONS.contains(row.contributionType())
+                || OTHER_CONTRIBUTIONS.contains(row.contributionType()));
+    }
+
+    private static boolean matchesLineage(EvidenceRow row, RepositoryAnalysis analysis) {
+        return analysis != null
+                && Objects.equals(row.repositoryId(), analysis.repositoryId())
+                && Objects.equals(normalizeSha(row.analyzedCommitSha()),
+                        normalizeSha(analysis.commitSha()))
+                && Objects.equals(row.registryVersion(), analysis.registryVersion())
+                && Objects.equals(row.rulePackVersion(), analysis.rulePackVersion());
     }
 
     private static String attributionStatus(long attributed, int total) {

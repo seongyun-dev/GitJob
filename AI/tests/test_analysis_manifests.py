@@ -12,8 +12,9 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from analysis.manifests import ManifestScanner, normalize_coordinate
 from depth_helpers import evaluate_depth_files
+
+from analysis.manifests import ManifestScanner, normalize_coordinate
 
 
 def repository(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -337,6 +338,16 @@ def test_requirements_skips_includes_editables_and_urls(tmp_path):
     )
 
     assert coordinates(ManifestScanner().scan(root)) == {"PYPI:pytest"}
+
+
+def test_requirements_path_is_not_reported_as_dependency_scope(tmp_path):
+    relative = "system/frappe/sohwa_farm/requirements-dev.txt"
+    root = repository(tmp_path, {relative: "pytest==9.1.1\n"})
+
+    occurrence = ManifestScanner().scan(root).occurrences[0]
+
+    assert occurrence.file == relative
+    assert occurrence.scope is None
 
 
 def test_pypi_names_are_normalized_so_one_project_is_one_candidate(tmp_path):

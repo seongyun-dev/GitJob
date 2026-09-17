@@ -4,15 +4,17 @@ import com.example.git_job.compute.client.CComputeException;
 import com.example.git_job.compute.controller.dto.ComputeState;
 import com.example.git_job.compute.service.UserEvidenceAssembler.Assembled;
 import com.example.git_job.compute.store.ComputeSnapshotStore;
+import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeSnapshot;
 import com.example.git_job.compute.store.UserTargetStore;
 import com.example.git_job.compute.store.UserTargetStore.Target;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 /**
@@ -28,16 +30,15 @@ import org.springframework.stereotype.Service;
  * UI를 그려야 한다. 오류로 올리는 것은 둘뿐이다 -- 사용자가 무언가 해야 하는 경우
  * (목표 직무 선택)와 아무것도 할 수 없는 경우(장애).</p>
  *
- * <h2>Snapshot이 없으면 한 번 만들어 본다</h2>
+ * <h2>GET은 계산하지 않는다</h2>
  *
  * <p>분석 완료 시 C 호출이 실패해도 Kafka 메시지는 정상 처리된다. 그 설계는 옳다 --
  * C가 잠깐 느렸다는 이유로 판정된 근거 수백 건을 다시 쓸 이유가 없다. 그러나 그러면
  * 그 사용자의 결과는 <b>다음 분석이나 목표 직무 변경까지 영영 생기지 않는다.</b></p>
  *
- * <p>그래서 조회 시점에 한 번 시도한다. {@code event_id}가 결정론적이라 이미 계산된
- * 것은 C가 저장된 결과를 그대로 주고, 실패하면 이번 조회만 준비 중으로 끝난다.
- * 스케줄러를 두지 않는 이유는 재계산이 필요한 시점이 곧 누군가 그 화면을 여는
- * 시점이기 때문이다 -- 아무도 보지 않는 결과를 미리 만들 이유가 없다.</p>
+ * <p>계산은 분석 완료와 목표 직무 변경 같은 쓰기 event만 시작한다. 조회가 계산을
+ * 시작하면 영구 422도 화면 새로고침마다 다시 전송되고, 같은 event identity의 payload가
+ * 달라졌을 때 409가 연쇄된다. 결과가 없으면 저장된 시도 상태만 읽어 화면에 돌려준다.</p>
  */
 @Service
 public class ComputeResultReader {
@@ -47,22 +48,12 @@ public class ComputeResultReader {
     private final UserTargetStore targets;
     private final ComputeSnapshotStore snapshots;
     private final UserEvidenceAssembler assembler;
-    /**
-     * 순환 참조를 끊는다.
-     *
-     * <p>{@code TargetService -> CComputeSyncService -> ...} 와 이 클래스가 같은
-     * 동기화를 쓰는데, 생성자로 직접 받으면 빈 그래프가 돈다. 조회 시점에만 필요하므로
-     * 지연해서 받는다.</p>
-     */
-    private final ObjectProvider<CComputeSyncService> sync;
 
     public ComputeResultReader(UserTargetStore targets, ComputeSnapshotStore snapshots,
-                               UserEvidenceAssembler assembler,
-                               ObjectProvider<CComputeSyncService> sync) {
+                               UserEvidenceAssembler assembler) {
         this.targets = targets;
         this.snapshots = snapshots;
         this.assembler = assembler;
-        this.sync = sync;
     }
 
     /**
@@ -85,10 +76,9 @@ public class ComputeResultReader {
      */
     public <T> Computed<T> read(long userId, Reader<T> reader) {
         Target target = requireTarget(userId);
-        ComputeSnapshot snapshot = snapshots.findLatest(userId, target.targetKey())
-                .orElseGet(() -> recompute(userId));
+        ComputeSnapshot snapshot = snapshots.findLatest(userId, target.targetKey()).orElse(null);
         if (snapshot == null) {
-            return new Computed<>(target, null, pendingState(userId), null);
+            return new Computed<>(target, null, pendingState(userId, target), null);
         }
 
         try {
@@ -99,34 +89,28 @@ public class ComputeResultReader {
     }
 
     /**
-     * 저장된 결과가 없을 때 한 번만 계산을 시도한다.
-     *
-     * <p>C 장애로 분석 완료 훅이 실패했던 사용자를 구하는 유일한 경로다. 멱등
-     * {@code event_id} 덕분에 이미 계산된 것은 다시 계산되지 않고 저장된 결과가 온다.</p>
-     *
-     * <p>실패를 삼키는 이유는 이 호출이 조회의 곁가지이기 때문이다. C가 여전히 내려가
-     * 있으면 아래에서 준비 중 상태를 만들고, 화면은 기다리는 UI를 그린다.</p>
-     */
-    private ComputeSnapshot recompute(long userId) {
-        try {
-            return sync.getObject().synchronize(userId).orElse(null);
-        } catch (RuntimeException unavailable) {
-            log.warn("조회 시점 C 재계산 실패: userId={}, reason={}", userId, unavailable.toString());
-            return null;
-        }
-    }
-
-    /**
      * 결과가 없는 이유.
      *
      * <p>기다리면 생기는 상태와 재분석해야 풀리는 상태를 구분한다. 후자를 준비 중으로
      * 두면 화면이 영원히 기다리고, 사용자는 무엇을 해야 하는지 알 수 없다.</p>
      */
-    private ComputeState pendingState(long userId) {
+    private ComputeState pendingState(long userId, Target target) {
         Assembled assembled = assembler.assemble(userId);
         if (assembled.isReady()) {
-            // 보낼 Evidence 는 있는데 결과가 없다. 방금 재계산도 실패했으므로 C 쪽이다.
-            return ComputeState.preparing("COMPUTING");
+            Optional<ComputeAttempt> attempt = snapshots.findAttempt(userId, target.targetKey(),
+                    assembled.evidenceVersion());
+            if (attempt.isPresent()) {
+                ComputeAttempt state = attempt.get();
+                if (state.failed()) {
+                    return ComputeState.failed(state.reason() == null
+                            ? "COMPUTE_FAILED" : state.reason());
+                }
+                int retryAfter = retryAfterSeconds(state.nextRetryAt(), Instant.now());
+                return "RETRYING".equals(state.status())
+                        ? ComputeState.retrying(retryAfter)
+                        : ComputeState.computing(retryAfter);
+            }
+            return ComputeState.preparing("COMPUTE_PENDING");
         }
         return switch (assembled.unavailable()) {
             case NO_ANALYSIS -> ComputeState.notAnalyzed();
@@ -135,6 +119,14 @@ public class ComputeResultReader {
             case NO_RULE_PACK_LINEAGE -> ComputeState.failed("REANALYSIS_REQUIRED_NO_RULE_PACK");
             case MIXED_RULE_PACK -> ComputeState.failed("REANALYSIS_REQUIRED_MIXED_RULE_PACK");
         };
+    }
+
+    private static int retryAfterSeconds(Instant nextRetryAt, Instant now) {
+        if (nextRetryAt == null || !nextRetryAt.isAfter(now)) {
+            return 0;
+        }
+        long millis = Duration.between(now, nextRetryAt).toMillis();
+        return (int) Math.min(Integer.MAX_VALUE, (millis + 999) / 1000);
     }
 
     /**

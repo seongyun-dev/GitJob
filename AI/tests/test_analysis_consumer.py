@@ -10,6 +10,7 @@ import json
 from hashlib import sha256
 
 import pytest
+
 from analysis.claim import Claim, ClaimStatus
 from analysis.clone import (
     CloneResult,
@@ -17,7 +18,7 @@ from analysis.clone import (
     PermanentCloneError,
     TransientCloneError,
 )
-from analysis.consumer import AnalysisConsumer, ClaimBusyError, ClaimLostError
+from analysis.consumer import AnalysisConsumer, ClaimLostError
 from analysis.judge import Candidate, Judgement
 from analysis.parse import ImportOccurrence, ParseReport
 from analysis.publish import ResultPublisher
@@ -136,6 +137,7 @@ class BatchTransport:
         self.consumer: AnalysisConsumer | None = None
         self.polled = False
         self.commits = 0
+        self.deferred: list[ConsumedMessage] = []
         self.closed = False
 
     def poll(self, _timeout_ms: int) -> list[ConsumedMessage]:
@@ -149,26 +151,24 @@ class BatchTransport:
     def commit(self) -> None:
         self.commits += 1
 
+    def defer(self, message: ConsumedMessage) -> None:
+        self.deferred.append(message)
+
     def close(self) -> None:
         self.closed = True
 
 
-class BusyRetryTransport:
-    """One delivery that becomes available without advancing its offset."""
+class DeferredRetryTransport:
+    """Redeliver the exact record after the consumer rewinds its offset."""
 
     def __init__(self, message: ConsumedMessage) -> None:
         self.message = message
-        self.delivered = False
         self.commits = 0
         self.closed = False
-        self.paused = 0
-        self.resumed = 0
+        self.deferred: list[ConsumedMessage] = []
         self.consumer: AnalysisConsumer | None = None
 
     def poll(self, _timeout_ms: int) -> list[ConsumedMessage]:
-        if self.delivered:
-            return []
-        self.delivered = True
         return [self.message]
 
     def commit(self) -> None:
@@ -176,14 +176,8 @@ class BusyRetryTransport:
         assert self.consumer is not None
         self.consumer.stop()
 
-    def pause_all(self) -> None:
-        self.paused += 1
-
-    def heartbeat(self, _timeout_ms: int) -> None:
-        return None
-
-    def resume_all(self) -> None:
-        self.resumed += 1
+    def defer(self, message: ConsumedMessage) -> None:
+        self.deferred.append(message)
 
     def close(self) -> None:
         self.closed = True
@@ -270,7 +264,8 @@ def test_clone_is_pinned_to_the_commit_not_the_branch(tmp_path):
 
 def test_busy_redelivery_is_retried_without_terminating_the_consumer(tmp_path):
     claims = BusyThenAcquiredClaims()
-    transport = BusyRetryTransport(message(event()))
+    busy = message(event())
+    transport = DeferredRetryTransport(busy)
     consumer = AnalysisConsumer(
         transport=transport, claims=claims, cloner=FakeCloner(tmp_path)
     )
@@ -280,7 +275,7 @@ def test_busy_redelivery_is_retried_without_terminating_the_consumer(tmp_path):
 
     assert claims.calls == 2
     assert transport.commits == 1
-    assert transport.paused == transport.resumed == 1
+    assert transport.deferred == [busy]
     assert transport.closed is True
 
 
@@ -469,17 +464,23 @@ def test_terminal_redelivery_of_the_same_event_does_not_clone_again(tmp_path):
     assert cloner.calls == []
 
 
-def test_busy_redelivery_never_commits_or_reaches_a_later_partition_offset(tmp_path):
+def test_busy_redelivery_is_deferred_without_stopping_the_worker(tmp_path):
     claims = FakeClaims(ClaimStatus.BUSY)
     cloner = FakeCloner(tmp_path)
-    transport = BatchTransport([message(event(), 7), message(event("ev_2", "an_2"), 8)])
-    consumer = AnalysisConsumer(transport=transport, claims=claims, cloner=cloner)
+    busy = message(event(), 7)
+    transport = BatchTransport([busy, message(event("ev_2", "an_2"), 8)])
+    consumer = AnalysisConsumer(
+        transport=transport,
+        claims=claims,
+        cloner=cloner,
+        poll_timeout_ms=0,
+    )
     transport.consumer = consumer
 
-    with pytest.raises(ClaimBusyError):
-        consumer.run()
+    consumer.run()
 
     assert transport.commits == 0
+    assert transport.deferred == [busy]
     assert transport.closed is True
     assert claims.claimed == ["ev_1"]
     assert cloner.calls == []
@@ -604,6 +605,39 @@ def test_a_failed_publish_leaves_the_claim_unfinished(tmp_path):
         ).handle(message(event()))
 
     assert claims.finished == []
+
+
+def test_invalid_result_contract_becomes_a_terminal_failure(tmp_path, monkeypatch):
+    claims, results, dlq = FakeClaims(), FakeResults(), FakeDlq()
+
+    def invalid_result(*_args, **_kwargs):
+        from analysis.results import TechnologyCandidate
+
+        TechnologyCandidate(
+            ecosystem="PYPI",
+            coordinate="pytest",
+            scope="x" * 41,
+            occurrence_count=1,
+        )
+
+    monkeypatch.setattr("analysis.consumer.completed_result", invalid_result)
+
+    outcome = build(
+        tmp_path,
+        claims=claims,
+        dlq=dlq,
+        registry=EmptyRegistry(),
+        results=results.publisher(),
+    ).handle(message(event()))
+
+    assert outcome.action == "failed"
+    assert outcome.error_code == "RESULT_CONTRACT_INVALID"
+    assert claims.finished == [
+        ("ev_1", 1, "FAILED", "RESULT_CONTRACT_INVALID")
+    ]
+    assert len(dlq.sent) == 1
+    body = json.loads(results.published[0][2])
+    assert body["payload"]["error_code"] == "RESULT_CONTRACT_INVALID"
 
 
 def test_a_permanent_clone_failure_is_reported_to_the_backend_too(tmp_path):

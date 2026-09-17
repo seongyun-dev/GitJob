@@ -8,6 +8,7 @@ import com.example.git_job.compute.client.dto.CohortResolved;
 import com.example.git_job.compute.client.dto.CohortSelector;
 import com.example.git_job.compute.service.UserEvidenceAssembler.Assembled;
 import com.example.git_job.compute.store.ComputeSnapshotStore;
+import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeSnapshot;
 import com.example.git_job.compute.store.UserTargetStore;
 import com.example.git_job.compute.store.UserTargetStore.Target;
@@ -54,6 +55,8 @@ public class CComputeSyncService {
 
     private static final String COHORT_RESOLVE_PATH = "/internal/v1/c/job-cohorts/resolve";
     private static final String ANALYSES_COMPLETED_PATH = "/internal/v1/c/analyses/completed";
+    private static final int MAX_ATTEMPTS = 3;
+    private static final int RUNNING_LEASE_SECONDS = 120;
 
     private final CComputeClient client;
     private final UserEvidenceAssembler assembler;
@@ -76,6 +79,15 @@ public class CComputeSyncService {
      * @throws CComputeException C가 준비되지 않았거나 장애일 때. 호출자가 상태로 바꾼다.
      */
     public Optional<ComputeSnapshot> synchronize(long userId) {
+        return synchronize(userId, null);
+    }
+
+    /** 저장된 재시도 행이 아직 현재 identity인지 확인한 뒤 다시 계산한다. */
+    Optional<ComputeSnapshot> synchronizeDue(ComputeAttempt due) {
+        return synchronize(due.userId(), due);
+    }
+
+    private Optional<ComputeSnapshot> synchronize(long userId, ComputeAttempt due) {
         Optional<Target> target = targets.find(userId);
         if (target.isEmpty()) {
             log.debug("C 계산 생략: 목표 직무 미선택 userId={}", userId);
@@ -88,7 +100,69 @@ public class CComputeSyncService {
             log.debug("C 계산 생략: userId={}, reason={}", userId, assembled.unavailable());
             return Optional.empty();
         }
-        return Optional.of(compute(userId, target.get(), assembled, true));
+        Target selectedTarget = target.get();
+        if (due != null && (!due.targetKey().equals(selectedTarget.targetKey())
+                || !due.evidenceVersion().equals(assembled.evidenceVersion()))) {
+            // 목표/Evidence가 바뀐 뒤 남은 retry다. 읽었던 정확한 token만 지우고
+            // 아래에서 현재 identity를 정상 claim한다.
+            snapshots.deleteAttempt(due);
+        }
+        Instant now = Instant.now();
+        Optional<ComputeAttempt> claimed = snapshots.tryStartAttempt(userId,
+                selectedTarget.targetKey(), assembled.evidenceVersion(), now,
+                now.plusSeconds(RUNNING_LEASE_SECONDS), MAX_ATTEMPTS);
+        if (claimed.isEmpty()) {
+            log.debug("C 계산 생략: active/terminal attempt userId={}, targetKey={}, evidence={}",
+                    userId, selectedTarget.targetKey(), assembled.evidenceVersion());
+            return Optional.empty();
+        }
+
+        ComputeAttempt attempt = claimed.get();
+        if (attempt.failed()) {
+            log.warn("C 계산 retry budget 소진: userId={}, targetKey={}, evidence={}",
+                    userId, selectedTarget.targetKey(), assembled.evidenceVersion());
+            return Optional.empty();
+        }
+        try {
+            ComputeSnapshot result = compute(userId, selectedTarget, assembled, true);
+            snapshots.clearAttempt(attempt);
+            return Optional.of(result);
+        } catch (CComputeException failure) {
+            recordFailure(attempt, failure);
+            throw failure;
+        } catch (RuntimeException failure) {
+            recordRetry(attempt, "COMPUTE_UNAVAILABLE", null);
+            throw failure;
+        }
+    }
+
+    private void recordFailure(ComputeAttempt attempt, CComputeException failure) {
+        switch (failure.getStatus()) {
+            case INVALID_INPUT -> recordTerminal(attempt, "COMPUTE_INVALID_INPUT");
+            case CONFLICT -> recordTerminal(attempt, "COMPUTE_IDEMPOTENCY_CONFLICT");
+            case TOO_LARGE -> recordTerminal(attempt, "COMPUTE_RESULT_TOO_LARGE");
+            case SCOPE_MISMATCH -> recordTerminal(attempt, "COMPUTE_SCOPE_MISMATCH");
+            case INTEGRITY_FAILED -> recordTerminal(attempt, "COMPUTE_INTEGRITY_FAILED");
+            case NOT_FOUND -> recordTerminal(attempt, "COMPUTE_INPUT_NOT_FOUND");
+            case PREPARING, NOT_PREPARED, MATCHING_NOT_PREPARED, COMPUTE_FAILED, UNAVAILABLE
+                    -> recordRetry(attempt, "COMPUTE_RETRYING", failure.getRetryAfterSec());
+        }
+    }
+
+    private void recordRetry(ComputeAttempt attempt, String reason, Integer retryAfterSec) {
+        Instant now = Instant.now();
+        if (attempt.attemptCount() >= MAX_ATTEMPTS) {
+            snapshots.markFailed(attempt, "COMPUTE_RETRY_EXHAUSTED", now);
+            return;
+        }
+        int backoff = retryAfterSec == null
+                ? Math.min(300, 5 * (1 << Math.max(0, attempt.attemptCount() - 1)))
+                : Math.max(0, retryAfterSec);
+        snapshots.markRetrying(attempt, reason, now.plusSeconds(backoff), now);
+    }
+
+    private void recordTerminal(ComputeAttempt attempt, String reason) {
+        snapshots.markFailed(attempt, reason, Instant.now());
     }
 
     /**

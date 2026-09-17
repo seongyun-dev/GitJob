@@ -2,6 +2,7 @@ package com.example.git_job.compute.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeSnapshot;
 import com.example.git_job.compute.store.UserTargetStore.Target;
 import java.time.Instant;
@@ -102,6 +103,83 @@ class ComputeStoreIntegrationTest {
             assertThat(store.findLatest(userId, "BACKEND|서울|신입").orElseThrow().eventId())
                     .isEqualTo("ev-new");
             assertThat(store.findLatest(userId, "FRONTEND||")).isEmpty();
+        });
+    }
+
+    @Test
+    @DisplayName("계산 attempt는 lease, backoff, terminal 상태를 원자적으로 지킨다")
+    void computeAttemptLifecycleIsBounded() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            String target = "BACKEND|서울|신입";
+
+            ComputeAttempt first = store.tryStartAttempt(userId, target, EVIDENCE_VERSION, now,
+                    now.plusSeconds(30), 3).orElseThrow();
+            assertThat(first.attemptCount()).isEqualTo(1);
+            assertThat(store.tryStartAttempt(userId, target, EVIDENCE_VERSION, now.plusSeconds(1),
+                    now.plusSeconds(31), 3)).isEmpty();
+            assertThat(store.dueAttempts(now.plusSeconds(1), 20)).isEmpty();
+            assertThat(store.dueAttempts(now.plusSeconds(31), 20))
+                    .extracting(ComputeAttempt::userId)
+                    .containsExactly(userId);
+
+            store.markRetrying(first, "COMPUTE_RETRYING", now.plusSeconds(10), now);
+            ComputeAttempt second = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now.plusSeconds(11), now.plusSeconds(41), 3).orElseThrow();
+            assertThat(second.attemptCount()).isEqualTo(2);
+
+            store.markRetrying(second, "COMPUTE_RETRYING", now.plusSeconds(20),
+                    now.plusSeconds(12));
+            ComputeAttempt third = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now.plusSeconds(21), now.plusSeconds(51), 3).orElseThrow();
+            assertThat(third.attemptCount()).isEqualTo(3);
+
+            // 세 번째 실행이 process 종료로 상태를 못 남겨도 lease가 끝난 다음 claim이
+            // 그 행을 terminal로 닫고 네 번째 outbound는 시작하지 않는다.
+            ComputeAttempt exhausted = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now.plusSeconds(60), now.plusSeconds(90), 3).orElseThrow();
+            assertThat(exhausted.failed()).isTrue();
+            assertThat(exhausted.reason()).isEqualTo("COMPUTE_RETRY_EXHAUSTED");
+
+            String terminalEvidence = "b".repeat(64);
+            ComputeAttempt permanent = store.tryStartAttempt(userId, target, terminalEvidence,
+                    now, now.plusSeconds(30), 3).orElseThrow();
+            store.markFailed(permanent, "COMPUTE_INVALID_INPUT", now.plusSeconds(1));
+            assertThat(store.tryStartAttempt(userId, target, terminalEvidence,
+                    now.plusSeconds(60), now.plusSeconds(90), 3)).isEmpty();
+            assertThat(store.findAttempt(userId, target, EVIDENCE_VERSION).orElseThrow().failed())
+                    .isTrue();
+            // 다른 identity의 terminal 상태를 현재 요청이 임의로 삭제하지 않는다.
+            assertThat(store.findAttempt(userId, target, terminalEvidence)).isPresent();
+        });
+    }
+
+    @Test
+    @DisplayName("삭제 뒤 재생성된 같은 attempt를 이전 worker가 덮어쓰지 못한다")
+    void staleWorkerCannotOverwriteRecreatedAttempt() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            String target = "BACKEND|서울|신입";
+
+            ComputeAttempt staleWorker = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now, now.plusSeconds(30), 3).orElseThrow();
+            jdbc.update("""
+                    DELETE FROM user_c_compute_attempt
+                    WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                    """, userId, target, EVIDENCE_VERSION);
+            ComputeAttempt replacement = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now.plusSeconds(1), now.plusSeconds(31), 3).orElseThrow();
+            assertThat(replacement.attemptCount()).isEqualTo(staleWorker.attemptCount());
+
+            store.deleteAttempt(staleWorker);
+            assertThat(store.findAttempt(userId, target, EVIDENCE_VERSION)).contains(replacement);
+
+            store.markFailed(staleWorker, "COMPUTE_UNAVAILABLE", now.plusSeconds(2));
+
+            assertThat(store.findAttempt(userId, target, EVIDENCE_VERSION).orElseThrow().status())
+                    .isEqualTo("RUNNING");
         });
     }
 

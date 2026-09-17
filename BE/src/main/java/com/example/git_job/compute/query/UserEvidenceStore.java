@@ -1,7 +1,10 @@
 package com.example.git_job.compute.query;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -84,12 +87,25 @@ public class UserEvidenceStore {
      * 커밋이다. 이름이 같아 섞이기 쉬워 별칭을 다르게 둔다.</p>
      */
     public List<EvidenceRow> evidence(long userId) {
-        return jdbc.query(LATEST_PER_REPOSITORY + """
+        return evidence(userId, null);
+    }
+
+    /** 처음 선택한 분석 ID 집합의 근거만 읽는다. */
+    public List<EvidenceRow> evidence(long userId, Set<String> analysisIds) {
+        if (analysisIds != null && analysisIds.isEmpty()) {
+            return List.of();
+        }
+        List<Object> args = new ArrayList<>();
+        String selectedAnalyses = selectedAnalyses(userId, analysisIds, args);
+        // LEFT JOIN contribution의 사용자 조건.
+        args.add(userId);
+        return jdbc.query(selectedAnalyses + """
                 SELECT l.analysis_id,
                        l.repository_id,
                        l.commit_sha            AS analyzed_commit_sha,
                        e.analysis_evidence_id,
                        e.registry_version,
+                       l.rule_pack_version,
                        e.rule_id,
                        e.fact_type,
                        e.file_path,
@@ -112,6 +128,7 @@ public class UserEvidenceStore {
                         rs.getString("analyzed_commit_sha"),
                         rs.getLong("analysis_evidence_id"),
                         rs.getString("registry_version"),
+                        rs.getString("rule_pack_version"),
                         rs.getString("rule_id"),
                         rs.getString("rule_type"),
                         rs.getString("tech_id"),
@@ -121,7 +138,7 @@ public class UserEvidenceStore {
                         rs.getInt("end_line"),
                         rs.getString("blame_commit_sha"),
                         rs.getString("contribution_type")),
-                userId, userId);
+                args.toArray());
     }
 
     /**
@@ -154,7 +171,17 @@ public class UserEvidenceStore {
      * 기술을 "보지 못했다"는 사실 자체가 판정 상한의 근거이기 때문이다.</p>
      */
     public List<TechnologySupport> technologySupport(long userId) {
-        return jdbc.query(LATEST_PER_REPOSITORY + """
+        return technologySupport(userId, null);
+    }
+
+    /** 처음 선택한 분석 ID 집합이 사용한 Rule Pack 범위만 읽는다. */
+    public List<TechnologySupport> technologySupport(long userId, Set<String> analysisIds) {
+        if (analysisIds != null && analysisIds.isEmpty()) {
+            return List.of();
+        }
+        List<Object> args = new ArrayList<>();
+        String selectedAnalyses = selectedAnalyses(userId, analysisIds, args);
+        return jdbc.query(selectedAnalyses + """
                 SELECT s.analysis_id, s.tech_id, s.max_supported_level, s.coverage
                 FROM latest l
                 JOIN analysis_technology_support s ON s.analysis_id = l.analysis_id
@@ -164,7 +191,28 @@ public class UserEvidenceStore {
                         rs.getString("tech_id"),
                         rs.getString("max_supported_level"),
                         rs.getString("coverage")),
-                userId);
+                args.toArray());
+    }
+
+    private static String selectedAnalyses(long userId, Set<String> analysisIds,
+                                           List<Object> args) {
+        args.add(userId);
+        if (analysisIds == null) {
+            return LATEST_PER_REPOSITORY;
+        }
+        List<String> ids = new ArrayList<>(new TreeSet<>(analysisIds));
+        ids.forEach(args::add);
+        return """
+                WITH latest AS (
+                    SELECT analysis_id, repository_id, repository_full_name, commit_sha,
+                           completed_at, registry_version, rule_pack_version,
+                           rule_pack_content_sha256, skipped_reasons
+                    FROM analysis_job
+                    WHERE user_id = ? AND status = 'SUCCEEDED'
+                      AND analysis_id IN (%s)
+                )
+                """.formatted(String.join(", ",
+                java.util.Collections.nCopies(ids.size(), "?")));
     }
 
     /**
@@ -236,7 +284,8 @@ public class UserEvidenceStore {
     }
 
     public record EvidenceRow(String analysisId, String repositoryId, String analyzedCommitSha,
-            long evidenceId, String registryVersion, String ruleId, String ruleType,
+            long evidenceId, String registryVersion, String rulePackVersion, String ruleId,
+            String ruleType,
             String techId, String factType, String filePath, int startLine, int endLine,
             String blameCommitSha, String contributionType) {
     }

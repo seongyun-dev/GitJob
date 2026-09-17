@@ -29,6 +29,11 @@ public record ComputeState(String dataStatus, String statusReason, Integer retry
         return new ComputeState(PREPARING, "COMPUTING", retryAfterSec);
     }
 
+    /** 이전 계산이 일시 실패해 backoff 중이다. GET은 이 시간을 당기지 않는다. */
+    public static ComputeState retrying(Integer retryAfterSec) {
+        return new ComputeState(PREPARING, "COMPUTE_RETRYING", retryAfterSec);
+    }
+
     /** 결과가 아직 없다. 분석은 끝났지만 C 계산이 아직 돌지 않은 상태다. */
     public static ComputeState preparing(String reason) {
         return new ComputeState(PREPARING, reason, null);

@@ -187,9 +187,12 @@ matchingWhatIf:  (targetKey: string, techId: string) =>
 }
 ```
 
-`statusReason` 값: `NONE` `COMPUTING` `COHORT_NOT_PREPARED` `MATCHING_NOT_PREPARED`
-`NO_CANDIDATES` `INSUFFICIENT_JOB_SAMPLE` `INSUFFICIENT_EVIDENCE` `PARTIAL_ANALYSIS`
-`RESULT_TOO_LARGE`.
+`statusReason` 값: `NONE` `COMPUTING` `COMPUTE_PENDING` `COMPUTE_RETRYING`
+`COMPUTE_INVALID_INPUT` `COMPUTE_IDEMPOTENCY_CONFLICT` `COMPUTE_RETRY_EXHAUSTED`
+`COHORT_NOT_PREPARED` `MATCHING_NOT_PREPARED` `NO_CANDIDATES`
+`INSUFFICIENT_JOB_SAMPLE` `INSUFFICIENT_EVIDENCE` `PARTIAL_ANALYSIS`
+`RESULT_TOO_LARGE`. `COMPUTE_*` terminal 사유는 같은 Evidence·목표 조합에서 GET을
+반복해도 유지되며, 새 Evidence나 목표 변경으로 identity가 바뀌어야 새 계산이 시작된다.
 
 C 응답 → 공개 응답 변환표. **C 장애를 전부 500으로 뭉개지 않는다.**
 
@@ -338,13 +341,50 @@ POST /internal/v1/c/analyses/completed      (c-compute-event/v1 + evidence-consu
   남기고 중단한다. 같은 event를 무한히 다시 만들지 않는다.
 - `202 PREPARING`: `Retry-After`를 따르고 같은 event로 재시도한다. 공개 API는 그동안
   `PREPARING`을 내려보낸다.
-- **조회 시점 재시도.** 분석 완료 훅에서 C 호출이 실패해도 Kafka 메시지는 정상
-  처리한다(느린 C 때문에 판정된 근거 수백 건을 다시 쓰지 않는다). 그러면 그 사용자의
-  결과는 다음 분석이나 목표 직무 변경까지 생기지 않으므로, 공개 API가 Snapshot을 찾지
-  못하면 **한 번 동기화를 시도한다**(`ComputeResultReader`). `event_id`가 결정론적이라
-  이미 계산된 것은 C가 저장된 결과를 그대로 주고, 실패하면 이번 조회만 준비 중으로
-  끝난다. 스케줄러를 두지 않는 이유는 재계산이 필요한 시점이 곧 누군가 그 화면을 여는
-  시점이기 때문이다.
+- **조회는 재시도하지 않는다.** 계산 시작점은 분석 완료와 목표 직무 변경뿐이다.
+  `ComputeResultReader`는 Snapshot과 `user_c_compute_attempt` 상태를 읽기만 하므로 화면
+  새로고침이 C outbound 요청이나 event attempt를 늘리지 않는다.
+- 일시 오류만 최대 3회까지 다시 claim할 수 있다. 실행 중 lease와 `Retry-After` 또는
+  지수 backoff 전에는 같은 Evidence·목표 조합을 다시 보내지 않는다. 상한에 도달하면
+  `FAILED/COMPUTE_RETRY_EXHAUSTED`로 고정한다.
+- 각 실행은 `run_token`을 새로 발급한다. 상태 변경과 정리는 이 token이 같은 행에만
+  적용하므로, 행이 삭제·재생성된 뒤 돌아온 이전 worker가 새 실행을 덮어쓰지 못한다.
+  목표나 Evidence가 바뀐 경우에도 사용자 전체 행을 지우지 않고 스케줄러가 읽었던
+  정확한 이전 token만 정리한다.
+- `422 INVALID_INPUT`, 두 번째 `409 IDEMPOTENCY_CONFLICT`, 범위·무결성 오류는 즉시
+  terminal 상태로 저장한다. 공개 GET은 각각의 안정적인 `COMPUTE_*` 사유를 200 응답의
+  `FAILED` 상태로 노출하고 자동 계산을 시작하지 않는다.
+
+### V22 배포 전 기존 미완료 사용자 확인
+
+V22는 기존 실패를 추측해 attempt 행으로 만들지 않는다. 배포 전에 아래 진단으로
+목표와 성공 분석은 있지만 최신 입력 이후 C Snapshot이나 attempt가 없는 사용자를 확인한다.
+
+```sql
+WITH latest_input AS (
+    SELECT t.user_id,
+           t.target_role || '|' || t.regions || '|' || t.career_levels AS target_key,
+           greatest(t.updated_at, max(a.completed_at)) AS input_at
+    FROM user_target t
+    JOIN analysis_job a ON a.user_id = t.user_id AND a.status = 'SUCCEEDED'
+    GROUP BY t.user_id, t.target_role, t.regions, t.career_levels, t.updated_at
+)
+SELECT i.user_id, i.target_key, i.input_at
+FROM latest_input i
+WHERE NOT EXISTS (
+          SELECT 1 FROM user_c_snapshot s
+          WHERE s.user_id = i.user_id AND s.target_key = i.target_key
+            AND s.computed_at >= i.input_at
+      )
+  AND NOT EXISTS (
+          SELECT 1 FROM user_c_compute_attempt a WHERE a.user_id = i.user_id
+      )
+ORDER BY i.user_id;
+```
+
+결과가 있으면 배포 후 해당 사용자의 최신 분석 완료 event를 기존 replay 절차로 다시
+전달하거나 목표 직무 저장 경로를 다시 실행해 write-side 계산을 시작한다. GET 호출로
+복구하지 않는다. 운영 DB에서 이 목록이 비어 있는지는 배포 승인 전에 별도로 확인한다.
 
 ## 4. 공개 API
 

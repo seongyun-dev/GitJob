@@ -1,7 +1,9 @@
 package com.example.git_job.compute.store;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -30,6 +32,18 @@ public class ComputeSnapshotStore {
             rs.getString("event_id"),
             rs.getString("target_key"),
             rs.getTimestamp("computed_at").toInstant());
+
+    private static final RowMapper<ComputeAttempt> ATTEMPT_MAPPER = (rs, row) ->
+            new ComputeAttempt(
+                    rs.getLong("user_id"),
+                    rs.getString("target_key"),
+                    rs.getString("evidence_version"),
+                    rs.getString("status"),
+                    rs.getString("reason"),
+                    rs.getInt("attempt_count"),
+                    rs.getObject("run_token", UUID.class),
+                    instantOrNull(rs.getTimestamp("next_retry_at")),
+                    rs.getTimestamp("updated_at").toInstant());
 
     private static final String COLUMNS = """
             user_id, evidence_version, cohort_snapshot_id, demand_snapshot_id,
@@ -82,8 +96,125 @@ public class ComputeSnapshotStore {
         return inserted > 0;
     }
 
+    public Optional<ComputeAttempt> findAttempt(long userId, String targetKey,
+                                                String evidenceVersion) {
+        return jdbc.query("""
+                SELECT user_id, target_key, evidence_version, status, reason,
+                       attempt_count, run_token, next_retry_at, updated_at
+                FROM user_c_compute_attempt
+                WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                """, ATTEMPT_MAPPER, userId, targetKey, evidenceVersion).stream().findFirst();
+    }
+
+    /** lease 또는 backoff가 끝난 정확한 실행. 실제 claim은 {@link #tryStartAttempt}가 한다. */
+    public List<ComputeAttempt> dueAttempts(Instant now, int limit) {
+        return jdbc.query("""
+                SELECT user_id, target_key, evidence_version, status, reason,
+                       attempt_count, run_token, next_retry_at, updated_at
+                FROM user_c_compute_attempt
+                WHERE status IN ('RUNNING', 'RETRYING') AND next_retry_at <= ?
+                ORDER BY updated_at, user_id
+                LIMIT ?
+                """, ATTEMPT_MAPPER, java.sql.Timestamp.from(now), limit);
+    }
+
+    /** 스케줄러가 읽은 정확한 실행만 지운다. 이후 재생성된 행은 token이 달라 보존된다. */
+    public void deleteAttempt(ComputeAttempt attempt) {
+        jdbc.update("""
+                DELETE FROM user_c_compute_attempt
+                WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND run_token = ?
+                """, attempt.userId(), attempt.targetKey(), attempt.evidenceVersion(),
+                attempt.runToken());
+    }
+
+    /**
+     * backoff가 끝난 계산 하나를 원자적으로 claim한다.
+     *
+     * <p>분석 완료와 목표 변경이 동시에 들어와도 {@code RETURNING}을 받은 호출 하나만
+     * C를 부른다. 영구 실패와 시도 상한을 넘은 행은 다시 열지 않는다.</p>
+     */
+    public Optional<ComputeAttempt> tryStartAttempt(long userId, String targetKey,
+            String evidenceVersion, Instant now, Instant leaseUntil, int maxAttempts) {
+        UUID runToken = UUID.randomUUID();
+        return jdbc.query("""
+                INSERT INTO user_c_compute_attempt
+                    (user_id, target_key, evidence_version, status, reason, attempt_count,
+                     run_token, next_retry_at, updated_at)
+                VALUES (?, ?, ?, 'RUNNING', 'COMPUTING', 1, ?, ?, ?)
+                ON CONFLICT (user_id, target_key, evidence_version) DO UPDATE SET
+                    status = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                                  THEN 'FAILED' ELSE 'RUNNING' END,
+                    reason = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                                  THEN 'COMPUTE_RETRY_EXHAUSTED' ELSE 'COMPUTING' END,
+                    attempt_count = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                                         THEN user_c_compute_attempt.attempt_count
+                                         ELSE user_c_compute_attempt.attempt_count + 1 END,
+                    run_token = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                                     THEN user_c_compute_attempt.run_token
+                                     ELSE EXCLUDED.run_token END,
+                    next_retry_at = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                                         THEN NULL ELSE EXCLUDED.next_retry_at END,
+                    updated_at = EXCLUDED.updated_at
+                WHERE user_c_compute_attempt.status <> 'FAILED'
+                  AND (user_c_compute_attempt.next_retry_at IS NULL
+                       OR user_c_compute_attempt.next_retry_at <= ?)
+                RETURNING user_id, target_key, evidence_version, status, reason,
+                          attempt_count, run_token, next_retry_at, updated_at
+                """, ATTEMPT_MAPPER,
+                userId, targetKey, evidenceVersion,
+                runToken,
+                java.sql.Timestamp.from(leaseUntil), java.sql.Timestamp.from(now),
+                maxAttempts, maxAttempts, maxAttempts, maxAttempts, maxAttempts,
+                java.sql.Timestamp.from(now)).stream().findFirst();
+    }
+
+    public void markRetrying(ComputeAttempt attempt, String reason, Instant nextRetryAt,
+                             Instant now) {
+        jdbc.update("""
+                UPDATE user_c_compute_attempt
+                SET status = 'RETRYING', reason = ?, next_retry_at = ?, updated_at = ?
+                WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND run_token = ? AND status = 'RUNNING'
+                """, reason, java.sql.Timestamp.from(nextRetryAt), java.sql.Timestamp.from(now),
+                attempt.userId(), attempt.targetKey(), attempt.evidenceVersion(),
+                attempt.runToken());
+    }
+
+    public void markFailed(ComputeAttempt attempt, String reason, Instant now) {
+        jdbc.update("""
+                UPDATE user_c_compute_attempt
+                SET status = 'FAILED', reason = ?, next_retry_at = NULL, updated_at = ?
+                WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND run_token = ? AND status = 'RUNNING'
+                """, reason, java.sql.Timestamp.from(now), attempt.userId(), attempt.targetKey(),
+                attempt.evidenceVersion(), attempt.runToken());
+    }
+
+    public void clearAttempt(ComputeAttempt attempt) {
+        jdbc.update("""
+                DELETE FROM user_c_compute_attempt
+                WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND run_token = ? AND status = 'RUNNING'
+                """, attempt.userId(), attempt.targetKey(), attempt.evidenceVersion(),
+                attempt.runToken());
+    }
+
+    private static Instant instantOrNull(java.sql.Timestamp value) {
+        return value == null ? null : value.toInstant();
+    }
+
     public record ComputeSnapshot(long userId, String evidenceVersion, String cohortSnapshotId,
             String demandSnapshotId, String recommendationSnapshotId, String eventId,
             String targetKey, Instant computedAt) {
+    }
+
+    public record ComputeAttempt(long userId, String targetKey, String evidenceVersion,
+            String status, String reason, int attemptCount, UUID runToken, Instant nextRetryAt,
+            Instant updatedAt) {
+
+        public boolean failed() {
+            return "FAILED".equals(status);
+        }
     }
 }

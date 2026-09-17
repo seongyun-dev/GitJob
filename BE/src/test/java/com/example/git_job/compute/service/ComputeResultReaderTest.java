@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static com.example.git_job.compute.support.ComputeTestSupport.reader;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +17,7 @@ import com.example.git_job.compute.service.UserEvidenceAssembler.Unavailable;
 import com.example.git_job.compute.support.ComputeTestSupport;
 import com.example.git_job.compute.service.ComputeResultReader.Computed;
 import com.example.git_job.compute.store.ComputeSnapshotStore;
+import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeSnapshot;
 import com.example.git_job.compute.store.UserTargetStore;
 import com.example.git_job.compute.store.UserTargetStore.Target;
@@ -24,6 +26,7 @@ import com.example.git_job.global.exceptions.ErrorCode;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -93,7 +96,7 @@ class ComputeResultReaderTest {
         Computed<String> computing = reader.read(USER_ID, snapshot -> "value");
         // 분석은 끝났고 계산만 남았다. 곧 값이 생기므로 기다리는 화면이다.
         assertThat(computing.state().dataStatus()).isEqualTo(ComputeState.PREPARING);
-        assertThat(computing.state().statusReason()).isEqualTo("COMPUTING");
+        assertThat(computing.state().statusReason()).isEqualTo("COMPUTE_PENDING");
     }
 
     @Test
@@ -114,31 +117,47 @@ class ComputeResultReaderTest {
     }
 
     @Test
-    @DisplayName("Snapshot이 없으면 한 번 다시 계산해 본다")
-    void recomputesWhenSnapshotIsMissing() {
+    @DisplayName("Snapshot이 없어도 GET은 계산을 시작하지 않는다")
+    void readDoesNotRecomputeWhenSnapshotIsMissing() {
         when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.empty());
-        when(sync.synchronize(USER_ID)).thenReturn(Optional.of(snapshot()));
 
-        Computed<String> computed = reader.read(USER_ID,
-                snapshot -> snapshot.recommendationSnapshotId());
+        Computed<String> first = reader.read(USER_ID, snapshot -> "value");
+        Computed<String> second = reader.read(USER_ID, snapshot -> "value");
 
-        // C 가 잠깐 내려가 분석 완료 훅이 실패했던 사용자를 구하는 유일한 경로다.
-        // 이것이 없으면 그 결과는 다음 분석이나 목표 직무 변경까지 생기지 않는다.
-        assertThat(computed.value()).isEqualTo("c-3");
-        verify(sync).synchronize(USER_ID);
+        assertThat(first.state().dataStatus()).isEqualTo(ComputeState.PREPARING);
+        assertThat(second.state().dataStatus()).isEqualTo(ComputeState.PREPARING);
+        verify(sync, never()).synchronize(USER_ID);
     }
 
     @Test
-    @DisplayName("재계산이 실패해도 조회는 상태로 끝난다")
-    void survivesFailedRecompute() {
+    @DisplayName("저장된 422 terminal failure는 새로고침해도 FAILED로 유지한다")
+    void exposesStoredTerminalFailure() {
         when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.empty());
-        when(sync.synchronize(USER_ID))
-                .thenThrow(new CComputeException(CComputeStatus.UNAVAILABLE, null, null, "down"));
+        when(snapshots.findAttempt(anyLong(), anyString(), anyString())).thenReturn(Optional.of(
+                new ComputeAttempt(USER_ID, "BACKEND|서울|신입", "f".repeat(64), "FAILED",
+                        "COMPUTE_INVALID_INPUT", 1, UUID.randomUUID(), null, Instant.EPOCH)));
 
-        // 재계산은 조회의 곁가지다. 실패를 그대로 올리면 기다리면 되는 상태가
-        // 503 오류 화면이 된다.
-        assertThat(reader.read(USER_ID, snapshot -> "value").state().dataStatus())
-                .isEqualTo(ComputeState.PREPARING);
+        Computed<String> computed = reader.read(USER_ID, snapshot -> "value");
+
+        assertThat(computed.state().dataStatus()).isEqualTo(ComputeState.FAILED);
+        assertThat(computed.state().statusReason()).isEqualTo("COMPUTE_INVALID_INPUT");
+        verify(sync, never()).synchronize(USER_ID);
+    }
+
+    @Test
+    @DisplayName("일시 실패 backoff는 RETRYING과 남은 시간을 노출한다")
+    void exposesStoredRetryState() {
+        when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(snapshots.findAttempt(anyLong(), anyString(), anyString())).thenReturn(Optional.of(
+                new ComputeAttempt(USER_ID, "BACKEND|서울|신입", "f".repeat(64), "RETRYING",
+                        "COMPUTE_RETRYING", 1, UUID.randomUUID(),
+                        Instant.now().plusSeconds(30), Instant.now())));
+
+        Computed<String> computed = reader.read(USER_ID, snapshot -> "value");
+
+        assertThat(computed.state().dataStatus()).isEqualTo(ComputeState.PREPARING);
+        assertThat(computed.state().statusReason()).isEqualTo("COMPUTE_RETRYING");
+        assertThat(computed.state().retryAfterSec()).isBetween(1, 30);
     }
 
     @Test

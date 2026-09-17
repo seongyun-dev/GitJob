@@ -3,6 +3,7 @@ package com.example.git_job.compute.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -21,6 +22,7 @@ import com.example.git_job.compute.client.dto.EvidencePayload;
 import com.example.git_job.compute.service.UserEvidenceAssembler.Assembled;
 import com.example.git_job.compute.service.UserEvidenceAssembler.Unavailable;
 import com.example.git_job.compute.store.ComputeSnapshotStore;
+import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeSnapshot;
 import com.example.git_job.compute.store.UserTargetStore;
 import com.example.git_job.compute.store.UserTargetStore.Target;
@@ -28,6 +30,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -66,6 +69,11 @@ class CComputeSyncServiceTest {
                 new Target("BACKEND", List.of("서울"), List.of("신입"), Instant.EPOCH)));
         when(assembler.assemble(USER_ID)).thenReturn(assembled());
         when(snapshots.findByEventId(any())).thenReturn(Optional.empty());
+        when(snapshots.tryStartAttempt(eq(USER_ID), any(), eq(EVIDENCE_VERSION), any(), any(),
+                anyInt())).thenAnswer(invocation -> Optional.of(new ComputeAttempt(
+                        USER_ID, invocation.getArgument(1), EVIDENCE_VERSION, "RUNNING",
+                        "COMPUTING", 1, UUID.randomUUID(), invocation.getArgument(4),
+                        invocation.getArgument(3))));
         when(snapshots.save(any())).thenReturn(true);
         stubResolve(Map.of("runtime", "c/1.0"));
         stubCompleted(RECOMMENDATION);
@@ -186,6 +194,69 @@ class CComputeSyncServiceTest {
 
         // 두 번째도 409 면 포기한다. 새 event ID 를 무한히 만들지 않는다.
         verify(client, times(2)).post(eq("/internal/v1/c/analyses/completed"), any(), any());
+        verify(snapshots).markFailed(any(), eq("COMPUTE_IDEMPOTENCY_CONFLICT"), any());
+    }
+
+    @Test
+    @DisplayName("422는 terminal failure로 저장한다")
+    void persistsInvalidInputAsTerminalFailure() {
+        when(client.post(eq("/internal/v1/c/analyses/completed"), any(),
+                eq(AnalysisCompleted.Result.class)))
+                .thenThrow(new CComputeException(CComputeStatus.INVALID_INPUT, "INVALID_INPUT",
+                        null, "invalid"));
+
+        assertThatThrownBy(() -> service.synchronize(USER_ID))
+                .isInstanceOf(CComputeException.class);
+
+        verify(snapshots).markFailed(any(), eq("COMPUTE_INVALID_INPUT"), any());
+        verify(snapshots, never()).markRetrying(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("일시 오류만 next retry time과 함께 저장한다")
+    void persistsTransientFailureForBoundedRetry() {
+        when(client.post(eq("/internal/v1/c/job-cohorts/resolve"), any(),
+                eq(CohortResolved.class)))
+                .thenThrow(new CComputeException(CComputeStatus.UNAVAILABLE, null, null, "down"));
+
+        assertThatThrownBy(() -> service.synchronize(USER_ID))
+                .isInstanceOf(CComputeException.class);
+
+        verify(snapshots).markRetrying(any(), eq("COMPUTE_RETRYING"), any(), any());
+        verify(snapshots, never()).markFailed(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("세 번째 일시 실패는 retry exhausted terminal 상태가 된다")
+    void stopsAfterTheRetryBudget() {
+        when(snapshots.tryStartAttempt(eq(USER_ID), any(), eq(EVIDENCE_VERSION), any(), any(),
+                anyInt())).thenAnswer(invocation -> Optional.of(new ComputeAttempt(
+                        USER_ID, invocation.getArgument(1), EVIDENCE_VERSION, "RUNNING",
+                        "COMPUTING", 3, UUID.randomUUID(), invocation.getArgument(4),
+                        invocation.getArgument(3))));
+        when(client.post(eq("/internal/v1/c/job-cohorts/resolve"), any(),
+                eq(CohortResolved.class)))
+                .thenThrow(new CComputeException(CComputeStatus.UNAVAILABLE, null, null, "down"));
+
+        assertThatThrownBy(() -> service.synchronize(USER_ID))
+                .isInstanceOf(CComputeException.class);
+
+        verify(snapshots).markFailed(any(), eq("COMPUTE_RETRY_EXHAUSTED"), any());
+        verify(snapshots, never()).markRetrying(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("현재 identity와 다른 due attempt는 읽었던 token만 정리한다")
+    void removesOnlyTheObservedObsoleteAttempt() {
+        ComputeAttempt obsolete = new ComputeAttempt(USER_ID, "FRONTEND||", "e".repeat(64),
+                "RETRYING", "COMPUTE_RETRYING", 1, UUID.randomUUID(), Instant.EPOCH,
+                Instant.EPOCH);
+
+        service.synchronizeDue(obsolete);
+
+        verify(snapshots).deleteAttempt(obsolete);
+        verify(snapshots).tryStartAttempt(eq(USER_ID), eq("BACKEND|서울|신입"),
+                eq(EVIDENCE_VERSION), any(), any(), anyInt());
     }
 
     @Test

@@ -13,15 +13,12 @@ import com.example.git_job.compute.service.UserEvidenceAssembler.Unavailable;
 import com.example.git_job.compute.store.ComputeSnapshotStore;
 import com.example.git_job.compute.store.UserTargetStore;
 import java.util.List;
-import java.util.Optional;
-import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * 계산 결과 조회 테스트의 공통 배선 (S15P21E102-279 후속).
  *
- * <p>{@code ComputeResultReader}는 Snapshot이 없을 때 조립기에게 "왜 없는지"를 묻고,
- * 필요하면 동기화를 한 번 시도한다. 그 두 협력자를 테스트마다 다시 엮으면 같은 배선이
- * 다섯 곳에 복제되고, 협력자가 하나 늘 때마다 다섯 곳을 고치게 된다.</p>
+ * <p>{@code ComputeResultReader}는 Snapshot이 없을 때 조립기와 저장된 attempt 상태로
+ * "왜 없는지"를 판단한다. 이 배선을 테스트마다 다시 엮지 않도록 한 곳에 둔다.</p>
  */
 public final class ComputeTestSupport {
 
@@ -31,9 +28,8 @@ public final class ComputeTestSupport {
     /**
      * Snapshot이 있는 경로만 보는 테스트용.
      *
-     * <p>조립기는 "보낼 Evidence가 있다"고 답하고 동기화는 아무것도 만들지 않는다.
-     * 그래서 Snapshot이 없으면 계산 대기로 끝난다 -- 재분석이 필요한 상태와 섞이지
-     * 않게 하려는 기본값이다.</p>
+     * <p>조립기는 "보낼 Evidence가 있다"고 답한다. Snapshot과 attempt가 없으면 계산
+     * 대기로 끝난다 -- 재분석이 필요한 상태와 섞이지 않게 하려는 기본값이다.</p>
      */
     public static ComputeResultReader reader(UserTargetStore targets,
                                              ComputeSnapshotStore snapshots) {
@@ -46,8 +42,7 @@ public final class ComputeTestSupport {
                                              ComputeSnapshotStore snapshots,
                                              UserEvidenceAssembler assembler,
                                              CComputeSyncService sync) {
-        when(sync.synchronize(anyLong())).thenReturn(Optional.empty());
-        return new ComputeResultReader(targets, snapshots, assembler, provider(sync));
+        return new ComputeResultReader(targets, snapshots, assembler);
     }
 
     /** 보낼 Evidence가 있는 조립 결과. 내용은 보지 않으므로 최소한만 채운다. */
@@ -60,30 +55,5 @@ public final class ComputeTestSupport {
 
     public static Assembled unavailable(Unavailable reason) {
         return new Assembled(null, null, reason);
-    }
-
-    /** 지연 조회용 최소 구현. 순환 참조를 끊으려고 프로덕션이 쓰는 형태다. */
-    private static ObjectProvider<CComputeSyncService> provider(CComputeSyncService sync) {
-        return new ObjectProvider<>() {
-            @Override
-            public CComputeSyncService getObject() {
-                return sync;
-            }
-
-            @Override
-            public CComputeSyncService getObject(Object... args) {
-                return sync;
-            }
-
-            @Override
-            public CComputeSyncService getIfAvailable() {
-                return sync;
-            }
-
-            @Override
-            public CComputeSyncService getIfUnique() {
-                return sync;
-            }
-        };
     }
 }

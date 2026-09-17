@@ -1,8 +1,11 @@
 package com.example.git_job.analysis.query;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -200,7 +203,21 @@ public class TechnologyProfileStore {
      * 파일을 만졌다는 것은 레벨의 근거가 아니라 화면에 보여줄 사실이다.</p>
      */
     public List<TechnologyLevel> personalLevels(long userId) {
-        return personalLevels(userId, null);
+        return personalLevels(userId, null, null);
+    }
+
+    /**
+     * 처음 선택한 분석 집합만으로 Personal Level을 계산한다.
+     *
+     * <p>조립 중 다른 분석이 완료되면 "저장소별 최신" 집합이 질의 사이에 바뀔 수 있다.
+     * Evidence 묶음이 고른 분석 ID와 개인 판정이 서로 다른 시점을 보지 않도록 조립기가
+     * 이 경로를 사용한다.</p>
+     */
+    public List<TechnologyLevel> personalLevels(long userId, Set<String> analysisIds) {
+        if (analysisIds == null || analysisIds.isEmpty()) {
+            return List.of();
+        }
+        return personalLevels(userId, null, analysisIds);
     }
 
     /**
@@ -213,19 +230,23 @@ public class TechnologyProfileStore {
      *         아니라 "확인된 범위가 없다"는 뜻이다
      */
     public Optional<String> personalLevel(long userId, String techId) {
-        return personalLevels(userId, techId).stream()
+        return personalLevels(userId, techId, null).stream()
                 .map(TechnologyLevel::level)
                 .findFirst();
     }
 
     /** @param techId {@code null} 이면 모든 기술. */
-    private List<TechnologyLevel> personalLevels(long userId, String techId) {
+    private List<TechnologyLevel> personalLevels(long userId, String techId,
+                                                  Set<String> selectedAnalysisIds) {
         String filter = techId == null ? "" : "      AND r.tech_id = ?\n";
-        Object[] args = techId == null
-                // LATEST_PER_REPOSITORY 에 하나, mine CTE 에 하나.
-                ? new Object[] {userId, userId}
-                : new Object[] {userId, userId, techId};
-        return jdbc.query(LATEST_PER_REPOSITORY + """
+        List<Object> args = new ArrayList<>();
+        String selectedAnalyses = selectedAnalysesCte(userId, selectedAnalysisIds, args);
+        // latest CTE 뒤 mine CTE의 기여 판정 사용자.
+        args.add(userId);
+        if (techId != null) {
+            args.add(techId);
+        }
+        return jdbc.query(selectedAnalyses + """
                 , mine AS (
                     SELECT DISTINCT e.analysis_id, e.rule_id, e.fact_type
                     FROM latest l
@@ -256,7 +277,26 @@ public class TechnologyProfileStore {
                 FROM holds GROUP BY tech_id
                 """, (rs, row) -> new TechnologyLevel(
                         rs.getString("tech_id"), rs.getString("level")),
-                args);
+                args.toArray());
+    }
+
+    private String selectedAnalysesCte(long userId, Set<String> selectedAnalysisIds,
+                                       List<Object> args) {
+        args.add(userId);
+        if (selectedAnalysisIds == null) {
+            return LATEST_PER_REPOSITORY;
+        }
+        List<String> ids = new ArrayList<>(new TreeSet<>(selectedAnalysisIds));
+        ids.forEach(args::add);
+        return """
+                WITH latest AS (
+                    SELECT analysis_id, repository_id, repository_full_name, commit_sha,
+                           completed_at
+                    FROM analysis_job
+                    WHERE user_id = ? AND status = 'SUCCEEDED'
+                      AND analysis_id IN (%s)
+                )
+                """.formatted(String.join(", ", java.util.Collections.nCopies(ids.size(), "?")));
     }
 
     /** 화면 상단 지표. 기술 수·L2 이상·저장소 수·마지막 분석 시각. */

@@ -405,10 +405,10 @@ class ManifestScanner:
                 DependencyOccurrence(
                     ecosystem="PYPI",
                     coordinate=coordinate,
-                    # A requirements file is the declaration source, not a
-                    # dependency scope.  Keep its path in ``file``; putting
-                    # the path in ``scope`` creates an invalid result candidate
-                    # for nested files and loses the semantic distinction.
+                    # A requirements file has no declaration-level scope.
+                    # The manifest path already lives in `file`; copying it
+                    # into `scope` both changes its meaning and can violate the
+                    # result contract's bounded scope field for nested repos.
                     scope=None,
                     file=relative,
                     line=number,

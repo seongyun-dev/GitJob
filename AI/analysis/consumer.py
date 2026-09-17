@@ -26,10 +26,9 @@ import signal
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from types import FrameType
 
-from common.kafka import ConsumedMessage, ConsumerTransport, KafkaTransport
 from pydantic import ValidationError
 
 from analysis.attribution import CommitAuthorIdentityResolver, GitEvidenceAttributor
@@ -66,6 +65,7 @@ from analysis.results import (
     schema_for_rule_pack,
 )
 from analysis.rules import RegistryStore, UnknownRegistryVersion
+from common.kafka import ConsumedMessage, ConsumerTransport, KafkaTransport
 
 __all__ = ["AnalysisConsumer", "ClaimBusyError", "ClaimLostError", "Outcome"]
 
@@ -147,7 +147,25 @@ class AnalysisConsumer:
         try:
             while not self._stopped:
                 for message in self.transport.poll(self.poll_timeout_ms):
-                    self._handle_with_busy_retry(message)
+                    try:
+                        self.handle(message)
+                    except ClaimBusyError:
+                        # `poll()` advances the consumer's in-memory position
+                        # even without a commit. Rewind this record before the
+                        # next poll; otherwise a later record could be handled
+                        # and committed past the active lease. The duplicate is
+                        # local contention, not a reason to terminate the
+                        # worker process.
+                        self.transport.defer(message)
+                        log.info(
+                            "deferred active lease: topic=%s partition=%s offset=%s",
+                            message.topic,
+                            message.partition,
+                            message.offset,
+                        )
+                        if not self._stopped and self.poll_timeout_ms > 0:
+                            sleep(min(self.poll_timeout_ms / 1_000, 1.0))
+                        break
                     # Committing per message is affordable because the consumer
                     # is configured for one record per poll, and it keeps the
                     # redelivery window to a single job.
@@ -157,42 +175,6 @@ class AnalysisConsumer:
         finally:
             self.transport.close()
             log.info("analysis consumer stopped")
-
-    def _handle_with_busy_retry(self, message: ConsumedMessage) -> Outcome:
-        """Wait for an active lease without advancing this partition.
-
-        A duplicate delivery is expected after a worker handoff.  Raising
-        ``ClaimBusyError`` from the top-level loop used to terminate the
-        process, leaving the same record to trigger a restart loop.  Pausing
-        assigned partitions prevents a later record from being committed past
-        the busy one; heartbeat polling keeps the Kafka group alive until the
-        lease can be taken over.
-        """
-        try:
-            return self.handle(message)
-        except ClaimBusyError:
-            if self._stopped:
-                raise
-            self.transport.pause_all()
-            try:
-                log.warning(
-                    "claim busy; waiting for lease expiry: topic=%s partition=%s offset=%s",
-                    message.topic,
-                    message.partition,
-                    message.offset,
-                )
-                while not self._stopped:
-                    self.transport.heartbeat(self.poll_timeout_ms)
-                    try:
-                        return self.handle(message)
-                    except ClaimBusyError:
-                        continue
-            finally:
-                self.transport.resume_all()
-            raise ClaimBusyError(
-                f"event at {message.topic}-{message.partition}-{message.offset} "
-                "remained busy during shutdown"
-            )
 
     def handle(self, message: ConsumedMessage) -> Outcome:
         """Process one message. Raising means "do not commit"."""
@@ -344,8 +326,8 @@ class AnalysisConsumer:
                 # leaves a terminal claim with nothing sent, and the redelivery
                 # skips it. This way the bad case is a duplicate, which the
                 # consumer already tolerates.
-                try:
-                    completed = completed_result(
+                result_publisher.publish(
+                    completed_result(
                         request,
                         judgement,
                         report,
@@ -358,31 +340,7 @@ class AnalysisConsumer:
                         attributed_evidence=attributed_evidence,
                         personal_assessments=personal_assessments,
                     )
-                except ValidationError as invalid:
-                    error_code = "RESULT_CONTRACT_INVALID"
-                    self._report_failure(
-                        request,
-                        error_code,
-                        f"result contract validation failed ({invalid.error_count()} errors)",
-                        force_v1=True,
-                    )
-                    if not self.claims.finish(
-                        request.event_id, token, "FAILED", error_code
-                    ):
-                        raise ClaimLostError(
-                            f"event {request.event_id} lease was taken over before "
-                            "result contract failure recording"
-                        ) from invalid
-                    self._to_dlq(message, error_code)
-                    log.error(
-                        "result contract validation failed: analysisId=%s errors=%s",
-                        payload.analysis_id,
-                        invalid.error_count(),
-                    )
-                    return Outcome(
-                        "failed", event_id=request.event_id, error_code=error_code
-                    )
-                result_publisher.publish(completed)
+                )
 
             if not self.claims.finish(request.event_id, token, "CLONED"):
                 raise ClaimLostError(
@@ -457,6 +415,28 @@ class AnalysisConsumer:
                 "failed",
                 event_id=request.event_id,
                 error_code="REGISTRY_VERSION_UNKNOWN",
+            )
+        except ValidationError as invalid:
+            error_code = "RESULT_CONTRACT_INVALID"
+            log.error(
+                "result contract validation failed: eventId=%s analysisId=%s "
+                "attempt=%s errors=%s",
+                request.event_id,
+                payload.analysis_id,
+                token,
+                invalid.error_count(),
+            )
+            self._report_failure(request, error_code, str(invalid))
+            if not self.claims.finish(
+                request.event_id, token, "FAILED", error_code
+            ):
+                raise ClaimLostError(
+                    f"event {request.event_id} lease was taken over before "
+                    "result contract failure recording"
+                ) from invalid
+            self._to_dlq(message, error_code)
+            return Outcome(
+                "failed", event_id=request.event_id, error_code=error_code
             )
         except CloneError as permanent:
             self._report_failure(request, permanent.code, str(permanent))

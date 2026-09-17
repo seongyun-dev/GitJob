@@ -2,7 +2,9 @@ package com.example.git_job.compute.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +16,7 @@ import com.example.git_job.compute.query.UserEvidenceStore.RepositoryAnalysis;
 import com.example.git_job.compute.query.UserEvidenceStore.TechnologySupport;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,16 +48,17 @@ class UserEvidenceAssemblerTest {
         assembler = new UserEvidenceAssembler(evidence, profiles);
         when(evidence.failedRepositoryIds(anyLong())).thenReturn(List.of());
         when(profiles.personalLevels(anyLong())).thenReturn(List.of());
+        when(profiles.personalLevels(anyLong(), anySet())).thenReturn(List.of());
         // 판정 범위는 이제 Registry 전체가 아니라 그 분석의 Rule Pack 이 실제로 본
         // 기술이다. 상한도 관측치가 아니라 여기서 온다.
-        when(evidence.technologySupport(anyLong())).thenReturn(List.of(
+        when(evidence.technologySupport(anyLong(), anySet())).thenReturn(List.of(
                 new TechnologySupport("an_1", "spring", "L3", "SUPPORTED"),
                 new TechnologySupport("an_1", "kafka", "L1", "PARTIAL")));
     }
 
     private void given(List<RepositoryAnalysis> analyses, List<EvidenceRow> rows) {
         when(evidence.latestAnalyses(USER_ID)).thenReturn(analyses);
-        when(evidence.evidence(USER_ID)).thenReturn(rows);
+        when(evidence.evidence(eq(USER_ID), anySet())).thenReturn(rows);
     }
 
     private static RepositoryAnalysis analysis() {
@@ -73,8 +77,9 @@ class UserEvidenceAssemblerTest {
 
     private static EvidenceRow row(long id, String factType, String ruleType,
                                    String contribution) {
-        return new EvidenceRow("an_1", "101", SHA, id, REGISTRY, "rule-" + factType, ruleType,
-                "spring", factType, "src/main/java/App.java", 10, 12,
+        return new EvidenceRow("an_1", "101", SHA, id, REGISTRY, RULE_PACK,
+                "rule-" + factType, ruleType, "spring", factType,
+                "src/main/java/App.java", 10, 12,
                 contribution == null ? null : BLAME, contribution);
     }
 
@@ -179,9 +184,12 @@ class UserEvidenceAssemblerTest {
     void ceilingComesFromRulePackSupport() {
         // kafka 는 이 Rule Pack 에서 L1 까지만 본다. 관측치가 L2 라도 상한이 L1 보다
         // 높아질 수 없다 -- 규칙이 볼 수 없었던 구간을 판정했다고 말하면 안 된다.
-        EvidenceRow kafka = new EvidenceRow("an_1", "101", SHA, 9L, REGISTRY, "rule-kafka",
-                "L2", "kafka", "API_CALL", "src/main/java/App.java", 1, 2, BLAME, "SOLE_AUTHOR");
+        EvidenceRow kafka = new EvidenceRow("an_1", "101", SHA, 9L, REGISTRY, RULE_PACK,
+                "rule-kafka", "L2", "kafka", "API_CALL", "src/main/java/App.java", 1, 2,
+                BLAME, "SOLE_AUTHOR");
         given(List.of(analysis()), List.of(kafka));
+        when(profiles.personalLevels(eq(USER_ID), anySet())).thenReturn(
+                List.of(new TechnologyProfileStore.TechnologyLevel("kafka", "L1")));
 
         EvidencePayload.PersonalAssessment assessment =
                 assembler.assemble(USER_ID).payload().personalAssessments().getFirst();
@@ -286,7 +294,8 @@ class UserEvidenceAssemblerTest {
     @DisplayName("blame 커밋이 없으면 SELF로 보내지 않는다")
     void selfNeedsAttributionCommit() {
         EvidenceRow authoredWithoutBlame = new EvidenceRow("an_1", "101", SHA, 1L, REGISTRY,
-                "rule-1", "L2", "spring", "API_CALL", "src/App.java", 1, 2, null, "SOLE_AUTHOR");
+                RULE_PACK, "rule-1", "L2", "spring", "API_CALL", "src/App.java", 1, 2,
+                null, "SOLE_AUTHOR");
         given(List.of(analysis()), List.of(authoredWithoutBlame));
 
         // C 는 attribution=SELF 인데 커밋이 없는 근거를 참여 근거로 인정하지 않는다.
@@ -297,10 +306,11 @@ class UserEvidenceAssemblerTest {
     @Test
     @DisplayName("저장소 상대 경로가 아니면 그 근거만 뺀다")
     void dropsUnsafePaths() {
-        EvidenceRow absolute = new EvidenceRow("an_1", "101", SHA, 1L, REGISTRY, "rule-1", "L1",
-                "spring", "DEPENDENCY", "/etc/passwd", 1, 1, null, null);
-        EvidenceRow traversal = new EvidenceRow("an_1", "101", SHA, 2L, REGISTRY, "rule-2", "L1",
-                "spring", "DEPENDENCY", "../outside/build.gradle", 1, 1, null, null);
+        EvidenceRow absolute = new EvidenceRow("an_1", "101", SHA, 1L, REGISTRY, RULE_PACK,
+                "rule-1", "L1", "spring", "DEPENDENCY", "/etc/passwd", 1, 1, null, null);
+        EvidenceRow traversal = new EvidenceRow("an_1", "101", SHA, 2L, REGISTRY, RULE_PACK,
+                "rule-2", "L1", "spring", "DEPENDENCY", "../outside/build.gradle", 1, 1,
+                null, null);
         given(List.of(analysis()), List.of(absolute, traversal, row(3L, "IMPORT", "L1", null)));
 
         List<EvidencePayload.Proof> proofs = onlyTechnology().proofs();
@@ -316,7 +326,7 @@ class UserEvidenceAssemblerTest {
         RepositoryAnalysis empty = new RepositoryAnalysis("an_2", "202", "octocat/docs", SHA,
                 Instant.EPOCH, REGISTRY, RULE_PACK, PACK_SHA, true, false);
         given(List.of(analysis(), empty), List.of(row(1L, "DEPENDENCY", "L1", null)));
-        when(evidence.technologySupport(anyLong())).thenReturn(List.of(
+        when(evidence.technologySupport(anyLong(), anySet())).thenReturn(List.of(
                 new TechnologySupport("an_1", "spring", "L3", "SUPPORTED"),
                 new TechnologySupport("an_2", "docker", "L1", "SUPPORTED"),
                 // 규칙이 없어 보지 못한 기술. 평가 범위에 넣으면 "안 쓴다"고 단정하게 된다.
@@ -331,6 +341,71 @@ class UserEvidenceAssemblerTest {
         // 범위는 그 분석의 Rule Pack 이 실제로 본 기술이다. Registry 전체가 아니다.
         assertThat(repositories.getFirst().evaluatedTechIds()).containsExactly("spring");
         assertThat(repositories.get(1).evaluatedTechIds()).containsExactly("docker");
+    }
+
+    @Test
+    @DisplayName("처음 선택한 분석 뒤에 새 분석이 완료돼도 선택한 분석의 근거를 유지한다")
+    void keepsEvidenceFromInitiallySelectedAnalysis() {
+        RepositoryAnalysis selected = analysis();
+        EvidenceRow selectedRow = row(1L, "DEPENDENCY", "L1", null);
+        EvidenceRow newerRow = new EvidenceRow("an_2", "101", "d".repeat(40), 2L,
+                REGISTRY, RULE_PACK, "rule-new", "L1", "kafka", "DEPENDENCY",
+                "build.gradle", 1, 1, null, null);
+        when(evidence.latestAnalyses(USER_ID)).thenReturn(List.of(selected));
+        // 현재 구현처럼 각 조회가 최신 분석을 다시 고르면 an_2만 보게 된다.
+        when(evidence.evidence(USER_ID)).thenReturn(List.of(newerRow));
+        when(evidence.technologySupport(USER_ID)).thenReturn(List.of(
+                new TechnologySupport("an_2", "kafka", "L1", "SUPPORTED")));
+
+        // 수정 후에는 처음 고른 ID 집합을 SQL에 전달해 an_1을 직접 읽는다.
+        when(evidence.evidence(USER_ID, Set.of("an_1"))).thenReturn(List.of(selectedRow));
+        when(evidence.technologySupport(USER_ID, Set.of("an_1"))).thenReturn(List.of(
+                new TechnologySupport("an_1", "spring", "L3", "SUPPORTED")));
+
+        EvidencePayload payload = assembler.assemble(USER_ID).payload();
+
+        assertThat(payload.repositories().getFirst().technologies())
+                .extracting(EvidencePayload.Technology::techId)
+                .containsExactly("spring");
+    }
+
+    @Test
+    @DisplayName("처음 선택한 분석 ID 밖의 근거는 같은 저장소여도 제외한다")
+    void excludesEvidenceOutsideSelectedAnalysisLineage() {
+        EvidenceRow stale = new EvidenceRow("an_old", "101", SHA, 9L, REGISTRY, RULE_PACK,
+                "rule-kafka", "L2", "kafka", "API_CALL", "src/main/java/Old.java", 1, 2, BLAME,
+                "SOLE_AUTHOR");
+        given(List.of(analysis()), List.of(row(1L, "DEPENDENCY", "L1", null), stale));
+
+        assertThat(assembler.assemble(USER_ID).payload().repositories().getFirst().technologies())
+                .extracting(EvidencePayload.Technology::techId)
+                .containsExactly("spring");
+    }
+
+    @Test
+    @DisplayName("선택한 분석과 Registry가 다른 근거는 제외한다")
+    void excludesEvidenceFromAnotherRegistry() {
+        EvidenceRow wrongRegistry = new EvidenceRow("an_1", "101", SHA, 9L, "registry-old",
+                RULE_PACK, "rule-kafka", "L2", "kafka", "API_CALL",
+                "src/main/java/Old.java", 1, 2, BLAME, "SOLE_AUTHOR");
+        given(List.of(analysis()), List.of(row(1L, "DEPENDENCY", "L1", null), wrongRegistry));
+
+        assertThat(assembler.assemble(USER_ID).payload().repositories().getFirst().technologies())
+                .extracting(EvidencePayload.Technology::techId)
+                .containsExactly("spring");
+    }
+
+    @Test
+    @DisplayName("선택한 분석과 Rule Pack이 다른 근거는 제외한다")
+    void excludesEvidenceFromAnotherRulePack() {
+        EvidenceRow wrongRulePack = new EvidenceRow("an_1", "101", SHA, 9L, REGISTRY,
+                "rule-pack-old", "rule-kafka", "L2", "kafka", "API_CALL",
+                "src/main/java/Old.java", 1, 2, BLAME, "SOLE_AUTHOR");
+        given(List.of(analysis()), List.of(row(1L, "DEPENDENCY", "L1", null), wrongRulePack));
+
+        assertThat(assembler.assemble(USER_ID).payload().repositories().getFirst().technologies())
+                .extracting(EvidencePayload.Technology::techId)
+                .containsExactly("spring");
     }
 
     @Test
@@ -349,7 +424,7 @@ class UserEvidenceAssemblerTest {
     @DisplayName("개인 판정은 top-level에만 두고 저장소 기술에 넣지 않는다")
     void personalLevelLivesOnlyAtTopLevel() {
         given(List.of(analysis()), List.of(row(1L, "API_CALL", "L2", "SOLE_AUTHOR")));
-        when(profiles.personalLevels(USER_ID)).thenReturn(
+        when(profiles.personalLevels(eq(USER_ID), anySet())).thenReturn(
                 List.of(new TechnologyProfileStore.TechnologyLevel("spring", "L2")));
 
         EvidencePayload payload = assembler.assemble(USER_ID).payload();
@@ -367,21 +442,32 @@ class UserEvidenceAssemblerTest {
     }
 
     @Test
-    @DisplayName("기여 판정이 없으면 무엇을 못 봤는지 함께 적는다")
-    void incompleteAttributionCarriesMissingScope() {
+    @DisplayName("기여 판정이 없으면 임의 L0 개인 판정을 만들지 않는다")
+    void unverifiedAttributionDoesNotCreatePersonalAssessment() {
         given(List.of(analysis()), List.of(row(1L, "API_CALL", "L2", null)));
 
-        EvidencePayload.PersonalAssessment assessment =
-                assembler.assemble(USER_ID).payload().personalAssessments().getFirst();
+        assertThat(assembler.assemble(USER_ID).payload().personalAssessments()).isEmpty();
+    }
 
-        // C 는 COMPLETE 가 아닌데 missing_scope 가 비어 있으면 묶음을 거절한다.
-        assertThat(assessment.attributionStatus()).isEqualTo("UNKNOWN");
-        assertThat(assessment.missingScope()).containsExactly("repository:101");
-        assertThat(assessment.personalLevel()).isEqualTo("L0");
-        // 귀속을 확인하지 못하면 상한이 L1 로 내려간다. 구현과 참여는 작성자를 알아야
-        // 판정할 수 있어서, 그 위를 "판정했는데 없었다"고 말할 수 없다. 관측된 L2 를
-        // 그대로 상한으로 쓰던 것이 잘못이었다.
-        assertThat(assessment.assessmentCeiling()).isEqualTo("L1");
+    @Test
+    @DisplayName("OTHER_AUTHOR 근거는 저장소 근거로 남되 개인 판정을 만들지 않는다")
+    void otherAuthorDoesNotCreatePersonalAssessment() {
+        given(List.of(analysis()), List.of(row(1L, "API_CALL", "L2", "OTHER_AUTHOR")));
+        when(profiles.personalLevels(eq(USER_ID), anySet())).thenReturn(
+                List.of(new TechnologyProfileStore.TechnologyLevel("spring", "L2")));
+
+        EvidencePayload payload = assembler.assemble(USER_ID).payload();
+
+        assertThat(payload.repositories().getFirst().technologies()).hasSize(1);
+        assertThat(payload.personalAssessments()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("본인 근거가 있어도 성립한 개인 Level이 없으면 L0을 만들지 않는다")
+    void missingHeldLevelDoesNotCreateL0() {
+        given(List.of(analysis()), List.of(row(1L, "API_CALL", "L2", "SOLE_AUTHOR")));
+
+        assertThat(assembler.assemble(USER_ID).payload().personalAssessments()).isEmpty();
     }
 
     @Test
@@ -400,6 +486,18 @@ class UserEvidenceAssemblerTest {
         // 값이 흔들리면 event ID 가 매번 달라져 C 가 같은 계산을 반복한다.
         assertThat(first).isEqualTo(second).matches("[0-9a-f]{64}");
         assertThat(afterNewCommit).isNotEqualTo(first);
+    }
+
+    @Test
+    @DisplayName("assembly policy가 바뀌면 Evidence identity도 바뀐다")
+    void assemblyPolicyIsPartOfEvidenceIdentity() {
+        given(List.of(analysis()), List.of());
+
+        String current = assembler.assemble(USER_ID).evidenceVersion();
+        String changed = UserEvidenceAssembler.evidenceVersion(USER_ID, List.of(analysis()),
+                REGISTRY, RULE_PACK, "evidence-assembly/future");
+
+        assertThat(changed).isNotEqualTo(current);
     }
 
     @Test
