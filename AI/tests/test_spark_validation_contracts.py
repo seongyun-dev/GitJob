@@ -128,7 +128,7 @@ class DatasetDigestContractTest(unittest.TestCase):
     def test_weekly_digest_path_streams_instead_of_collecting(self):
         source = (
             ROOT / "Infra" / "spark" / "jobs" / "repo_activity_weekly.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         start = source.index("def slice_row_digest")
         end = source.index(chr(10) + "def _hadoop_path_exists", start)
         digest_block = source[start:end]

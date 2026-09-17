@@ -214,8 +214,28 @@ powershell -ExecutionPolicy Bypass -File `
   \\wsl.localhost\Ubuntu-24.04\home\ssafy\workspace\S15P21E102\Infra\scripts\llm-bridge-install-task.ps1
 ```
 
-작업 이름은 `GitJob LLM Tailscale Bridge`. 브리지는 로그온 시점에 WSL 이 아직
-없을 것을 전제하고 직접 깨워 최대 5분 기다리며, WSL 주소가 바뀌면 다시 읽는다.
+작업 이름은 `GitJob LLM Tailscale Bridge`. 같은 실행기를 사용자 Startup 폴더에도
+숨김 VBS로 등록한다. 일부 Windows 환경에서는 유효한 장기 PowerShell 작업도
+Task Scheduler가 `0xFFFD0000`으로 실행 전에 종료하기 때문에 두 개의 독립적인
+로그온 진입점을 둔다. 단일 인스턴스 mutex가 있어 둘 다 성공해도 브리지는 하나만
+실행된다. 설치 성공 여부는 예약 작업 상태가 아니라 Tailscale 주소의 실제 리스너로
+판정한다.
+
+브리지는 로그온 시점에 Tailscale 또는 WSL이 아직 없을 것을 전제하고 직접 깨워
+기다리며, WSL/Tailscale 주소가 바뀌거나 일시 장애가 발생해도 supervisor가 종료하지
+않고 다시 연결한다.
+설치기는 브리지 스크립트를 `%LOCALAPPDATA%\GitJob`으로 복사하고 그 Windows
+경로를 예약 작업에 등록한다. 예약 작업이 `\\wsl.localhost`의 원본을 직접 실행하면
+로그온 직후 WSL 파일시스템이 준비되기 전에 PowerShell 자체가 종료될 수 있기
+때문이다. 실행 중 의존성이 늦게 준비되거나 일시적으로 사라져도 supervisor는
+종료하지 않고 재시도한다.
+
+브리지 진단 로그:
+
+```text
+%LOCALAPPDATA%\GitJob\logs\llm-tailscale-bridge.log
+%LOCALAPPDATA%\GitJob\logs\llm-tailscale-bridge-bootstrap.log
+```
 
 ### 남은 수동 작업 하나 — lingering
 
@@ -272,6 +292,16 @@ journalctl --user -u gitjob-llm-summary -n 50
 `Linger=no`이므로 로그인 전 상주를 보장하지 않으며, Windows 로그인 시 예약
 작업이 WSL을 기동하는 현재 경로를 사용한다. 실제 노트북 재부팅 시험은 수행하지
 않았다.
+
+2026-09-16 장애 재현 및 수정: `Fix/S15P21E102-279-be-result-contract-compatibility`
+기준 BE 호출에서 Tailscale ping은 성공했지만 TCP 18080은 timeout이었다. 노트북에서
+확인한 결과 WSL FastAPI와 방화벽은 정상이었고 Tailscale 주소의 Windows 리스너만
+없었다. 기존 예약 작업은 WSL UNC 경로를 직접 실행하다 `Last Result=1`로 종료되어
+있었다. Windows 로컬 설치본, supervisor 재시도, Startup fallback, 단일 인스턴스
+mutex를 적용했다. 이후 브리지와 WSL을 모두 완전히 종료한 상태에서 Startup 진입점만
+실행해 첫 health probe 200으로 자동 복구되는 것을 확인했다. EC2에서도
+`100.90.250.31:18080/health`가 200, 실제 `POST /technology-summary`가
+`llm_status=OK`를 반환했다.
 
 `tailscale ping` 이 되는데 TCP 가 안 되면 ACL 을 의심하지 말 것 —
 `tailscale ping` 은 ACL 을 거치지 않는다. 리스너가 있는지부터 본다.

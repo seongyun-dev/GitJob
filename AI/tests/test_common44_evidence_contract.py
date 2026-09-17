@@ -256,6 +256,15 @@ def test_exact_base_generated_v1_result_remains_readable():
     path = AI_ROOT / "tests/fixtures/repository-analysis-result-v1-base-3a4c57c.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     result = RepositoryAnalysisResult.model_validate(payload)
-    assert result.model_dump(mode="json") == payload
+    rendered = result.model_dump(mode="json")
+
+    # `commit_sha` was added to v1 evidence after this immutable v1 snapshot
+    # was created. It is optional, defaults to None, and is absent from the
+    # historical payload. Permit exactly that additive field, then compare the
+    # entire remaining structure so an older field cannot change or disappear.
+    for evidence in rendered["payload"]["evidence"]:
+        assert evidence.pop("commit_sha") is None
+
+    assert rendered == payload
     assert result.schema_version == "repository-analysis-result/v1"
     assert result.payload.technologies[0].level == "L3"

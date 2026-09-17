@@ -962,8 +962,15 @@ def test_trailing_deadline_word_without_a_date_yields_no_label():
 
 def test_period_deadline_makes_the_posting_active():
     client = FakeClient([LIST_HTML], detail_html=PERIOD_DETAIL_HTML)
-    record = WorknetCrawler(_config(), client).run().batch.records[0]
+    collected_at = parse_datetime("2026-09-13 12:00:00")
+    assert collected_at is not None
+    record = (
+        WorknetCrawler(_config(), client, collected_at=collected_at)
+        .run()
+        .batch.records[0]
+    )
 
+    assert record.collected_at == collected_at
     assert record.deadline is not None
     assert record.deadline.isoformat() == "2026-09-14T00:00:00+09:00"
     assert record.posting_status is PostingStatus.ACTIVE

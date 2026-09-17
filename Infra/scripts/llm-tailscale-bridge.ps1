@@ -38,10 +38,39 @@ param(
     [int]$ListenPort = 18080,
     [int]$TargetPort = 18080,
     [string]$Distro = 'Ubuntu-24.04',
-    [int]$WaitForTargetSeconds = 300
+    [int]$WaitForTargetSeconds = 300,
+    [int]$RetryDelaySeconds = 3,
+    [string]$LogPath = (Join-Path $env:LOCALAPPDATA 'GitJob\logs\llm-tailscale-bridge.log')
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Write-BridgeLog {
+    param([string]$Level, [string]$Message)
+    $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffK'), $Level, $Message
+    Write-Host $line
+    try {
+        $logDirectory = Split-Path -Parent $LogPath
+        if ($logDirectory) {
+            New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+        }
+        Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+    } catch {
+        # Logging must never take down the network bridge.
+    }
+}
+
+$createdNew = $false
+$instanceMutex = [System.Threading.Mutex]::new(
+    $true,
+    'Local\GitJobLlmTailscaleBridge',
+    [ref]$createdNew
+)
+if (-not $createdNew) {
+    Write-BridgeLog 'INFO' 'another bridge instance is already running; exiting'
+    $instanceMutex.Dispose()
+    exit 0
+}
 
 function Get-TailscaleIPv4 {
     $exe = 'C:\Program Files\Tailscale\tailscale.exe'
@@ -71,71 +100,108 @@ function Test-Target {
     } catch { return $false }
 }
 
-$tailscaleIp = Get-TailscaleIPv4
-
-# At logon this runs before WSL is up, so booting it and waiting is the normal
-# path, not an error case. `wsl.exe -- true` is what starts the distro, and
-# systemd then brings up gitjob-ollama and gitjob-llm-summary.
-$wslIp = $null
-$deadline = (Get-Date).AddSeconds($WaitForTargetSeconds)
-while ($true) {
-    try {
-        & wsl.exe -d $Distro -- true 2>$null | Out-Null
-        $wslIp = Get-WslIPv4 -Distro $Distro
-        if (Test-Target -Ip $wslIp -Port $TargetPort) { break }
-    } catch { }
-    if ((Get-Date) -ge $deadline) {
-        throw "Nothing answered on ${Distro}:${TargetPort} within $WaitForTargetSeconds s. In WSL, run: bash Infra/scripts/llm-summary-serve-wsl.sh"
+function Wait-BridgeTarget {
+    # At logon both Tailscale and WSL may still be unavailable. Resolve both in
+    # this loop: resolving Tailscale once before it made the task exit during
+    # the exact startup race it was meant to handle.
+    $deadline = (Get-Date).AddSeconds($WaitForTargetSeconds)
+    $lastError = 'dependencies are not ready'
+    while ($true) {
+        try {
+            $tailscaleIp = Get-TailscaleIPv4
+            & wsl.exe -d $Distro -- true 2>$null | Out-Null
+            $wslIp = Get-WslIPv4 -Distro $Distro
+            if (Test-Target -Ip $wslIp -Port $TargetPort) {
+                return [pscustomobject]@{ TailscaleIp = $tailscaleIp; WslIp = $wslIp }
+            }
+            $lastError = "nothing answered on ${wslIp}:${TargetPort}"
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        if ((Get-Date) -ge $deadline) {
+            throw "Bridge dependencies did not become ready within $WaitForTargetSeconds s: $lastError"
+        }
+        Start-Sleep -Seconds $RetryDelaySeconds
     }
-    Start-Sleep -Seconds 3
 }
 
-$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse($tailscaleIp), $ListenPort)
-$listener.Start()
-Write-Host "bridging tailnet ${tailscaleIp}:${ListenPort}  ->  wsl ${wslIp}:${TargetPort}"
-Write-Host 'Ctrl+C to stop.'
+function Start-BridgeSession {
+    param([string]$TailscaleIp, [string]$WslIp)
 
-$jobs = [System.Collections.ArrayList]::new()
-try {
-    while ($true) {
-        # A peer can close while no new connection is arriving. Reap completed
-        # pumps before checking Pending so a dead pooled connection is closed
-        # promptly instead of waiting for the next caller.
-        foreach ($done in @($jobs | Where-Object { $_.Tasks[0].IsCompleted -or $_.Tasks[1].IsCompleted })) {
-            $done.In.Close(); $done.Out.Close()
-            [void]$jobs.Remove($done)
-        }
+    $listener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Parse($TailscaleIp),
+        $ListenPort
+    )
+    $listener.Start()
+    Write-BridgeLog 'INFO' "bridging tailnet ${TailscaleIp}:${ListenPort} -> wsl ${WslIp}:${TargetPort}"
 
-        if (-not $listener.Pending()) { Start-Sleep -Milliseconds 50; continue }
-
-        $inbound = $listener.AcceptTcpClient()
-        $outbound = [System.Net.Sockets.TcpClient]::new()
-        try {
-            $outbound.Connect($wslIp, $TargetPort)
-        } catch {
-            # WSL takes a new address whenever it restarts, so a refusal is more
-            # often a moved target than a dead one. Re-resolve before giving up
-            # on this connection; the next one then goes to the right place.
-            Write-Warning "target refused the connection: $($_.Exception.Message)"
-            $refreshed = $null
-            try { $refreshed = Get-WslIPv4 -Distro $Distro } catch { }
-            if ($refreshed -and $refreshed -ne $wslIp) {
-                Write-Host "wsl address moved: $wslIp -> $refreshed"
-                $wslIp = $refreshed
+    $jobs = [System.Collections.ArrayList]::new()
+    $nextAddressCheck = (Get-Date).AddSeconds(5)
+    try {
+        while ($true) {
+            # Reap completed pumps even while no new connection is arriving.
+            foreach ($done in @($jobs | Where-Object { $_.Tasks[0].IsCompleted -or $_.Tasks[1].IsCompleted })) {
+                $done.In.Close(); $done.Out.Close()
+                [void]$jobs.Remove($done)
             }
-            $inbound.Close()
-            continue
-        }
 
-        # Both directions are copied concurrently. A summary request is small but
-        # the reply can take seconds on a 4B model, so a half-duplex pump would
-        # stall every call.
-        $a = $inbound.GetStream().CopyToAsync($outbound.GetStream())
-        $b = $outbound.GetStream().CopyToAsync($inbound.GetStream())
-        [void]$jobs.Add([pscustomobject]@{ Tasks = @($a, $b); In = $inbound; Out = $outbound })
+            if ((Get-Date) -ge $nextAddressCheck) {
+                $currentTailscaleIp = Get-TailscaleIPv4
+                if ($currentTailscaleIp -ne $TailscaleIp) {
+                    throw "Tailscale address changed: $TailscaleIp -> $currentTailscaleIp"
+                }
+                $nextAddressCheck = (Get-Date).AddSeconds(5)
+            }
+
+            if (-not $listener.Pending()) { Start-Sleep -Milliseconds 50; continue }
+
+            $inbound = $listener.AcceptTcpClient()
+            $outbound = [System.Net.Sockets.TcpClient]::new()
+            try {
+                $outbound.Connect($WslIp, $TargetPort)
+            } catch {
+                # WSL takes a new address whenever it restarts. Refresh the target
+                # and let the caller retry instead of killing the bridge process.
+                Write-BridgeLog 'WARN' "target refused connection: $($_.Exception.Message)"
+                try {
+                    $refreshed = Get-WslIPv4 -Distro $Distro
+                    if ($refreshed -ne $WslIp) {
+                        Write-BridgeLog 'INFO' "wsl address moved: $WslIp -> $refreshed"
+                        $WslIp = $refreshed
+                    }
+                } catch {
+                    Write-BridgeLog 'WARN' "could not refresh WSL address: $($_.Exception.Message)"
+                }
+                $inbound.Close()
+                $outbound.Close()
+                continue
+            }
+
+            # Both directions are copied concurrently. A summary request is small
+            # but the reply can take seconds, so a half-duplex pump would stall.
+            $a = $inbound.GetStream().CopyToAsync($outbound.GetStream())
+            $b = $outbound.GetStream().CopyToAsync($inbound.GetStream())
+            [void]$jobs.Add([pscustomobject]@{ Tasks = @($a, $b); In = $inbound; Out = $outbound })
+        }
+    } finally {
+        foreach ($job in $jobs) { $job.In.Close(); $job.Out.Close() }
+        $listener.Stop()
+        Write-BridgeLog 'INFO' 'bridge session stopped'
+    }
+}
+
+try {
+    Write-BridgeLog 'INFO' "bridge supervisor started for ${Distro}"
+    while ($true) {
+        try {
+            $target = Wait-BridgeTarget
+            Start-BridgeSession -TailscaleIp $target.TailscaleIp -WslIp $target.WslIp
+        } catch {
+            Write-BridgeLog 'ERROR' $_.Exception.Message
+        }
+        Start-Sleep -Seconds $RetryDelaySeconds
     }
 } finally {
-    foreach ($job in $jobs) { $job.In.Close(); $job.Out.Close() }
-    $listener.Stop()
-    Write-Host 'bridge stopped.'
+    $instanceMutex.ReleaseMutex()
+    $instanceMutex.Dispose()
 }

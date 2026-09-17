@@ -213,10 +213,15 @@ class WorknetCrawler:
         client: WorknetHttpClient | None = None,
         *,
         on_progress: ProgressCallback | None = None,
+        collected_at: datetime | None = None,
     ) -> None:
         self.config = config
         self.client = client or WorknetHttpClient(base_url=config.base_url)
         self._on_progress = on_progress
+        # Production callers leave this unset and each run records its actual
+        # start time. Tests and replay callers can provide the observed
+        # collection time so deadline status remains reproducible.
+        self._collected_at = as_seoul(collected_at) if collected_at else None
 
     def _progress(self, message: str) -> None:
         if self._on_progress is not None:
@@ -282,7 +287,7 @@ class WorknetCrawler:
             return None, f"detail parse failed: {error}"
 
     def run(self) -> CrawlResult:
-        collected_at = as_seoul(datetime.now(UTC))
+        collected_at = self._collected_at or as_seoul(datetime.now(UTC))
         cursor = Cursor.load(self.config.cursor_path, self.config)
         already = set(cursor.collected_ids)
         resumed_count = len(already)
