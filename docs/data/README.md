@@ -1102,6 +1102,14 @@ C조 범위다.
 - [병목 판정 기준 · 튜닝 후보 · 발표 템플릿](2026-09-12-bottleneck-analysis-template.md) — 증가배수 R 기준, 원인별 조절 지점, "문제 발견 → 원인 → 개선 → 결과" 한 장 템플릿
 - 측정 제약: HDFS·Spark 지표는 Prometheus exporter가 없어 CLI·Spark UI 수동 수집이다(`docs/be/admin-monitoring-api.md` §7). Spark job이 stdout에 내는 summary JSON이 1차 데이터다
 
+## Kafka retention 정책과 Connect 로그 상한 (S15P21E102-258)
+
+- Jira: S15P21E102-258
+- `github.events` 정식 운영 retention: **24h (`retention.ms=86400000`)**. 장애 대응 임시값 12h와 이전 IaC 기본값 `-1`은 더 이상 정책이 아니다
+- 기존 topic의 drift는 `Infra/scripts/kafka-topics.sh --check`가 보고하고 `--enforce-retention`이 정렬한다
+- Connect worker 로그는 `RollingFileAppender` 10MB × 10 = **100 MB 고정 천장**. image 기본 `DailyRollingFileAppender`는 크기도 개수도 제한하지 못해 2026-09-14에 4.54 GiB를 썼다
+- 상세: [github.events retention 확정과 Kafka Connect 로그 상한](2026-09-17-kafka-retention-and-connect-log-bounds.md)
+
 ## GH Archive 6개월 Historical Bootstrap
 
 - Jira: S15P21E102-179

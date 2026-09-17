@@ -170,6 +170,15 @@ services:
       CDC_DATABASE_PASSWORD: ${CDC_DATABASE_PASSWORD:?CDC_DATABASE_PASSWORD must be set}
     expose:
       - "8083"
+    volumes:
+      # The worker's own log files, bounded (S15P21E102-258). The image's
+      # DailyRollingFileAppender cannot cap size or file count, and on
+      # 2026-09-14 it wrote 4.54 GiB into the container and filled the service
+      # host root. `logging:` below bounds only the stdout capture, which is a
+      # different set of files. Read-only is safe: the entrypoint copies its
+      # defaults with `cp -rn`, and it only rewrites this file when
+      # CONNECT_LOG4J_* or LOG_LEVEL is set, neither of which this service does.
+      - ./Infra/cdc/connect-log4j.properties:/kafka/config/log4j.properties:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8083/connectors >/dev/null"]
       interval: 10s

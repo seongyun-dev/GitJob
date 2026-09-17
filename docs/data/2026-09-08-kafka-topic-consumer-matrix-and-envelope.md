@@ -344,12 +344,19 @@ Spark Structured Streaming은 **오프셋을 자체 체크포인트에서 관리
 |---|---|---|
 | 토픽 | `github.events` · `so.raw` · `jobs.collected` **3종** | §2.1 |
 | 파티션 | 6 / 3 / 3 (제안) | §3.2 |
-| `retention.ms` | `-1` (무기한) | `-108` 티켓 |
+| `retention.ms` | `-1` (무기한) — **`github.events`는 2026-09-17부터 24h**, 아래 참고 | `-108` 티켓 |
 | `cleanup.policy` | `delete` | `-108` 티켓 — **되감기가 설계 근거** |
 | 프로듀서 | 멱등성 활성화 | `-108` 티켓 |
 | 오프셋 | §5 결정에 따름 | — |
 
 `compact`가 아니라 `delete`인 것은 특정 시점으로 되감아 다시 읽는 것이 복구 절차이기 때문이다.
+
+> **2026-09-17 갱신 (`S15P21E102-258`).** 이 표는 2026-09-08 결정 시점의 기록이다.
+> `github.events`의 `retention.ms`는 그 뒤 **24h(`86400000`)** 로 확정됐다 — 이 topic만
+> publisher 속도 외에 크기를 제한하는 것이 없고, 2026-09-14에 service host root를
+> 채워 장애를 냈기 때문이다. 나머지 topic은 `-1` 그대로고, 되감기가 설계 근거라는
+> 것도 바뀜지 않았다. `github.events`에서만 되감기 범위가 24시간이다 —
+> [retention 확정과 Connect 로그 상한](2026-09-17-kafka-retention-and-connect-log-bounds.md).
 
 ## 7. AI팀 확인 체크리스트
 

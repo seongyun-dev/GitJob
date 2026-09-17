@@ -30,9 +30,31 @@
 #                                       postings, so volume never grows with
 #                                       the number of collected postings.
 #
-# `retention.ms=-1` and `cleanup.policy=delete` are from §5: replay from the
-# beginning is the design basis, so nothing may age out and nothing may be
-# compacted away by key.
+# `cleanup.policy=delete` is from §5: nothing may be compacted away by key.
+#
+# Retention is per topic, not one global value. §5's `retention.ms=-1` still
+# holds for every topic whose replay-from-the-beginning is the design basis,
+# but `github.events` is the exception and the reason this list carries a third
+# column (S15P21E102-258).
+#
+#   github.events   86400000 (24h)   GH Archive hours. The only topic whose
+#                                    volume is bounded by nothing but how fast
+#                                    the publisher runs. On 2026-09-14 it filled
+#                                    the service host root ("No space left on
+#                                    device") and took Postgres down with it.
+#                                    Kafka shares that root with the HDFS
+#                                    DataNode4 volume, which is 192.5 GB of the
+#                                    220 GB in use — so Kafka cannot be allowed
+#                                    to grow without a ceiling. 24h is long
+#                                    enough for C1 to fall a full day behind and
+#                                    still catch up without a re-download, which
+#                                    is the replay this topic actually needs.
+#   everything else -1               Unchanged. These are small, and replay from
+#                                    offset 0 is how they are consumed.
+#
+# 12h was the emergency value applied during the incident to reclaim space; it
+# is not the operating policy. See
+# `docs/data/2026-09-17-kafka-retention-and-connect-log-bounds.md`.
 #
 # Repository analysis owns three explicit topics. Auto-create is disabled and
 # an empty deployment has no outbox event for Debezium to route yet, so relying
@@ -45,8 +67,16 @@
 # Kafka cannot reduce partitions, and silently raising them would rehash every
 # key and break per-key ordering. A mismatch is reported for a human instead.
 #
-#   infra/scripts/kafka-topics.sh          # create missing, then describe
-#   infra/scripts/kafka-topics.sh --check  # report only, create nothing
+# Retention drift is a separate problem from a missing topic. `--create
+# --if-not-exists` leaves an existing topic's config alone, so a topic whose
+# `retention.ms` was changed by hand during an incident keeps that value for
+# ever and nothing here notices. Every mode below therefore compares the live
+# `retention.ms` against the table and reports a difference;
+# `--enforce-retention` is the one mode that repairs it.
+#
+#   infra/scripts/kafka-topics.sh                     # create missing, then describe
+#   infra/scripts/kafka-topics.sh --check             # report only, change nothing
+#   infra/scripts/kafka-topics.sh --enforce-retention # also align existing topics
 
 set -Eeuo pipefail
 
@@ -55,26 +85,27 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 
 CHECK_ONLY=0
-if [[ "${1:-}" == "--check" ]]; then
-  CHECK_ONLY=1
-elif [[ -n "${1:-}" ]]; then
-  die "unknown argument: $1 (expected --check or nothing)"
-fi
+ENFORCE_RETENTION=0
+case "${1:-}" in
+  --check) CHECK_ONLY=1 ;;
+  --enforce-retention) ENFORCE_RETENTION=1 ;;
+  "") ;;
+  *) die "unknown argument: $1 (expected --check, --enforce-retention, or nothing)" ;;
+esac
 
 require_core_tools
 
-# name:partitions
+# name:partitions:retention.ms
 TOPICS=(
-  "github.events:6"
-  "so.raw:3"
-  "jobs.collected:3"
-  "gitjob.repository-analysis.requests.v1:3"
-  "gitjob.repository-analysis.results.v1:3"
-  "gitjob.repository-analysis.dlq.v1:3"
-  "gitjob.repo-activity-weekly.completed.v1:1"
+  "github.events:6:86400000"
+  "so.raw:3:-1"
+  "jobs.collected:3:-1"
+  "gitjob.repository-analysis.requests.v1:3:-1"
+  "gitjob.repository-analysis.results.v1:3:-1"
+  "gitjob.repository-analysis.dlq.v1:3:-1"
+  "gitjob.repo-activity-weekly.completed.v1:1:-1"
 )
 
-RETENTION_MS="-1"
 CLEANUP_POLICY="delete"
 # Single-broker KRaft in this environment; the compose file pins every internal
 # replication factor to 1 for the same reason.
@@ -101,27 +132,47 @@ existing_partitions() {
     head -1
 }
 
+kafka_configs() {
+  # Same doubled-slash reason as `kafka_topics`.
+  compose exec -T kafka //opt/kafka/bin/kafka-configs.sh \
+    --bootstrap-server localhost:9092 --entity-type topics "$@"
+}
+
+existing_retention() {
+  # Prints the topic's `retention.ms` override. A topic without an override
+  # inherits the broker default, which is not `-1`, so an absent override is
+  # reported as `<broker-default>` rather than silently passing the comparison.
+  local topic="$1" found
+  found="$(kafka_configs --entity-name "$topic" --describe 2>/dev/null |
+    grep -o 'retention[.]ms=[-0-9]*' | head -1)" || true
+  if [[ -z "$found" ]]; then
+    echo "<broker-default>"
+  else
+    echo "${found#retention.ms=}"
+  fi
+}
+
 mismatch=0
 created=0
+retention_fixed=0
 
 for entry in "${TOPICS[@]}"; do
-  topic="${entry%%:*}"
-  want="${entry##*:}"
+  IFS=: read -r topic want want_retention <<<"$entry"
   have="$(existing_partitions "$topic" || true)"
 
   if [[ -z "$have" ]]; then
     if (( CHECK_ONLY )); then
-      echo "MISSING  $topic (would create with $want partitions)"
+      echo "MISSING  $topic (would create with $want partitions, retention.ms=$want_retention)"
       mismatch=1
       continue
     fi
-    echo "Creating $topic with $want partitions"
+    echo "Creating $topic with $want partitions, retention.ms=$want_retention"
     kafka_topics \
       --create --if-not-exists \
       --topic "$topic" \
       --partitions "$want" \
       --replication-factor "$REPLICATION_FACTOR" \
-      --config "retention.ms=$RETENTION_MS" \
+      --config "retention.ms=$want_retention" \
       --config "cleanup.policy=$CLEANUP_POLICY" >/dev/null
     created=$((created + 1))
     continue
@@ -136,7 +187,26 @@ for entry in "${TOPICS[@]}"; do
     continue
   fi
 
-  echo "OK       $topic ($have partitions)"
+  # Retention is repairable in a way partitions are not: `--alter` changes only
+  # how long records are kept, never how they are distributed, so it cannot
+  # break ordering or rehash a key.
+  have_retention="$(existing_retention "$topic")"
+  if [[ "$have_retention" == "$want_retention" ]]; then
+    echo "OK       $topic ($have partitions, retention.ms=$have_retention)"
+    continue
+  fi
+
+  if (( ENFORCE_RETENTION )); then
+    echo "ALTER    $topic retention.ms $have_retention -> $want_retention"
+    kafka_configs --entity-name "$topic" \
+      --alter --add-config "retention.ms=$want_retention" >/dev/null
+    retention_fixed=$((retention_fixed + 1))
+    continue
+  fi
+
+  echo "DRIFT    $topic retention.ms=$have_retention, this table says $want_retention" >&2
+  echo "         re-run with --enforce-retention to align it" >&2
+  mismatch=1
 done
 
 echo
@@ -150,13 +220,13 @@ done
 
 if (( mismatch )); then
   echo
-  echo "One or more topics do not match S15P21E102-102 §3.2." >&2
+  echo "One or more topics do not match S15P21E102-102 §3.2 or the retention table." >&2
   exit 1
 fi
 
 echo
-if (( created )); then
-  echo "Created $created topic(s); all topics now match -102 §3.2."
+if (( created )) || (( retention_fixed )); then
+  echo "Created $created topic(s), aligned retention on $retention_fixed; all topics now match."
 else
-  echo "All topics already match -102 §3.2."
+  echo "All topics already match -102 §3.2 and the retention table."
 fi
