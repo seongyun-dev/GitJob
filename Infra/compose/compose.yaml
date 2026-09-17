@@ -243,6 +243,26 @@ services:
       KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:-gitjob.repository-analysis.requests.v1}
       # Consumed here: the worker's verdicts, evidence and unmatched dependencies.
       KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
+      # 같은 결과의 v3 계약이 오는 토픽. worker 와 같은 변수 이름을 쓴다.
+      #
+      # 워커는 Registry 버전에 따라 발행 토픽을 바꾸고 v1 을 함께 보내지 않는다
+      # (AI/analysis/consumer.py). registry-20260911.3/.4 를 CURRENT 로 올린 뒤 여기가
+      # 비어 있으면 결과가 도달하지 않아 분석이 QUEUED 에 남는다.
+      #
+      # 지금 CURRENT 인 Registry 는 Rule Pack 이 없어 워커가 여전히 v1 로 발행한다.
+      # 그래도 미리 구독해 두는 이유는 순서 때문이다 -- BE 가 먼저 구독하고 있어야
+      # Registry 를 올린 직후의 첫 v3 결과가 유실되지 않는다.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3:-gitjob.repository-analysis.results.v3}
+      # 적용하지 못한 결과가 가는 곳. 역직렬화 오류는 재시도로 고쳐지지 않아 곧바로
+      # 여기로 간다 -- 전에는 로그 한 줄만 남기고 커밋돼 분석이 QUEUED 에 남은 채
+      # 무엇을 재생해야 하는지조차 남지 않았다.
+      #
+      # 브로커에 없으면 전송이 실패하고 컨슈머가 그 레코드에서 멈춘다. 그것은 의도한
+      # 동작이다 -- 안전망이 끊긴 채로 커밋하고 넘어가면 같은 장애를 반복한다.
+      #
+      # worker 의 KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ 와는 다른 토픽이다. 그쪽은
+      # 처리하지 못한 요청이 가는 곳이고 payload 모양이 다르다.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_DLQ: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_DLQ:-gitjob.repository-analysis.results.dlq.v1}
       # Private repository credential broker. The same service token is injected
       # into the data-host worker; it never enters Kafka or an image layer.
       ANALYSIS_PRIVATE_REPOSITORIES_ENABLED: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:-false}
@@ -510,6 +530,20 @@ services:
       # Worker -> backend. Failures ride this topic too: the DLQ is for operators,
       # and a failure that lives only there leaves analysis_job at QUEUED forever.
       KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
+      # 어떤 결과 계약까지 발행할 수 있게 할지. 값이 v3 면 v3 publisher 가 만들어지고,
+      # 비어 있으면 v1 publisher 만 생긴다(AI/analysis/__main__.py).
+      #
+      # 계약을 고르는 것이 아니라 준비하는 것이다. 실제 계약은 판정에 쓴 Rule Pack 이
+      # 정한다(schema_for_rule_pack). Rule Pack 이 없는 Registry 는 이 값이 v3 여도
+      # v1 로 나가므로, Registry 를 올리기 전에 미리 켜 두어도 동작이 바뀌지 않는다.
+      #
+      # 반대로 켜지 않은 채 registry-20260911.3/.4 를 CURRENT 로 올리면 v3 publisher 가
+      # 없어 분석이 UNSUPPORTED_RESULT_SCHEMA 로 실패한다. 그래서 Registry 전환보다
+      # 먼저 배포한다.
+      #
+      # v3 를 켜면 이 토픽이 반드시 있어야 하고, 없으면 워커가 기동에서 멈춘다.
+      ANALYSIS_RESULT_SCHEMA_VERSION: ${ANALYSIS_RESULT_SCHEMA_VERSION:-repository-analysis-result/v3}
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3:-gitjob.repository-analysis.results.v3}
       ANALYSIS_CONSUMER_GROUP: ${ANALYSIS_CONSUMER_GROUP:-gitjob-repository-analysis}
       # Must exceed the slowest clone. Below it the broker hands this consumer's
       # partitions to someone else, who then clones the same repository again.
@@ -531,7 +565,17 @@ services:
       #   depth 1  클론 1.4s / 디스크  3MB / blame 2.1s  (답이 틀림)
       #   full     클론 4.0s / 디스크 13MB / blame 2.7s
       # 부분 클론(--filter)은 blame 에서 240~800배 느려 쓸 수 없다.
-      ANALYSIS_ATTRIBUTE_AUTHORS: ${ANALYSIS_ATTRIBUTE_AUTHORS:-false}
+      #
+      # 기본값이 true 인 이유: 꺼 두면 Evidence 의 commit_sha 가 전부 NULL 로 남고,
+      # 조회 쪽은 그것을 "본인이 안 썼다"가 아니라 "확인되지 않았다"로 읽는다. 즉
+      # personalLevel 이 영영 만들어지지 않는데 화면에는 아무 오류도 나오지 않는다.
+      # 끄고 싶으면 명시적으로 끄는 편이 낫다 -- 조용히 비는 쪽이 기본값이면 안 된다.
+      #
+      # 켜면 전체 히스토리를 받으므로 ANALYSIS_MAX_REPOSITORY_BYTES(기본 2GiB) 에
+      # 걸리는 저장소가 늘 수 있다. 크기는 fetch 뒤에야 알 수 있어
+      # REPOSITORY_TOO_LARGE 로 실패한다(AI/analysis/clone.py). 워커 디스크 여유를
+      # 먼저 확인한다.
+      ANALYSIS_ATTRIBUTE_AUTHORS: ${ANALYSIS_ATTRIBUTE_AUTHORS:-true}
       ANALYSIS_CLAIM_LEASE_SECONDS: ${ANALYSIS_CLAIM_LEASE_SECONDS:-900}
       # A repository that times out is a transient failure on every delivery.
       # Without a cap it is redelivered forever and its partition never moves.

@@ -6,8 +6,9 @@ fields are carried as labelled Korean text rather than stable class names.
 """
 
 import csv
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
+from unittest.mock import Mock
 from urllib.parse import urljoin
 
 import pytest
@@ -960,7 +961,11 @@ def test_trailing_deadline_word_without_a_date_yields_no_label():
     assert _deadline_label_from_row("마감일까지 채용사이트 바로가기 접수 방법") is None
 
 
-def test_period_deadline_makes_the_posting_active():
+def test_period_deadline_makes_the_posting_active(monkeypatch):
+    frozen_datetime = Mock(wraps=datetime)
+    frozen_datetime.now.return_value = datetime(2026, 9, 13, tzinfo=UTC)
+    monkeypatch.setattr("Worknet_Collector_V1.crawler.datetime", frozen_datetime)
+
     client = FakeClient([LIST_HTML], detail_html=PERIOD_DETAIL_HTML)
     collected_at = parse_datetime("2026-09-13 12:00:00")
     assert collected_at is not None

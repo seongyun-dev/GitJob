@@ -60,6 +60,13 @@ public class UserEvidenceAssembler {
     private static final String CONFIG_FACT = "CONFIG_KEY";
     /** 본인이 쓴 줄로 인정하는 기여. {@code PARTIAL_EDIT}는 그 줄을 본인이 쓰지 않았다. */
     private static final Set<String> SELF_CONTRIBUTIONS = Set.of("SOLE_AUTHOR", "CO_AUTHORED");
+    /**
+     * 남이 썼다고 <b>확인된</b> 기여. 확인하지 못한 {@code UNVERIFIED}는 여기 없다.
+     *
+     * <p>{@code OTHER_AUTHOR}는 커밋 작성자를 물어 본인이 아님을 확인한 것이고,
+     * {@code PARTIAL_EDIT}는 그 줄을 본인이 쓰지 않았음을 이미 아는 값이다.</p>
+     */
+    private static final Set<String> OTHER_CONTRIBUTIONS = Set.of("PARTIAL_EDIT", "OTHER_AUTHOR");
     private static final List<String> LEVELS = List.of("L0", "L1", "L2", "L3");
 
     /**
@@ -455,7 +462,14 @@ public class UserEvidenceAssembler {
         return attributed == total ? "COMPLETE" : "PARTIAL";
     }
 
-    /** {@code SOLE_AUTHOR}·{@code CO_AUTHORED}만 본인이다. 나머지는 그 줄을 본인이 쓰지 않았다. */
+    /**
+     * {@code SOLE_AUTHOR}·{@code CO_AUTHORED}만 본인이다. 나머지는 그 줄을 본인이 쓰지 않았다.
+     *
+     * <p>C가 받는 값은 셋이다. {@code OTHER}는 <b>물어봐서 남이 썼더라</b>이고,
+     * {@code UNKNOWN}은 <b>물어보지 못했다</b>이다. 둘을 합치면 C가 "본인 근거가
+     * 없다"와 "확인할 수 없었다"를 구분하지 못하고, 그러면 미확인을 부족으로 세게
+     * 된다.</p>
+     */
     private static String attribution(EvidenceRow row) {
         if (row.contributionType() == null) {
             return "UNKNOWN";
@@ -463,7 +477,9 @@ public class UserEvidenceAssembler {
         if (SELF_CONTRIBUTIONS.contains(row.contributionType())) {
             return "SELF";
         }
-        return "PARTIAL_EDIT".equals(row.contributionType()) ? "OTHER" : "UNKNOWN";
+        // PARTIAL_EDIT 는 "그 줄은 남이 썼다"를 이미 확인한 값이고, OTHER_AUTHOR 는
+        // 커밋 작성자를 물어 확인한 값이다. 남는 UNVERIFIED 만 모른다는 뜻이다.
+        return OTHER_CONTRIBUTIONS.contains(row.contributionType()) ? "OTHER" : "UNKNOWN";
     }
 
     private static String sourceKind(String factType) {

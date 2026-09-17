@@ -7,7 +7,7 @@ import type { ContributionLabel as Value } from '@/shared/types/domain'
  * 기여 라벨 배지.
  *
  * **숫자 prop이 없다.** 기여 비율을 노출하면 다시 점수 평가가 되므로
- * 와이어프레임 1-1이 금지한 항목이다. 값 4종만 받는다.
+ * 와이어프레임 1-1이 금지한 항목이다. 값 5종만 받는다.
  *
  * hideSoleAuthor는 목록(S4-B, 생략)과 상세(S5, 표시)의 차이를 다룬다.
  */
@@ -15,6 +15,9 @@ const LABELS: Readonly<Record<Value, { text: string; tone: Tone }>> = {
   SOLE_AUTHOR: { text: '주 작성자', tone: 'neutral' },
   CO_AUTHORED: { text: '공동 작업', tone: 'caution' },
   PARTIAL_EDIT: { text: '일부 수정', tone: 'caution' },
+  OTHER_AUTHOR: { text: '다른 사람 작성', tone: 'caution' },
+  // 단정하지 않는 문구다. 커밋을 계정에 붙이지 못했을 뿐이고, 등록하지 않은
+  // 이메일로 커밋하면 본인 코드여도 여기로 온다.
   UNVERIFIED: { text: '팀 저장소 · 본인 기여 미확인', tone: 'neutral' },
 }
 

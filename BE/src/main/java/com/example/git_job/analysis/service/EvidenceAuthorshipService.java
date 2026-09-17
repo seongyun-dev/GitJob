@@ -82,11 +82,11 @@ public class EvidenceAuthorshipService {
         }
 
         String[] owner = fullName.split("/", 2);
-        Map<String, String> commitLogins = resolve(job, owner[0], owner[1], refs);
+        CommitAuthors authors = resolve(job, owner[0], owner[1], refs);
 
         List<Authorship> rows = new ArrayList<>();
         for (EvidenceCommitRef ref : refs) {
-            String commitLogin = commitLogins.get(ref.commitSha());
+            String commitLogin = authors.byCommit().get(ref.commitSha());
             rows.add(new Authorship(
                     ref.analysisEvidenceId(),
                     job.getAnalysisId(),
@@ -97,9 +97,38 @@ public class EvidenceAuthorshipService {
                     matchedLines(commitLogin, login, ref)));
         }
         int written = authorship.insertAll(rows);
-        log.info("authorship recorded: analysisId={}, evidence={}, commits={}",
-                job.getAnalysisId(), written, commitLogins.size());
+
+        // 상한에 걸린 것은 경고로 올린다. 저장된 행만 보면 이 분석은 "미확인이 많은
+        // 저장소"와 구분되지 않는다 -- 둘 다 UNVERIFIED 다. 기여가 과소평가됐다는
+        // 사실이 남는 곳은 여기뿐이고, 남지 않으면 사용자가 왜 Personal Level 을 못
+        // 받았는지 되짚을 방법이 없다.
+        if (authors.skipped() > 0) {
+            log.warn("authorship lookup budget exhausted: analysisId={}, userId={}, commits={},"
+                            + " lookedUp={}, cached={}, skipped={}, limit={}."
+                            + " 남은 커밋은 묻지 못해 미확인으로 남았고 기여가 과소평가된다.",
+                    job.getAnalysisId(), job.getUserId(), authors.byCommit().size(),
+                    authors.lookedUp(), authors.cached(), authors.skipped(),
+                    MAX_COMMIT_LOOKUPS);
+        }
+        log.info("authorship recorded: analysisId={}, evidence={}, commits={}, lookedUp={},"
+                        + " cached={}, skipped={}",
+                job.getAnalysisId(), written, authors.byCommit().size(),
+                authors.lookedUp(), authors.cached(), authors.skipped());
         return written;
+    }
+
+    /**
+     * 커밋별 작성자와, 그 답을 어떻게 얻었는지.
+     *
+     * <p>{@code skipped} 가 0 이 아니면 그 분석의 기여는 <b>과소평가</b>된 것이다.
+     * 묻지 못한 커밋은 {@code null} 로 남아 "GitHub 이 계정을 붙이지 못했다"와 같은
+     * 값이 되는데, 실제로는 묻지도 않았다. 저장된 행으로는 그 둘을 나눌 수 없으므로
+     * 호출부가 로그로 남긴다.</p>
+     *
+     * @param cached GitHub 대신 {@code repository_commit} 에서 답을 얻은 커밋 수
+     */
+    private record CommitAuthors(Map<String, String> byCommit, int lookedUp, int cached,
+            int skipped) {
     }
 
     /**
@@ -109,11 +138,13 @@ public class EvidenceAuthorshipService {
      * 등록하지 않은 이메일로 커밋하면 본인 코드여도 여기가 빈다. 그때 기여는
      * <b>과소평가</b>되는데, 없는 기여를 주장하는 것보다 낫다.</p>
      */
-    private Map<String, String> resolve(AnalysisJob job, String owner, String repository,
+    private CommitAuthors resolve(AnalysisJob job, String owner, String repository,
             List<EvidenceCommitRef> refs) {
         Map<String, String> byCommit = new HashMap<>();
         String token = null;
         int looked = 0;
+        int cachedHits = 0;
+        int skipped = 0;
 
         for (EvidenceCommitRef ref : refs) {
             String sha = ref.commitSha();
@@ -123,12 +154,17 @@ public class EvidenceAuthorshipService {
             CachedCommit cached = authorship.findCommit(job.getRepositoryId(), sha).orElse(null);
             if (cached != null) {
                 byCommit.put(sha, cached.githubLogin());
+                cachedHits++;
                 continue;
             }
             if (looked >= MAX_COMMIT_LOOKUPS) {
                 // 남은 커밋은 미확인으로 둔다. 여기서 멈추지 않으면 한 분석이
                 // 사용자의 시간당 한도를 다 쓰고 다음 분석을 전부 막는다.
+                //
+                // 세어 두는 이유는 저장된 행이 이 사실을 담지 못하기 때문이다.
+                // 묻지 못한 커밋과 물었는데 계정이 없던 커밋이 같은 UNVERIFIED 가 된다.
                 byCommit.put(sha, null);
+                skipped++;
                 continue;
             }
             if (token == null) {
@@ -150,7 +186,7 @@ public class EvidenceAuthorshipService {
                             ? OffsetDateTime.now(ZoneOffset.UTC)
                             : commit.authoredAt());
         }
-        return byCommit;
+        return new CommitAuthors(byCommit, looked, cachedHits, skipped);
     }
 
     /**
@@ -163,12 +199,26 @@ public class EvidenceAuthorshipService {
      * <p>{@code CO_AUTHORED} 와 {@code PARTIAL_EDIT} 는 근거가 여러 줄에 걸치고 그
      * 줄들의 커밋이 갈릴 때 쓸 값이다. 지금 근거는 한 줄짜리라 나오지 않지만, 값
      * 집합을 미리 좁히면 나중에 마이그레이션이 필요해진다.</p>
+     *
+     * <h2>못 물어본 것과 물어봐서 아닌 것은 다르다</h2>
+     *
+     * <p>둘 다 {@code UNVERIFIED} 로 쓰던 때가 있었다. Level 판정만 보면 어차피 둘 다
+     * 제외되니 결과가 같았기 때문인데, 그 뒤 두 값을 실제로 구분해야 하는 곳이
+     * 생겼다 -- 기술 요약 계약의 {@code authorship} 은 "본인 근거가 소수다"
+     * ({@code MOSTLY_OTHERS})와 "판정 자체가 없다"({@code NOT_VERIFIED})를 다른
+     * 값으로 요구한다. 저장할 때 합쳐 두면 나중에 되살릴 수 없다.</p>
+     *
+     * <p>{@code PARTIAL_EDIT} 를 재사용하지 않는다. 그 값은 "근거 줄은 남이 썼지만
+     * 그 파일을 본인이 건드린 적 있다"는 더 좁은 뜻이고(V14), 우리는 파일을 건드린
+     * 적이 있는지 확인하지 않았다. 확인하지 않은 것을 주장하지 않는다.</p>
      */
     private String contributionType(String commitLogin, String userLogin) {
         if (commitLogin == null) {
+            // GitHub 이 커밋을 계정에 붙이지 못했다. 등록하지 않은 이메일로 커밋하면
+            // 본인 코드여도 여기로 온다 -- "본인이 아니다"가 아니라 "모른다"이다.
             return "UNVERIFIED";
         }
-        return commitLogin.equalsIgnoreCase(userLogin) ? "SOLE_AUTHOR" : "UNVERIFIED";
+        return commitLogin.equalsIgnoreCase(userLogin) ? "SOLE_AUTHOR" : "OTHER_AUTHOR";
     }
 
     private int matchedLines(String commitLogin, String userLogin, EvidenceCommitRef ref) {

@@ -100,7 +100,7 @@ class AnalysisResultServiceTest {
                         "import org.springframework.boot.SpringApplication;", null)),
                 List.of(new TechnologyCandidate(TechnologyCandidate.Ecosystem.MAVEN,
                         "com.h2database:h2", "runtimeOnly", 1)),
-                new AnalysisStats(50, 82, 471, 55, 1932742, 250, Map.of(), 0),
+                new AnalysisStats(50, 82, 471, 55, 1932742L, 250L, Map.of(), 0),
                 // v3 결과는 Rule Pack 계보를 함께 싣는다. C 가 근거의 범위를 검사하는
                 // 값이라 이것이 없으면 조립 단계에서 그 저장소가 통째로 빠진다.
                 "rule-pack-20260911.4", "a".repeat(64),

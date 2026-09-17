@@ -85,6 +85,15 @@ public class AnalysisResultService {
                 job.getRepositoryId(), payload.candidates(), now);
         jobs.save(job);
 
+        // v3 는 구조 근거 노드 수를 싣는 계약인데 빠져 있다. 거절하지 않는 이유는 이
+        // 값을 읽는 곳이 없기 때문이다 -- 읽지 않는 숫자 하나로 결과 전체를 버린 것이
+        // 이번 장애였다. 대신 워커 쪽 계약 이탈로 남긴다.
+        if (RepositoryAnalysisResultEvent.SCHEMA_VERSION_V3.equals(event.schemaVersion())
+                && payload.stats() != null && !payload.stats().reportedSyntaxNodes()) {
+            log.warn("v3 result without syntax_node_count: analysisId={}, eventId={}",
+                    payload.analysisId(), event.eventId());
+        }
+
         log.info("Analysis closed: analysisId={}, status={}, schema={}, rulePack={},"
                         + " technologies={}, evidence={}, candidates={}, support={}, traceId={}",
                 payload.analysisId(), job.getStatus(), event.schemaVersion(),

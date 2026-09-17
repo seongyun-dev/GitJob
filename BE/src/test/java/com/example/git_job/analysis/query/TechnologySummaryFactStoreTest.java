@@ -168,7 +168,7 @@ class TechnologySummaryFactStoreTest {
                 "a/C.java", 1, OTHER_SHA);
         contribution(first, "an_1", "SOLE_AUTHOR", SHA);
         contribution(second, "an_1", "CO_AUTHORED", SHA);
-        contribution(third, "an_1", "UNVERIFIED", OTHER_SHA);
+        contribution(third, "an_1", "OTHER_AUTHOR", OTHER_SHA);
 
         assertEquals("MOSTLY_MINE", store.authorship(USER, "lombok"));
     }
@@ -180,7 +180,7 @@ class TechnologySummaryFactStoreTest {
         String rule = ruleOf("lombok", "L1");
         long only = evidence("an_1", rule, "IMPORT", "{\"MODULE\":\"lombok.Getter\"}",
                 "a/A.java", 1, OTHER_SHA);
-        contribution(only, "an_1", "UNVERIFIED", OTHER_SHA);
+        contribution(only, "an_1", "OTHER_AUTHOR", OTHER_SHA);
 
         assertEquals("MOSTLY_OTHERS", store.authorship(USER, "lombok"));
     }
@@ -205,6 +205,27 @@ class TechnologySummaryFactStoreTest {
     }
 
     @Test
+    @DisplayName("UNVERIFIED 행도 분모에 넣지 않는다")
+    void unverifiedRowsAreNotCountedAgainstTheUser() {
+        // 행이 있다는 것과 답을 얻었다는 것은 다르다. UNVERIFIED 는 GitHub 이 커밋을
+        // 계정에 붙이지 못했거나 조회 상한에 걸려 묻지 못한 근거이고, 분모에 넣으면
+        // 바로 위 테스트가 막으려던 과소평가가 행이 있다는 이유만으로 되살아난다.
+        job("an_1", USER);
+        String rule = ruleOf("lombok", "L1");
+        long mineRow = evidence("an_1", rule, "IMPORT", "{\"MODULE\":\"lombok.Getter\"}",
+                "a/A.java", 1, SHA);
+        contribution(mineRow, "an_1", "SOLE_AUTHOR", SHA);
+        for (int i = 0; i < 3; i++) {
+            long row = evidence("an_1", rule, "IMPORT",
+                    "{\"MODULE\":\"lombok.Kind" + i + "\"}", "a/B" + i + ".java", 1, OTHER_SHA);
+            contribution(row, "an_1", "UNVERIFIED", OTHER_SHA);
+        }
+
+        assertEquals("MOSTLY_MINE", store.authorship(USER, "lombok"));
+    }
+
+
+    @Test
     @DisplayName("본인 것이 소수면 MOSTLY_OTHERS")
     void smallMinorityIsMostlyOthers() {
         // 본인 근거가 두어 건뿐인데 MIXED 로 올리면 요약이 그것을 대등하게 말한다.
@@ -216,7 +237,7 @@ class TechnologySummaryFactStoreTest {
         for (int i = 0; i < 5; i++) {
             long row = evidence("an_1", rule, "IMPORT",
                     "{\"MODULE\":\"lombok.Kind" + i + "\"}", "a/B" + i + ".java", 1, OTHER_SHA);
-            contribution(row, "an_1", "UNVERIFIED", OTHER_SHA);
+            contribution(row, "an_1", "OTHER_AUTHOR", OTHER_SHA);
         }
 
         assertEquals("MOSTLY_OTHERS", store.authorship(USER, "lombok"));
@@ -234,8 +255,8 @@ class TechnologySummaryFactStoreTest {
         long third = evidence("an_1", rule, "IMPORT", "{\"MODULE\":\"lombok.Builder\"}",
                 "a/C.java", 1, OTHER_SHA);
         contribution(first, "an_1", "SOLE_AUTHOR", SHA);
-        contribution(second, "an_1", "UNVERIFIED", OTHER_SHA);
-        contribution(third, "an_1", "UNVERIFIED", OTHER_SHA);
+        contribution(second, "an_1", "OTHER_AUTHOR", OTHER_SHA);
+        contribution(third, "an_1", "OTHER_AUTHOR", OTHER_SHA);
 
         assertEquals("MIXED", store.authorship(USER, "lombok"));
     }

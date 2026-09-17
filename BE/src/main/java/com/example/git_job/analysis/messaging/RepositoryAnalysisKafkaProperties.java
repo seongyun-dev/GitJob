@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /** Kafka destinations owned by repository analysis. */
 @ConfigurationProperties(prefix = "gitjob.kafka.topics.repository-analysis")
 public record RepositoryAnalysisKafkaProperties(
-        String requests, String results, String resultsV3) {
+        String requests, String results, String resultsV3, String resultsDlq) {
 
     public RepositoryAnalysisKafkaProperties {
         requests = require(requests, "requests");
@@ -13,6 +13,23 @@ public record RepositoryAnalysisKafkaProperties(
         // stays at QUEUED, so it is required rather than defaulted.
         results = require(results, "results");
         resultsV3 = resultsV3 == null ? "" : resultsV3.strip();
+        resultsDlq = require(resultsDlq, "results-dlq");
+    }
+
+    /**
+     * 적용하지 못한 결과가 가는 곳.
+     *
+     * <p>v3 토픽과 달리 선택값이 아니다. 비워 두면 "DLQ 없이 돌린다"가 되는데, 그것이
+     * 바로 결과 4건이 어디로 갔는지 아무도 모르게 된 상태다. 값이 없으면 기동에서
+     * 멈추는 편이 낫다 -- 운영 중에 조용히 사라지는 것보다 배포 때 이름이 불리는 것이
+     * 싸다.</p>
+     *
+     * <p>워커의 {@code KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ} 와는 <b>다른 토픽</b>이다.
+     * 그쪽은 처리하지 못한 <i>요청</i>이 가는 곳이고 payload 모양이 다르다. 섞으면
+     * 비우는 사람이 무엇을 보고 있는지 알 수 없다.</p>
+     */
+    public String resultsDlq() {
+        return resultsDlq;
     }
 
     /**

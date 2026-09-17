@@ -33,9 +33,21 @@ import org.springframework.stereotype.Repository;
  * 평가한다. 한 질의로 합치지 않는 이유는 두 판정의 대상이 다르기 때문이다 --
  * Repository 는 모든 근거, Personal 은 본인 근거만이다.</p>
  *
- * <p>기여 판정이 아직 없는 기술은 Personal 이 비어 있다. 그것은 "본인이 안
- * 썼다"가 아니라 "확인되지 않았다"이며, Repository Level 로 대신 채우면 화면이
- * "본인이 썼다"고 말하게 된다.</p>
+ * <p>본인 근거는 {@code analysis_evidence_commit} 에서 오고, 그 테이블은 이 경로가
+ * 전부 살아 있을 때만 채워진다.</p>
+ *
+ * <ol>
+ *   <li>워커의 {@code ANALYSIS_ATTRIBUTE_AUTHORS} 가 켜져 있어야 한다. 그래야 전체
+ *       히스토리를 클론하고 {@code git blame} 이 답을 낸다. 꺼져 있으면 결과의
+ *       {@code commit_sha} 가 전부 비어 온다.</li>
+ *   <li>{@code EvidenceAuthorshipService} 가 그 커밋의 작성자를 GitHub 에 물어
+ *       {@code analysis_evidence_commit} 에 쓴다. 근거 적재와 다른 트랜잭션이라,
+ *       GitHub 이 느리면 근거는 남고 이 행만 비는 상태가 정상적으로 생긴다.</li>
+ * </ol>
+ *
+ * <p>그래서 Personal 이 비는 경우는 흔하다. 그것은 "본인이 안 썼다"가 아니라
+ * "확인되지 않았다"이며, Repository Level 로 대신 채우면 화면이 "본인이 썼다"고
+ * 말하게 된다 -- 확인하지 못한 것과 확인해 보니 아닌 것은 다른 사실이다.</p>
  */
 @Repository
 public class TechnologyProfileStore {

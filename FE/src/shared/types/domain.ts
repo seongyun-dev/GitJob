@@ -8,13 +8,18 @@ export const EVIDENCE_LEVELS = ['L0', 'L1', 'L2', 'L3'] as const
 export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number]
 
 /**
- * 기여 라벨 4종. 비율 값을 노출하지 않는다(와이어프레임 1-1 금지 규칙).
+ * 기여 라벨 5종. 비율 값을 노출하지 않는다(와이어프레임 1-1 금지 규칙).
  * 숫자를 받는 자리를 만들지 않는 것이 이 타입의 목적이다.
+ *
+ * `OTHER_AUTHOR`와 `UNVERIFIED`는 붙여 쓰지 않는다. 앞은 커밋 작성자를 물어
+ * **남이 썼음을 확인한** 것이고, 뒤는 **물어보지 못한** 것이다. 합쳐서 보여주면
+ * 화면이 "확인 못 했다"를 "본인이 안 썼다"로 말하게 된다.
  */
 export const CONTRIBUTION_LABELS = [
   'SOLE_AUTHOR',
   'CO_AUTHORED',
   'PARTIAL_EDIT',
+  'OTHER_AUTHOR',
   'UNVERIFIED',
 ] as const
 export type ContributionLabel = (typeof CONTRIBUTION_LABELS)[number]

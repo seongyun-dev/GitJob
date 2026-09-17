@@ -165,7 +165,7 @@ class RepositoryAnalysisResultEventTest {
                         Map.of("MODULE", "org.springframework.boot.SpringApplication"), null, null)),
                 List.of(new TechnologyCandidate(Ecosystem.MAVEN,
                         "org.postgresql:postgresql", "runtimeOnly", 1)),
-                new AnalysisStats(50, 82, 471, 17, 1932742, 1400, Map.of(), 0),
+                new AnalysisStats(50, 82, 471, 17, 1932742L, 1400L, Map.of(), 0),
                 null, null, List.of());
     }
 

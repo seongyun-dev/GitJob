@@ -56,11 +56,24 @@
 # is not the operating policy. See
 # `docs/data/2026-09-17-kafka-retention-and-connect-log-bounds.md`.
 #
-# Repository analysis owns three explicit topics. Auto-create is disabled and
+# Repository analysis owns five explicit topics. Auto-create is disabled and
 # an empty deployment has no outbox event for Debezium to route yet, so relying
 # on first traffic leaves both the consumer and result producer unready. Three
 # partitions matches the connector's topic.creation.default.partitions setting
 # and the existing result-topic contract.
+#
+# `results.v1` and `results.v3` are both result topics and both have to exist.
+# The worker publishes one contract per analysis and picks the topic from the Rule
+# Pack it judged with -- it does not also send v1. A missing v3 topic is therefore
+# not a degraded mode: the worker refuses to start, and if it were started without
+# one, registry-20260911.3/.4 analyses would fail with UNSUPPORTED_RESULT_SCHEMA.
+#
+# The two DLQs are not interchangeable. `...dlq.v1` takes requests the worker
+# could not process; `...results.dlq.v1` takes results this service could not
+# apply, and it has to exist before the backend starts -- the consumer stops on
+# a record it cannot deliver there. That is deliberate. Without a DLQ at all, a
+# result that failed to deserialize was logged once and committed, which is how
+# four analyses were lost with consumer lag reading zero.
 #
 # Idempotent: `--create --if-not-exists` leaves an existing topic alone. It
 # does **not** change the partition count of a topic that already exists —
@@ -102,7 +115,9 @@ TOPICS=(
   "jobs.collected:3:-1"
   "gitjob.repository-analysis.requests.v1:3:-1"
   "gitjob.repository-analysis.results.v1:3:-1"
+  "gitjob.repository-analysis.results.v3:3:-1"
   "gitjob.repository-analysis.dlq.v1:3:-1"
+  "gitjob.repository-analysis.results.dlq.v1:3:-1"
   "gitjob.repo-activity-weekly.completed.v1:1:-1"
 )
 

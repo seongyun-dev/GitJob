@@ -237,6 +237,22 @@ class UserEvidenceAssemblerTest {
     }
 
     @Test
+    @DisplayName("OTHER_AUTHOR는 OTHER로, UNVERIFIED는 UNKNOWN으로 나간다")
+    void keepsAConfirmedOtherAuthorApartFromAnUnverifiedOne() {
+        // C 가 이 둘을 구분해야 미확인을 부족으로 세지 않는다. 앞은 커밋 작성자를
+        // 물어 본인이 아님을 확인한 것이고, 뒤는 물어보지 못한 것이다.
+        given(List.of(analysis()), List.of(
+                row(1L, "API_CALL", "L2", "OTHER_AUTHOR"),
+                row(2L, "IMPORT", "L1", "UNVERIFIED")));
+
+        List<EvidencePayload.Proof> proofs = onlyTechnology().proofs();
+
+        assertThat(proofs).hasSize(2);
+        assertThat(proofs.get(0).attribution()).isEqualTo("OTHER");
+        assertThat(proofs.get(1).attribution()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
     @DisplayName("근거 행은 C가 인정하는 형태로 나간다")
     void buildsAcceptableProofs() {
         given(List.of(analysis()), List.of(

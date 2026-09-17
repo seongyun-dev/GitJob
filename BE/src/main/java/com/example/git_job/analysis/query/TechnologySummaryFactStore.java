@@ -50,6 +50,7 @@ public class TechnologySummaryFactStore {
                 SELECT e.analysis_evidence_id, e.fact_type, e.fact_payload, e.file_path,
                        e.start_line, e.rule_id, e.registry_version, e.commit_sha,
                        l.repository_id, l.repository_full_name, r.rule_type,
+                       c.contribution_type,
                        c.contribution_type IN ('SOLE_AUTHOR', 'CO_AUTHORED') AS is_mine
                 FROM latest l
                 JOIN analysis_evidence e ON e.analysis_id = l.analysis_id
@@ -84,6 +85,16 @@ public class TechnologySummaryFactStore {
      * 그중 69 가 본인 것이었다. 전체로 나누면 과반이 안 되어 {@code MIXED} 가
      * 나오지만, 확인된 것만 보면 81% 로 분명히 {@code MOSTLY_MINE} 이다.</p>
      *
+     * <p>"판정됐다"는 <b>행이 있다</b>가 아니라 <b>답을 얻었다</b>이다.
+     * {@code analysis_evidence_commit} 에는 {@code UNVERIFIED} 행도 쌓이는데, 그것은
+     * GitHub 이 커밋을 계정에 붙이지 못했거나 조회 상한에 걸려 묻지 못한 근거다.
+     * 행이 있다는 이유로 분모에 넣으면 위 문단이 막으려던 과소평가가 그대로
+     * 일어난다.</p>
+     *
+     * <p>이 구분은 {@code OTHER_AUTHOR}(물어봐서 남이 썼다)가 {@code UNVERIFIED} 에서
+     * 갈라져 나오면서 비로소 가능해졌다(V19). 그 전에는 둘이 한 값이라 미판정을 빼면
+     * 확인된 타인 작성까지 함께 빠졌다.</p>
+     *
      * <h2>경계</h2>
      *
      * <p>판정된 근거가 하나도 없으면 {@code NOT_VERIFIED} 다. 이것은 "본인이 안
@@ -98,7 +109,10 @@ public class TechnologySummaryFactStore {
         Counts counts = jdbc.queryForObject(LATEST_PER_REPOSITORY + EVIDENCE_OF_TECH + """
                 SELECT count(*) AS total,
                        count(*) FILTER (WHERE is_mine) AS mine_count,
-                       count(*) FILTER (WHERE is_mine IS NOT NULL) AS judged
+                       -- 행이 있는지가 아니라 답을 얻었는지로 센다. UNVERIFIED 는
+                       -- 행이 있어도 "묻지 못했다"이므로 분모가 아니다.
+                       count(*) FILTER (WHERE contribution_type IS NOT NULL
+                                          AND contribution_type <> 'UNVERIFIED') AS judged
                 FROM mine
                 """, (rs, row) -> new Counts(
                         rs.getInt("total"), rs.getInt("mine_count"), rs.getInt("judged")),

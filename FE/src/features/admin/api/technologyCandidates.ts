@@ -13,7 +13,7 @@ const BASE = '/admin/technology-candidates'
 /** BE `TechnologyCandidateResponse`. 시각은 ISO-8601 문자열로 온다. */
 export interface TechnologyCandidate {
   candidateId: number
-  /** MAVEN · NPM · PYPI · NUGET 등. 좌표를 읽는 방식이 생태계마다 다르다. */
+  /** MAVEN · NPM · PYPI · NUGET · GO · CARGO · COMPOSER. 좌표를 읽는 방식이 생태계마다 다르다. */
   ecosystem: string
   coordinate: string
   /** MAIN · TEST · DEV. 관찰이 엇갈리면 BE가 null로 둔다. */

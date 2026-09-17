@@ -430,6 +430,153 @@ repo_analysis.event_claim 누락이면 service 호스트에서 실행한다.
     fi
   fi
 
+  # --- 분석 결과 계약 배선 ------------------------------------------------------
+  # CURRENT Registry 가 요구하는 결과 계약과 실제 배선이 어긋나면 분석이 조용히 멈춘다.
+  # 워커는 판정에 쓴 Rule Pack 으로 발행 계약을 정하고 v1 을 함께 보내지 않는다.
+  # v3 publisher 가 없으면 UNSUPPORTED_RESULT_SCHEMA 로 실패하고, BE 가 v3 토픽을
+  # 구독하지 않으면 결과가 도달하지 않아 분석이 QUEUED 에 남는다. 둘 다 컨테이너는
+  # 건강해 보이므로 다른 검사로는 드러나지 않는다.
+  #
+  # 이 호스트의 env 파일을 본다. service 호스트는 backend 를, data 호스트는
+  # analysis-worker 를 같은 두 변수로 설정하므로 양쪽에서 돌려야 한다.
+  if ! profile_enabled core; then
+    skip analysis-result "core 프로필이 이 호스트에 없다"
+  elif ! running postgres; then
+    undetermined analysis-result "postgres 컨테이너가 이 호스트에 없다"
+  else
+    current_registry="$(psql_query "SELECT registry_version FROM technology_registry WHERE status = 'CURRENT'")"
+    current_rule_pack="$(psql_query "SELECT p.rule_pack_version FROM technology_rule_pack p JOIN technology_registry r ON r.registry_version = p.registry_version WHERE r.status = 'CURRENT'")"
+    # compose.yaml 의 기본값과 같아야 한다. 미설정과 기본값을 구분하지 않는다.
+    result_schema="$(read_env ANALYSIS_RESULT_SCHEMA_VERSION)"
+    result_schema="${result_schema:-repository-analysis-result/v3}"
+    result_topic_v3="$(read_env KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3)"
+    result_topic_v3="${result_topic_v3:-gitjob.repository-analysis.results.v3}"
+
+    case "$current_rule_pack" in
+      "") required_contract="repository-analysis-result/v1" ;;
+      rule-pack-20260911.2) required_contract="repository-analysis-result/v2" ;;
+      rule-pack-20260911.3|rule-pack-20260911.4) required_contract="repository-analysis-result/v3" ;;
+      *) required_contract="unknown" ;;
+    esac
+
+    if [[ -z "$current_registry" ]]; then
+      needs_action analysis-result "technology_registry 에 CURRENT 가 없다" \
+        "CURRENT 없이는 분석 요청 자체가 만들어지지 않는다. Registry 발행 상태를 확인한다.
+    SELECT registry_version, status FROM technology_registry ORDER BY registry_version;"
+    elif [[ "$required_contract" == "unknown" ]]; then
+      undetermined analysis-result \
+        "CURRENT=$current_registry 의 Rule Pack $current_rule_pack 을 이 스크립트가 모른다"
+    elif [[ "$required_contract" == "repository-analysis-result/v2" ]]; then
+      # BE 에는 v2 결과 토픽 설정이 없다. 워커가 v2 로 발행하면 아무도 읽지 않는다.
+      needs_action analysis-result \
+        "CURRENT=$current_registry 는 v2 결과를 만드는데 BE 는 v2 토픽을 구독하지 않는다" \
+        "v2 를 쓰려면 BE 에 v2 결과 토픽 구독을 먼저 추가해야 한다. 그 전에는 .3/.4 로 올리거나 Rule Pack 이 없는 Registry 를 쓴다."
+    elif [[ "$required_contract" == "repository-analysis-result/v1" ]]; then
+      # Rule Pack 이 없는 Registry 다. 워커는 v1 로 발행하므로 v3 배선은 쓰이지 않는다.
+      ok analysis-result "CURRENT=$current_registry, 결과 계약 v1 (Rule Pack 없음)"
+    elif [[ "$result_schema" != "repository-analysis-result/v3" ]]; then
+      needs_action analysis-result \
+        "CURRENT=$current_registry 는 v3 결과를 요구하는데 ANALYSIS_RESULT_SCHEMA_VERSION=$result_schema" \
+        "워커에 v3 publisher 가 없어 분석이 UNSUPPORTED_RESULT_SCHEMA 로 실패한다. env 파일에서 지우거나 v3 로 맞춘 뒤 analysis-worker 를 재시작한다."
+    elif [[ -z "$result_topic_v3" ]]; then
+      needs_action analysis-result \
+        "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3 이 비어 있다" \
+        "워커는 기동하지 못하고, BE 는 v3 토픽을 구독하지 않아 결과가 도달하지 않는다. env 파일에서 지워 기본값을 쓰게 한다."
+    elif ! grep -Fq "\"$result_topic_v3:" "$SCRIPT_DIR/kafka-topics.sh"; then
+      needs_action analysis-result \
+        "v3 결과 토픽 $result_topic_v3 이 kafka-topics.sh 에 선언돼 있지 않다" \
+        "자동 생성이 꺼져 있어 없는 토픽에는 발행도 구독도 되지 않는다. 기본 이름을 쓰거나 kafka-topics.sh 의 TOPICS 에 추가한다."
+    else
+      ok analysis-result "CURRENT=$current_registry, 결과 계약 v3, 토픽 $result_topic_v3"
+    fi
+  fi
+
+  # --- Backend -> C Compute 배선 ------------------------------------------------
+  # 분석이 정상 저장돼도 이 연결이 없으면 공고 매칭·Skill Gap·추천이 계산되지 않는다.
+  # BE 는 주소나 토큰이 비면 C 를 아예 호출하지 않고 계산 결과를 "미준비"로 내리는데
+  # (CComputeProperties#isConfigured), 화면에서는 아직 계산 전인 것과 구분되지 않는다.
+  # 그래서 설정 누락이 장애로 보이지 않고 몇 주씩 남을 수 있다.
+  if ! profile_enabled app; then
+    skip backend-compute "app 프로필이 이 호스트에 없다"
+  elif ! running backend; then
+    undetermined backend-compute "backend 컨테이너가 이 호스트에 없다"
+  else
+    compute_url="$(read_env C_COMPUTE_URL)"
+    compute_token="$(read_env C_COMPUTE_TOKEN)"
+    if [[ -z "$compute_url" || -z "$compute_token" ]]; then
+      needs_action backend-compute \
+        "C_COMPUTE_URL/C_COMPUTE_TOKEN 이 비어 있어 BE 가 C 를 호출하지 않는다" \
+        "분석은 저장되지만 추천까지 이어지지 않는다. env 파일에 두 값을 채우고 backend 를 재시작한다.
+service 호스트에서 주소는 compose 내부 이름이 아니라 데이터 노드의 Tailscale 주소다.
+토큰은 worker 의 C_COMPUTE_TOKEN 과 같은 값이어야 한다."
+    else
+      # 토큰은 컨테이너 안에서만 읽는다. 이 스크립트로도, 로그로도 나오지 않는다.
+      compute_code="$(compose exec -T backend sh -c '
+        curl -sS -o /dev/null -w "%{http_code}" --max-time 5 \
+          -H "Authorization: Bearer $C_COMPUTE_TOKEN" \
+          "$C_COMPUTE_URL/ready" 2>/dev/null || echo 000
+      ' 2>/dev/null | tr -d '\r' | tail -n 1)"
+      case "$compute_code" in
+        200)
+          ok backend-compute "BE 에서 C /ready 도달" ;;
+        000)
+          needs_action backend-compute \
+            "BE 컨테이너에서 $compute_url 에 닿지 않는다" \
+            "주소가 이 호스트 기준인지 확인한다. split 배포에서는 compose 내부 이름이 아니라 데이터 노드의 Tailscale 주소여야 한다." ;;
+        401|403)
+          needs_action backend-compute \
+            "C 가 인증을 거절했다 (code=$compute_code)" \
+            "backend 와 worker 의 C_COMPUTE_TOKEN 이 같은 값인지 확인한다." ;;
+        503)
+          needs_action backend-compute \
+            "C 가 아직 준비되지 않았다 (code=503)" \
+            "위 worker-ready 결과를 먼저 본다. Registry 미활성이면 C 를 재기동해야 한다." ;;
+        *)
+          undetermined backend-compute "C /ready 응답이 예상 밖이다 (code=${compute_code:-unknown})" ;;
+      esac
+    fi
+  fi
+
+  # --- 개인 귀속 산출물 ---------------------------------------------------------
+  # personalLevel 은 Evidence 의 commit_sha 에서 나온다. ANALYSIS_ATTRIBUTE_AUTHORS 가
+  # 꺼져 있으면 워커가 얕은 체크아웃으로 돌고 그 값이 전부 NULL 로 남는데, 분석은
+  # SUCCEEDED 로 끝나고 기술 목록도 보인다. 설정만 봐서는 드러나지 않으므로 결과를 본다.
+  #
+  # 설정 자체는 data 호스트에 있고 근거 행은 DB 에 있다. DB 를 보는 쪽이 진실이다.
+  if ! profile_enabled core; then
+    skip analysis-personal "core 프로필이 이 호스트에 없다"
+  elif ! running postgres; then
+    undetermined analysis-personal "postgres 컨테이너가 이 호스트에 없다"
+  else
+    personal_row="$(psql_query "SELECT j.analysis_id || '|'
+           || (SELECT count(*) FROM analysis_evidence e
+                WHERE e.analysis_id = j.analysis_id AND e.commit_sha IS NOT NULL) || '|'
+           || (SELECT count(*) FROM analysis_evidence e WHERE e.analysis_id = j.analysis_id)
+      FROM analysis_job j
+     WHERE j.status = 'SUCCEEDED'
+     ORDER BY j.completed_at DESC NULLS LAST
+     LIMIT 1")"
+    if [[ -z "$personal_row" ]]; then
+      skip analysis-personal "성공한 분석이 아직 없다"
+    else
+      personal_analysis="${personal_row%%|*}"
+      personal_rest="${personal_row#*|}"
+      personal_attributed="${personal_rest%%|*}"
+      personal_total="${personal_rest##*|}"
+      if [[ "$personal_total" == "0" ]]; then
+        ok analysis-personal "최근 성공 분석 $personal_analysis 의 근거가 0건 (등록 기술 미관측)"
+      elif [[ "$personal_attributed" == "0" ]]; then
+        needs_action analysis-personal \
+          "최근 성공 분석 $personal_analysis 의 근거 $personal_total 건에 commit_sha 가 하나도 없다" \
+          "ANALYSIS_ATTRIBUTE_AUTHORS 가 꺼져 있으면 personalLevel 을 만들 수 없다. data 호스트에서 켜고 analysis-worker 를 재시작한다.
+켜면 전체 히스토리를 클론하므로 worker 디스크 여유를 먼저 본다.
+이미 저장된 분석은 자동으로 채워지지 않는다 -- 그 사용자는 재분석이 필요하다."
+      else
+        ok analysis-personal "최근 성공 분석 $personal_analysis 근거 $personal_attributed/$personal_total 건에 commit_sha 있음"
+      fi
+    fi
+  fi
+
   # --- Weekly Trend consumer placement --------------------------------------
   # The base service historically belonged to the data profile. The production
   # topology now runs it only on the Service host, where host networking can

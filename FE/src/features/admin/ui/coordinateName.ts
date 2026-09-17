@@ -10,10 +10,17 @@
  * 최종 이름은 관리자가 승격 폼에서 직접 정한다.
  *
  * 생태계마다 이름의 경계가 다르다.
- *   MAVEN  group:artifact  → artifact          (그룹은 배포 주체지 기술명이 아니다)
- *   NPM    @scope/name     → 그대로            (스코프까지가 패키지 이름이다)
- *   PYPI   name            → 그대로
- *   NUGET  A.B.C           → 그대로            (점 구분이 곧 패키지 이름이다)
+ *   MAVEN    group:artifact       → artifact   (그룹은 배포 주체지 기술명이 아니다)
+ *   NPM      @scope/name          → 그대로     (스코프까지가 패키지 이름이다)
+ *   PYPI     name                 → 그대로
+ *   NUGET    A.B.C                → 그대로     (점 구분이 곧 패키지 이름이다)
+ *   GO       host/owner/module    → 그대로     (모듈 경로 전체가 식별자다)
+ *   CARGO    name                 → 그대로
+ *   COMPOSER vendor/name          → 그대로     (NPM 스코프와 같은 이유)
+ *
+ * MAVEN만 잘라 내고 나머지는 좌표를 그대로 둔다. 모르는 생태계가 와도 같은 길로
+ * 떨어지는데, 그것이 맞는 기본값이다 -- 경계를 모르는 채로 자르면 다른 패키지와
+ * 같은 이름이 되고, 관리자는 그 화면만 보고 승격을 판단한다.
  */
 export function coordinateName(ecosystem: string, coordinate: string): string {
   if (ecosystem === 'MAVEN') {

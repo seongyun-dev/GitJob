@@ -24,7 +24,20 @@ public record TechnologyCandidate(
         @JsonProperty("occurrence_count") int occurrenceCount
 ) {
 
-    public enum Ecosystem { MAVEN, NPM, PYPI, NUGET }
+    /**
+     * 워커가 의존성 선언을 읽어 낼 수 있는 생태계.
+     *
+     * <p>{@code GO}·{@code CARGO}·{@code COMPOSER} 는
+     * {@code repository-analysis-result/v2} 부터 계약에 있었지만 여기에는 없었다. 이
+     * enum 은 Jackson 이 읽는 자리라, 모르는 값 하나가 후보 하나를 버리는 것이 아니라
+     * <b>결과 이벤트 전체</b>를 역직렬화 실패로 만든다 -- Go·Rust·PHP 저장소를 분석한
+     * 사용자는 판정과 근거까지 통째로 잃고 QUEUED 에 남는다.</p>
+     *
+     * <p>목록을 늘릴 때는 {@code CK_TECHNOLOGY_CANDIDATE_ECOSYSTEM} 도 함께 늘려야
+     * 한다. DB 에 같은 제약이 하나 더 있어서, 여기만 고치면 실패 지점이 역직렬화에서
+     * 트랜잭션으로 옮겨갈 뿐이다.</p>
+     */
+    public enum Ecosystem { MAVEN, NPM, PYPI, NUGET, GO, CARGO, COMPOSER }
 
     public TechnologyCandidate {
         ecosystem = Objects.requireNonNull(ecosystem, "ecosystem must not be null");

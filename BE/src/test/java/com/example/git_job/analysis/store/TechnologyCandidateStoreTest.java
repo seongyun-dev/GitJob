@@ -354,4 +354,29 @@ class TechnologyCandidateStoreTest {
         // limit을 지킨다.
         assertEquals(1, store.observations(id, 1).size());
     }
+
+    @Test
+    @DisplayName("JVM 밖 생태계도 저장된다 -- GO·CARGO·COMPOSER")
+    void storesDependencyEcosystemsOutsideTheJvm() {
+        // ecosystem 은 두 군데에서 좁혀져 있었다. 이벤트의 enum 과 여기 CHECK 제약이다.
+        // enum 만 늘리면 역직렬화는 통과하고 이 INSERT 가 깨지면서 결과 적용 트랜잭션이
+        // 통째로 롤백된다 -- 후보 하나가 아니라 판정과 근거까지 함께 잃는다.
+        givenJob("an_polyglot", 1201L, "repo_polyglot");
+
+        store.record("an_polyglot", 1201L, "repo_polyglot", List.of(
+                new TechnologyCandidate(Ecosystem.GO, "github.com/gin-gonic/gin", "require", 1),
+                new TechnologyCandidate(Ecosystem.CARGO, "serde", "dependencies", 1),
+                new TechnologyCandidate(Ecosystem.COMPOSER, "monolog/monolog", "require-dev", 2)
+        ), SEEN);
+
+        assertEquals("GO", ecosystemOf("github.com/gin-gonic/gin"));
+        assertEquals("CARGO", ecosystemOf("serde"));
+        assertEquals("COMPOSER", ecosystemOf("monolog/monolog"));
+    }
+
+    private String ecosystemOf(String coordinate) {
+        return jdbc.queryForObject(
+                "SELECT ecosystem FROM technology_candidate WHERE coordinate = ?",
+                String.class, coordinate);
+    }
 }

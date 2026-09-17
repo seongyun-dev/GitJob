@@ -155,13 +155,19 @@ grep -Fq 'PROFILES=core bash Infra/scripts/repo-analysis-migrate.sh' Infra/scrip
 grep -Fq 'PROFILES=core bash Infra/scripts/kafka-topics.sh' Infra/scripts/deploy.sh
 grep -Fq 'spark-worker worker analysis-worker collector' Infra/scripts/healthcheck.sh
 grep -Fq 'analysis-worker-ready' Infra/scripts/verify-deployment.sh
+grep -Fq 'analysis-result' Infra/scripts/verify-deployment.sh
+grep -Fq 'backend-compute' Infra/scripts/verify-deployment.sh
+grep -Fq 'analysis-personal' Infra/scripts/verify-deployment.sh
 grep -Fq 'profiles: !override [weekly]' Infra/compose/compose.ec2-data-cluster.yaml
 grep -Fq 'remove_legacy_data_weekly_consumer' Infra/scripts/deploy.sh
 grep -Fq 'start_service_weekly_consumer' Infra/scripts/deploy.sh
 grep -Fq 'weekly-consumer-placement' Infra/scripts/verify-deployment.sh
-for topic in requests results dlq; do
+for topic in requests results dlq results.dlq; do
   grep -Fq "gitjob.repository-analysis.${topic}.v1:3" Infra/scripts/kafka-topics.sh
 done
+# v3 결과 토픽은 .v1 로 끝나지 않아 위 루프에 들어가지 않는다. 빠지면 워커가
+# 기동하지 못하거나 registry-20260911.3/.4 결과가 도달하지 않는다.
+grep -Fq "gitjob.repository-analysis.results.v3:3" Infra/scripts/kafka-topics.sh
 
 live_report="$({
   printf '%s\n' 'Live datanodes (4):'
