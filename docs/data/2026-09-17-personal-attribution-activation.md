@@ -54,8 +54,11 @@
 
 ### 1.2 확인
 
+서비스 호스트에서 운영 Compose 설정을 명시해 확인한다.
+
 ```bash
-bash Infra/scripts/verify-deployment.sh
+ENV_FILE=.env.service COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml \
+PROFILES=core,app bash Infra/scripts/verify-deployment.sh
 ```
 
 `schema` 줄의 최신 마이그레이션이 `V19` 인지 본다.
@@ -112,9 +115,13 @@ grep -n ANALYSIS_ATTRIBUTE_AUTHORS .env.data
 ### 3.2 재시작
 
 ```bash
-ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data.yaml \
+ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
 PROFILES=data ./Infra/scripts/up.sh
 ```
+
+현재 2호스트 HDFS/Spark 구성에서는 반드시 `compose.ec2-data-cluster.yaml`을 쓴다.
+`compose.ec2-data.yaml`만 사용하면 NameNode의 Tailscale RPC publish와 host-network
+DataNode 설정이 빠져 NameNode/DataNode healthcheck가 서로 기다리게 된다.
 
 `up.sh` 는 `compose up -d` 라 설정이 바뀐 컨테이너만 다시 만들고 healthcheck 까지
 돌린다. 값은 **기동 시점에만** 읽으므로 컨테이너를 다시 띄우지 않으면 반영되지 않는다.
@@ -236,8 +243,11 @@ WARN  authorship lookup budget exhausted: analysisId=..., commits=120,
 
 ### 5.3 전체 상태
 
+data 호스트에서는 운영 cluster overlay를 명시한다.
+
 ```bash
-bash Infra/scripts/verify-deployment.sh
+ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
+PROFILES=data bash Infra/scripts/verify-deployment.sh
 ```
 
 ```text
