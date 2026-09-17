@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useJobDemands, useSaveTarget, useTarget } from '@/features/matching/hooks/useMatching'
+import { formatCollectedAt } from '@/features/matching/model/presentation'
 import { ApiError } from '@/shared/api/client'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
@@ -222,7 +223,7 @@ export function TargetRolePage() {
                   <>
                     <p className="text-[12px] text-brand-faint">
                       비교 대상 공고 {preview.data.basis.jobCount ?? 0}건 ·{' '}
-                      {preview.data.basis.asOf ?? '수집 기준 미정'}
+                      {formatCollectedAt(preview.data.basis.asOf)}
                     </p>
                     <ol className="mt-3 grid gap-3">
                       {technologies.map((technology) => (

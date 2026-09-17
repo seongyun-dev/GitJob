@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { toNextSkills } from '@/features/matching/api/adapter'
+import { DataGapNotice } from '@/features/matching/components/DataGapNotice'
 import { NextSkillCard } from '@/features/matching/components/NextSkillCard'
 import { RecommendationChain } from '@/features/matching/components/RecommendationChain'
 import { useRecommendations, useTarget } from '@/features/matching/hooks/useMatching'
@@ -122,15 +123,7 @@ export function RecommendationPage() {
                 rest.map((skill) => <NextSkillCard key={skill.techId} skill={skill} />)
               )}
 
-              {data !== undefined && data.dataGaps.length > 0 && (
-                <ul className="grid gap-1.5 rounded-[14px] border border-brand-line bg-white/70 px-4 py-3">
-                  {data.dataGaps.map((gap) => (
-                    <li key={gap} className="text-[11.5px] leading-[1.6] text-tone-neutral">
-                      · {gap}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {data !== undefined && <DataGapNotice gaps={data.dataGaps} />}
             </div>
           </div>
         )}

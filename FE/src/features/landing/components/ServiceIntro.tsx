@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { githubLoginUrl } from '@/features/auth/api/authUrls'
+import { AnalysisStartLink } from '@/features/landing/components/AnalysisStartLink'
 import { FlowConnector, FlowNode } from '@/features/landing/components/FlowRail'
 import {
   ArrowUpIcon,
@@ -298,21 +298,12 @@ export function ServiceIntro({ footer }: { footer?: ReactNode }) {
             어떤 가능성이 있을까요?
           </h2>
 
-          {/*
-            `<a>`인 것은 진입 엔드포인트가 302로 GitHub에 넘기기 때문이다. 브라우저
-            최상위 이동이어야 하므로 `<Link>`로 부르면 안 된다.
-
-            Hero의 `GitHub 연동 시작`과 같은 곳으로 간다. 204가 "GitHub Login이 서비스
-            진입점"을 Production 계약으로 정했고, 소개를 끝까지 읽은 사람에게 다른
-            입구를 주면 흐름이 갈린다.
-          */}
-          <a
-            href={githubLoginUrl()}
+          <AnalysisStartLink
             className="inline-flex items-center gap-3 rounded-2xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-8 py-[18px] text-[17px] font-bold text-white shadow-[0_18px_40px_rgba(31,60,140,0.4)] transition-shadow hover:shadow-[0_22px_48px_rgba(31,60,140,0.48)] lg:px-[38px] lg:py-[22px] lg:text-[19px]"
           >
             <GithubIcon className="h-[22px] w-[22px] lg:h-6 lg:w-6" />
             GitHub로 분석 시작하기
-          </a>
+          </AnalysisStartLink>
 
           {/* 하지 않는 것을 마지막에 한 번 더 적는다. 권한을 넘기기 직전이라 여기가 맞다. */}
           <span className="text-[14px] text-white/70 lg:text-[15px]">

@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { toJobPosting } from '@/features/matching/api/adapter'
+import { DataGapNotice } from '@/features/matching/components/DataGapNotice'
 import { JobPostingCard } from '@/features/matching/components/JobPostingCard'
 import { JobRequirementDrawer } from '@/features/matching/components/JobRequirementDrawer'
 import { useJobMatches, useTarget } from '@/features/matching/hooks/useMatching'
+import { formatCollectedAt } from '@/features/matching/model/presentation'
 import type { JobPostingView } from '@/features/matching/model/view'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel, PartialNotice } from '@/shared/ui/ComputeStatePanel'
@@ -126,7 +128,7 @@ export function JobMatchPage() {
         <div className="shrink-0 rounded-[14px] border border-brand-line bg-white px-5 py-3.5">
           <p className="text-[12px] text-brand-faint">공고 수집 기준</p>
           <p className="mt-1 text-[13.5px] font-[750] text-brand-ink-soft">
-            {basis?.asOf ?? '수집 기준 미정'}
+            {formatCollectedAt(basis?.asOf)}
           </p>
         </div>
       </div>
@@ -223,15 +225,7 @@ export function JobMatchPage() {
                     계산 결과 그대로 보여줍니다.
                   </p>
 
-                  {data.dataGaps.length > 0 && (
-                    <ul className="mt-4 grid gap-1.5">
-                      {data.dataGaps.map((gap) => (
-                        <li key={gap} className="text-[11.5px] leading-[1.6] text-tone-neutral">
-                          · {gap}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <DataGapNotice gaps={data.dataGaps} className="mt-4" />
 
                   <Link
                     to="/skill-gap"

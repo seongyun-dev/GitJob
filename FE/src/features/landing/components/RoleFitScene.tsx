@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router'
 import { SiteHeader } from '@/app/layouts/SiteHeader'
-import { githubLoginUrl } from '@/features/auth/api/authUrls'
+import { AnalysisStartLink } from '@/features/landing/components/AnalysisStartLink'
 import { ROLE_FIT, ROLE_FITS } from '@/features/landing/roleFitData'
 import type { RoleKey } from '@/features/landing/roleFitData'
 
@@ -72,16 +72,11 @@ export function RoleFitScene({
               className="lp-rise flex flex-wrap gap-3"
               style={{ '--lp-delay': '330ms' } as CSSProperties}
             >
-              {/*
-                `<a>`인 것은 진입 엔드포인트가 302로 GitHub에 넘기기 때문이다. 브라우저
-                최상위 이동이어야 하므로 `<Link>`로 부르면 안 된다.
-              */}
-              <a
-                href={githubLoginUrl()}
+              <AnalysisStartLink
                 className="rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-[26px] py-4 text-[16px] font-bold text-white shadow-[0_14px_30px_rgba(31,60,140,0.34)] transition-shadow hover:shadow-[0_18px_38px_rgba(31,60,140,0.42)]"
               >
                 내 근거 채우러 가기
-              </a>
+              </AnalysisStartLink>
               {/*
                 로그인 전에 열리는 유일한 제품 화면이 트렌드다. 공고 매칭·Evidence는
                 분석 결과가 있어야 채워지므로 둘러보기의 목적지가 될 수 없다.
