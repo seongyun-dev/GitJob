@@ -119,13 +119,13 @@ export function SelectedRepositoryCard({
           {/*
             접수된 분석의 진행 화면으로 이동한다(티켓 192에서 흐름 연결).
             analysisId가 저장소마다 다르므로 링크도 카드별로 각자의 ID를 가리킨다.
-            진행 상태 조회 API는 아직 없어서 그 화면은 준비 중 상태만 보여준다.
+            여러 저장소를 한 번에 접수해도 진행 상태는 이 링크별로 각각 확인한다.
           */}
           <Link
             to={`/analyses/${outcome.accepted.analysisId}`}
-            className="mt-1 block rounded-lg border border-brand-line px-2.5 py-1.5 text-center text-[11.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+            className="mt-2 block rounded-lg bg-tone-accent px-2.5 py-2 text-center text-[12px] font-[750] text-white shadow-[0_8px_18px_rgba(47,94,235,0.2)] transition-shadow hover:shadow-[0_10px_22px_rgba(47,94,235,0.3)]"
           >
-            진행 화면 보기
+            분석 진행 화면 보기
           </Link>
         </dl>
       ) : (

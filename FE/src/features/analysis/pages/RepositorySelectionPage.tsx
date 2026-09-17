@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router'
 import type { AnalysisRequestOutcome, RepositorySummary } from '@/features/analysis/api/types'
 import { AnalysisRequestPanel } from '@/features/analysis/components/AnalysisRequestPanel'
 import {
@@ -11,6 +12,14 @@ import {
   useAnalysisRequests,
   useRepositoryList,
 } from '@/features/analysis/hooks/useRepositoryAnalysis'
+import {
+  ANALYSIS_SELECTION_HISTORY_KEY,
+  branchesFromDraft,
+  createAnalysisSelectionDraft,
+  outcomesFromDraft,
+  readAnalysisSelectionDraft,
+  selectedFromDraft,
+} from '@/features/analysis/model/selectionHistory'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { DESIGN_FIXTURES_ENABLED } from '@/mocks/designFixtures'
 import { REPOSITORY_LIST } from '@/mocks/fixtures/repositoryList'
@@ -79,15 +88,29 @@ function Pagination({
 }
 
 export function RepositorySelectionPage() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [initialDraft] = useState(() => readAnalysisSelectionDraft(location.state))
+  const historyTarget = useRef(`${location.pathname}${location.search}${location.hash}`)
+  const baseHistoryState = useRef(
+    typeof location.state === 'object' && location.state !== null ? location.state : {},
+  )
   const [page, setPage] = useState(1)
   /**
    * fullName만 담지 않고 항목 전체를 담는다. 페이지를 넘기면 현재 페이지 목록에서
    * 선택한 저장소가 사라지는데, 선택 요약과 브랜치 선택은 계속 보여야 한다.
    * Map이라 선택 순서가 보존되고 fullName으로 바로 조회된다.
    */
-  const [selected, setSelected] = useState<Map<string, RepositorySummary>>(new Map())
-  const [branchByRepo, setBranchByRepo] = useState<Map<string, string>>(new Map())
-  const [outcomes, setOutcomes] = useState<Map<string, AnalysisRequestOutcome>>(new Map())
+  const [selected, setSelected] = useState<Map<string, RepositorySummary>>(() =>
+    selectedFromDraft(initialDraft),
+  )
+  const [branchByRepo, setBranchByRepo] = useState<Map<string, string>>(() =>
+    branchesFromDraft(initialDraft),
+  )
+  const [outcomes, setOutcomes] = useState<Map<string, AnalysisRequestOutcome>>(() =>
+    outcomesFromDraft(initialDraft),
+  )
+  const [scopeShortcutDismissed, setScopeShortcutDismissed] = useState(false)
 
   const repositories = useRepositoryList(page)
   const submission = useAnalysisRequests()
@@ -105,8 +128,34 @@ export function RepositorySelectionPage() {
   const showQueryState = !DESIGN_FIXTURES_ENABLED
   const selectedList = [...selected.values()]
 
+  /*
+   * 진행 화면 링크가 새 history entry를 만들기 전에 현재 선택 화면 entry를 갱신한다.
+   * 브라우저 뒤로 가기로 돌아오면 위 초기화 함수가 선택·브랜치·성공 결과를 복원한다.
+   * 같은 URL을 replace하므로 뒤로 가기 깊이와 스크롤 위치는 바뀌지 않는다.
+   */
+  useEffect(() => {
+    const draft = createAnalysisSelectionDraft(selected.values(), branchByRepo, outcomes)
+    void navigate(historyTarget.current, {
+      replace: true,
+      preventScrollReset: true,
+      state: {
+        ...baseHistoryState.current,
+        [ANALYSIS_SELECTION_HISTORY_KEY]: draft,
+      },
+    })
+  }, [selected, branchByRepo, outcomes, navigate])
+
+  function showAnalysisScope() {
+    setScopeShortcutDismissed(true)
+    document.getElementById('analysis-request-panel')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  }
+
   /** 선택 해제 시 그 저장소의 브랜치·결과까지 함께 정리한다. 남겨 두면 재선택 때 되살아난다. */
   const removeRepository = useCallback((fullName: string) => {
+    setScopeShortcutDismissed(false)
     setSelected((prev) => {
       const next = new Map(prev)
       next.delete(fullName)
@@ -125,6 +174,7 @@ export function RepositorySelectionPage() {
   }, [])
 
   function toggleRepository(fullName: string) {
+    setScopeShortcutDismissed(false)
     if (selected.has(fullName)) {
       removeRepository(fullName)
       return
@@ -252,6 +302,16 @@ export function RepositorySelectionPage() {
           onSubmit={startAnalysis}
         />
       </div>
+
+      {selectedList.length > 0 && !scopeShortcutDismissed && (
+        <button
+          type="button"
+          onClick={showAnalysisScope}
+          className="fixed right-4 bottom-4 left-4 z-30 rounded-xl bg-[linear-gradient(135deg,var(--color-brand-600),var(--color-brand-400))] px-5 py-3.5 text-[14px] font-[750] text-white shadow-[0_14px_32px_rgba(31,60,140,0.34)] lg:hidden"
+        >
+          선택한 Repository {selectedList.length}개 · 분석 설정 보기
+        </button>
+      )}
     </div>
   )
 }

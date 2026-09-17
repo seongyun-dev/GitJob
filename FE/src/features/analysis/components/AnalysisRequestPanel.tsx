@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import type { AnalysisRequestOutcome, RepositorySummary } from '@/features/analysis/api/types'
 import { SelectedRepositoryCard } from '@/features/analysis/components/SelectedRepositoryCard'
 
@@ -17,10 +18,9 @@ import { SelectedRepositoryCard } from '@/features/analysis/components/SelectedR
  * 브랜치를 정해 보내는 것은 이 티켓의 기능 요구라서 유지하고, Final의 시각 언어로
  * 스타일만 맞췄다. Final의 기능을 베끼지 않고 시각만 가져온다는 원칙에 따른 것이다.
  *
- * 성공 후 라우팅하지 않는 이유: 진행 상태 화면(S15P21E102-136)과 그 화면이 쓸
- * `GET /analyses/{analysisId}`(S15P21E102-133)이 둘 다 없다. 응답의 `statusUrl`은
- * 아직 열리지 않은 경로를 가리키므로 링크로 쓰지 않고, 받은 `analysisId`를
- * 저장소별로 보여준 뒤 멈춘다.
+ * 분석 접수 뒤에는 `analysisId`별 진행 화면으로 이어진다. 저장소마다 분석이 독립적이라
+ * 한 건이면 패널의 주 CTA로 보내고, 여러 건이면 각 저장소 카드에서 자기 진행 화면으로
+ * 이동하게 한다.
  */
 
 /** Final CTA의 그라디언트·그림자 값. */
@@ -78,11 +78,14 @@ export function AnalysisRequestPanel({
 
   const isRetry = untried.length === 0 && failed.length > 0
   const canSubmit = submittable.length > 0 && branchesReady && !isSubmitting
+  const singleOutcome = repositories.length === 1 ? outcomes.get(repositories[0]?.fullName ?? '') : undefined
+  const completedAnalysisId = singleOutcome?.ok === true ? singleOutcome.accepted.analysisId : null
 
   return (
     <section
+      id="analysis-request-panel"
       aria-labelledby="analysis-request-heading"
-      className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)] lg:sticky lg:top-[96px]"
+      className="scroll-mt-32 rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)] lg:sticky lg:top-[96px]"
     >
       <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">ANALYSIS SCOPE</p>
       <h2
@@ -112,6 +115,34 @@ export function AnalysisRequestPanel({
         </ul>
       )}
 
+      {completedAnalysisId !== null ? (
+        <Link
+          to={`/analyses/${completedAnalysisId}`}
+          className={`${PRIMARY_CTA} mt-4 block text-center`}
+        >
+          분석 진행 화면 보기
+        </Link>
+      ) : submittable.length === 0 && succeeded.length > 1 ? (
+        <div className="mt-4 rounded-xl bg-tone-success-bg px-4 py-3 text-[13px] leading-[1.6] font-semibold text-tone-success">
+          분석 {succeeded.length}건을 등록했습니다. 위 Repository별 버튼에서 진행 상태를 확인하세요.
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={!canSubmit}
+          className={`${PRIMARY_CTA} mt-4`}
+        >
+          {isSubmitting
+            ? '분석을 등록하는 중입니다…'
+            : repositories.length === 0
+              ? '분석할 Repository를 고르세요'
+              : isRetry
+                ? `실패한 ${failed.length}개 다시 시도`
+                : `${submittable.length}개 Repository 분석 시작`}
+        </button>
+      )}
+
       <dl className="mt-4 border-t border-brand-line pt-1">
         {EVIDENCE_STEPS.map((item) => (
           <div key={item.step} className="flex gap-3 py-3">
@@ -122,21 +153,6 @@ export function AnalysisRequestPanel({
           </div>
         ))}
       </dl>
-
-      <button type="button" onClick={onSubmit} disabled={!canSubmit} className={PRIMARY_CTA}>
-        {isSubmitting
-          ? '분석을 등록하는 중입니다…'
-          : repositories.length === 0
-            ? // 아직 아무것도 고르지 않은 상태. 아래 "모두 등록되었습니다"로 떨어지면
-              // 하지 않은 일을 했다고 말하게 된다.
-              '분석할 Repository를 고르세요'
-            : submittable.length === 0
-            ? // 고른 저장소가 모두 접수된 상태. "0개 분석 시작"으로 읽히지 않게 문구를 바꾼다.
-              '모두 등록되었습니다'
-            : isRetry
-              ? `실패한 ${failed.length}개 다시 시도`
-              : `${submittable.length}개 Repository 분석 시작`}
-      </button>
 
       {outcomes.size > 0 && !isSubmitting && (
         <div className="mt-3 text-[12.5px] leading-[1.6]">
@@ -153,7 +169,7 @@ export function AnalysisRequestPanel({
           )}
           {succeeded.length > 0 && (
             <p className="mt-1 text-brand-faint">
-              진행 상태 화면은 아직 제공되지 않습니다. 저장소별 분석 ID를 보관해 주세요.
+              이 화면을 벗어나도 분석은 계속되며, 언제든 진행 화면에서 상태를 확인할 수 있습니다.
             </p>
           )}
         </div>
