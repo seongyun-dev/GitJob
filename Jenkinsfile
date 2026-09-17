@@ -53,6 +53,7 @@ pipeline {
                     # error, which hides that the env file is what needs fixing.
                     bash Infra/scripts/check-required-env.sh .env.ci \\
                       Infra/compose/compose.yaml Infra/compose/compose.wsl.yaml
+                    bash Infra/scripts/check-flyway-migrations.sh
                     docker compose --project-directory . --project-name "${COMPOSE_PROJECT_NAME}" --env-file .env.ci ${COMPOSE_FILES} \\
                       --profile core --profile app config --quiet
                 '''
