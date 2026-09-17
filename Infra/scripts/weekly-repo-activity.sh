@@ -53,8 +53,8 @@ period="${WEEKLY_PERIOD:-}"
 
 input_format="${WEEKLY_INPUT_FORMAT:-raw-json}"
 case "$input_format" in
-  raw-json | stream-parquet) ;;
-  *) die "WEEKLY_INPUT_FORMAT must be raw-json or stream-parquet: $input_format" ;;
+  raw-json | stream-parquet | transition | recovery-raw-json) ;;
+  *) die "unsupported WEEKLY_INPUT_FORMAT: $input_format" ;;
 esac
 
 hdfs_uri="${HDFS_URI:-$(env_value HDFS_URI)}"
@@ -70,8 +70,10 @@ master_url="${master_url:-spark://spark-master:7077}"
 # other, so the input is resolved here rather than left to the job.
 if [[ "$input_format" == "stream-parquet" ]]; then
   input="${WEEKLY_INPUT:-${parquet_root%/}/stream/github.events}"
-else
+elif [[ "$input_format" == "raw-json" ]]; then
   input="${WEEKLY_INPUT:-${raw_root%/}/gharchive/dt=${period}-*/*.json.gz}"
+else
+  input=""
 fi
 
 output="${WEEKLY_OUTPUT:-${parquet_root%/}/github/repo_activity_weekly/period=${period}/snapshot=${snapshot_id}}"
@@ -88,15 +90,28 @@ log_file="$state_root/${snapshot_id}.log"
 
 args=(
   --input-format "$input_format"
-  --input "$input"
   --output "$output"
   --period-start "$period_start"
   --period-end "$period_end"
 )
+if [[ -n "$input" ]]; then
+  args+=(--input "$input")
+fi
 # Raw counts its hourly files; the stream gate is hour coverage and ignores
 # this, so it is only passed on the path that uses it.
 if [[ "$input_format" == "raw-json" ]]; then
   args+=(--expected-files "${WEEKLY_EXPECTED_FILES:-744}")
+elif [[ "$input_format" == "transition" ]]; then
+  raw_input="${WEEKLY_RAW_INPUT:-}"
+  stream_input="${WEEKLY_STREAM_INPUT:-}"
+  [[ -n "$raw_input" ]] || die "WEEKLY_RAW_INPUT is required for transition"
+  [[ -n "$stream_input" ]] || die "WEEKLY_STREAM_INPUT is required for transition"
+  args+=(--raw-input "$raw_input" --stream-input "$stream_input")
+elif [[ "$input_format" == "recovery-raw-json" ]]; then
+  recovery_manifest="${WEEKLY_RECOVERY_MANIFEST:-}"
+  [[ "$recovery_manifest" == /* ]] \
+    || die "WEEKLY_RECOVERY_MANIFEST must be an absolute path inside spark-worker"
+  args+=(--recovery-manifest "$recovery_manifest")
 fi
 # `LABEL=PATH`, repeatable. Space-separated here because a cron line cannot
 # carry an array.
@@ -109,7 +124,14 @@ spark_submit_storage_args
 
 {
   echo "weekly repo activity: format=${input_format} snapshot=${snapshot_id}"
-  echo "  input:  ${input}"
+  if [[ "$input_format" == "recovery-raw-json" ]]; then
+    echo "  manifest: ${recovery_manifest}"
+  elif [[ "$input_format" == "transition" ]]; then
+    echo "  raw input:    ${raw_input}"
+    echo "  stream input: ${stream_input}"
+  else
+    echo "  input:  ${input}"
+  fi
   echo "  output: ${output}"
   echo "  period: ${period_start} .. ${period_end}"
 } >&2

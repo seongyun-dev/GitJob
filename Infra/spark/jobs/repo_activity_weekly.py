@@ -90,12 +90,15 @@ comparison is a choice the consumer makes with the flag in front of them.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 UTC = timezone.utc
 
@@ -125,11 +128,22 @@ INPUT_FORMAT_STREAM_PARQUET = "stream-parquet"
 # own coverage gate, then unions at the typed intermediate.  It never widens
 # what the other two accept.
 INPUT_FORMAT_TRANSITION = "transition"
+INPUT_FORMAT_RECOVERY_RAW_JSON = "recovery-raw-json"
 INPUT_FORMATS = (
     INPUT_FORMAT_RAW_JSON,
     INPUT_FORMAT_STREAM_PARQUET,
     INPUT_FORMAT_TRANSITION,
+    INPUT_FORMAT_RECOVERY_RAW_JSON,
 )
+
+RECOVERY_MANIFEST_SCHEMA_VERSION = "weekly-recovery-source-manifest/v1"
+RECOVERY_MAX_MESSAGE_BYTES = 1_048_576
+RECOVERY_MANIFEST_MAX_BYTES = 2 * 1024 * 1024
+SUPPORTED_RECOVERY_PERIODS = (
+    ("2026-08-31T00:00:00Z", "2026-09-07T00:00:00Z"),
+    ("2026-09-07T00:00:00Z", "2026-09-14T00:00:00Z"),
+)
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 # The transition mode exists for the weeks that actually straddle the cutoff,
 # not as a general "read both" switch.  One boundary produces one such week, and
@@ -205,9 +219,9 @@ def resolve_input_path(value: str | None, input_format: str) -> str:
     validate_input_format(input_format)
     if value:
         return value
-    if input_format == INPUT_FORMAT_TRANSITION:
-        # Two readers, two roots.  `--raw-input` and `--stream-input` carry them
-        # and `--input` is meaningless here, so there is nothing to default.
+    if input_format in (INPUT_FORMAT_TRANSITION, INPUT_FORMAT_RECOVERY_RAW_JSON):
+        # Transition has two explicit roots. Recovery reads only the 168 URIs
+        # named by its manifest. `--input` is meaningless for both.
         return ""
     return (
         DEFAULT_INPUT if input_format == INPUT_FORMAT_RAW_JSON else DEFAULT_STREAM_INPUT
@@ -241,6 +255,14 @@ def validate_period(
             raise ValueError("period_start precedes historical_start")
         if end > historical_cutoff:
             raise ValueError("period_end exceeds exclusive historical_cutoff")
+        return
+    if input_format == INPUT_FORMAT_RECOVERY_RAW_JSON:
+        normalized = (format_stream_hour(start), format_stream_hour(end))
+        if normalized not in SUPPORTED_RECOVERY_PERIODS:
+            raise ValueError(
+                "recovery period is not allowed; supported: "
+                f"{list(SUPPORTED_RECOVERY_PERIODS)}"
+            )
         return
     if input_format == INPUT_FORMAT_TRANSITION:
         # The one period shape the other two must refuse: it has to *contain*
@@ -354,6 +376,152 @@ def missing_raw_hour_files(
         for name in expected_raw_hour_files(period_start, period_end)
         if name not in seen
     )
+
+
+def _canonical_recovery_uri(
+    value: object, *, allowed_schemes: tuple[str, ...] = ("hdfs",)
+) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("recovery URI must be a non-blank string")
+    parsed = urlsplit(value)
+    if parsed.scheme not in allowed_schemes or not parsed.path.startswith("/"):
+        raise ValueError(
+            f"recovery URI must use {allowed_schemes} with an absolute path: {value}"
+        )
+    if parsed.scheme == "file" and parsed.netloc:
+        raise ValueError(f"file recovery URI must be local: {value}")
+    if (
+        parsed.query
+        or parsed.fragment
+        or any(part == ".." for part in parsed.path.split("/"))
+    ):
+        raise ValueError(f"unsafe recovery URI: {value}")
+    return parsed.path
+
+
+def _recovery_count(entry: Mapping[str, object], name: str) -> int:
+    value = entry.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+def load_recovery_manifest(
+    path: Path,
+    *,
+    period_start: str,
+    period_end: str,
+) -> dict[str, object]:
+    """Load the only input list a bounded raw recovery run may read."""
+
+    manifest_path = Path(path)
+    if manifest_path.stat().st_size > RECOVERY_MANIFEST_MAX_BYTES:
+        raise ValueError("recovery manifest exceeds byte bound")
+    try:
+        document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("recovery manifest is unreadable") from exc
+    if not isinstance(document, dict):
+        raise TypeError("recovery manifest must be an object")
+    if document.get("schema_version") != RECOVERY_MANIFEST_SCHEMA_VERSION:
+        raise ValueError("unsupported recovery manifest schema_version")
+    if (
+        document.get("period_start") != period_start
+        or document.get("period_end") != period_end
+    ):
+        raise ValueError("recovery manifest period does not match requested period")
+    validate_period(
+        period_start,
+        period_end,
+        input_format=INPUT_FORMAT_RECOVERY_RAW_JSON,
+    )
+    if document.get("max_message_bytes") != RECOVERY_MAX_MESSAGE_BYTES:
+        raise ValueError(
+            "recovery manifest max_message_bytes does not match publisher policy"
+        )
+    files = document.get("files")
+    if not isinstance(files, list) or len(files) != 168:
+        raise ValueError("recovery manifest must contain exactly 168 files")
+
+    expected_hours = expected_stream_hours(period_start, period_end)
+    seen_hours: set[str] = set()
+    seen_source_uris: set[tuple[str, str, str]] = set()
+    seen_uris: set[str] = set()
+    validated: list[dict[str, object]] = []
+    for raw_entry in files:
+        if not isinstance(raw_entry, Mapping):
+            raise TypeError("recovery file entry must be an object")
+        entry = dict(raw_entry)
+        hour = validate_stream_hour(entry.get("hour"))
+        if hour in seen_hours:
+            raise ValueError(f"duplicate recovery hour: {hour}")
+        seen_hours.add(hour)
+        source_uri_value = entry.get("source_uri")
+        source_uri = _canonical_recovery_uri(
+            source_uri_value, allowed_schemes=("hdfs", "file")
+        )
+        source_parts = urlsplit(str(source_uri_value))
+        source_identity = (
+            source_parts.scheme.casefold(),
+            source_parts.netloc.casefold(),
+            source_uri,
+        )
+        if source_identity in seen_source_uris:
+            raise ValueError(f"duplicate recovery source URI: {source_uri_value}")
+        seen_source_uris.add(source_identity)
+        uri = _canonical_recovery_uri(entry.get("uri"))
+        if uri in seen_uris:
+            raise ValueError(f"duplicate recovery URI: {entry.get('uri')}")
+        seen_uris.add(uri)
+        for field in ("source_sha256", "sha256"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not SHA256_PATTERN.fullmatch(value):
+                raise ValueError(f"{field} must be a lowercase SHA-256")
+        source_count = _recovery_count(entry, "source_event_count")
+        accepted_count = _recovery_count(entry, "accepted_event_count")
+        rejected_count = _recovery_count(entry, "rejected_oversized_count")
+        skipped_count = _recovery_count(entry, "skipped_line_count")
+        if source_count != accepted_count + rejected_count + skipped_count:
+            raise ValueError(f"source count mismatch for recovery hour {hour}")
+        entry["hour"] = hour
+        entry["source_uri_path"] = source_uri
+        entry["uri_path"] = uri
+        validated.append(entry)
+
+    missing = sorted(set(expected_hours) - seen_hours)
+    extra = sorted(seen_hours - set(expected_hours))
+    if missing or extra:
+        raise ValueError(
+            f"recovery hours do not match period; missing={missing[:20]} extra={extra[:20]}"
+        )
+    document["files"] = sorted(validated, key=lambda item: str(item["hour"]))
+    return document
+
+
+def reconcile_recovery_inputs(
+    entries: Sequence[Mapping[str, object]],
+    observed: Mapping[str, Mapping[str, object]],
+) -> None:
+    """Require exact input membership, digest and accepted line counts."""
+
+    expected_by_path = {
+        _canonical_recovery_uri(entry["uri"]): entry for entry in entries
+    }
+    observed_by_path = {
+        _canonical_recovery_uri(uri): values for uri, values in observed.items()
+    }
+    missing = sorted(set(expected_by_path) - set(observed_by_path))
+    extra = sorted(set(observed_by_path) - set(expected_by_path))
+    if missing:
+        raise ValueError(f"missing recovery input: {missing[:20]}")
+    if extra:
+        raise ValueError(f"unexpected recovery input: {extra[:20]}")
+    for uri_path, entry in expected_by_path.items():
+        actual = observed_by_path[uri_path]
+        if actual.get("sha256") != entry.get("sha256"):
+            raise ValueError(f"recovery input hash mismatch: {uri_path}")
+        if actual.get("accepted_event_count") != entry.get("accepted_event_count"):
+            raise ValueError(f"recovery accepted count mismatch: {uri_path}")
 
 
 def parse_event_timestamp(value: object) -> datetime:
@@ -1198,6 +1366,15 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
     in_period = None
     stream_summary: dict[str, object] | None = None
     transition_summary: dict[str, object] | None = None
+    recovery_summary: dict[str, object] | None = None
+    recovery_manifest: dict[str, object] | None = None
+    if input_format == INPUT_FORMAT_RECOVERY_RAW_JSON:
+        recovery_manifest = load_recovery_manifest(
+            arguments.recovery_manifest,
+            period_start=arguments.period_start,
+            period_end=arguments.period_end,
+        )
+        arguments.input = f"manifest:{arguments.recovery_manifest}"
     try:
         if _hadoop_path_exists(spark, arguments.output):
             raise FileExistsError(
@@ -1208,6 +1385,74 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             typed, input_files, transition_summary = _read_transition_input(
                 spark, F, arguments
             )
+        elif arguments.input_format == INPUT_FORMAT_RECOVERY_RAW_JSON:
+            if recovery_manifest is None:  # pragma: no cover - guarded above
+                raise RuntimeError("recovery manifest was not loaded")
+            entries = recovery_manifest["files"]
+            recovery_uris = [str(entry["uri"]) for entry in entries]
+
+            binary_rows = (
+                spark.read.format("binaryFile")
+                .load(recovery_uris)
+                .select(
+                    F.col("path"),
+                    F.sha2(F.col("content"), 256).alias("sha256"),
+                )
+                .collect()
+            )
+            line_rows = (
+                spark.read.text(recovery_uris)
+                .select(F.input_file_name().alias("path"))
+                .groupBy("path")
+                .agg(F.count(F.lit(1)).alias("accepted_event_count"))
+                .collect()
+            )
+            observed: dict[str, dict[str, object]] = {
+                str(row["path"]): {
+                    "sha256": str(row["sha256"]),
+                    "accepted_event_count": 0,
+                }
+                for row in binary_rows
+            }
+            for row in line_rows:
+                observed.setdefault(str(row["path"]), {}).update(
+                    accepted_event_count=int(row["accepted_event_count"])
+                )
+            reconcile_recovery_inputs(entries, observed)
+
+            raw = spark.read.schema(build_event_schema()).json(recovery_uris)
+            input_files = tuple(raw.inputFiles())
+            typed = raw.select(
+                F.col("repo.id").cast("long").alias("repo_id"),
+                F.col("repo.name").alias("repo_name"),
+                F.col("type").alias("event_type"),
+                F.to_timestamp(F.col("created_at")).alias("created_at_ts"),
+                F.col("_corrupt_record"),
+            )
+            recovery_summary = {
+                "schema_version": recovery_manifest["schema_version"],
+                "manifest": str(arguments.recovery_manifest),
+                "manifest_sha256": hashlib.sha256(
+                    Path(arguments.recovery_manifest).read_bytes()
+                ).hexdigest(),
+                "max_message_bytes": recovery_manifest["max_message_bytes"],
+                "expected_hour_count": len(entries),
+                "observed_file_count": len(input_files),
+                "source_event_count": sum(
+                    int(entry["source_event_count"]) for entry in entries
+                ),
+                "accepted_event_count": sum(
+                    int(entry["accepted_event_count"]) for entry in entries
+                ),
+                "rejected_oversized_count": sum(
+                    int(entry["rejected_oversized_count"]) for entry in entries
+                ),
+                "skipped_line_count": sum(
+                    int(entry["skipped_line_count"]) for entry in entries
+                ),
+                "input_hashes_match": True,
+                "accepted_counts_match": True,
+            }
         elif arguments.input_format == INPUT_FORMAT_RAW_JSON:
             raw = spark.read.schema(build_event_schema()).json(arguments.input)
             input_files = tuple(raw.inputFiles())
@@ -1702,7 +1947,9 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
                 # part-files a batch becomes.  `stream.observed_hour_count` is
                 # the gate there.
                 "completeness_gate": (
-                    "expected_files"
+                    "manifest_hashes_and_accepted_counts"
+                    if input_format == INPUT_FORMAT_RECOVERY_RAW_JSON
+                    else "expected_files"
                     if input_format == INPUT_FORMAT_RAW_JSON
                     else "expected_hours_and_files"
                     if input_format == INPUT_FORMAT_TRANSITION
@@ -1711,6 +1958,7 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
             },
             "stream": stream_summary,
             "transition": transition_summary,
+            "recovery": recovery_summary,
             "week_rule": {
                 "week_start": "Monday",
                 "timezone": "UTC",
@@ -1765,8 +2013,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "raw-json reads the Historical Raw hourly files below the cutoff; "
             "stream-parquet reads C1's archive of github.events at or above it; "
-            "transition reads both for the one Monday week that straddles it"
+            "transition reads both for the one Monday week that straddles it; "
+            "recovery-raw-json reads exactly 168 immutable manifest files"
         ),
+    )
+    parser.add_argument(
+        "--recovery-manifest",
+        type=Path,
+        help="recovery-raw-json only; weekly-recovery-source-manifest/v1",
     )
     parser.add_argument(
         "--raw-input",
@@ -1825,7 +2079,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
+    provided_input = arguments.input
     arguments.input = resolve_input_path(arguments.input, arguments.input_format)
+    if arguments.input_format == INPUT_FORMAT_RECOVERY_RAW_JSON:
+        if provided_input is not None:
+            parser.error("--input is not allowed for --input-format recovery-raw-json")
+        if arguments.recovery_manifest is None:
+            parser.error(
+                "--recovery-manifest is required for --input-format recovery-raw-json"
+            )
+        try:
+            load_recovery_manifest(
+                arguments.recovery_manifest,
+                period_start=arguments.period_start,
+                period_end=arguments.period_end,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            parser.error(str(exc))
+    elif arguments.recovery_manifest is not None:
+        parser.error("--recovery-manifest requires --input-format recovery-raw-json")
     if arguments.input_format == INPUT_FORMAT_TRANSITION:
         if not arguments.raw_input:
             parser.error("--raw-input is required for --input-format transition")
