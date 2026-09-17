@@ -135,7 +135,12 @@ remote_exec() {
   local host="$1"
   local user="$2"
   local command="$3"
-  ssh "${ssh_options[@]}" "$user@$host" "$command"
+  # SSH executes command strings through the account's login shell.  The data
+  # host uses zsh, while these remote scripts intentionally use Bash features
+  # such as pipefail, arrays, and mapfile.  Stream the script to Bash explicitly
+  # so deployment behavior does not depend on each host's default shell.
+  printf '%s\n' "$command" \
+    | ssh "${ssh_options[@]}" "$user@$host" bash -s --
 }
 
 # Compose treats ${VAR:?...} as mandatory and interpolates the whole file
