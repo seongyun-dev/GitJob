@@ -116,7 +116,25 @@ ACTIVITY_COLUMNS = ("repo_id", "repo_name", "event_count", "week_start")
 
 INPUT_FORMAT_RAW_JSON = "raw-json"
 INPUT_FORMAT_STREAM_PARQUET = "stream-parquet"
-INPUT_FORMATS = (INPUT_FORMAT_RAW_JSON, INPUT_FORMAT_STREAM_PARQUET)
+# S15P21E102-295.  The cutoff splits Raw from the stream, and a Monday-start
+# week is free to straddle it: 2026-09-01 is a Tuesday, so September's first
+# week begins 2026-08-31 with one Raw day and six stream days.  Neither reader
+# can serve that week alone and `validate_period` refuses both, by design -- the
+# guard is what keeps an hour from being counted twice.  This third format is
+# the narrow exception: it reads each side with that side's own reader and its
+# own coverage gate, then unions at the typed intermediate.  It never widens
+# what the other two accept.
+INPUT_FORMAT_TRANSITION = "transition"
+INPUT_FORMATS = (
+    INPUT_FORMAT_RAW_JSON,
+    INPUT_FORMAT_STREAM_PARQUET,
+    INPUT_FORMAT_TRANSITION,
+)
+
+# The transition mode exists for the weeks that actually straddle the cutoff,
+# not as a general "read both" switch.  One boundary produces one such week, and
+# naming it here means a future cutoff move has to add its week deliberately.
+SUPPORTED_TRANSITION_WEEK_STARTS = ("2026-08-31",)
 
 # `c1_archiver_stream.archive_location("github.events")` with the default
 # parquet root.  Named here rather than imported because `Infra/spark` and
@@ -187,6 +205,10 @@ def resolve_input_path(value: str | None, input_format: str) -> str:
     validate_input_format(input_format)
     if value:
         return value
+    if input_format == INPUT_FORMAT_TRANSITION:
+        # Two readers, two roots.  `--raw-input` and `--stream-input` carry them
+        # and `--input` is meaningless here, so there is nothing to default.
+        return ""
     return (
         DEFAULT_INPUT if input_format == INPUT_FORMAT_RAW_JSON else DEFAULT_STREAM_INPUT
     )
@@ -220,9 +242,118 @@ def validate_period(
         if end > historical_cutoff:
             raise ValueError("period_end exceeds exclusive historical_cutoff")
         return
+    if input_format == INPUT_FORMAT_TRANSITION:
+        # The one period shape the other two must refuse: it has to *contain*
+        # the boundary, not sit on one side of it.  A transition run over a
+        # period that does not straddle is the same double-count risk from the
+        # other direction, so it is refused here rather than silently reading
+        # one empty side.
+        if start < historical_start:
+            raise ValueError("period_start precedes historical_start")
+        if not start < historical_cutoff < end:
+            raise ValueError(
+                "transition period must straddle the historical cutoff "
+                f"({SUPPORTED_HISTORICAL_CUTOFF})"
+            )
+        return
     # The stream has no upper bound: it is fed by hours that keep arriving.
     if start < historical_cutoff:
         raise ValueError("stream period_start precedes historical_cutoff")
+
+
+def validate_transition_week(
+    period_start: str, period_end: str, *, boundary: str = SUPPORTED_HISTORICAL_CUTOFF
+) -> tuple[str, str]:
+    """Check the transition period is exactly one supported straddling week.
+
+    Returns `(week_start, boundary)`.
+
+    Three things are enforced and each has a reason:
+
+    * **Exactly seven days, Monday-start.**  The weekly output keys on
+      `week_start`, so a period covering part of a week would write a row that
+      claims a whole one.
+    * **It straddles the boundary.**  `validate_period` already says this; it
+      is re-derived here because this function is what the readers split on.
+    * **The week is one of `SUPPORTED_TRANSITION_WEEK_STARTS`.**  Mixed input is
+      a exception granted to a named week, not a mode any period can ask for.
+    """
+
+    start = parse_utc_hour(period_start)
+    end = parse_utc_hour(period_end)
+    moment = parse_utc_hour(boundary)
+    if start >= end:
+        raise ValueError("period_start must be before period_end")
+    if end - start != timedelta(days=7):
+        raise ValueError("transition period must be exactly one seven-day week")
+    if start.weekday() != 0:
+        raise ValueError("transition period must start on a Monday")
+    if not start < moment < end:
+        raise ValueError("transition period must straddle the boundary")
+    week_start = start.date().isoformat()
+    if week_start not in SUPPORTED_TRANSITION_WEEK_STARTS:
+        raise ValueError(
+            f"transition is not supported for week_start={week_start}; "
+            f"supported: {list(SUPPORTED_TRANSITION_WEEK_STARTS)}"
+        )
+    return week_start, format_stream_hour(moment)
+
+
+def transition_split(
+    period_start: str, period_end: str, *, boundary: str = SUPPORTED_HISTORICAL_CUTOFF
+) -> tuple[tuple[str, str], tuple[str, str]]:
+    """The two half-open sub-periods the two readers get.
+
+    `((raw_start, raw_end), (stream_start, stream_end))`, both half-open and
+    meeting exactly at the boundary.  Meeting rather than overlapping is the
+    whole point: every hour of the week belongs to exactly one reader, which is
+    what makes cross-source de-duplication unnecessary rather than merely
+    unlikely to matter.
+    """
+
+    validate_transition_week(period_start, period_end, boundary=boundary)
+    moment = format_stream_hour(parse_utc_hour(boundary))
+    return (period_start, moment), (moment, period_end)
+
+
+def expected_raw_hour_files(period_start: str, period_end: str) -> tuple[str, ...]:
+    """Every GH Archive hourly file name a `[start, end)` period needs.
+
+    The Raw gate is a file-count comparison (`--expected-files`).  Names rather
+    than a count, because "23 of 24" does not say *which* hour is absent, and
+    the operator's next action is to fetch that hour.
+    """
+
+    start = parse_utc_hour(period_start)
+    end = parse_utc_hour(period_end)
+    if start >= end:
+        raise ValueError("period_start must be before period_end")
+    names: list[str] = []
+    moment = start
+    while moment < end:
+        names.append(f"{moment.date().isoformat()}-{moment.hour}.json.gz")
+        moment += timedelta(hours=1)
+    return tuple(names)
+
+
+def missing_raw_hour_files(
+    observed: Iterable[str], period_start: str, period_end: str
+) -> tuple[str, ...]:
+    """Expected hourly files with no counterpart in `observed`, in order.
+
+    `observed` may be full URIs; only the trailing file name is compared.
+    """
+
+    seen = {
+        value.rstrip("/").rsplit("/", 1)[-1]
+        for value in observed
+        if isinstance(value, str)
+    }
+    return tuple(
+        name
+        for name in expected_raw_hour_files(period_start, period_end)
+        if name not in seen
+    )
 
 
 def parse_event_timestamp(value: object) -> datetime:
@@ -472,6 +603,67 @@ def normalize_stream_rows(
     return normalized
 
 
+def normalize_raw_rows(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    boundary: str = SUPPORTED_HISTORICAL_CUTOFF,
+) -> list[dict[str, object]]:
+    """Mirror of the Raw select, for the transition path's Historical half.
+
+    Raw is already one event per line with no envelope, so there is nothing to
+    de-duplicate -- `-102` §4.1's re-send only exists on the stream side.  The
+    one thing this adds over the plain select is the boundary guard: a Raw
+    event at or after the cutoff belongs to the stream half and counting it here
+    would count it twice.
+    """
+
+    moment = parse_utc_hour(boundary)
+    normalized: list[dict[str, object]] = []
+    for row in rows:
+        repo = row.get("repo")
+        repo = repo if isinstance(repo, Mapping) else {}
+        repo_id = repo.get("id")
+        created_at = row.get("created_at")
+        try:
+            occurred = parse_event_timestamp(created_at)
+        except ValueError:
+            occurred = None
+        if occurred is not None and occurred >= moment:
+            raise ValueError(
+                "raw input carries an event at or after the transition boundary: "
+                f"{created_at!r}"
+            )
+        normalized.append(
+            {
+                "repo_id": repo_id if isinstance(repo_id, int) else None,
+                "repo_name": repo.get("name"),
+                "event_type": row.get("type"),
+                "created_at": created_at,
+            }
+        )
+    return normalized
+
+
+def normalize_transition_rows(
+    raw_rows: Iterable[Mapping[str, object]],
+    stream_rows: Iterable[Mapping[str, object]],
+    *,
+    boundary: str = SUPPORTED_HISTORICAL_CUTOFF,
+) -> list[dict[str, object]]:
+    """The union the transition Spark path builds, as a testable list.
+
+    Raw first, stream second, both already reduced to the same four keys.  The
+    two halves are disjoint in time, so this is a concatenation and not a merge:
+    no key can appear on both sides, and inventing a cross-source identity to
+    check that would be asserting something the boundary already guarantees.
+    """
+
+    return [
+        *normalize_raw_rows(raw_rows, boundary=boundary),
+        *normalize_stream_rows(stream_rows, cutoff=boundary),
+    ]
+
+
 def aggregate_weekly_rows(
     events: Iterable[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -689,6 +881,162 @@ def join_coverage_row(
     }
 
 
+def _read_transition_input(
+    spark: Any, F: Any, arguments: argparse.Namespace
+) -> tuple[Any, tuple[str, ...], dict[str, object]]:
+    """Read both halves of a straddling week and union them at `typed`.
+
+    Each half keeps its own reader and its own completeness gate, because the
+    two have different notions of what "all of it" means: Raw publishes one file
+    per hour and its absence is a missing file, while the number of Parquet part
+    files C1 writes says nothing and only hour coverage does.  Collapsing them
+    into one gate would weaken whichever side lost.
+
+    The union happens at the five-column intermediate both existing branches
+    already produce, so everything downstream -- the quality block, the
+    aggregation, the digest, the row count, Top-N -- runs unchanged and cannot
+    tell which half a row came from.  That is the point: `week_start` is a
+    property of the event's instant, not of the reader that found it.
+    """
+
+    from pyspark import StorageLevel
+
+    week_start, boundary = validate_transition_week(
+        arguments.period_start,
+        arguments.period_end,
+        boundary=arguments.transition_boundary,
+    )
+    (raw_start, raw_end), (stream_start, stream_end) = transition_split(
+        arguments.period_start,
+        arguments.period_end,
+        boundary=arguments.transition_boundary,
+    )
+
+    # --- Historical half -------------------------------------------------
+    raw = spark.read.schema(build_event_schema()).json(arguments.raw_input)
+    raw_files = tuple(raw.inputFiles())
+    absent_files = missing_raw_hour_files(raw_files, raw_start, raw_end)
+    expected_files = expected_raw_hour_files(raw_start, raw_end)
+    if absent_files:
+        shown = list(absent_files[:MAX_REPORTED_MISSING_HOURS])
+        suffix = (
+            f" (+{len(absent_files) - len(shown)} more)"
+            if len(absent_files) > len(shown)
+            else ""
+        )
+        raise RuntimeError(
+            "raw input is missing "
+            f"{len(absent_files)} of {len(expected_files)} "
+            f"expected hourly files: {shown}{suffix}"
+        )
+    raw_typed = raw.select(
+        F.col("repo.id").cast("long").alias("repo_id"),
+        F.col("repo.name").alias("repo_name"),
+        F.col("type").alias("event_type"),
+        F.to_timestamp(F.col("created_at")).alias("created_at_ts"),
+        F.col("_corrupt_record"),
+    )
+    boundary_ts = parse_utc_hour(boundary)
+    raw_after_boundary = raw_typed.where(
+        F.col("created_at_ts").isNotNull()
+        & (F.col("created_at_ts") >= F.lit(boundary_ts))
+    ).count()
+    if raw_after_boundary:
+        # The mirror of the stream half's `below_cutoff_event_count`: an hour
+        # that reached both readers would be counted twice.
+        raise RuntimeError(
+            "raw input carries events at or after the transition boundary: "
+            f"{raw_after_boundary}. Those hours belong to the stream half."
+        )
+
+    # --- Streaming half --------------------------------------------------
+    archive = spark.read.parquet(arguments.stream_input)
+    missing_columns = sorted(set(STREAM_REQUIRED_COLUMNS) - set(archive.columns))
+    if missing_columns:
+        raise RuntimeError(
+            f"stream input is not a C1 archive; missing columns: {missing_columns}"
+        )
+    stream_files = tuple(archive.inputFiles())
+    scoped = archive.where(F.col("source") == F.lit(STREAM_SOURCE))
+    if "dt" in archive.columns:
+        scoped = scoped.where(
+            (F.col("dt") >= F.lit(stream_start[:10]))
+            & (F.col("dt") <= F.lit(stream_end[:10]))
+        )
+    deduped = scoped.dropDuplicates(list(DEDUP_KEYS))
+    stream_typed_full = deduped.select(
+        F.substring_index(F.col("source_id"), "/", 1).alias("hour_key"),
+        F.get_json_object(F.col("payload"), "$.repo.id").cast("long").alias("repo_id"),
+        F.get_json_object(F.col("payload"), "$.repo.name").alias("repo_name"),
+        F.col("event_type"),
+        F.to_timestamp(F.col("occurred_at")).alias("created_at_ts"),
+        F.when(
+            F.get_json_object(F.col("payload"), "$").isNull(),
+            F.col("payload"),
+        ).alias("_corrupt_record"),
+    )
+    stream_end_ts = parse_utc_hour(stream_end)
+    out_of_period = F.col("created_at_ts").isNotNull() & (
+        (F.col("created_at_ts") < F.lit(boundary_ts))
+        | (F.col("created_at_ts") >= F.lit(stream_end_ts))
+    )
+    below_boundary = stream_typed_full.where(
+        F.col("created_at_ts").isNotNull()
+        & (F.col("created_at_ts") < F.lit(boundary_ts))
+    ).count()
+    if below_boundary:
+        raise RuntimeError(
+            "stream input carries events below the transition boundary: "
+            f"{below_boundary}. Those hours belong to the raw half."
+        )
+    in_period = stream_typed_full.where(~out_of_period).persist(StorageLevel.DISK_ONLY)
+    observed_hours = sorted(
+        str(row["hour_key"])
+        for row in in_period.select("hour_key").distinct().collect()
+    )
+    for hour_key in observed_hours:
+        validate_stream_hour(hour_key)
+    expected_hours = expected_stream_hours(stream_start, stream_end)
+    absent_hours = missing_stream_hours(observed_hours, stream_start, stream_end)
+    if absent_hours:
+        shown = list(absent_hours[:MAX_REPORTED_MISSING_HOURS])
+        suffix = (
+            f" (+{len(absent_hours) - len(shown)} more)"
+            if len(absent_hours) > len(shown)
+            else ""
+        )
+        raise RuntimeError(
+            "stream input is missing "
+            f"{len(absent_hours)} of {len(expected_hours)} "
+            f"expected UTC hours: {shown}{suffix}"
+        )
+    stream_typed = in_period.drop("hour_key")
+
+    typed = raw_typed.unionByName(stream_typed)
+    summary = {
+        "week_start": week_start,
+        "boundary": boundary,
+        "raw": {
+            "input": arguments.raw_input,
+            "period_start": raw_start,
+            "period_end": raw_end,
+            "expected_file_count": len(expected_files),
+            "observed_file_count": len(raw_files),
+            "missing_files": [],
+        },
+        "stream": {
+            "input": arguments.stream_input,
+            "period_start": stream_start,
+            "period_end": stream_end,
+            "dedup_keys": list(DEDUP_KEYS),
+            "expected_hour_count": len(expected_hours),
+            "observed_hour_count": len(observed_hours),
+            "missing_hours": [],
+        },
+    }
+    return typed, (*raw_files, *stream_files), summary
+
+
 def build_event_schema() -> Any:
     """The four Raw fields this aggregation reads, and nothing else.
 
@@ -849,13 +1197,18 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
     weekly = None
     in_period = None
     stream_summary: dict[str, object] | None = None
+    transition_summary: dict[str, object] | None = None
     try:
         if _hadoop_path_exists(spark, arguments.output):
             raise FileExistsError(
                 f"output already exists; refusing to overwrite: {arguments.output}"
             )
 
-        if arguments.input_format == INPUT_FORMAT_RAW_JSON:
+        if arguments.input_format == INPUT_FORMAT_TRANSITION:
+            typed, input_files, transition_summary = _read_transition_input(
+                spark, F, arguments
+            )
+        elif arguments.input_format == INPUT_FORMAT_RAW_JSON:
             raw = spark.read.schema(build_event_schema()).json(arguments.input)
             input_files = tuple(raw.inputFiles())
             if len(input_files) != arguments.expected_files:
@@ -1351,10 +1704,13 @@ def run_job(arguments: argparse.Namespace) -> dict[str, object]:
                 "completeness_gate": (
                     "expected_files"
                     if input_format == INPUT_FORMAT_RAW_JSON
+                    else "expected_hours_and_files"
+                    if input_format == INPUT_FORMAT_TRANSITION
                     else "expected_hours"
                 ),
             },
             "stream": stream_summary,
+            "transition": transition_summary,
             "week_rule": {
                 "week_start": "Monday",
                 "timezone": "UTC",
@@ -1408,7 +1764,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=INPUT_FORMAT_RAW_JSON,
         help=(
             "raw-json reads the Historical Raw hourly files below the cutoff; "
-            "stream-parquet reads C1's archive of github.events at or above it"
+            "stream-parquet reads C1's archive of github.events at or above it; "
+            "transition reads both for the one Monday week that straddles it"
+        ),
+    )
+    parser.add_argument(
+        "--raw-input",
+        default=None,
+        help="transition only; the Historical Raw hourly files below the boundary",
+    )
+    parser.add_argument(
+        "--stream-input",
+        default=DEFAULT_STREAM_INPUT,
+        help="transition only; the C1 archive at or above the boundary",
+    )
+    parser.add_argument(
+        "--transition-boundary",
+        default=SUPPORTED_HISTORICAL_CUTOFF,
+        help=(
+            "transition only; the instant Raw stops and the stream starts. "
+            "Named explicitly so a mixed read can never be asked for by accident"
         ),
     )
     parser.add_argument(
@@ -1451,6 +1826,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     arguments.input = resolve_input_path(arguments.input, arguments.input_format)
+    if arguments.input_format == INPUT_FORMAT_TRANSITION:
+        if not arguments.raw_input:
+            parser.error("--raw-input is required for --input-format transition")
+        if not arguments.stream_input:
+            parser.error("--stream-input is required for --input-format transition")
+        try:
+            validate_transition_week(
+                arguments.period_start,
+                arguments.period_end,
+                boundary=arguments.transition_boundary,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
     if arguments.expected_files < 1:
         parser.error("--expected-files must be positive")
     if arguments.join_max_rows < 1:
