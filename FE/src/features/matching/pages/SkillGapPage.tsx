@@ -5,7 +5,6 @@ import { useSkillGap, useTarget } from '@/features/matching/hooks/useMatching'
 import type { SkillGapSummaryView } from '@/features/matching/model/view'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel, PartialNotice } from '@/shared/ui/ComputeStatePanel'
-import { PageFootnote } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StatStrip } from '@/shared/ui/StatStrip'
 import type { StatItem } from '@/shared/ui/StatStrip'
@@ -22,7 +21,7 @@ import type { StatItem } from '@/shared/ui/StatStrip'
  * `채우면 +N`은 공고 수 증가분이고 C가 계산한다. 상위 후보에만 있는 값이라 대부분의
  * 행은 `—`다 — 0으로 채우면 "채워도 안 늘어난다"는 다른 사실이 된다.
  */
-const GAP_COLUMNS = ['기술', '필수 요구', '우대 요구', '내 EVIDENCE', '판정', '채우면 +N'] as const
+const GAP_COLUMNS = ['기술', '필수 요구', '우대 요구', '내 수준', '판정', '늘어나는 공고'] as const
 
 /**
  * 지표 4연.
@@ -56,11 +55,11 @@ function toStats(summary: SkillGapSummaryView | null): readonly StatItem[] {
 }
 
 const LEGEND = [
-  { mark: '✓', label: '충족', detail: '요구 Level 이상의 Personal Evidence가 있습니다.' },
+  { mark: '✓', label: '충족', detail: '공고에서 요구하는 수준 이상입니다.' },
   {
     mark: '△',
-    label: 'Level 부족',
-    detail: 'Evidence는 있는데 요구 Level에 미치지 못합니다.',
+    label: '수준 부족',
+    detail: '사용 근거는 있지만 공고의 요구 수준에는 미치지 못합니다.',
   },
   { mark: '✕', label: '미보유', detail: '선언·설정·구현 어느 것도 확인되지 않았습니다.' },
   {
@@ -89,15 +88,7 @@ export function SkillGapPage() {
       </Link>
 
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
-        <PageHero
-          eyebrow="SKILL GAP · 상세"
-          title={
-            summary === null
-              ? '무엇이 충족됐고 무엇이 부족한가요?'
-              : `무엇이 부족한가 — ${summary.basisText} 기준`
-          }
-          description="비교 집합이 요구하는 기술을 내 Personal Evidence와 하나씩 대조합니다. 점수가 아니라 기술별 충족 · 부족 · 판단 근거 부족 구분입니다."
-        />
+        <PageHero title="부족한 기술" />
         {summary !== null && (
           <div className="shrink-0 rounded-[14px] border border-brand-line bg-white px-5 py-3.5">
             <p className="text-[12px] text-brand-faint">비교 집합</p>
@@ -139,9 +130,7 @@ export function SkillGapPage() {
                   <SkillGapRows groups={groups} />
                 </div>
                 <p className="border-t border-brand-line px-[22px] py-3 text-[11.5px] leading-[1.65] text-brand-faint">
-                  `채우면 +N`은 그 기술 하나만 요구 Level로 채웠다고 가정했을 때 필수를 모두
-                  충족하게 되는 공고의 증가분입니다. 같은 공고가 여러 행에 걸쳐 있어 행끼리
-                  더하지 않습니다. 계산되지 않은 행은 `—`입니다.
+                  늘어나는 공고 수는 그 기술을 공고의 요구 수준까지 익혔다고 가정한 결과입니다.
                 </p>
               </div>
 
@@ -175,7 +164,7 @@ export function SkillGapPage() {
 
                 <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
                   <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
-                    NEXT
+                    다음 단계
                   </p>
                   <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
                     그럼 무엇을 먼저 배울까요?
@@ -199,10 +188,6 @@ export function SkillGapPage() {
         )}
       </div>
 
-      <PageFootnote>
-        충족 · 부족은 기술 요건의 대조 결과이며 합격 가능성이나 역량 점수가 아닙니다. 판단 근거가
-        부족한 기술은 부족한 기술과 분리해 표시하며 둘을 합산하지 않습니다.
-      </PageFootnote>
     </div>
   )
 }

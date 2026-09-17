@@ -7,7 +7,7 @@ import {
 } from '@/features/matching/hooks/useMatching'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { DataRegion } from '@/shared/ui/DataRegion'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
 import { MeterBar } from '@/shared/ui/MeterBar'
 import { PageHero } from '@/shared/ui/PageHero'
@@ -64,13 +64,11 @@ export function WhatIfPage() {
 
       <div className="mt-3">
         <PageHero
-          eyebrow="NEXT SKILL · WHAT-IF"
           title={
             selected === undefined
-              ? '이 기술을 요구 Level로 만들면 무엇이 달라질까요?'
-              : `${selected.techName}을(를) 채우면 무엇이 달라질까요?`
+              ? '기술을 배우면 맞는 공고가 얼마나 늘까요?'
+              : `${selected.techName}을(를) 배우면 맞는 공고가 얼마나 늘까요?`
           }
-          description="공고 매칭과 같은 계산에서, 특정 기술의 Personal Evidence가 요구 Level이 되었다고 가정한 결과입니다."
         />
       </div>
 
@@ -129,18 +127,14 @@ export function WhatIfPage() {
         {ready && selected !== undefined && (
           /* v2의 `571 / 757`. 왼쪽이 가정, 오른쪽이 그 결과로 새로 매칭되는 공고다. */
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[571px_minmax(0,1fr)]">
-            <DataRegion
-              eyebrow={`#${selected.rank} RECOMMENDED`}
-              title="무엇을 가정하나"
-              hint="Evidence를 실제로 만들지는 않습니다. 같은 계산에서 이 기술만 채웠다고 두고 다시 대조한 결과입니다."
-            >
+            <DataRegion title="예상 변화">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-[22px] leading-[1.2] font-[750] tracking-[-0.03em] text-brand-ink">
                   {selected.techName}
                 </h2>
                 {selected.fromLevel === null ? (
                   <span className="rounded-lg border border-brand-line bg-white px-2 py-1 text-[11.5px] font-[750] text-brand-faint">
-                    현재 미판정
+                    현재 근거 없음
                   </span>
                 ) : (
                   <LevelBadge level={selected.fromLevel} />
@@ -196,7 +190,7 @@ export function WhatIfPage() {
               {selected.reasons.length > 0 && (
                 <>
                   <p className="mt-6 text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">
-                    추천 근거
+                    추천 이유
                   </p>
                   <ul className="mt-2 grid gap-1.5">
                     {selected.reasons.map((reason) => (
@@ -215,11 +209,7 @@ export function WhatIfPage() {
               )}
             </DataRegion>
 
-            <DataRegion
-              eyebrow="NEWLY MATCHED"
-              title="새로 부합하는 공고"
-              hint="이 기술만 채웠을 때 필수 요건을 모두 충족하게 되는 공고입니다. 이미 충족하던 공고는 빠져 있습니다."
-            >
+            <DataRegion title="새로 맞는 공고">
               {jobs.length === 0 ? (
                 <StateCard
                   kind="EMPTY"
@@ -269,10 +259,6 @@ export function WhatIfPage() {
         )}
       </div>
 
-      <PageFootnote>
-        공고 수 변화는 합격 가능성이 아닙니다. Evidence를 실제로 만들지 않으며, 같은 비교 집합에서
-        그 기술만 요구 Level로 채웠다고 가정한 결과입니다.
-      </PageFootnote>
     </div>
   )
 }

@@ -18,7 +18,7 @@ import { LevelBadge } from '@/shared/ui/LevelBadge'
  * 않는다"고 못 박는다) 화면도 Raw Code Viewer를 제공하지 않는다. `permalink`가 원문
  * 확인의 유일한 경로다.
  */
-export const PROOF_TABLE_TEMPLATE = '52px minmax(0,436fr) 150px 130px 70px'
+export const PROOF_TABLE_TEMPLATE = '76px minmax(0,436fr) 150px 130px 70px'
 
 /**
  * `factType`을 v2의 배지 문자로 바꾼다.
@@ -28,11 +28,11 @@ export const PROOF_TABLE_TEMPLATE = '52px minmax(0,436fr) 150px 130px 70px'
  * 여기 한 곳에 둔다. 계약의 5종을 모두 덮어 두어 추출기가 늘어도 빈 칸이 나오지 않는다.
  */
 const FACT_BADGE: Readonly<Record<EvidenceItem['factType'], string>> = {
-  DEPENDENCY: 'DEP',
-  IMPORT: 'IMP',
-  CONFIG_KEY: 'CFG',
-  ANNOTATION: 'IMPL',
-  API_CALL: 'IMPL',
+  DEPENDENCY: '의존성',
+  IMPORT: '불러오기',
+  CONFIG_KEY: '설정',
+  ANNOTATION: '구현',
+  API_CALL: '구현',
 }
 
 /** 파일 경로 표시. 줄 번호가 없는 근거(매니페스트 스캔)는 경로만 보여준다. */
@@ -42,7 +42,7 @@ function formatLocation(item: EvidenceItem): string {
 
 /** Commit 표기. 앞 7자만 쓰는 것은 GitHub 관례이고 v2도 그렇게 적는다. */
 function formatCommit(item: EvidenceItem): string {
-  return `commit ${item.commitSha.slice(0, 7)} · ${item.detectedAt.slice(0, 10)}`
+  return `기준 버전 ${item.commitSha.slice(0, 7)} · ${item.detectedAt.slice(0, 10)}`
 }
 
 function ProofRow({ item, contributorText }: { item: EvidenceItem; contributorText: string }) {
@@ -101,7 +101,7 @@ export function EvidenceProofRows({ evidence }: { evidence: TechnologyEvidence }
       <section>
         <div className="flex flex-wrap items-center gap-2.5 px-[10px] pt-2 pb-2">
           <p className="text-[12px] font-extrabold tracking-[0.04em] text-brand-ink-soft">
-            Personal Level에 반영된 Evidence
+            내 수준에 반영된 근거
           </p>
           <span className="rounded-full bg-tone-accent-bg px-2.5 py-1 text-[11px] font-extrabold text-tone-accent">
             {personal.length}
@@ -109,7 +109,7 @@ export function EvidenceProofRows({ evidence }: { evidence: TechnologyEvidence }
         </div>
         <div className="divide-y divide-[#F1F4F9]">
           {personal.map((item) => (
-            <ProofRow key={item.evidenceId} item={item} contributorText="본인 Commit" />
+            <ProofRow key={item.evidenceId} item={item} contributorText="내가 작성" />
           ))}
         </div>
       </section>
@@ -118,18 +118,18 @@ export function EvidenceProofRows({ evidence }: { evidence: TechnologyEvidence }
         <section className="mt-3 border-t border-brand-line pt-2">
           <div className="flex flex-wrap items-center gap-2.5 px-[10px] pt-2 pb-2">
             <p className="text-[12px] font-extrabold tracking-[0.04em] text-brand-ink-soft">
-              Repository Level에만 반영된 Evidence
+              저장소 수준에만 반영된 근거
             </p>
             <span className="rounded-full bg-tone-neutral-bg px-2.5 py-1 text-[11px] font-extrabold text-tone-neutral">
               {repositoryOnly.length}
             </span>
             <p className="min-w-0 flex-1 truncate text-[11.5px] text-brand-faint">
-              타인 Commit → Personal 미반영
+              다른 사람이 작성한 코드
             </p>
           </div>
           <div className="divide-y divide-[#F1F4F9]">
             {repositoryOnly.map((item) => (
-              <ProofRow key={item.evidenceId} item={item} contributorText="타인 Commit" />
+              <ProofRow key={item.evidenceId} item={item} contributorText="다른 사람이 작성" />
             ))}
           </div>
         </section>

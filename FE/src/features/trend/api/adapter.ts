@@ -9,6 +9,7 @@ import type {
   TrendSourceId,
   TrendSourceView,
 } from '@/features/trend/model/view'
+import { rankObservableRows } from '@/features/trend/model/ranking'
 
 /**
  * Trend DTO를 화면 타입으로 (S15P21E102-279).
@@ -23,19 +24,35 @@ import type {
 const SOURCE_IDS: readonly TrendSourceId[] = ['GITHUB_WEEKLY', 'GITHUB_ARCHIVE', 'JOB']
 
 const LABEL: Readonly<Record<TrendSourceId, string>> = {
-  GITHUB_WEEKLY: 'GITHUB · 주간 활동',
-  GITHUB_ARCHIVE: 'GITHUB · 월별 Archive',
-  JOB: 'JOB · 채용공고',
+  GITHUB_WEEKLY: 'GitHub 주간 활동',
+  GITHUB_ARCHIVE: 'GitHub 월별 활동',
+  JOB: '채용공고 수요',
 }
 
 const FOOTNOTE: Readonly<Record<TrendSourceId, string>> = {
   GITHUB_WEEKLY: '공개 저장소의 주간 활동 관측입니다. 비공개 저장소는 포함하지 않습니다.',
-  GITHUB_ARCHIVE: '월별 commit 관측입니다. 완료된 달만 포함하며 미완료 월은 비어 있습니다.',
+  GITHUB_ARCHIVE: '월별 GitHub 활동입니다. 완료된 달만 표시합니다.',
   JOB: '수집된 채용공고의 월별 요구 건수입니다.',
 }
 
 function toSourceId(value: string): TrendSourceId | null {
   return SOURCE_IDS.includes(value as TrendSourceId) ? (value as TrendSourceId) : null
+}
+
+function unitDisplayName(sourceId: TrendSourceId, value: string | null): string {
+  if (value === null) return sourceId === 'JOB' ? '채용공고 수요' : 'GitHub 활동'
+  const normalized = value.trim().toUpperCase()
+  if (normalized === 'EVENTS' || normalized === 'EVENT_COUNT') return 'GitHub 활동'
+  if (normalized === 'REPOSITORIES' || normalized === 'REPOSITORY_COUNT') return '저장소'
+  if (normalized === 'JOB_POSTINGS' || normalized === 'JOB_COUNT') return '채용공고 수요'
+  return value
+}
+
+function reasonText(reasons: readonly string[], fallback: string): string {
+  if (reasons.length === 0) return fallback
+  return reasons.some((reason) => /^[A-Z0-9_:.-]+$/.test(reason))
+    ? '비교할 데이터가 충분하지 않습니다.'
+    : reasons.join(' · ')
 }
 
 /** 표기 문자열. 값이 없으면 지어내지 않고 `—`를 둔다. */
@@ -81,7 +98,7 @@ export function toTrendSeries(dto: TechnologyTrendDto): TrendSeriesView[] {
         value: point.value,
       }))
       const last = source.points.at(-1)
-      const unit = source.unit ?? '관측값'
+      const unit = unitDisplayName(id, source.unit)
       return {
         sourceId: id,
         label: LABEL[id],
@@ -91,7 +108,7 @@ export function toTrendSeries(dto: TechnologyTrendDto): TrendSeriesView[] {
         deltaText:
           last === undefined ? null : changeText(last.absoluteChange, last.relativeChange),
         points,
-        note: source.reasons.length === 0 ? FOOTNOTE[id] : source.reasons.join(' · '),
+        note: reasonText(source.reasons, FOOTNOTE[id]),
       } satisfies TrendSeriesView
     })
     .filter((series): series is TrendSeriesView => series !== null)
@@ -100,8 +117,8 @@ export function toTrendSeries(dto: TechnologyTrendDto): TrendSeriesView[] {
 /**
  * 개요 화면의 출처 카드.
  *
- * 순위는 비교 응답이 준 순서를 그대로 쓴다. 값이 없는 기술은 뒤로 밀리되 순번은
- * 유지한다 — 순위를 화면이 다시 매기면 "값 없음"이 최하위라는 판정이 되어 버린다.
+ * 공고 수요는 비교 후보를 고르는 근거이고, 각 카드 순위는 해당 출처의 실제 관측값이다.
+ * `READY + 0`은 관측된 값으로 남기며, 미관측/표본 부족은 순위를 받지 않는다.
  */
 export function toTrendSource(
   compare: TrendCompareDto,
@@ -111,27 +128,53 @@ export function toTrendSource(
   if (id === null) {
     return null
   }
-  const rows: TrendRankRow[] = compare.rows.map((row, index) => ({
-    rank: index + 1,
-    techId: row.techId,
-    techName: techNames.get(row.techId) ?? row.techId,
-    share: numberText(row.value),
-    delta: changeText(row.absoluteChange, row.relativeChange),
-    direction: direction(row.absoluteChange, row.relativeChange),
-  }))
-  const ready = compare.rows.filter((row) => row.value !== null)
+  const ranking = rankObservableRows(compare.rows)
+  const sourceRows = new Map(compare.rows.map((row) => [row.techId, row]))
+  const rows: TrendRankRow[] = ranking.observed.map((row) => {
+    const source = sourceRows.get(row.techId)
+    return {
+      rank: row.rank,
+      techId: row.techId,
+      techName: techNames.get(row.techId) ?? '알 수 없는 기술',
+      dataStatus: row.dataStatus,
+      statusReason: source?.statusReason ?? '',
+      observedValue: row.value,
+      share: numberText(row.value),
+      delta: changeText(source?.absoluteChange ?? null, source?.relativeChange ?? null),
+      direction: direction(source?.absoluteChange ?? null, source?.relativeChange ?? null),
+    }
+  })
+  const unobservedRows = ranking.unobserved.map((row) => {
+    const source = sourceRows.get(row.techId)
+    return {
+      techId: row.techId,
+      techName: techNames.get(row.techId) ?? '알 수 없는 기술',
+      dataStatus: row.dataStatus,
+      statusReason: source?.statusReason ?? '',
+    }
+  })
   return {
     id,
     label: LABEL[id],
-    unit: compare.unit ?? '관측값',
+    unit: unitDisplayName(id, compare.unit),
     // 한 기술도 값이 없으면 카드 전체가 비어 있는 것이다. 빈 표를 READY로 그리면
     // 사용자는 "관측했더니 전부 0"으로 읽는다.
-    status: ready.length === 0 ? 'NO_DATA' : 'READY',
+    status: rows.length === 0 ? unavailableStatus(unobservedRows.map((row) => row.dataStatus)) : 'READY',
     basis: compare.rows[0]?.period ?? '기간 미정',
     scopeNote: null,
-    rows: ready.length === 0 ? [] : rows,
+    maximumObservedValue: ranking.maximumObservedValue,
+    rows,
+    unobservedRows,
     footnote: FOOTNOTE[id],
   }
+}
+
+function unavailableStatus(statuses: readonly TrendSourceView['status'][]): TrendSourceView['status'] {
+  if (statuses.includes('PREPARING')) return 'PREPARING'
+  if (statuses.includes('INSUFFICIENT_DATA')) return 'INSUFFICIENT_DATA'
+  if (statuses.includes('FAILED')) return 'FAILED'
+  if (statuses.includes('NOT_SUPPORTED')) return 'NOT_SUPPORTED'
+  return 'NO_DATA'
 }
 
 /** 조회조차 하지 못한 출처. 빈 표 대신 이유를 남긴다. */
@@ -143,11 +186,13 @@ export function unavailableSource(
   return {
     id,
     label: LABEL[id],
-    unit: id === 'JOB' ? '월별 공고 요구 건수' : '관측값',
+    unit: id === 'JOB' ? '채용공고 수요' : 'GitHub 활동',
     status,
     basis: '조회 불가',
     scopeNote,
+    maximumObservedValue: null,
     rows: [],
+    unobservedRows: [],
     footnote: FOOTNOTE[id],
   }
 }

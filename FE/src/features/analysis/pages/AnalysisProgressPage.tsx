@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router'
 import { AnalysisStepList } from '@/features/analysis/components/AnalysisStepList'
 import { useAnalysisStatus } from '@/features/analysis/hooks/useRepositoryAnalysis'
 import { profileErrorMessage } from '@/features/evidence/hooks/useTechnologyProfile'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { DataRegion } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 import { queryKeys } from '@/shared/api/queryKeys'
@@ -44,16 +44,13 @@ export function AnalysisProgressPage() {
   return (
     <div>
       <PageHero
-        eyebrow="ANALYSIS"
         title="GitHub를 분석하고 있어요"
-        description="선택한 Repository를 순서대로 분석합니다. 이 화면을 벗어나도 분석은 계속됩니다."
+        description="이 화면을 벗어나도 분석은 계속됩니다."
       />
 
       <div className="gj-split mt-7">
         <DataRegion
-          eyebrow="PROGRESS"
           title="분석 진행"
-          hint="네 단계를 순서대로 거칩니다. 어디까지 진행됐는지는 상태 조회가 붙으면 표시됩니다."
         >
           <AnalysisStepList />
           <div className="mt-3">
@@ -72,22 +69,11 @@ export function AnalysisProgressPage() {
           <h2 className="mt-1.5 text-[18px] leading-[1.25] font-[750] tracking-[-0.03em] text-brand-ink">
             지금까지 확인된 기술
           </h2>
-          <div className="mt-4">
-            <StateCard
-              kind="PREPARING"
-              title="중간 결과 준비 중"
-              description="분석이 진행되는 동안 확인된 기술이 이 자리에 쌓입니다. 추정값으로 채우지 않습니다."
-            />
-          </div>
-          <p className="mt-4 text-[12.5px] leading-[1.6] text-brand-muted">
-            Personal Level은 사용자 기여 확인 단계가 끝나야 확정됩니다. 중간 결과는 Repository
-            기준입니다.
-          </p>
           <Link
             to="/evidence"
             className="mt-4 block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
           >
-            Evidence 화면 보기
+            내 기술 보기
           </Link>
           <Link
             to="/onboarding/repositories"
@@ -97,13 +83,6 @@ export function AnalysisProgressPage() {
           </Link>
         </aside>
       </div>
-
-      {analysisId !== undefined && (
-        <PageFootnote>
-          분석 ID <span className="font-evidence text-brand-muted">{analysisId}</span> · 이 화면을
-          벗어나도 분석은 서버에서 계속 진행됩니다.
-        </PageFootnote>
-      )}
     </div>
   )
 }
@@ -145,7 +124,6 @@ function ProgressState({
         kind="ERROR"
         title={failure.title}
         description={failure.description}
-        meta={data.errorCode ?? data.currentStage}
         action={failure.action}
       />
     )
@@ -153,7 +131,7 @@ function ProgressState({
   if (data.analysisStatus === 'SUCCEEDED' || data.analysisStatus === 'PARTIAL_SUCCEEDED') {
     return (
       <StateCard
-        kind={data.analysisStatus === 'SUCCEEDED' ? 'EMPTY' : 'PARTIAL'}
+        kind={data.analysisStatus === 'SUCCEEDED' ? 'SUCCESS' : 'PARTIAL'}
         title="분석이 끝났어요"
         description="확인된 기술과 근거를 보러 갈 수 있습니다."
         meta={scope}
@@ -170,7 +148,7 @@ function ProgressState({
       kind="LOADING"
       title="분석하고 있어요"
       description="이 화면을 벗어나도 분석은 계속됩니다."
-      meta={`${data.currentStage} · ${scope}`}
+      meta={scope}
     />
   )
 }

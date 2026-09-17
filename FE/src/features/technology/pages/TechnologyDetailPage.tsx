@@ -13,6 +13,7 @@ import {
   WHY_NEEDED,
 } from '@/mocks/fixtures/technologyDetail'
 import type { NextSkillFixture } from '@/mocks/types'
+import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { CodePath } from '@/shared/ui/CodePath'
 import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
@@ -125,6 +126,38 @@ export function TechnologyDetailPage() {
    * 붙일 자리를 만드는 데까지다.
    */
   const detail = withDesignFixture<boolean>(false, () => skill?.techId === 'kafka')
+
+  if (!detail) {
+    const techName = technologyDisplayName(techId ?? '')
+    return (
+      <div>
+        <Link
+          to="/recommendations"
+          className="inline-block text-[13px] font-semibold text-brand-muted hover:text-brand-ink"
+        >
+          ← 다음 학습 기술
+        </Link>
+        <div className="mt-3">
+          <PageHero title={techName} description="공고 변화와 내 사용 근거를 확인해 보세요." />
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          {[
+            { to: `/what-if?tech=${techId ?? ''}`, label: '늘어나는 공고 보기' },
+            { to: `/trends/${techId ?? ''}`, label: '기술 트렌드 보기' },
+            { to: `/evidence/${techId ?? ''}`, label: '내 사용 근거 보기' },
+          ].map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className="rounded-[16px] border border-brand-line bg-white px-5 py-5 text-center text-[14px] font-[750] text-brand-ink shadow-[0_10px_28px_rgba(25,47,81,0.07)] hover:border-brand-line-active"
+            >
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   const requestedTab = params.get('tab')
   const tab = TABS.find((item) => item.id === requestedTab)?.id ?? 'why'

@@ -229,20 +229,12 @@ export function RepositorySelectionPage() {
   return (
     <div>
       <header className="max-w-[640px]">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">REPOSITORY</p>
-          <DesignMockBadge />
-        </div>
-        <h1 className="mt-2 text-[26px] leading-[1.16] font-[750] tracking-[-0.045em] text-brand-ink sm:text-[30px] lg:text-[34px]">
-          분석할 프로젝트를 선택해주세요
+        <DesignMockBadge />
+        <h1 className="text-[26px] leading-[1.16] font-[750] tracking-[-0.045em] text-brand-ink sm:text-[30px] lg:text-[34px]">
+          분석할 GitHub 저장소를 선택하세요
         </h1>
         <p className="mt-3 text-[14px] leading-[1.65] text-brand-muted">
-          선택한 Repository의 파일 · 설정 · Commit을 읽기 전용으로 분석합니다. 언제든 다시 선택해
-          재분석할 수 있습니다.
-        </p>
-        <p className="mt-2 text-[12.5px] leading-[1.6] text-brand-faint">
-          비공개 Repository도 같은 기준으로 분석하며, 임시 checkout은 분석 후 삭제하고 공개 Trend에
-          포함하지 않습니다.
+          선택한 저장소에서 기술 사용 근거를 찾습니다.
         </p>
       </header>
 
@@ -309,7 +301,7 @@ export function RepositorySelectionPage() {
           onClick={showAnalysisScope}
           className="fixed right-4 bottom-4 left-4 z-30 rounded-xl bg-[linear-gradient(135deg,var(--color-brand-600),var(--color-brand-400))] px-5 py-3.5 text-[14px] font-[750] text-white shadow-[0_14px_32px_rgba(31,60,140,0.34)] lg:hidden"
         >
-          선택한 Repository {selectedList.length}개 · 분석 설정 보기
+          선택한 저장소 {selectedList.length}개 · 분석 시작
         </button>
       )}
     </div>

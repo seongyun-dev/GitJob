@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { stateKindDisplayName } from '@/shared/presentation/userFacingLabels'
 import { lookupLabel } from '@/shared/ui/lookupLabel'
 
 /**
@@ -30,6 +31,8 @@ export type StateKind =
   | 'EMPTY'
   /** 조회 실패 */
   | 'ERROR'
+  /** 작업이 정상적으로 완료됨 */
+  | 'SUCCESS'
   /** 일부만 완료됨 */
   | 'PARTIAL'
   /** 호출 한도 대기 */
@@ -53,6 +56,7 @@ const TONES: Readonly<Record<StateKind, Tone>> = {
   LOADING: 'neutral',
   EMPTY: 'neutral',
   ERROR: 'danger',
+  SUCCESS: 'neutral',
   PARTIAL: 'caution',
   RATE_LIMITED: 'caution',
   PREPARING: 'caution',
@@ -105,7 +109,7 @@ export function StateCard({
         <span
           className={`inline-flex self-start rounded-full px-2.5 py-1 text-[10.5px] font-extrabold tracking-[0.1em] ${TONE_CLASSES[tone]}`}
         >
-          {kind}
+          {stateKindDisplayName(kind)}
         </span>
         {meta !== undefined && (
           <span className="shrink-0 text-[12px] font-semibold text-brand-faint">{meta}</span>

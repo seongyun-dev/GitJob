@@ -48,8 +48,6 @@ export function LoginPage() {
         <Link to="/main" aria-label="GitJob 메인으로" className="flex items-center">
           <BrandLogo className="h-[30px] lg:h-9" />
         </Link>
-        {/* 도움말 화면이 없어 링크로 만들지 않는다. 연결 화면과 같은 판단. */}
-        <span className="text-[13px] text-brand-faint">도움말</span>
       </header>
 
       {/* 헤더 아래 남는 공간을 채우고 카드를 세로 중앙에 둔다. pb 로 살짝 위로 올려
@@ -61,9 +59,7 @@ export function LoginPage() {
             GitJob 시작하기
           </h1>
           <p className="mt-2.5 text-[13.5px] leading-[1.7] text-brand-muted text-pretty">
-            GitHub 계정으로 로그인합니다.
-            <br />
-            선택한 Repository만 읽기 전용으로 분석합니다.
+            GitHub 계정으로 로그인하고 분석할 저장소를 선택하세요.
           </p>
 
           <a
@@ -77,8 +73,7 @@ export function LoginPage() {
           </a>
 
           <p className="mt-3.5 text-[12px] leading-[1.6] text-brand-faint">
-            로그인 시 읽기 전용 권한만 요청합니다. 코드 원문은 저장하지 않으며 GitHub Permalink로만
-            연결합니다.
+            저장소는 읽기 전용으로 확인합니다.
           </p>
 
           {/*

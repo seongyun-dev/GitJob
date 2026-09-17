@@ -5,7 +5,7 @@ import { useJobMatch, useTarget } from '@/features/matching/hooks/useMatching'
 import type { JobPostingView } from '@/features/matching/model/view'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { DataRegion } from '@/shared/ui/DataRegion'
 import { SegmentBar } from '@/shared/ui/MeterBar'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
@@ -129,11 +129,7 @@ export function JobPostingDetailPage() {
       </Link>
 
       <div className="mt-3">
-        <PageHero
-          eyebrow="JOB POSTING"
-          title={posting?.title ?? '공고 상세'}
-          description="이 공고가 요구하는 기술과 내 Evidence를 하나씩 대조합니다. 기술요건 충족 여부만 보여주며 합격 가능성은 판정하지 않습니다."
-        />
+        <PageHero title={posting?.title ?? '공고 상세'} />
       </div>
 
       <div className="mt-6">
@@ -195,7 +191,7 @@ export function JobPostingDetailPage() {
           </div>
 
           <div className="grid gap-4">
-            <DataRegion eyebrow="POSTING" title="공고 정보" hint="수집 시점의 원문 값입니다.">
+            <DataRegion title="공고 정보">
               <dl className="grid gap-2.5">
                 {metaItems(posting).map((meta) => (
                   <div key={meta.label} className="flex items-baseline justify-between gap-3">
@@ -222,26 +218,18 @@ export function JobPostingDetailPage() {
               )}
             </DataRegion>
 
-            <DataRegion
-              eyebrow="NEXT"
-              title="무엇을 채우면 되나요"
-              hint="부족한 기술을 채우면 어떤 공고가 열리는지 다음 화면에서 봅니다."
-            >
+            <DataRegion title="부족한 기술">
               <Link
                 to="/skill-gap"
                 className="block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
               >
-                Skill Gap 보기 →
+                부족한 기술 보기 →
               </Link>
             </DataRegion>
           </div>
         </div>
       )}
 
-      <PageFootnote>
-        기술요건 충족 여부만 보여줍니다. 합격 가능성이나 지원 가능 여부는 판정하지 않습니다.
-        공고 본문은 저장하지 않고 원문 링크로만 연결합니다.
-      </PageFootnote>
     </div>
   )
 }

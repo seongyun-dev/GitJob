@@ -6,10 +6,11 @@ import { JobPostingCard } from '@/features/matching/components/JobPostingCard'
 import { JobRequirementDrawer } from '@/features/matching/components/JobRequirementDrawer'
 import { useJobMatches, useTarget } from '@/features/matching/hooks/useMatching'
 import { formatCollectedAt } from '@/features/matching/model/presentation'
+import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
 import type { JobPostingView } from '@/features/matching/model/view'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel, PartialNotice } from '@/shared/ui/ComputeStatePanel'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { DataRegion } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StatStrip } from '@/shared/ui/StatStrip'
 import type { StatItem } from '@/shared/ui/StatStrip'
@@ -114,19 +115,17 @@ export function JobMatchPage() {
   const scopeText =
     basis === undefined
       ? '선택한 직무의 수집된 공고 전체'
-      : [basis.targetRole, ...basis.regions, ...basis.careerLevels].filter(Boolean).join(' · ')
+      : [targetRoleDisplayName(basis.targetRole), ...basis.regions, ...basis.careerLevels]
+          .filter(Boolean)
+          .join(' · ')
 
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <PageHero
-          eyebrow="JOB MATCH"
-          title="공고 요구 기술과 비교했어요"
-          description="기술요건 충족 여부만 보여줍니다. 합격 가능성이나 지원 가능 여부는 판정하지 않습니다."
-        />
+        <PageHero title="내 기술과 맞는 공고" />
         {/* 비교 기준을 항상 함께 둔다. 기준을 숨기면 숫자가 절대값으로 읽힌다 */}
         <div className="shrink-0 rounded-[14px] border border-brand-line bg-white px-5 py-3.5">
-          <p className="text-[12px] text-brand-faint">공고 수집 기준</p>
+          <p className="text-[12px] text-brand-faint">공고 업데이트</p>
           <p className="mt-1 text-[13.5px] font-[750] text-brand-ink-soft">
             {formatCollectedAt(basis?.asOf)}
           </p>
@@ -156,11 +155,7 @@ export function JobMatchPage() {
             )}
 
             <div className="gj-split">
-              <DataRegion
-                eyebrow="POSTINGS"
-                title="공고별 기술요건 대조"
-                hint="✓ 보유 · △ Level 부족 · ✕ Evidence 없음 · ? 판정 못 함 순으로 공고마다 나란히 표시됩니다."
-              >
+              <DataRegion title="공고 목록">
                 {postings.length === 0 ? (
                   <StateCard
                     kind="EMPTY"
@@ -214,24 +209,14 @@ export function JobMatchPage() {
               </DataRegion>
 
               <div className="grid gap-4">
-                <DataRegion
-                  eyebrow="SKILL GAP"
-                  title="무엇이 부족한가"
-                  hint="기술별 충족·부족·미판정 구분은 Skill Gap 화면이 보여줍니다."
-                >
-                  <p className="text-[12.5px] leading-[1.7] text-brand-muted">
-                    이 화면은 공고 하나하나의 요건 충족을 보여줍니다. 어떤 기술이 몇 건의
-                    공고에서 요구되는지, 무엇을 채우면 몇 건이 늘어나는지는 다음 두 화면이
-                    계산 결과 그대로 보여줍니다.
-                  </p>
-
+                <DataRegion title="부족한 기술">
                   <DataGapNotice gaps={data.dataGaps} className="mt-4" />
 
                   <Link
                     to="/skill-gap"
                     className="mt-4 block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
                   >
-                    기술별 상세 Gap 보기
+                    부족한 기술 자세히 보기
                   </Link>
                   <Link
                     to="/recommendations"
@@ -248,10 +233,6 @@ export function JobMatchPage() {
 
       <JobRequirementDrawer posting={openPosting} onClose={() => setOpenPosting(null)} />
 
-      <PageFootnote>
-        기술요건 충족도만 보여줍니다. 합격 가능성이나 취업 확률은 계산하지 않습니다. 판정하지
-        못한 요건은 미보유와 구분해 표시하며 부족으로 세지 않습니다.
-      </PageFootnote>
     </div>
   )
 }

@@ -25,19 +25,25 @@ export function PageHero({
   description,
   aside,
 }: {
-  eyebrow: string
+  eyebrow?: string
   title: string
-  description: string
+  description?: string
   aside?: ReactNode
 }) {
   return (
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div className="gj-hero-text">
-        <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">{eyebrow}</p>
-        <h1 className="gj-page-title mt-2 leading-[1.16] font-[750] tracking-[-0.045em] text-brand-ink">
+        {eyebrow !== undefined && eyebrow !== '' && (
+          <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">{eyebrow}</p>
+        )}
+        <h1
+          className={`gj-page-title leading-[1.16] font-[750] tracking-[-0.045em] text-brand-ink ${eyebrow ? 'mt-2' : ''}`}
+        >
           {title}
         </h1>
-        <p className="mt-3 text-[14px] leading-[1.65] text-brand-muted">{description}</p>
+        {description !== undefined && description !== '' && (
+          <p className="mt-3 text-[14px] leading-[1.65] text-brand-muted">{description}</p>
+        )}
       </div>
       {aside}
     </header>

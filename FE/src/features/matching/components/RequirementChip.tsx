@@ -35,8 +35,8 @@ const MARK_CLASS: Readonly<Record<RequirementMark, string>> = {
 /** 접근성 라벨. 기호만 읽히면 화면 낭독으로는 의미를 알 수 없다. */
 const MARK_LABEL: Readonly<Record<RequirementMark, string>> = {
   HAVE: '보유',
-  WEAK: 'Level 부족',
-  NONE: 'Evidence 없음',
+  WEAK: '수준 부족',
+  NONE: '근거 없음',
   UNKNOWN: '판정하지 않음',
 }
 

@@ -25,11 +25,23 @@ export interface TrendRankRow {
    */
   techId: string
   techName: string
+  /** API row state is retained so unavailable values never look like rank zero. */
+  dataStatus: DataStatus
+  statusReason: string
+  /** Raw observed value; strings are presentation only and must not drive bars. */
+  observedValue: number
   /** 비중 표기. 출처마다 분모가 달라 문자열로 둔다. 값이 없으면 `—`. */
   share: string
   /** 변화 표기. 값이 없으면 `—`. 0으로 채우지 않는다. */
   delta: string
   direction: 'UP' | 'DOWN' | null
+}
+
+export interface TrendUnobservedRow {
+  techId: string
+  techName: string
+  dataStatus: DataStatus
+  statusReason: string
 }
 
 /** 출처 하나 · 화면 12. */
@@ -43,7 +55,11 @@ export interface TrendSourceView {
   basis: string
   /** 이 출처의 지원 범위 한계. 없으면 `null`. */
   scopeNote: string | null
+  /** Maximum among actual ranked observations in this source only. */
+  maximumObservedValue: number | null
   rows: TrendRankRow[]
+  /** Null or insufficient observations are not assigned a rank. */
+  unobservedRows: TrendUnobservedRow[]
   footnote: string
 }
 

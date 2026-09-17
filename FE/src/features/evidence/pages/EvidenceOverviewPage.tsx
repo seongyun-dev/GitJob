@@ -16,9 +16,8 @@ import {
 } from '@/features/evidence/hooks/useTechnologyProfile'
 import { buildEvidenceOverviewPanels } from '@/features/evidence/model/overview'
 import { LEVEL_STEPS } from '@/shared/constants/evidenceLevel'
+import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
-import { PageFootnote } from '@/shared/ui/DataRegion'
-import { LevelLegend } from '@/shared/ui/LevelBadge'
 import { Modal } from '@/shared/ui/Modal'
 import { StatStrip } from '@/shared/ui/StatStrip'
 import { PageHero } from '@/shared/ui/PageHero'
@@ -62,7 +61,11 @@ export function EvidenceOverviewPage() {
   const summary = profile.data?.summary
   const technologies = profile.data?.technologies ?? []
   const repositories = profile.data?.repositories ?? []
-  const panels = buildEvidenceOverviewPanels(technologies, repositories)
+  const displayTechnologies = technologies.map((technology) => ({
+    ...technology,
+    displayName: technologyDisplayName(technology.techId, technology.displayName),
+  }))
+  const panels = buildEvidenceOverviewPanels(displayTechnologies, repositories)
   const analyzedNothing = repositories.length === 0
 
   /** 어느 지표의 목록이 열려 있는지. 한 번에 하나만 연다. */
@@ -94,7 +97,7 @@ export function EvidenceOverviewPage() {
     {
       label: '확인된 기술',
       note: summary === undefined ? '분석 후 표시' : `${summary.technologyCount}개`,
-      caption: 'Repository Level 기준',
+      caption: '저장소 기준',
       onOpen: technologies.length > 0 ? () => setOpenDetail('technologies') : undefined,
     },
     {
@@ -104,7 +107,7 @@ export function EvidenceOverviewPage() {
       onOpen: advanced.length > 0 ? () => setOpenDetail('advanced') : undefined,
     },
     {
-      label: '분석한 Repository',
+      label: '분석한 저장소',
       note: summary === undefined ? '분석 후 표시' : `${summary.repositoryCount}개`,
       caption: '저장소별 최신 분석 기준',
       onOpen: repositories.length > 0 ? () => setOpenDetail('repositories') : undefined,
@@ -120,9 +123,7 @@ export function EvidenceOverviewPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <PageHero
-          eyebrow="MY EVIDENCE"
-          title="내 GitHub에서 확인된 기술"
-          description="Evidence는 점수가 아니라 근거입니다. Personal은 본인 Commit으로 확인된 범위, Repository는 저장소 전체 기준입니다."
+          title="내 기술"
         />
         <div className="flex shrink-0 flex-wrap gap-2.5">
           <Link
@@ -164,19 +165,6 @@ export function EvidenceOverviewPage() {
         </div>
       </div>
 
-      {/*
-        Level 범례. 척도가 네 단계라는 것은 제품 정의라 판정 결과가 없어도 보여준다.
-        단계별 의미는 등급 정책 확정 후 constants에서 채워진다.
-      */}
-      <div className="mt-5">
-        <LevelLegend />
-      </div>
-
-      <PageFootnote>
-        Personal Level이 Repository Level보다 낮은 기술은 저장소에는 구현이 있으나 본인 기여
-        근거가 확인되지 않은 경우입니다. 점수로 환산하지 않습니다.
-      </PageFootnote>
-
       {openDetail !== null && (
         <StatDetailModal
           detail={openDetail}
@@ -213,8 +201,8 @@ function StatDetailModal({
   if (detail === 'repositories') {
     return (
       <Modal
-        title="분석한 Repository"
-        description="저장소별 최신 분석 기준입니다. 판정은 아래 커밋 시점의 코드에서 나왔습니다."
+        title="분석한 저장소"
+        description="저장소별 최신 분석 결과입니다."
         onClose={onClose}
       >
         <ul className="grid gap-2">
@@ -251,8 +239,8 @@ function StatDetailModal({
       title={isAdvanced ? 'L2 이상인 기술' : '확인된 기술'}
       description={
         isAdvanced
-          ? '코드에서 실제로 다룬 기술입니다. Repository Level이 L2 이상인 것만 모았습니다.'
-          : 'Repository Level 기준으로 근거가 확인된 기술 전부입니다.'
+          ? '저장소 수준이 L2 이상인 기술입니다.'
+          : '근거가 확인된 기술입니다.'
       }
       onClose={onClose}
     >
@@ -264,7 +252,7 @@ function StatDetailModal({
           >
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-[750] text-brand-ink">
-                {technology.displayName}
+                {technologyDisplayName(technology.techId, technology.displayName)}
               </p>
               <p className="mt-0.5 truncate text-[11.5px] text-brand-muted">
                 근거 {technology.evidenceCount.toLocaleString('ko-KR')}건 · 저장소{' '}
@@ -337,7 +325,7 @@ function TechnologyRows({
       <StateCard
         kind="INSUFFICIENT_DATA"
         title="판정할 수 있는 기술이 없었어요"
-        description="분석은 끝났지만 Registry가 아는 기술이 저장소에서 확인되지 않았습니다."
+        description="분석한 저장소에서 기술 사용 근거를 찾지 못했습니다."
       />
     )
   }
@@ -399,12 +387,12 @@ function TechnologyRow({
             {open ? '▾' : '▸'}
           </span>
           <span className="truncate text-[14px] font-semibold text-brand-ink">
-            {technology.displayName}
+            {technologyDisplayName(technology.techId, technology.displayName)}
           </span>
         </button>
 
         {technology.personalLevel === null ? (
-          <span className="text-[12.5px] text-brand-faint">미판정</span>
+          <span className="text-[12.5px] text-brand-faint">내 근거 없음</span>
         ) : (
           <EvidenceLevel level={technology.personalLevel} />
         )}

@@ -6,7 +6,8 @@ import {
   profileErrorMessage,
   useTechnologyEvidence,
 } from '@/features/evidence/hooks/useTechnologyProfile'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
+import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
@@ -43,46 +44,25 @@ export function EvidenceDetailPage() {
       </Link>
 
       <div className="mt-3">
-        <PageHero
-          eyebrow="EVIDENCE DETAIL"
-          title="이 기술의 판정 근거"
-          description="어떤 파일과 Commit으로 판정했는지, 어떤 근거가 Personal Level에 반영됐는지 보여줍니다. 코드 원문은 저장하지 않고 GitHub Permalink로만 연결합니다."
-        />
+        <PageHero title={`${technologyDisplayName(techId ?? '')} 사용 근거`} />
       </div>
 
-      {/* v2는 두 Level을 먼저 나란히 대비시킨다. 값은 판정 결과라 비운다. */}
-      <div className="mt-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:max-w-[640px]">
-        {[
-          { label: 'PERSONAL', caption: '본인 Commit 기준' },
-          { label: 'REPOSITORY', caption: '저장소 전체 기준' },
-        ].map((item) => (
-          <div
-            key={item.label}
-            className="rounded-[14px] border border-brand-line bg-white px-5 py-4 shadow-[0_10px_28px_rgba(25,47,81,0.07)]"
-          >
-            <p className="text-[10.5px] font-extrabold tracking-[0.12em] text-brand-faint">
-              {item.label}
-            </p>
-            <p className="mt-2 text-[15px] font-[750] text-brand-faint">판정 후 표시</p>
-            <p className="mt-1 text-[12.5px] text-brand-faint">{item.caption}</p>
-          </div>
-        ))}
+      <div className="mt-6 max-w-[320px] rounded-[14px] border border-brand-line bg-white px-5 py-4 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
+        <p className="text-[12px] font-semibold text-brand-muted">확인된 수준</p>
+        <div className="mt-2">
+          {evidence.data?.level === null || evidence.data?.level === undefined ? (
+            <p className="text-[14px] font-[750] text-brand-faint">근거 없음</p>
+          ) : (
+            <EvidenceLevel level={evidence.data.level} />
+          )}
+        </div>
       </div>
 
-      {/*
-        Level 과 근거 표 사이에 둔다 · 티켓 S15P21E102-137.
-
-        이 문단이 하는 일이 "왜 이 수준인가"를 사람 말로 푸는 것이라 두 값 사이가
-        자리다. 위에서 수준을 보고, 여기서 이유를 읽고, 아래에서 근거를 확인한다.
-
-        요약이 없어도 화면은 완성돼 있다. 그래서 이 자리가 비어도 아래 표는 그대로
-        그린다 -- 요약은 판정 결과가 아니라 판정 결과를 설명하는 것이다.
-      */}
       <div className="mt-4">
         <TechnologySummaryCard techId={techId} />
       </div>
 
-      <div className="gj-split mt-4">
+      <div className="mt-4">
         <div className="overflow-hidden rounded-[18px] border border-brand-line bg-white shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
           {/*
             컬럼 헤더를 뺐다 · 티켓 S15P21E102-252.
@@ -100,49 +80,14 @@ export function EvidenceDetailPage() {
             />
           </div>
         </div>
-
-        {/* 오른쪽 열이 둘로 늘어 `gj-split`의 한 칸 안에서 다시 쌓는다. */}
-        <div className="grid gap-4">
-          <DataRegion
-            eyebrow="NEXT LEVEL"
-            title="다음 Level 판정 기준"
-            hint="어떤 근거가 더 확인되면 Level이 올라가는지 표시됩니다."
-          >
-            <StateCard
-              kind="PREPARING"
-              title="판정 기준 준비 중"
-              description="기준은 기술마다 달라 등급 정책과 조회 API가 준비된 뒤 표시합니다. 화면에서 만들어내지 않습니다."
-            />
-          </DataRegion>
-
-          {/*
-            v2가 근거 표 옆에 두는 `Kafka 추천 기술 상세 →`. 기술명은 조회 API가
-            주는 값이라 붙이지 않는다. `techId`는 실제 route param이라 그대로 넘긴다.
-          */}
-          <DataRegion
-            eyebrow="NEXT SKILL"
-            title="추천 기술 상세"
-            hint="이 기술을 다음 Level로 올리는 학습 안내로 이동합니다."
-          >
-            <Link
-              to={techId === undefined ? '/recommendations' : `/technologies/${techId}`}
-              className="block rounded-xl border border-brand-line bg-white px-5 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
-            >
-              추천 기술 상세 →
-            </Link>
-          </DataRegion>
-        </div>
       </div>
 
-      <PageFootnote>
-        Raw Code Viewer는 제공하지 않습니다. 각 근거는 GitHub Permalink로 원문을 확인합니다.
-        {techId !== undefined && (
-          <>
-            {' · '}
-            기술 <span className="font-evidence text-brand-muted">{techId}</span>
-          </>
-        )}
-      </PageFootnote>
+      <Link
+        to={techId === undefined ? '/recommendations' : `/technologies/${techId}`}
+        className="mt-4 inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink hover:border-brand-line-active"
+      >
+        이 기술 자세히 보기 →
+      </Link>
     </div>
   )
 }
@@ -175,7 +120,7 @@ function LevelGroups({
       <StateCard
         kind="INSUFFICIENT_DATA"
         title="이 기술의 근거가 아직 없어요"
-        description="Registry에는 있는 기술이지만 분석한 저장소에서 확인되지 않았습니다."
+        description="분석한 저장소에서 이 기술의 사용 근거를 찾지 못했습니다."
       />
     )
   }

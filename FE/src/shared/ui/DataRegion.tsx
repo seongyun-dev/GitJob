@@ -21,7 +21,7 @@ export function DataRegion({
   action,
   children,
 }: {
-  eyebrow: string
+  eyebrow?: string
   title: string
   /** 영역 제목 옆 보조 설명. 정적 문구만 넣는다 */
   hint?: string
@@ -33,8 +33,12 @@ export function DataRegion({
     <section className="rounded-[18px] border border-brand-line bg-white p-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)] 3xl:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">{eyebrow}</p>
-          <h2 className="mt-1.5 text-[18px] leading-[1.25] font-[750] tracking-[-0.03em] text-brand-ink">
+          {eyebrow !== undefined && eyebrow !== '' && (
+            <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">{eyebrow}</p>
+          )}
+          <h2
+            className={`text-[18px] leading-[1.25] font-[750] tracking-[-0.03em] text-brand-ink ${eyebrow ? 'mt-1.5' : ''}`}
+          >
             {title}
           </h2>
           {hint !== undefined && (

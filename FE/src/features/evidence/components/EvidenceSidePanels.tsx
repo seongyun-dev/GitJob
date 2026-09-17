@@ -33,7 +33,7 @@ export function ReinforcementPanel({ items }: { items?: readonly ReinforcementIt
             근거 보강 필요
           </p>
           <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
-            저장소엔 있지만 내 Commit에는 없는 기술
+            저장소에는 있지만 내 근거가 부족한 기술
           </h2>
         </div>
         {items !== undefined && (
@@ -48,13 +48,13 @@ export function ReinforcementPanel({ items }: { items?: readonly ReinforcementIt
           <StateCard
             kind="PREPARING"
             title="아직 판정 결과가 없어요"
-            description="Personal Level이 Repository Level보다 낮은 기술이 이 자리에 모입니다. 부족한 기술과는 구분해 표시합니다."
+            description="저장소 수준보다 내 수준이 낮은 기술이 여기에 표시됩니다."
           />
         ) : items.length === 0 ? (
           <StateCard
             kind="EMPTY"
             title="보강이 필요한 기술이 없어요"
-            description="Personal Level이 판정된 기술 중 Repository Level보다 낮은 항목이 없습니다."
+            description="저장소 수준보다 내 수준이 낮은 기술이 없습니다."
           />
         ) : (
           <ul className="grid gap-2">
@@ -105,7 +105,7 @@ export function AnalysisContextPanel({
   return (
     <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
       <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
-        ANALYSIS CONTEXT
+        분석 기준
       </p>
       <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
         무엇을 근거로 판정했나
@@ -116,7 +116,7 @@ export function AnalysisContextPanel({
           <StateCard
             kind="NO_DATA"
             title="아직 분석한 저장소가 없어요"
-            description="분석에 포함된 저장소와 저장소별 본인 Commit 수, 근거 수가 여기에 표시됩니다."
+            description="저장소를 분석하면 사용 근거가 여기에 표시됩니다."
           />
         ) : repositories.length === 0 ? (
           <StateCard
@@ -138,7 +138,7 @@ export function AnalysisContextPanel({
                   </p>
                 </div>
                 <p className="mt-1 truncate text-[11.5px] text-brand-muted">
-                  <span className="font-mono">{repo.commitSha.slice(0, 7)}</span> ·{' '}
+                  기준 버전 <span className="font-mono">{repo.commitSha.slice(0, 7)}</span> ·{' '}
                   {new Date(repo.analyzedAt).toLocaleString('ko-KR')}
                 </p>
               </li>

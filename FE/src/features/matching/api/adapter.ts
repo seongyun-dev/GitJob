@@ -20,6 +20,8 @@ import type {
 } from '@/features/matching/model/view'
 import { EVIDENCE_LEVELS } from '@/shared/types/domain'
 import type { EvidenceLevel } from '@/shared/types/domain'
+import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
+import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 
 /**
  * 서버 DTO를 화면 타입으로 옮긴다 (S15P21E102-279).
@@ -51,7 +53,10 @@ function toLevel(value: string | null | undefined): EvidenceLevel | null {
  */
 function toRequirement(clause: ClauseDto): JobRequirement {
   return {
-    techName: clause.techIds.length === 0 ? '해석 실패' : clause.techIds.join(' / '),
+    techName:
+      clause.techIds.length === 0
+        ? '확인되지 않은 기술'
+        : clause.techIds.map((techId) => technologyDisplayName(techId)).join(' / '),
     mark: toMark(clause.mark),
     requiredLevel: toLevel(clause.requiredLevel),
   }
@@ -95,16 +100,16 @@ function toVerdict(value: string): SkillGapVerdict {
 
 const VERDICT_TEXT: Readonly<Record<SkillGapVerdict, string>> = {
   MET: '충족',
-  LEVEL_SHORT: 'Level 부족',
+  LEVEL_SHORT: '수준 부족',
   NO_EVIDENCE: '미보유',
   UNDETERMINED: '미판정',
 }
 
 const GROUP_TITLE: Readonly<Record<SkillGapVerdict, { title: string; description: string }>> = {
-  MET: { title: '충족', description: '요구 Level 이상의 Personal Evidence가 있습니다' },
+  MET: { title: '충족', description: '공고가 요구하는 수준을 충족합니다' },
   LEVEL_SHORT: {
-    title: 'Level 부족',
-    description: 'Evidence는 있는데 요구 Level에 미치지 못합니다',
+    title: '수준 부족',
+    description: '근거는 있지만 공고가 요구하는 수준에는 미치지 못합니다',
   },
   NO_EVIDENCE: { title: '미보유', description: '선언·설정·구현 어느 것도 확인되지 않았습니다' },
   UNDETERMINED: {
@@ -116,7 +121,7 @@ const GROUP_TITLE: Readonly<Record<SkillGapVerdict, { title: string; description
 function toSkillGapRow(row: SkillGapRowDto): SkillGapRowView {
   const verdict = toVerdict(row.verdict)
   return {
-    techName: row.techId,
+    techName: technologyDisplayName(row.techId),
     requiredCount: row.requiredCount,
     preferredCount: row.preferredCount,
     personalLevel: toLevel(row.personalLevel),
@@ -153,13 +158,13 @@ export function toSkillGapSummary(dto: SkillGapDto): SkillGapSummaryView | null 
     return null
   }
   const jobCount = dto.basis.jobCount
-  const role = dto.basis.targetRole ?? '선택한 직무'
+  const role = targetRoleDisplayName(dto.basis.targetRole)
   return {
     basisText: jobCount === null ? role : `${role} · 수요 산정 공고 ${jobCount}건`,
     requiredTechCount: dto.summary.requiredTechCount,
     metCount: dto.summary.metCount,
     gapCount: dto.summary.gapCount,
-    gapBreakdown: `미보유 ${dto.summary.noEvidenceCount} · Level 부족 ${dto.summary.levelShortCount}`,
+    gapBreakdown: `미보유 ${dto.summary.noEvidenceCount} · 수준 부족 ${dto.summary.levelShortCount}`,
     undeterminedCount: dto.summary.undeterminedCount,
   }
 }
@@ -168,7 +173,7 @@ export function toNextSkills(dto: RecommendationDto): NextSkillView[] {
   return dto.candidates.map((candidate) => ({
     techId: candidate.techId,
     rank: candidate.rank,
-    techName: candidate.techId,
+    techName: technologyDisplayName(candidate.techId),
     fromLevel: toLevel(candidate.personalLevel),
     currentFullMatch: candidate.whatIf?.currentCount ?? null,
     projectedFullMatch: candidate.whatIf?.projectedCount ?? null,

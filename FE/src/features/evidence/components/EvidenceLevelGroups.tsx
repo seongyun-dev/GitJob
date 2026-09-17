@@ -39,11 +39,11 @@ import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
  * 타입이 달라 공유하지 못했다. 두 계약이 하나로 합쳐질 때 함께 정리한다.
  */
 const FACT_BADGE: Readonly<Record<string, string>> = {
-  DEPENDENCY: 'DEP',
-  IMPORT: 'IMP',
-  CONFIG_KEY: 'CFG',
-  ANNOTATION: 'IMPL',
-  API_CALL: 'IMPL',
+  DEPENDENCY: '의존성',
+  IMPORT: '불러오기',
+  CONFIG_KEY: '설정',
+  ANNOTATION: '구현',
+  API_CALL: '구현',
 }
 
 /** 한 파일에서 보여 줄 줄 번호의 최대 개수. 넘으면 나머지는 수로만 알린다. */
@@ -53,7 +53,7 @@ const MAX_LINE_CHIPS = 10
 const MAX_FILES_COLLAPSED = 6
 
 function badgeOf(factType: string): string {
-  return FACT_BADGE[factType] ?? factType.slice(0, 4)
+  return FACT_BADGE[factType] ?? '사용'
 }
 
 /** 파일 경로를 디렉터리와 파일명으로 가른다. 파일명만 진하게 둬야 눈이 거기서 멈춘다. */
@@ -198,10 +198,7 @@ function LevelSection({ group, defaultOpen }: { group: EvidenceLevelGroup; defau
       >
         <EvidenceLevel level={group.level} />
 
-        {/* 규칙 이름이 이 Level 을 만든 이유다. 접혀 있을 때도 보여야 한다. */}
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-brand-muted">
-          {group.rules.join(' · ')}
-        </span>
+        <span className="min-w-0 flex-1" />
 
         <span className="shrink-0 text-[12px] tabular-nums text-brand-faint">
           근거 {group.evidenceCount.toLocaleString('ko-KR')}건 · 파일 {group.files.length}개

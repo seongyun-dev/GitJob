@@ -49,7 +49,7 @@ const COPY: Readonly<Record<string, Copy>> = {
   },
   INSUFFICIENT_EVIDENCE: {
     kind: 'EMPTY',
-    title: '비교할 Evidence가 아직 없어요',
+    title: '비교할 기술 정보가 아직 없어요',
     description:
       '저장소를 분석하면 그 결과로 공고 요구 기술과 비교합니다. 분석한 저장소가 없으면 대조할 것이 없습니다.',
   },
@@ -161,9 +161,7 @@ export function ComputeStatePanel({
       <StateCard
         kind={kind}
         title={error.message}
-        description={
-          error.action === 'SHOW_RETRY' ? '일시적인 문제일 수 있습니다.' : `오류 코드 ${error.code}`
-        }
+        description={error.action === 'SHOW_RETRY' ? '일시적인 문제일 수 있습니다.' : ''}
         action={
           error.action === 'SHOW_RETRY' && onRetry !== undefined ? (
             <button

@@ -1,8 +1,8 @@
 import { Link } from 'react-router'
 import type { TrendSourceView } from '@/features/trend/model/view'
 import { MeterBar } from '@/shared/ui/MeterBar'
-import { StateCard } from '@/shared/ui/StateCard'
 import type { StateKind } from '@/shared/ui/StateCard'
+import { stateKindDisplayName } from '@/shared/presentation/userFacingLabels'
 
 /**
  * 출처별 트렌드 카드 · 티켓 S15P21E102-204.
@@ -37,7 +37,7 @@ const RANK_COLUMNS = ['#', '기술', '비중', '전기 대비'] as const
 const RANK_TEMPLATE = '22px minmax(0,1fr) 64px 62px'
 
 export function TrendSourceCard({ source }: { source: TrendSourceView }) {
-  const top = source.rows[0]?.share
+  const top = source.maximumObservedValue
 
   return (
     <section className="rounded-[18px] border border-brand-line bg-white p-5 shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
@@ -50,41 +50,33 @@ export function TrendSourceCard({ source }: { source: TrendSourceView }) {
             {source.unit}
           </h2>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2.5 py-1 text-[10.5px] font-extrabold tracking-[0.06em] ${
-            source.status === 'READY'
-              ? 'bg-tone-success-bg text-tone-success'
-              : 'border border-brand-line bg-white text-brand-faint'
-          }`}
-        >
-          {source.status}
-        </span>
+        {source.status !== 'READY' && (
+          <span className="shrink-0 rounded-full border border-brand-line bg-white px-2.5 py-1 text-[10.5px] font-bold text-brand-faint">
+            {stateKindDisplayName(STATE_KIND[source.status])}
+          </span>
+        )}
       </div>
       <p className="mt-1.5 text-[12px] leading-[1.55] text-brand-faint">{source.basis}</p>
 
-      <div className="mt-4 overflow-hidden rounded-[12px] border border-brand-line">
-        <div
-          className="grid gap-2.5 bg-[#F7F9FC] px-3 py-2 text-[10px] font-extrabold tracking-[0.1em] text-brand-faint"
-          style={{ gridTemplateColumns: RANK_TEMPLATE }}
-        >
-          {RANK_COLUMNS.map((label) => (
-            <span key={label} className="truncate">
-              {label}
-            </span>
-          ))}
+      {source.rows.length === 0 ? (
+        <div className="mt-4 rounded-[12px] border border-brand-line bg-[#F7F9FC] px-4 py-4">
+          <p className="text-[12.5px] leading-[1.65] text-brand-muted">
+            {source.scopeNote ?? source.footnote}
+          </p>
         </div>
-        <div className="p-3">
-          {source.rows.length === 0 ? (
-            <StateCard
-              kind={STATE_KIND[source.status]}
-              title={
-                source.status === 'NOT_SUPPORTED'
-                  ? '이 출처는 지원하지 않아요'
-                  : '데이터를 준비하고 있어요'
-              }
-              description={source.scopeNote ?? source.footnote}
-            />
-          ) : (
+      ) : (
+        <div className="mt-4 overflow-hidden rounded-[12px] border border-brand-line">
+          <div
+            className="grid gap-2.5 bg-[#F7F9FC] px-3 py-2 text-[10px] font-extrabold tracking-[0.1em] text-brand-faint"
+            style={{ gridTemplateColumns: RANK_TEMPLATE }}
+          >
+            {RANK_COLUMNS.map((label) => (
+              <span key={label} className="truncate">
+                {label}
+              </span>
+            ))}
+          </div>
+          <div className="p-3">
             <ul className="grid gap-2.5">
               {source.rows.map((row) => (
                 <li key={row.techName}>
@@ -125,11 +117,11 @@ export function TrendSourceCard({ source }: { source: TrendSourceView }) {
                     막대 분모는 이 출처의 1위 값이다. 값이 없는 행(`—`)은 막대를
                     그리지 않는다 -- 0 길이 막대는 "관측했더니 0"으로 읽힌다.
                   */}
-                  {Number.isFinite(Number.parseFloat(row.share)) && (
+                  {top !== null && (
                     <div className="mt-1.5">
                       <MeterBar
-                        value={Number.parseFloat(row.share)}
-                        total={Number.parseFloat(top ?? row.share)}
+                        value={row.observedValue}
+                        total={top}
                         tone={row.rank === 1 ? 'accent' : 'muted'}
                         height={4}
                       />
@@ -138,11 +130,14 @@ export function TrendSourceCard({ source }: { source: TrendSourceView }) {
                 </li>
               ))}
             </ul>
-          )}
+          </div>
         </div>
-      </div>
-
-      <p className="mt-3 text-[11.5px] leading-[1.6] text-brand-faint">{source.footnote}</p>
+      )}
+      {source.unobservedRows.length > 0 && (
+        <p className="mt-3 text-[11.5px] leading-[1.55] text-brand-faint">
+          순위 미포함: {source.unobservedRows.map((row) => `${row.techName} (${stateKindDisplayName(STATE_KIND[row.dataStatus])})`).join(', ')}
+        </p>
+      )}
     </section>
   )
 }

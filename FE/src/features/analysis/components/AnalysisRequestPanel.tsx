@@ -27,19 +27,6 @@ import { SelectedRepositoryCard } from '@/features/analysis/components/SelectedR
 const PRIMARY_CTA =
   'w-full rounded-xl bg-[linear-gradient(135deg,var(--color-brand-600),var(--color-brand-400))] px-[22px] py-[14px] text-[14px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)] transition-shadow not-disabled:hover:shadow-[0_16px_32px_rgba(47,94,235,0.34)] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none'
 
-/**
- * 분석이 무엇을 근거로 삼는지에 대한 설명. Final 패널의 01/02/03 문구를 그대로 썼다.
- *
- * 지어낸 문구가 아니고, 우리 계약과도 맞는다. C조 Evidence 계약의
- * `EvidenceProof.kind` 3종(`DIRECT_DEPENDENCY` · `IMPLEMENTATION` · `PARTICIPATION`)에
- * 1:1로 대응한다(`AI/recommendation/evidence.py`).
- */
-const EVIDENCE_STEPS: ReadonlyArray<{ step: string; text: string }> = [
-  { step: '01', text: '빌드 · 설정 파일에서 Dependency 확인' },
-  { step: '02', text: '소스 코드에서 실제 설정 · 구현 사용 판정' },
-  { step: '03', text: 'Commit 작성자로 본인 기여 여부 확인' },
-]
-
 export function AnalysisRequestPanel({
   repositories,
   branchByRepo,
@@ -87,18 +74,17 @@ export function AnalysisRequestPanel({
       aria-labelledby="analysis-request-heading"
       className="scroll-mt-32 rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)] lg:sticky lg:top-[96px]"
     >
-      <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">ANALYSIS SCOPE</p>
       <h2
         id="analysis-request-heading"
-        className="mt-1.5 text-[18px] leading-[1.25] font-[750] tracking-[-0.03em] text-brand-ink"
+        className="text-[18px] leading-[1.25] font-[750] tracking-[-0.03em] text-brand-ink"
       >
-        선택한 Repository {repositories.length}개
+        선택한 저장소 {repositories.length}개
       </h2>
 
       {repositories.length === 0 ? (
         // 패널은 항상 자리를 지킨다. Final에서도 ANALYSIS SCOPE 블록이 화면의 고정 요소다.
         <p className="mt-3 text-[13px] leading-[1.6] text-brand-faint">
-          왼쪽 목록에서 분석할 Repository를 고르세요. 여러 개를 함께 고를 수 있습니다.
+          왼쪽에서 분석할 저장소를 선택하세요.
         </p>
       ) : (
         <ul className="mt-4 grid max-h-[38vh] gap-2 overflow-y-auto">
@@ -136,23 +122,12 @@ export function AnalysisRequestPanel({
           {isSubmitting
             ? '분석을 등록하는 중입니다…'
             : repositories.length === 0
-              ? '분석할 Repository를 고르세요'
+              ? '분석할 저장소를 고르세요'
               : isRetry
                 ? `실패한 ${failed.length}개 다시 시도`
-                : `${submittable.length}개 Repository 분석 시작`}
+                : `${submittable.length}개 저장소 분석 시작`}
         </button>
       )}
-
-      <dl className="mt-4 border-t border-brand-line pt-1">
-        {EVIDENCE_STEPS.map((item) => (
-          <div key={item.step} className="flex gap-3 py-3">
-            <dt className="shrink-0 text-[11px] leading-[1.5] font-extrabold text-brand-400">
-              {item.step}
-            </dt>
-            <dd className="min-w-0 text-[13.5px] leading-[1.5] text-brand-body">{item.text}</dd>
-          </div>
-        ))}
-      </dl>
 
       {outcomes.size > 0 && !isSubmitting && (
         <div className="mt-3 text-[12.5px] leading-[1.6]">
@@ -175,9 +150,6 @@ export function AnalysisRequestPanel({
         </div>
       )}
 
-      <p className="mt-3 text-[12.5px] leading-[1.6] text-brand-faint">
-        분석 결과는 Evidence(파일 · 설정 · Commit)로 제시되며 점수로 환산하지 않습니다.
-      </p>
     </section>
   )
 }

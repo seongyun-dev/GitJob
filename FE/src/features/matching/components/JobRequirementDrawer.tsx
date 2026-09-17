@@ -213,10 +213,6 @@ export function JobRequirementDrawer({
               원문 공고 보기{posting.sourceSite === null ? '' : ` · ${posting.sourceSite}`}
             </a>
           )}
-          <p className="text-[11.5px] leading-[1.6] text-brand-faint">
-            보유 여부는 GitHub Personal Evidence 기준입니다. 기술요건 충족 여부만 보여주며 지원
-            결과를 예측하지 않습니다.
-          </p>
         </div>
       </aside>
     </>

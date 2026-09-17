@@ -8,7 +8,7 @@ import {
   ANALYSIS_HISTORY,
 } from '@/mocks/fixtures/analysisFlow'
 import type { AnalysisHistoryFixture } from '@/mocks/types'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { DataRegion } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
@@ -30,13 +30,13 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 이력 표의 상태 넷이 서로 다른 색인 것이 중요하다(SUCCEEDED · PARTIAL · FAILED).
  * 실패와 부분 완료를 같은 색으로 칠하지 않는다는 것이 화면 15의 규칙이다.
  */
-const HISTORY_COLUMNS = ['일시', 'REPOSITORY', '결과', '상태'] as const
+const HISTORY_COLUMNS = ['일시', '저장소', '결과', '상태'] as const
 const HISTORY_TEMPLATE = '170px minmax(0,1fr) minmax(0,1fr) 90px'
 
 /** v2가 나열하는 연결 축. 상태 값은 조회 API가 준다. */
 const CONNECTIONS = [
   { name: 'SSAFY 계정', description: '로그인 · 서비스 접근' },
-  { name: 'GitHub', description: '읽기 전용 · 분석 대상 Repository 접근' },
+  { name: 'GitHub', description: '분석할 저장소 연결' },
 ] as const
 
 /**
@@ -87,6 +87,28 @@ const HISTORY_STATUS_CLASS: Readonly<Record<HistoryStatus, string>> = {
   PARTIAL: 'bg-tone-caution-bg text-tone-caution',
   FAILED: 'bg-tone-danger-bg text-tone-danger',
   CANCELED: 'bg-tone-neutral-bg text-tone-neutral',
+}
+
+const HISTORY_STATUS_LABEL: Readonly<Record<HistoryStatus, string>> = {
+  QUEUED: '대기 중',
+  RUNNING: '분석 중',
+  RATE_LIMITED: '잠시 지연',
+  SUCCEEDED: '완료',
+  PARTIAL_SUCCEEDED: '일부 완료',
+  PARTIAL: '일부 완료',
+  FAILED: '실패',
+  CANCELED: '취소',
+}
+
+const CONNECTION_STATUS_LABEL: Readonly<Record<string, string>> = {
+  'SIGNED IN': '로그인됨',
+  CONNECTED: '연결됨',
+}
+
+function userFacingText(value: string): string {
+  return value
+    .replaceAll('Repository', '저장소')
+    .replace(/RATE_LIMIT(?:ED)?/g, '요청 제한으로 지연')
 }
 
 /**
@@ -179,11 +201,7 @@ export function MyPage() {
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <PageHero
-          eyebrow="MY PAGE"
-          title="계정 · 연결 · 분석 이력"
-          description="GitHub 분석은 언제든 다시 실행할 수 있습니다. 새 Commit이 추가되면 재분석으로 Evidence를 갱신하세요."
-        />
+        <PageHero title="내 정보" />
         <div className="flex shrink-0 flex-wrap items-center gap-2.5">
           <DesignMockBadge />
           <Link
@@ -199,7 +217,7 @@ export function MyPage() {
       <div className="mt-7 grid grid-cols-1 gap-4 lg:grid-cols-[372px_minmax(0,1fr)]">
         <div className="grid gap-4">
           <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
-            <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">ACCOUNT</p>
+            <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">내 계정</p>
             {account === null ? (
               <>
                 <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
@@ -209,7 +227,7 @@ export function MyPage() {
                   <StateCard
                     kind="PREPARING"
                     title="계정 정보를 아직 불러올 수 없어요"
-                    description="이름과 소속은 조회 API가 준비되면 표시합니다. 화면에서 만들지 않습니다."
+                    description="로그인 계정 정보를 표시할 수 없습니다."
                   />
                 </div>
               </>
@@ -225,10 +243,10 @@ export function MyPage() {
 
           <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
             <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
-              CONNECTIONS
+              연결된 계정
             </p>
             <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
-              두 계정은 따로 연결됩니다
+              계정 연결
             </h2>
 
             <ul className="mt-4 grid gap-2">
@@ -245,7 +263,7 @@ export function MyPage() {
                           {connection.name}
                         </p>
                         <p className="mt-0.5 text-[11.5px] leading-[1.5] text-brand-muted">
-                          {live?.detail ?? connection.description}
+                          {userFacingText(live?.detail ?? connection.description)}
                         </p>
                       </div>
                       {/*
@@ -254,7 +272,7 @@ export function MyPage() {
                       */}
                       {live !== null && (
                         <span className="shrink-0 rounded-full bg-tone-success-bg px-2.5 py-1 text-[10.5px] font-extrabold tracking-[0.06em] text-tone-success">
-                          {live.status}
+                          {CONNECTION_STATUS_LABEL[live.status] ?? '연결됨'}
                         </span>
                       )}
                     </div>
@@ -267,7 +285,7 @@ export function MyPage() {
               to="/onboarding/repositories"
               className="mt-4 block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
             >
-              Repository 다시 선택
+              저장소 다시 선택
             </Link>
 
             <p className="mt-4 text-[11.5px] leading-[1.65] text-brand-faint">
@@ -301,7 +319,7 @@ export function MyPage() {
               */}
               <div className="flex flex-col items-center justify-center px-8 py-8 text-center">
                 <p className="text-[10.5px] font-extrabold tracking-[0.16em] text-brand-600">
-                  LATEST ANALYSIS
+                  최근 분석
                 </p>
                 <h2 className="mt-2.5 text-[19px] font-[800] tracking-[-0.02em] text-brand-ink">
                   {historyQuery.isPending
@@ -311,7 +329,7 @@ export function MyPage() {
                 <p className="mt-2 max-w-[420px] text-[13px] leading-[1.7] text-brand-muted">
                   {historyQuery.isPending
                     ? '잠시만 기다려 주세요.'
-                    : 'Repository를 고르면 그 저장소의 의존성과 설정에서 기술 사용 근거를 찾습니다. 읽기 전용이고 고른 저장소만 봅니다.'}
+                    : '저장소를 선택하면 기술 사용 근거를 찾습니다.'}
                 </p>
                 {!historyQuery.isPending && (
                   <Link
@@ -353,7 +371,7 @@ export function MyPage() {
               <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
                 <div className="min-w-0">
                   <p className="text-[10.5px] font-extrabold tracking-[0.16em] text-brand-600">
-                    LATEST ANALYSIS
+                    최근 분석
                   </p>
 
                   <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -370,13 +388,13 @@ export function MyPage() {
                         HISTORY_STATUS_CLASS[latest.status]
                       }`}
                     >
-                      {latest.status}
+                      {HISTORY_STATUS_LABEL[latest.status]}
                     </span>
                   </div>
 
                   <dl className="mt-3.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px]">
                     <div className="flex items-center gap-1.5">
-                      <dt className="text-brand-faint">Repository</dt>
+                      <dt className="text-brand-faint">저장소</dt>
                       <dd className="font-evidence font-[750] text-brand-ink-soft">
                         {latest.repositories || '이름 기록 없음'}
                       </dd>
@@ -384,7 +402,9 @@ export function MyPage() {
                     <span aria-hidden className="h-3 w-px bg-brand-line" />
                     <div className="flex items-center gap-1.5">
                       <dt className="text-brand-faint">결과</dt>
-                      <dd className="font-[750] text-brand-ink-soft">{latest.resultText}</dd>
+                      <dd className="font-[750] text-brand-ink-soft">
+                        {userFacingText(latest.resultText)}
+                      </dd>
                     </div>
                   </dl>
                 </div>
@@ -395,7 +415,7 @@ export function MyPage() {
                     to="/evidence"
                     className="rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-4 py-2.5 text-[13px] font-[750] text-white shadow-[0_10px_22px_rgba(47,94,235,0.26)]"
                   >
-                    My Evidence 열기
+                    내 기술 보기
                   </Link>
                   <Link
                     to="/jobs"
@@ -417,7 +437,7 @@ export function MyPage() {
             같은 문장이 hint·표 아래·각주 세 곳에 있었다.
           */}
           {history.length > 0 && (
-            <DataRegion eyebrow="HISTORY" title="분석 이력">
+            <DataRegion title="분석 이력">
               <div className="overflow-hidden rounded-[14px]">
                 <div
                   className="hidden gap-4 border-b border-brand-line px-2.5 py-2.5 text-[10.5px] font-extrabold tracking-[0.12em] text-brand-faint lg:grid"
@@ -452,13 +472,15 @@ export function MyPage() {
                       <p className="truncate font-evidence text-[12px] text-brand-ink-soft">
                         {item.repositories || '이름 기록 없음'}
                       </p>
-                      <p className="truncate text-[12.5px] text-brand-muted">{item.resultText}</p>
+                      <p className="truncate text-[12.5px] text-brand-muted">
+                        {userFacingText(item.resultText)}
+                      </p>
                       <span
                         className={`w-fit justify-self-start rounded-full px-2.5 py-1 text-[10.5px] font-extrabold tracking-[0.06em] lg:justify-self-end ${
                           HISTORY_STATUS_CLASS[item.status]
                         }`}
                       >
-                        {item.status}
+                        {HISTORY_STATUS_LABEL[item.status]}
                       </span>
                     </div>
                   ))}
@@ -473,10 +495,6 @@ export function MyPage() {
         </div>
       </div>
 
-      <PageFootnote>
-        분석은 GitHub의 공개·허용된 저장소만 읽습니다. Evidence는 재분석 시점의 Commit 기준으로
-        갱신되며, 과거 분석 결과를 덮어쓰지 않습니다.
-      </PageFootnote>
     </div>
   )
 }

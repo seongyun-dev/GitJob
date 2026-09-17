@@ -2,11 +2,11 @@ import { Link } from 'react-router'
 import { toNextSkills } from '@/features/matching/api/adapter'
 import { DataGapNotice } from '@/features/matching/components/DataGapNotice'
 import { NextSkillCard } from '@/features/matching/components/NextSkillCard'
-import { RecommendationChain } from '@/features/matching/components/RecommendationChain'
 import { useRecommendations, useTarget } from '@/features/matching/hooks/useMatching'
+import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel, PartialNotice } from '@/shared/ui/ComputeStatePanel'
-import { DataRegion, PageFootnote } from '@/shared/ui/DataRegion'
+import { DataRegion } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
 
@@ -37,16 +37,15 @@ export function RecommendationPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <PageHero
-          eyebrow="RECOMMENDATION · NEXT SKILL"
-          title="다음에 무엇을 배우면 가장 많이 달라질까요?"
-          description="필수 기술을 모두 충족하는 공고 수가 얼마나 늘어나는지로만 정렬합니다. 추천 점수는 만들지 않습니다."
+          title="다음에 배울 기술"
+          description="배우면 지원할 수 있는 공고가 많이 늘어나는 순서예요."
         />
         <div className="flex shrink-0 flex-wrap items-center gap-2.5">
           {basis !== undefined && basis.jobCount !== null && (
             <div className="rounded-[14px] border border-brand-line bg-white px-5 py-3.5">
               <p className="text-[12px] text-brand-faint">비교 집합</p>
               <p className="mt-1 text-[13.5px] font-[750] text-brand-ink-soft">
-                {basis.targetRole ?? '선택한 직무'} 수요 산정 공고 {basis.jobCount}건
+                {targetRoleDisplayName(basis.targetRole)} 공고 {basis.jobCount}건
               </p>
             </div>
           )}
@@ -75,32 +74,17 @@ export function RecommendationPage() {
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_326px]">
             <div className="grid gap-4">
               {first === undefined ? (
-                <DataRegion
-                  eyebrow="#1 RECOMMENDED"
-                  title="1순위 후보"
-                  hint="가장 많은 공고가 요구하면서 현재 근거가 부족한 기술입니다."
-                >
+                <DataRegion title="첫 번째 추천">
                   <StateCard
                     kind="EMPTY"
                     title="추천할 기술이 없어요"
-                    description="요구 기술을 이미 충족했거나, 선행 조건이 갖춰진 후보가 없습니다. 화면에서 순위를 만들지 않습니다."
+                    description="현재 조건에서 새로 추천할 기술이 없습니다."
                   />
                 </DataRegion>
               ) : (
                 <NextSkillCard skill={first} emphasis />
               )}
 
-              {/*
-                근거 체인. 1순위 카드가 값을 채워도 이 골격을 남기는 이유는 다섯
-                단계가 추천의 정의이고, 카드가 그중 일부만 보여주기 때문이다.
-              */}
-              <DataRegion
-                eyebrow="WHY"
-                title="무엇을 근거로 추천하나요"
-                hint="다섯 단계를 모두 밝힙니다. 하나의 점수로 합치지 않습니다."
-              >
-                <RecommendationChain />
-              </DataRegion>
             </div>
 
             <div className="grid gap-4">
@@ -109,7 +93,7 @@ export function RecommendationPage() {
                   다음 후보
                 </p>
                 <p className="mt-1.5 text-[12.5px] leading-[1.6] text-brand-muted">
-                  같은 기준 · 필수 전체 충족 공고 증가 수 순
+                  지원할 수 있는 공고가 많이 늘어나는 순서입니다.
                 </p>
               </div>
 
@@ -117,7 +101,7 @@ export function RecommendationPage() {
                 <StateCard
                   kind="EMPTY"
                   title="후순위 후보가 없어요"
-                  description="C는 상위 후보만 계산합니다. 더 많은 후보가 생기면 이 자리에 놓입니다."
+                  description="현재 조건에서 다른 추천 후보가 없습니다."
                 />
               ) : (
                 rest.map((skill) => <NextSkillCard key={skill.techId} skill={skill} />)
@@ -129,10 +113,6 @@ export function RecommendationPage() {
         )}
       </div>
 
-      <PageFootnote>
-        공고 수 변화는 합격 가능성이 아닙니다. 추천 점수나 순위 점수를 만들지 않으며, 정렬 기준은
-        필수 기술을 모두 충족하는 공고 수의 증가분 하나입니다.
-      </PageFootnote>
     </div>
   )
 }
