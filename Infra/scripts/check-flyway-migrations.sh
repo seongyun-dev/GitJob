@@ -15,9 +15,11 @@ mapfile -t migration_files < <(
 
 declare -A version_owner=()
 for migration_file in "${migration_files[@]}"; do
-  [[ "$migration_file" =~ ^V([0-9]+)__(.+)\.sql$ ]] \
+  [[ "$migration_file" =~ ^V([0-9]+([._][0-9]+)*)__(.+)\.sql$ ]] \
     || die "invalid versioned migration filename: $migration_file"
-  version="${BASH_REMATCH[1]}"
+  # Flyway accepts both dots and underscores as version-part separators.
+  # Normalize them so V11_1 and V11.1 are checked as the same version.
+  version="${BASH_REMATCH[1]//_/.}"
   if [[ -n "${version_owner[$version]:-}" ]]; then
     die "duplicate migration version V$version: ${version_owner[$version]} and $migration_file"
   fi
