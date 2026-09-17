@@ -103,8 +103,16 @@ public class MonitoringQueries {
         return "max(hdfs_capacity_total_bytes{" + clusterSelector() + "})";
     }
 
+    public String hdfsCapacityRemainingBytes() {
+        return "max(hdfs_capacity_remaining_bytes{" + clusterSelector() + "})";
+    }
+
     public String hdfsBlocksTotal() {
         return "max(hdfs_blocks_total{" + clusterSelector() + "})";
+    }
+
+    public String hdfsUnderReplicatedBlocks() {
+        return "max(hdfs_under_replicated_blocks{" + clusterSelector() + "})";
     }
 
     public String hdfsLiveDataNodes() {

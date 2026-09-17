@@ -305,8 +305,12 @@ class MonitoringServiceTest {
                 .thenReturn(List.of(value("hdfs-namenode", 86016)));
         when(prometheus.instant(queries.hdfsCapacityTotalBytes()))
                 .thenReturn(List.of(value("hdfs-namenode", 3_243_303_530_496d)));
+        when(prometheus.instant(queries.hdfsCapacityRemainingBytes()))
+                .thenReturn(List.of(value("hdfs-namenode", 3_243_303_444_480d)));
         when(prometheus.instant(queries.hdfsBlocksTotal()))
                 .thenReturn(List.of(value("hdfs-namenode", 0)));
+        when(prometheus.instant(queries.hdfsUnderReplicatedBlocks()))
+                .thenReturn(List.of(value("hdfs-namenode", 2)));
         when(prometheus.instant(queries.hdfsLiveDataNodes()))
                 .thenReturn(List.of(value("hdfs-namenode", 3)));
         when(prometheus.instant(queries.hdfsDeadDataNodes()))
@@ -317,7 +321,9 @@ class MonitoringServiceTest {
         assertThat(overview.hdfs().up()).isTrue();
         assertThat(overview.hdfs().capacityUsedBytes()).isEqualTo(86016L);
         assertThat(overview.hdfs().capacityTotalBytes()).isEqualTo(3_243_303_530_496L);
+        assertThat(overview.hdfs().capacityRemainingBytes()).isEqualTo(3_243_303_444_480L);
         assertThat(overview.hdfs().blocksTotal()).isEqualTo(0L);
+        assertThat(overview.hdfs().underReplicatedBlocks()).isEqualTo(2L);
         assertThat(overview.hdfs().liveDataNodes()).isEqualTo(3);
         assertThat(overview.hdfs().deadDataNodes()).isEqualTo(0);
         assertThat(overview.coverage().hdfs()).isEqualTo(CoverageState.COLLECTED);

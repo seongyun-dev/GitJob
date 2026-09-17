@@ -111,8 +111,8 @@ public record MonitoringOverviewResponse(
      * HDFS 현황 (S15P21E102-261 Phase 2).
      *
      * <p>{@code up}은 NameNode /jmx 를 옮기는 json-exporter 도달 여부다. 붙어 있으면 용량
-     * (사용/전체 바이트)·전체 Block 수·DataNode Live/Dead 수를 함께 싣는다 — 이 값들이 있어
-     * Data Platform의 HDFS 카드가 COLLECTED로 실수치를 그린다.</p>
+     * (사용/전체/잔여 바이트)·전체 Block 수·Under-replicated Block 수·DataNode Live/Dead 수를
+     * 함께 싣는다 — 이 값들이 있어 Data Platform의 HDFS 카드가 COLLECTED로 실수치를 그린다.</p>
      *
      * <p>{@code null}과 0은 다르다. exporter가 없으면 시계열이 없어 {@code null}이고, 값이
      * 왔는데 0이면 실제로 0이다(예: 방금 포맷한 클러스터의 Block 0). 미도달 시 값 자리를
@@ -124,10 +124,12 @@ public record MonitoringOverviewResponse(
             Long capacityTotalBytes,
             Long blocksTotal,
             Integer liveDataNodes,
-            Integer deadDataNodes
+            Integer deadDataNodes,
+            Long capacityRemainingBytes,
+            Long underReplicatedBlocks
     ) {
         public static HdfsStatus unknown() {
-            return new HdfsStatus(null, null, null, null, null, null);
+            return new HdfsStatus(null, null, null, null, null, null, null, null);
         }
     }
 
@@ -179,9 +181,9 @@ public record MonitoringOverviewResponse(
      * 어떤 범위가 실제로 수집되고 있는지.
      *
      * <p>이 필드가 있는 이유는 화면이 "값이 0"과 "아직 수집하지 않음"을 구분해야 하기
-     * 때문이다. HDFS logical capacity, Spark application/executor, Collector business
-     * counter, Kafka topic business 지표는 Prometheus exposition endpoint나 exporter가
-     * 아직 없다(S15P21E102-205 문서 3장). 값을 만들지 않고 상태만 내린다.</p>
+     * 때문이다. HDFS/Spark 기본 exporter 지표는 현재 수집 대상이지만, Spark
+     * application/executor, Collector business counter, Kafka topic business 지표는 아직
+     * 별도 exposition endpoint나 exporter가 없다. 값을 만들지 않고 상태만 내린다.</p>
      */
     public record Coverage(
             CoverageState hdfs,

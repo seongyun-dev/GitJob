@@ -77,7 +77,8 @@ IP는 열쇠로 쓰지 않는다 — 그것들이 바뀌기 때문이다.
 - Disk 합계는 서버 한 대라도 용량을 못 읽으면 만들지 않는다. 반쪽 합계는 실제보다 작은
   사용량을 주장하고 그것이 "여유 있다"는 오판으로 이어진다.
 - 네트워크 합계도 IN·OUT 중 하나만 있으면 만들지 않는다.
-- `kafka.up`이 `null`이면 "죽었다"가 아니라 "아직 재보지 않았다"로 표시한다.
+- `kafka.up`이 `null`이면 "죽었다"가 아니라 "아직 재보지 않았다"로 표시한다. HDFS 카드의
+  용량 여유·Under-replicated Block도 exporter 시계열이 없으면 `—`로 남긴다.
 
 ## 5. 디자인에 있지만 렌더하지 않는 것
 
@@ -92,7 +93,7 @@ FRONTEND`가 적혀 있다. 아래는 근거가 없어 옮기지 않았다.
 | `job-postings · 3 partitions` | 실제 토픽은 `gitjob.*`이고 partition 수를 주는 API가 없다 |
 | Grafana `Dashboards 4 · Datasource OK` | Grafana API 호출이 이번 범위 밖 → 링크만 노출 |
 | HDFS 복제 계수 | `Infra/`에 `dfs.replication` 설정이 없다 → config에서 `null` |
-| 서비스 칩별 개별 상태 | 컨테이너 UP/DOWN exporter(cAdvisor) 없음 → 호스트 상태를 따른다 |
+| 서비스 칩별 개별 상태 | 개별 health source가 없는 서비스는 UNKNOWN으로 유지한다 |
 
 Infrastructure Map은 디자인의 픽셀 좌표(1174x372)를 쓰지 않는다. 그 좌표는 서버가 정확히
 두 대일 때만 맞고 세 대가 되면 선이 허공을 가리킨다. 대신 논리 순서(`column`)와 격자·띠로
@@ -142,7 +143,8 @@ Infrastructure Map은 디자인의 픽셀 좌표(1174x372)를 쓰지 않는다. 
 
 - `S15P21E102-209` 병합 후 실제 BE로 위 미확인 항목 확인
 - Alertmanager 도입 시 Recent Events 공급원 연결
-- HDFS/Spark exporter 도입 시 `coverage`가 `COLLECTED`로 오고 카드에 수치 연결
+- Production observability overlay 배포 후 HDFS/Spark 값과 `coverage=COLLECTED` read-back
+  확인
 - `node_load1` 존재 확인 후 CPU 보조 표기 추가
 - 기존 `TechnologyCandidatePage`가 Final v2 브랜드 토큰을 쓰지 않아 Monitoring과 톤이
   다르다. 이번 범위 밖이며 별도 티켓이 필요하다.

@@ -61,9 +61,9 @@ export interface MonitoringOverview {
   /**
    * HDFS 현황 · 티켓 S15P21E102-261 Phase 2.
    *
-   * `up`은 NameNode /jmx 를 옮기는 json-exporter 도달 여부. 붙어 있으면 용량(사용/전체
-   * 바이트)·전체 Block 수·DataNode Live/Dead 수가 실값으로 온다. 미도달이면 `up`이 `null`이고
-   * 값 필드도 `null`이다(`0`과 구분).
+   * `up`은 NameNode /jmx 를 옮기는 json-exporter 도달 여부. 붙어 있으면 용량(사용/전체/
+   * 잔여 바이트)·전체 Block·Under-replicated Block·DataNode Live/Dead 수가 실값으로 온다.
+   * 미도달이면 `up`이 `null`이고 값 필드도 `null`이다(`0`과 구분).
    */
   hdfs: {
     up: boolean | null
@@ -72,6 +72,8 @@ export interface MonitoringOverview {
     blocksTotal: number | null
     liveDataNodes: number | null
     deadDataNodes: number | null
+    capacityRemainingBytes: number | null
+    underReplicatedBlocks: number | null
   }
   /**
    * Spark 현황 · 티켓 S15P21E102-261 Phase 3.

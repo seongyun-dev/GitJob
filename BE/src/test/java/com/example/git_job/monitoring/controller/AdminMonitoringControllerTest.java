@@ -73,7 +73,8 @@ class AdminMonitoringControllerTest {
                         23.4, 4, 41.0, 6_600_000_000L, 16_000_000_000L,
                         54.0, 216_000_000_000L, 400_000_000_000L, 4_100_000d, 2_100_000d)),
                 new KafkaStatus(true, 10, 0.5d, 0L),
-                new HdfsStatus(true, 86016L, 3_243_303_530_496L, 0L, 3, 0),
+                new HdfsStatus(true, 86016L, 3_243_303_530_496L, 0L, 3, 0,
+                        3_243_303_444_480L, 2L),
                 new SparkStatus(true, 1, 2, 0, 2048L, 0L),
                 new DataStoreStatus(61L, 5L, 4L),
                 new Coverage(CoverageState.COLLECTED, CoverageState.COLLECTED,
@@ -103,6 +104,9 @@ class AdminMonitoringControllerTest {
                 // HDFS 실지표(S15P21E102-261 Phase 2). json-exporter가 붙으면 값과 COLLECTED가 함께 온다.
                 .andExpect(jsonPath("$.data.hdfs.up").value(true))
                 .andExpect(jsonPath("$.data.hdfs.capacityTotalBytes").value(3_243_303_530_496L))
+                .andExpect(jsonPath("$.data.hdfs.capacityRemainingBytes")
+                        .value(3_243_303_444_480L))
+                .andExpect(jsonPath("$.data.hdfs.underReplicatedBlocks").value(2))
                 .andExpect(jsonPath("$.data.hdfs.liveDataNodes").value(3))
                 .andExpect(jsonPath("$.data.coverage.hdfs")
                         .value(CoverageState.COLLECTED.name()))

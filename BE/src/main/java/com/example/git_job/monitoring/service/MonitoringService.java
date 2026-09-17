@@ -260,7 +260,7 @@ public class MonitoringService {
             return HdfsStatus.unknown();
         }
         if (up.get(0).value() <= 0) {
-            return new HdfsStatus(false, null, null, null, null, null);
+            return new HdfsStatus(false, null, null, null, null, null, null, null);
         }
         return new HdfsStatus(
                 true,
@@ -268,7 +268,9 @@ public class MonitoringService {
                 toLong(firstValue(prometheus.instant(queries.hdfsCapacityTotalBytes()))),
                 toLong(firstValue(prometheus.instant(queries.hdfsBlocksTotal()))),
                 toInteger(firstValue(prometheus.instant(queries.hdfsLiveDataNodes()))),
-                toInteger(firstValue(prometheus.instant(queries.hdfsDeadDataNodes()))));
+                toInteger(firstValue(prometheus.instant(queries.hdfsDeadDataNodes()))),
+                toLong(firstValue(prometheus.instant(queries.hdfsCapacityRemainingBytes()))),
+                toLong(firstValue(prometheus.instant(queries.hdfsUnderReplicatedBlocks()))));
     }
 
     /**

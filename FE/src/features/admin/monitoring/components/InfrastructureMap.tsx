@@ -6,6 +6,7 @@ import { formatPercent, formatSeconds } from '@/features/admin/monitoring/ui/for
 import { MetricValue } from '@/features/admin/monitoring/ui/MetricValue'
 import { AdminBadge, UpDot } from '@/features/admin/monitoring/ui/StatusBadge'
 import { monitoringDotState } from '@/features/admin/monitoring/model/monitoringState'
+import { serviceUpState } from '@/features/admin/monitoring/model/serviceHealth'
 
 /**
  * Infrastructure Map · 티켓 S15P21E102-210. 이 화면의 중심 시각물이다.
@@ -26,9 +27,8 @@ import { monitoringDotState } from '@/features/admin/monitoring/model/monitoring
  * SVG 색은 리터럴 hex다. `stroke`는 Tailwind 클래스를 받지 않아 `ResourceOverview`와 같은
  * 방식으로 문자열을 넘긴다. 값은 디자인 파일 것 그대로.
  *
- * 상태 점은 Prometheus target UP/DOWN이 근거다. 컨테이너 단위 UP/DOWN을 주는 exporter가
- * 없어(`prometheus.yml`에 cAdvisor job이 없다) 서비스 칩은 호스트 서버의 상태를 따른다.
- * 디자인의 `node_exporter + cAdvisor` 문구에서 cAdvisor는 그래서 빠졌다.
+ * 서버 상태 점은 Prometheus target UP/DOWN이 근거다. 서비스 칩은 overview가 실제로
+ * 제공하는 서비스별 source만 사용하며, source가 없는 서비스는 회색 UNKNOWN으로 남긴다.
  */
 
 const STREAM_TYPES = ['KAFKA_STREAM', 'HDFS_REPLICATION', 'SPARK_CONTROL'] as const
@@ -95,6 +95,12 @@ function ServiceChip({ service, up }: { service: ServerNode['services'][number];
 /** 서버 카드. 디자인 padding 18px 20px · radius 16 · #F6F8FC. */
 function ServerCard({ view, server }: { view: MonitoringView; server: ServerView }) {
   const up = serverUpState(view, server)
+  const serviceEvidence = {
+    prometheusState: view.state,
+    kafkaUp: view.kafka.up,
+    hdfsUp: view.hdfs.up,
+    sparkUp: view.spark.up,
+  } as const
   const metrics = server.metrics
 
   return (
@@ -133,7 +139,11 @@ function ServerCard({ view, server }: { view: MonitoringView; server: ServerView
 
       <div className="mt-4 flex flex-wrap gap-2">
         {server.node.services.map((service) => (
-          <ServiceChip key={service.id} service={service} up={up} />
+          <ServiceChip
+            key={service.id}
+            service={service}
+            up={serviceUpState(service.id, serviceEvidence)}
+          />
         ))}
       </div>
     </div>
@@ -504,8 +514,9 @@ export function InfrastructureMap({ view }: { view: MonitoringView }) {
 
       {/* 각주. 디자인 `padding 14px 28px 18px · border-top`. `FUTURE STATE` 태그는 디자인 파일의 자기 표기라 옮기지 않는다. */}
       <p className="mt-3.5 border-t border-[#E8EDF4] px-7 pt-3.5 pb-[18px] text-[12px] leading-[1.6] text-brand-faint">
-        노드 상태는 Prometheus target UP/DOWN 기준입니다. 컨테이너 내부 지표를 주는
-        exporter가 아직 없어 서비스 칩은 호스트 서버의 상태를 따릅니다.
+        노드 상태는 Prometheus node-exporter target UP/DOWN 기준입니다. 서비스 칩은
+        overview가 제공하는 실제 서비스 source만 사용하며, source가 없는 서비스는 UNKNOWN으로
+        표시합니다.
         {view.replicationFactor === null
           ? ' HDFS 복제 계수는 확인된 설정값이 없어 표시하지 않습니다.'
           : ` HDFS 복제 계수 ${view.replicationFactor}.`}

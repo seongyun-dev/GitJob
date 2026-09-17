@@ -113,9 +113,27 @@ Jira에서 바꾸지 않았다(6장 참고).
       }
     ],
     "kafka": { "up": true },
+    "hdfs": {
+      "up": true,
+      "capacityUsedBytes": 86016,
+      "capacityTotalBytes": 3243303530496,
+      "blocksTotal": 0,
+      "liveDataNodes": 3,
+      "deadDataNodes": 0,
+      "capacityRemainingBytes": 3243303444480,
+      "underReplicatedBlocks": 2
+    },
+    "spark": {
+      "up": true,
+      "aliveWorkers": 1,
+      "coresTotal": 2,
+      "coresUsed": 0,
+      "memoryTotalMb": 2048,
+      "memoryUsedMb": 0
+    },
     "coverage": {
-      "hdfs": "NOT_COLLECTED",
-      "spark": "NOT_COLLECTED",
+      "hdfs": "COLLECTED",
+      "spark": "COLLECTED",
       "collector": "NOT_COLLECTED",
       "kafkaBusiness": "NOT_COLLECTED"
     },
@@ -226,10 +244,10 @@ metric family만 쓴다.
 추가한다. 같은 이유로 `TimeRange`는 `60m` 하나이고 `MetricKind`는 셋이다 — 화면에 범위
 선택 컨트롤이 없고 시계열 그래프가 셋이다.
 
-**아직 수집하지 않는 것.** HDFS logical capacity/block health, Spark
-application/executor/stage, Collector business counter, Kafka topic business 지표는
-Prometheus exposition endpoint나 exporter가 없다(205 문서 3장). `coverage`가
-`NOT_COLLECTED`로 알리며 값을 만들지 않는다.
+**아직 수집하지 않는 것.** Spark application/executor/stage, Collector business counter,
+Kafka topic business 지표는 현재 Prometheus exposition endpoint나 exporter가 없다.
+HDFS/Spark 기본 exporter가 연결되지 않은 runtime에서는 `coverage`가 `NOT_COLLECTED`로
+알리고 값을 만들지 않는다.
 
 **추정으로 넣지 않은 것.** 확정 디자인의 "load 0.9"에 해당하는 `node_load1`은 205 문서의
 수집 확인 목록에 없어 넣지 않았다. node-exporter 기본 collector에 있을 가능성이 높지만,
@@ -305,7 +323,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$BE_ORIGIN/api/v1/admin/monitoring/ove
 - `S15P21E102-210` FE 화면 연결
 - Runtime 검증 수행 및 이 문서 8장 갱신
 - `node_load1` 존재 확인 후 CPU 보조 표기 추가
-- HDFS/Spark exporter 도입 시 `coverage` 해당 필드를 `COLLECTED`로 전환
+- Production observability overlay 배포 후 HDFS/Spark `coverage`와 실제 값 read-back 검증
 - Alertmanager 도입 시 Recent Events 공급원 결정(현재 화면은 PREPARING)
 - `/api/v1/ops/metrics` 구현 시 경로 통합 여부 결정
 - 공용 `ApiResponse`에 `meta` 블록이 없는 것과 PROJECT_GUIDE 14장 예시의 차이 — 이번

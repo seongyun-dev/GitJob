@@ -7,13 +7,13 @@ import { AdminBadge } from '@/features/admin/monitoring/ui/StatusBadge'
  * Kafka 실지표 S15P21E102-261 Phase 1, HDFS 실지표 Phase 2.
  *
  * 이 섹션의 요점은 **"서비스가 준비되지 않음"과 "상세 지표가 아직 연결되지 않음"을
- * 구분해 보여주는 것**이다. HDFS·Spark·Collector는 실제로 돌고 있다. 돌지 않는 것은
- * 그것들의 지표 수집이다. 그래서 카드는 서비스가 죽었다고 말하지 않고, 무엇이 연결되면
- * 무엇이 보일지를 말한다.
+ * 구분해 보여주는 것**이다. HDFS·Spark 기본 지표는 json-exporter가 연결되면 실수치를
+ * 그리고, 고급 지표와 Collector business counter는 별도 source가 없어 준비 상태로 둔다.
+ * 그래서 카드는 서비스가 죽었다고 말하지 않고, 무엇이 연결되면 무엇이 보일지를 말한다.
  *
  * 상태는 `overview.coverage`가 준다(BE 계약). 화면이 판단하지 않는다. exporter가 붙어
- * `COLLECTED`가 오면 카드가 실수치를 그린다. **Kafka(kafka-exporter)·HDFS(json-exporter)는
- * 실제 값을 그리고**, Spark·Collector는 아직 `N/A`다.
+ * `COLLECTED`가 오면 카드가 실수치를 그린다. **Kafka(kafka-exporter)·HDFS·Spark
+ * (json-exporter)는 기본 실수치를 그리고**, Collector는 DB source로 판단한다.
  *
  * 숫자 자리에 값을 만들지 않는다. `COLLECTED`가 아니면 `N/A`이고, `COLLECTED`라도 개별
  * 값이 `null`이면 `—`다 — 0(실제로 0)과 "값 없음"을 구분한다.
@@ -79,14 +79,14 @@ const PLATFORMS: readonly {
     name: 'HDFS',
     source: 'json-exporter(NameNode JMX) 실시간 수집',
     prerequisite: 'NameNode JMX exporter 연결 후',
-    willShow: '용량 · Block · DataNode 상태',
+    willShow: '용량 · Block · Under-replicated · DataNode 상태',
   },
   {
     key: 'spark',
     name: 'Spark',
     source: 'json-exporter(Master /json/) 실시간 수집',
-    prerequisite: 'Metrics Sink 연결 후',
-    willShow: 'Application · Executor · 실패율',
+    prerequisite: 'Spark Master JSON exporter 연결 후',
+    willShow: 'Worker · Core · Memory',
   },
   {
     // collector 슬롯을 "데이터 적재"로 쓴다. collector 산출물은 Kafka/HDFS로 흐르고
@@ -201,7 +201,9 @@ function HdfsMetrics({ hdfs }: { hdfs: MonitoringOverview['hdfs'] }) {
         value={capacityPercent(hdfs.capacityUsedBytes, hdfs.capacityTotalBytes)}
         unit={`/ ${formatBytesCompact(hdfs.capacityTotalBytes)}`}
       />
+      <StatRow label="여유" value={formatBytesCompact(hdfs.capacityRemainingBytes)} unit="" />
       <StatRow label="Block" value={formatInt(hdfs.blocksTotal)} unit="개" />
+      <StatRow label="Under-rep" value={formatInt(hdfs.underReplicatedBlocks)} unit="개" />
       <StatRow label="DataNode" value={dataNode} unit={dataNodeUnit} />
     </div>
   )
