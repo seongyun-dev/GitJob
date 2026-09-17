@@ -40,6 +40,10 @@ export const queryKeys = {
   // 끝나면 결과가 달라지므로 무한 staleTime 을 쓰지 않는다.
   myTechnologies: () => ['me', 'technologies'] as const,
   myTechnologyEvidence: (techId: string) => ['me', 'technologies', techId, 'evidence'] as const,
+  // 요약은 판정 위에 얹는 문단이라 같은 접두를 쓴다. 분석이 하나 더 끝나면 Fact Pack
+  // 이 달라져 요약도 다시 만들어져야 하는데, 그때 `['me','technologies']` 무효화에
+  // 함께 실린다.
+  myTechnologySummary: (techId: string) => ['me', 'technologies', techId, 'summary'] as const,
 
   // 관리자 — 후보 목록과 레지스트리 상태. 승격·거절이 둘 다 바꾸므로
   // 한 뮤테이션이 두 키를 모두 무효화한다.

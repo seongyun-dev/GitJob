@@ -97,10 +97,65 @@ export interface TechnologyEvidence {
   levels: EvidenceLevelGroup[]
 }
 
+/**
+ * 요약이 없는 이유. 화면이 다시 물을지 말지를 이 값이 정한다.
+ *
+ * `PENDING` 과 `NONE` 을 가르는 것이 이 타입의 목적이다. 생성은 노트북 GPU 한 대
+ * 위에서 돌고 BE 가 동시 2건까지만 보내므로, 자리를 못 받은 요청이 `PENDING` 으로
+ * 돌아온다. 그것을 `NONE` 과 같이 다루면 화면은 빈 자리가 영구적인지 알 수 없다.
+ */
+export type SummaryStatus = 'READY' | 'PENDING' | 'NONE'
+
+/**
+ * 판정 위에 얹는 한 문단. BE `TechnologySummaryView`.
+ *
+ * **언제나 200 이다.** 모델이 꺼져 있어도 문장 검증에 떨어져도 `status` 로 사유가
+ * 오고 본문만 비어 온다. 이 호출이 실패해도 카드는 이미 완성돼 있다 -- 수준·근거·
+ * permalink 는 이 문장과 무관하다.
+ */
+export interface TechnologySummary {
+  techId: string
+  status: SummaryStatus
+  /** `PENDING` 일 때만 0 보다 크다. 서버가 자리가 날 즈음을 지시한다 */
+  retryAfterSeconds: number
+  /** 40자 이내. 카드 제목. Level 문자열은 담지 않는다 -- Level 은 옆에 따로 그려진다 */
+  headline: string | null
+  /** 2~3문장, 200자 이내 */
+  summary: string | null
+  /**
+   * 다음 수준까지 무엇이 비었는지 한 문장.
+   *
+   * 도달 가능한 최고 수준이면 `null` 이다. 현재 레지스트리에 L3 규칙을 가진 기술이
+   * 둘뿐이라 대부분의 기술이 여기 해당한다.
+   */
+  gap: string | null
+  /**
+   * 자신감이 아니라 **입력이 얼마나 구체적인가**다. 의존성 선언만 확인된 기술은
+   * 문장이 맞아도 `LOW` 다. AI 서비스가 Fact Pack 에서 규칙으로 계산한다.
+   */
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | null
+  /**
+   * `OK` 모델이 쓴 문장 · `FALLBACK` 데이터에서 기계적으로 만든 문장.
+   * **둘 다 정상이라 화면은 구분하지 않는다.** 되짚을 때만 쓴다.
+   */
+  llmStatus: 'OK' | 'FALLBACK' | null
+}
+
 export function fetchTechnologyProfile(): Promise<TechnologyProfile> {
   return get<TechnologyProfile>(BASE)
 }
 
 export function fetchTechnologyEvidence(techId: string): Promise<TechnologyEvidence> {
   return get<TechnologyEvidence>(`${BASE}/${encodeURIComponent(techId)}/evidence`)
+}
+
+/**
+ * 기술 하나의 요약. 캐시에 있으면 즉시, 없으면 BE 가 만들어서 준다(약 4초).
+ *
+ * 목록(`/me/technologies`)에 실리지 않는 이유는 기술 열두 개면 목록이 48초를
+ * 기다리게 되기 때문이다. 카드마다 따로 부르면 목록은 즉시 뜨고 문단은 도착하는
+ * 대로 채워진다.
+ */
+export function fetchTechnologySummary(techId: string): Promise<TechnologySummary> {
+  return get<TechnologySummary>(`${BASE}/${encodeURIComponent(techId)}/summary`)
 }

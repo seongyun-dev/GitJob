@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router'
 import type { EvidenceLevelGroup } from '@/features/evidence/api/technologiesApi'
 import { EvidenceLevelGroups } from '@/features/evidence/components/EvidenceLevelGroups'
+import { TechnologySummaryCard } from '@/features/evidence/components/TechnologySummaryCard'
 import {
   profileErrorMessage,
   useTechnologyEvidence,
@@ -66,6 +67,19 @@ export function EvidenceDetailPage() {
             <p className="mt-1 text-[12.5px] text-brand-faint">{item.caption}</p>
           </div>
         ))}
+      </div>
+
+      {/*
+        Level 과 근거 표 사이에 둔다 · 티켓 S15P21E102-137.
+
+        이 문단이 하는 일이 "왜 이 수준인가"를 사람 말로 푸는 것이라 두 값 사이가
+        자리다. 위에서 수준을 보고, 여기서 이유를 읽고, 아래에서 근거를 확인한다.
+
+        요약이 없어도 화면은 완성돼 있다. 그래서 이 자리가 비어도 아래 표는 그대로
+        그린다 -- 요약은 판정 결과가 아니라 판정 결과를 설명하는 것이다.
+      */}
+      <div className="mt-4">
+        <TechnologySummaryCard techId={techId} />
       </div>
 
       <div className="gj-split mt-4">

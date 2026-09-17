@@ -14,6 +14,13 @@ export type StatItem = {
   /** 값 자리 문구. 실제 값이 없으면 대기 상태를 적는다 */
   note: string
   caption: string
+  /**
+   * 있으면 그 칸이 버튼이 된다. 숫자를 센 대상 목록을 여는 자리다.
+   *
+   * 셀 대상이 없을 때(분석 전·0개)는 호출부가 아예 넘기지 않는다. 눌러도 빈 목록만
+   * 나오는 버튼을 두면 화면이 "볼 게 있다"고 거짓말을 한다.
+   */
+  onOpen?: () => void
 }
 
 /**
@@ -33,12 +40,35 @@ export function StatStrip({ items }: { items: readonly StatItem[] }) {
       className={`grid grid-cols-1 divide-y divide-brand-line overflow-hidden rounded-[18px] border border-brand-line bg-white shadow-[0_10px_28px_rgba(25,47,81,0.07)] sm:grid-cols-2 lg:divide-x lg:divide-y-0 ${columns}`}
     >
       {items.map((item) => (
-        <div key={item.label} className="px-6 py-5">
-          <p className="text-[13px] font-semibold text-brand-ink-soft">{item.label}</p>
-          <p className="mt-2 text-[15px] font-[750] text-brand-faint">{item.note}</p>
-          <p className="mt-1.5 text-[12.5px] leading-[1.5] text-brand-faint">{item.caption}</p>
-        </div>
+        <StatCell key={item.label} item={item} />
       ))}
     </div>
+  )
+}
+
+function StatCell({ item }: { item: StatItem }) {
+  const body = (
+    <>
+      <p className="text-[13px] font-semibold text-brand-ink-soft">{item.label}</p>
+      <p className="mt-2 text-[15px] font-[750] text-brand-faint">{item.note}</p>
+      <p className="mt-1.5 text-[12.5px] leading-[1.5] text-brand-faint">{item.caption}</p>
+    </>
+  )
+
+  if (item.onOpen === undefined) {
+    return <div className="px-6 py-5">{body}</div>
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={item.onOpen}
+      className="px-6 py-5 text-left hover:bg-tone-accent-bg/40"
+    >
+      {body}
+      <span className="mt-1.5 inline-block text-[12px] font-bold text-tone-accent underline">
+        목록 보기
+      </span>
+    </button>
   )
 }
