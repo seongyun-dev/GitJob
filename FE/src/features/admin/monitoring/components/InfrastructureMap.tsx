@@ -108,11 +108,18 @@ function ServiceChip({ service, up }: { service: ServerNode['services'][number];
 /** 서버 카드. 디자인 padding 18px 20px · radius 16 · #F6F8FC. */
 function ServerCard({ view, server }: { view: MonitoringView; server: ServerView }) {
   const up = serverUpState(view, server)
+  /*
+    칩 하나하나의 근거 · 티켓 319. 살아 있는 DataNode·Worker 수는 이미 수집되고 있어
+    (NameNode `/jmx`, Spark Master `/json/`) 그 두 칩을 회색으로 둘 이유가 없다.
+    판정 규칙 자체는 `model/serviceHealth` 한 곳에 있다.
+  */
   const serviceEvidence = {
     prometheusState: view.state,
     kafkaUp: view.kafka.up,
     hdfsUp: view.hdfs.up,
     sparkUp: view.spark.up,
+    liveDataNodes: view.hdfs.liveDataNodes,
+    aliveWorkers: view.spark.aliveWorkers,
   } as const
   const metrics = server.metrics
 
