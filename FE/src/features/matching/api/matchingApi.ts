@@ -7,6 +7,7 @@ import type {
   TargetDto,
   WhatIfDto,
 } from '@/features/matching/api/types'
+import { jobDemandsPath } from '@/features/matching/model/jobDemandsQuery'
 import { get, put } from '@/shared/api/client'
 
 /**
@@ -82,14 +83,15 @@ export function fetchWhatIf(
   )
 }
 
-/** 직무별 기술 수요. 개인 결과가 아니라 조건을 직접 넣어 본다. */
+/**
+ * 기술 수요. 개인 결과가 아니라 조건을 직접 넣어 본다.
+ *
+ * `targetRole`이 없으면 현재 채용시장 전체다 — 경로 규칙은 {@link jobDemandsPath}.
+ */
 export function fetchJobDemands(params: {
-  targetRole: string
+  targetRole?: string
   regions: readonly string[]
   careerLevels: readonly string[]
 }): Promise<JobDemandDto> {
-  const query = new URLSearchParams({ targetRole: params.targetRole })
-  params.regions.forEach((region) => query.append('regions', region))
-  params.careerLevels.forEach((level) => query.append('careerLevels', level))
-  return get<JobDemandDto>(`/job-demands?${query.toString()}`)
+  return get<JobDemandDto>(jobDemandsPath(params))
 }

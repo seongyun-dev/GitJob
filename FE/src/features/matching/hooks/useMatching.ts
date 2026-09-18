@@ -143,3 +143,22 @@ export function useJobDemands(params: {
     refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
+
+/**
+ * 현재 채용시장 전체 수요 · 티켓 S15P21E102-339.
+ *
+ * 목표 직무를 고르지 않아도, 고르기 **전에도** 볼 수 있어야 하므로 `enabled` 조건이
+ * 없다. 직무별 조회와 같은 endpoint를 쓰지만 `targetRole`을 아예 보내지 않는 것이
+ * 곧 "시장 전체"라는 요청이다.
+ */
+export function useCurrentMarketDemands(params: {
+  regions: readonly string[]
+  careerLevels: readonly string[]
+}) {
+  return useQuery({
+    queryKey: queryKeys.currentMarketDemands(params.regions, params.careerLevels),
+    queryFn: () =>
+      fetchJobDemands({ regions: params.regions, careerLevels: params.careerLevels }),
+    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
+  })
+}

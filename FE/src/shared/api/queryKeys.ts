@@ -86,6 +86,13 @@ export const queryKeys = {
   // 시장 지표 -- 개인 결과가 아니라 사용자 단위로 나뉘지 않는다.
   jobDemands: (targetRole: string, regions: readonly string[], careerLevels: readonly string[]) =>
     ['job-demands', targetRole, regions, careerLevels] as const,
+  /*
+   * 직무 전체 시장 · 티켓 S15P21E102-339. 직무 자리에 빈 문자열을 넣지 않고 전용
+   * 표식을 쓴다. ''는 "직무를 고르지 않음"과 "직무 이름이 비어 있음"을 같은 칸에
+   * 넣는 것이라, 캐시에서 두 질문의 답이 서로를 덮을 수 있다.
+   */
+  currentMarketDemands: (regions: readonly string[], careerLevels: readonly string[]) =>
+    ['job-demands', 'current-market', regions, careerLevels] as const,
   technologyTrends: (
     techId: string,
     periods: readonly string[],

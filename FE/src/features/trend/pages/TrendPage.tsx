@@ -4,6 +4,7 @@ import { useJobDemands, useTarget } from '@/features/matching/hooks/useMatching'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
 import { unavailableSource } from '@/features/trend/api/adapter'
 import { toTrendPeriodViews } from '@/features/trend/api/periodViews'
+import { MarketDemandSection } from '@/features/trend/components/MarketDemandSection'
 import { TrendSourceCard } from '@/features/trend/components/TrendSourceCard'
 import { useTechnologyTrendsBatch } from '@/features/trend/hooks/useTrends'
 import {
@@ -147,6 +148,12 @@ export function TrendPage() {
       </div>
 
       <div className="mt-7 grid gap-4">
+        {/*
+         * 직무와 무관한 시장 전체가 먼저다 · 티켓 S15P21E102-339. 아래 원천별 카드는
+         * 목표 직무를 골라야 채워지는데, 무엇을 고를지 정하려면 시장을 먼저 봐야 한다.
+         */}
+        <MarketDemandSection limit={COMPARE_LIMIT} />
+
         <ComputeStatePanel
           isLoading={target.isLoading || demands.isLoading}
           error={target.error ?? demands.error}
@@ -157,7 +164,7 @@ export function TrendPage() {
 
         {target.data === null && !target.isLoading && (
           <p className="text-[13px] text-brand-muted">
-            먼저{' '}
+            직무별 추세를 보려면{' '}
             <Link to="/roles" className="font-semibold text-brand-600 hover:underline">
               목표 직무를 선택해 주세요.
             </Link>
