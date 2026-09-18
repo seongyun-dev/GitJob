@@ -3,6 +3,16 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
 import { AnalysisStepList } from '@/features/analysis/components/AnalysisStepList'
 import { useAnalysisStatus } from '@/features/analysis/hooks/useRepositoryAnalysis'
+import {
+  analysisPhase,
+  failureCopy,
+  failureKind,
+  hasResult,
+  isPending,
+  phaseCopy,
+  phaseHeadline,
+  waitedMinutes,
+} from '@/features/analysis/model/analysisProgress'
 import { profileErrorMessage } from '@/features/evidence/hooks/useTechnologyProfile'
 import { DataRegion } from '@/shared/ui/DataRegion'
 import { PageHero } from '@/shared/ui/PageHero'
@@ -27,6 +37,15 @@ import { queryKeys } from '@/shared/api/queryKeys'
  *
  * URL의 `analysisId`는 실제 route state지만 화면의 주요 정보가 아니라 각주로 둔다.
  *
+ * ## 주 흐름에서는 더 이상 여기로 오지 않는다 (S15P21E102-326)
+ *
+ * 저장소를 고른 뒤 진행과 완료를 선택 화면의 패널 안에서 보여주도록 바꿨다. 이 화면이
+ * 보여 줄 수 있는 것이 "대기 / 진행 / 완료" 한 줄이라 화면을 옮길 값어치가 없었다.
+ *
+ * 그래도 주소는 남긴다. BE가 접수 응답으로 `statusUrl`을 주고, 새로고침이나 링크로
+ * 직접 들어오는 경로가 있어야 한다. 상태 판정과 문구는 패널과 같은
+ * `model/analysisProgress`를 써서 두 곳이 같은 말을 한다.
+ *
  * 이 화면의 기능 ownership은 S15P21E102-136(이윤서)에 있다. 시각 적용까지만 한다.
  */
 export function AnalysisProgressPage() {
@@ -35,17 +54,25 @@ export function AnalysisProgressPage() {
   const status = useAnalysisStatus(analysisId)
   const data = status.data
 
+  /*
+   * 상태를 아직 못 읽었으면 국면을 정하지 않는다. 기본값을 두면 로딩 중에 hero가
+   * 한 번 엉뚱한 제목을 보였다가 바뀐다.
+   */
+  const phase = data === undefined ? null : analysisPhase(data.analysisStatus)
+
   useEffect(() => {
-    if (data?.analysisStatus === 'SUCCEEDED' || data?.analysisStatus === 'PARTIAL_SUCCEEDED') {
+    if (phase !== null && hasResult(phase)) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
     }
-  }, [data?.analysisStatus, queryClient])
+  }, [phase, queryClient])
+
+  const hero = phase === null ? null : phaseCopy(phase)
 
   return (
     <div>
       <PageHero
-        title="GitHub를 분석하고 있어요"
-        description="이 화면을 벗어나도 분석은 계속됩니다."
+        title={phase === null ? '분석 상태' : phaseHeadline(phase)}
+        description={hero?.description ?? '진행 상태를 읽고 있습니다.'}
       />
 
       <div className="gj-split mt-7">
@@ -87,7 +114,13 @@ export function AnalysisProgressPage() {
   )
 }
 
-/** 상태 한 줄. 종료됐는지, 실패했는지, 아직 도는지를 구분한다. */
+/**
+ * 상태 한 줄.
+ *
+ * 대기(`QUEUED`)와 진행(`RUNNING`)을 구분한다. 전에는 둘을 하나의 fallback으로 묶어
+ * 아직 시작되지 않은 분석에도 "분석하고 있어요"라고 말했다 — 워커가 내려가 있으면
+ * 그 문장이 몇 분이든 유지된다.
+ */
 function ProgressState({
   loading,
   error,
@@ -101,6 +134,7 @@ function ProgressState({
         currentStage: string
         completedCount: number
         totalCount: number
+        requestedAt: string
         errorCode: string | null
       }
     | undefined
@@ -115,84 +149,75 @@ function ProgressState({
     return null
   }
 
+  const phase = analysisPhase(data.analysisStatus)
+  const copy = phaseCopy(phase)
   const scope = `저장소 ${data.completedCount}/${data.totalCount}`
 
-  if (data.analysisStatus === 'FAILED') {
-    const failure = analysisFailure(data.errorCode)
+  if (phase === 'FAILED') {
+    const kind = failureKind(data.errorCode)
+    const failure = failureCopy(kind)
     return (
       <StateCard
         kind="ERROR"
         title={failure.title}
         description={failure.description}
-        action={failure.action}
+        meta={data.errorCode ?? undefined}
+        action={failureAction(kind)}
       />
     )
   }
-  if (data.analysisStatus === 'SUCCEEDED' || data.analysisStatus === 'PARTIAL_SUCCEEDED') {
+
+  if (hasResult(phase)) {
     return (
       <StateCard
-        kind={data.analysisStatus === 'SUCCEEDED' ? 'SUCCESS' : 'PARTIAL'}
-        title="분석이 끝났어요"
-        description="확인된 기술과 근거를 보러 갈 수 있습니다."
+        kind={copy.kind}
+        title={copy.title}
+        description={copy.description}
         meta={scope}
         action={
           <Link to="/evidence" className="text-tone-accent underline">
-            결과 보기
+            결과 확인하러 가기
           </Link>
         }
       />
     )
   }
+
+  /*
+   * 대기·진행 중에는 경과 시간만 덧붙인다. 남은 시간은 알 수 없어 적지 않는다.
+   * `저장소 0/1`은 이 국면에서 늘 0이라 알려 주는 것이 없어 빼고, 대신 얼마나
+   * 기다렸는지를 둔다.
+   */
+  const waited = isPending(phase) ? waitedMinutes(data.requestedAt) : null
+
   return (
     <StateCard
-      kind="LOADING"
-      title="분석하고 있어요"
-      description="이 화면을 벗어나도 분석은 계속됩니다."
-      meta={scope}
+      kind={copy.kind}
+      title={copy.title}
+      description={copy.description}
+      meta={waited === null ? undefined : `요청 후 ${waited}분 경과`}
     />
   )
 }
 
-function analysisFailure(errorCode: string | null) {
-  if (errorCode === 'GITHUB_RECONNECT_REQUIRED') {
-    return {
-      title: 'GitHub 연결을 갱신해 주세요',
-      description: '비공개 저장소 권한이 만료되었거나 조직 승인이 필요합니다.',
-      action: (
-        <Link to="/onboarding/github?redirectTo=/onboarding/repositories" className="text-tone-accent underline">
-          GitHub 다시 연결
-        </Link>
-      ),
-    }
+/** 실패 사유별 복구 경로. 문구는 `model/analysisProgress`가 갖고 링크만 여기서 만든다. */
+function failureAction(kind: ReturnType<typeof failureKind>) {
+  if (kind === 'GITHUB_RECONNECT') {
+    return (
+      <Link
+        to="/onboarding/github?redirectTo=/onboarding/repositories"
+        className="text-tone-accent underline"
+      >
+        GitHub 다시 연결
+      </Link>
+    )
   }
-  if (
-    errorCode === 'REPOSITORY_NOT_ACCESSIBLE' ||
-    errorCode === 'REPOSITORY_CREDENTIAL_NOT_FOUND'
-  ) {
-    return {
-      title: '저장소에 접근할 수 없어요',
-      description: '저장소가 삭제되었거나 현재 GitHub 계정의 접근 권한이 바뀌었습니다.',
-      action: (
-        <Link to="/onboarding/repositories" className="text-tone-accent underline">
-          저장소 다시 선택
-        </Link>
-      ),
-    }
+  if (kind === 'REPOSITORY') {
+    return (
+      <Link to="/onboarding/repositories" className="text-tone-accent underline">
+        저장소 다시 선택
+      </Link>
+    )
   }
-  if (
-    errorCode === 'CREDENTIAL_BROKER_UNAVAILABLE' ||
-    errorCode === 'CREDENTIAL_BROKER_INVALID_RESPONSE' ||
-    errorCode === 'CREDENTIAL_BROKER_UNAUTHORIZED'
-  ) {
-    return {
-      title: '비공개 저장소 연결이 지연되고 있어요',
-      description: '서비스 연결을 복구한 뒤 다시 분석해 주세요.',
-      action: undefined,
-    }
-  }
-  return {
-    title: '분석에 실패했어요',
-    description: '아래 사유를 확인하고 다시 시도해 주세요.',
-    action: undefined,
-  }
+  return undefined
 }

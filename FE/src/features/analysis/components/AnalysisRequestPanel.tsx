@@ -1,4 +1,3 @@
-import { Link } from 'react-router'
 import type { AnalysisRequestOutcome, RepositorySummary } from '@/features/analysis/api/types'
 import { SelectedRepositoryCard } from '@/features/analysis/components/SelectedRepositoryCard'
 
@@ -18,9 +17,15 @@ import { SelectedRepositoryCard } from '@/features/analysis/components/SelectedR
  * 브랜치를 정해 보내는 것은 이 티켓의 기능 요구라서 유지하고, Final의 시각 언어로
  * 스타일만 맞췄다. Final의 기능을 베끼지 않고 시각만 가져온다는 원칙에 따른 것이다.
  *
- * 분석 접수 뒤에는 `analysisId`별 진행 화면으로 이어진다. 저장소마다 분석이 독립적이라
- * 한 건이면 패널의 주 CTA로 보내고, 여러 건이면 각 저장소 카드에서 자기 진행 화면으로
- * 이동하게 한다.
+ * ## 접수 뒤에도 이 화면에 머문다 (S15P21E102-326)
+ *
+ * 이전에는 접수 뒤 `분석 진행 화면 보기`로 `/analyses/:id`에 보냈다. 그 화면이 보여
+ * 줄 수 있는 것은 "대기 / 진행 / 완료" 한 줄이 전부여서 — 워커가 중간 진행을
+ * 발행하지 않아 단계별 진척이 없다 — 화면을 옮길 값어치가 없었다. 이제 진행과 완료를
+ * 저장소 카드 안에서 보여주고, 결과가 나오면 카드의 버튼으로 바로 결과로 간다.
+ *
+ * 저장소마다 분석이 독립적이라 상태도 카드마다 따로 돈다. 패널은 몇 건이 접수되고
+ * 몇 건이 실패했는지만 말한다.
  */
 
 /** Final CTA의 그라디언트·그림자 값. */
@@ -65,8 +70,9 @@ export function AnalysisRequestPanel({
 
   const isRetry = untried.length === 0 && failed.length > 0
   const canSubmit = submittable.length > 0 && branchesReady && !isSubmitting
-  const singleOutcome = repositories.length === 1 ? outcomes.get(repositories[0]?.fullName ?? '') : undefined
-  const completedAnalysisId = singleOutcome?.ok === true ? singleOutcome.accepted.analysisId : null
+
+  /** 보낼 것이 남지 않았고 접수된 것이 있으면, 이제 볼 곳은 각 저장소 카드다. */
+  const allSubmitted = submittable.length === 0 && succeeded.length > 0
 
   return (
     <section
@@ -101,16 +107,9 @@ export function AnalysisRequestPanel({
         </ul>
       )}
 
-      {completedAnalysisId !== null ? (
-        <Link
-          to={`/analyses/${completedAnalysisId}`}
-          className={`${PRIMARY_CTA} mt-4 block text-center`}
-        >
-          분석 진행 화면 보기
-        </Link>
-      ) : submittable.length === 0 && succeeded.length > 1 ? (
+      {allSubmitted ? (
         <div className="mt-4 rounded-xl bg-tone-success-bg px-4 py-3 text-[13px] leading-[1.6] font-semibold text-tone-success">
-          분석 {succeeded.length}건을 등록했습니다. 위 Repository별 버튼에서 진행 상태를 확인하세요.
+          분석 {succeeded.length}건을 등록했습니다. 진행 상태는 위 저장소별로 표시됩니다.
         </div>
       ) : (
         <button
@@ -144,7 +143,7 @@ export function AnalysisRequestPanel({
           )}
           {succeeded.length > 0 && (
             <p className="mt-1 text-brand-faint">
-              이 화면을 벗어나도 분석은 계속되며, 언제든 진행 화면에서 상태를 확인할 수 있습니다.
+              이 화면을 벗어나도 분석은 계속됩니다. 끝나면 저장소마다 결과로 가는 버튼이 생깁니다.
             </p>
           )}
         </div>
