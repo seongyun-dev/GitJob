@@ -15,9 +15,17 @@ SOURCE_SITE = "JOBKOREA"
 def listing_row_from_jobkorea(
     item: JobListItem,
     *,
-    posted_at: datetime,
+    posted_at: datetime | None,
 ) -> ListingRow:
-    """Keep listing evidence while adopting the shared field names."""
+    """Keep listing evidence while adopting the shared field names.
+
+    ``posted_at`` is optional because the v3 active-scope mode selects a
+    listing on the strength of it being listed, not on its registration date.
+    A label the parser could not read therefore reaches here as ``None``, and
+    `ListingRow.posted_on` is ``date | None`` for exactly that case -- the
+    shared normalizer maps the absence through to ``posted_at=None``. Guessing
+    a date here would be indistinguishable from a real one downstream.
+    """
 
     return ListingRow(
         source_posting_id=item.posting_id,
@@ -27,7 +35,7 @@ def listing_row_from_jobkorea(
         career_level=item.career_level,
         region=item.region,
         raw_job_category=item.raw_job_category,
-        posted_on=posted_at.date(),
+        posted_on=posted_at.date() if posted_at is not None else None,
         deadline_label=item.deadline_label,
     )
 
@@ -37,7 +45,7 @@ def posting_detail_from_jobkorea(
     *,
     description_text: str | None,
     image_sources: tuple[str, ...],
-    posted_at: datetime,
+    posted_at: datetime | None,
 ) -> PostingDetail | None:
     """Move the source body plus optional OCR text into the common detail."""
 
@@ -57,7 +65,7 @@ def normalize_jobkorea_posting(
     detail: DetailContent | None,
     description_text: str | None,
     image_sources: tuple[str, ...],
-    posted_at: datetime,
+    posted_at: datetime | None,
     deadline: datetime | None,
     collected_at: datetime,
     detail_fetched: bool,

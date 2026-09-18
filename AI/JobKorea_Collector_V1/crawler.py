@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from .client import (
     JobKoreaHttpError,
 )
 from .dates import SEOUL, as_seoul, date_range_bounds, parse_deadline, parse_posted_at
+from .duties import DutyScope, resolve_duty_preset
 from .ocr import (
     OcrRecognitionError,
     OcrUnavailableError,
@@ -44,7 +46,72 @@ from .ocr import (
 )
 from .parser import DetailContent, JobListItem, parse_detail, parse_job_list
 
-COLLECTOR_VERSION = "jobkorea-crawler/v2"
+
+class CollectionMode(StrEnum):
+    """What a run is selecting, which is also what its output means.
+
+    ``DATE_RANGE`` reads pages ordered by registration date and keeps the rows
+    inside the requested window. ``ACTIVE_LISTING`` (S15P21E102-335) ignores
+    the window and takes every posting the site still lists for a duty scope,
+    which is a different population and therefore a different contract.
+    """
+
+    DATE_RANGE = "date_range"
+    ACTIVE_LISTING = "active_listing"
+
+
+# One version per mode, never one constant for both. `job.jobkorea_contract`
+# and `job.collector.analysis_input` admit a snapshot as the fixed 16-duty v3
+# population only when the version says v3, so a legacy date-range batch
+# wearing that stamp would be handed to v3 validation -- and an active-scope
+# batch stamped v2 would be refused by it.
+COLLECTOR_VERSION_DATE_RANGE = "jobkorea-crawler/v2"
+COLLECTOR_VERSION_ACTIVE_LISTING = "jobkorea-crawler/v3"
+
+_COLLECTOR_VERSIONS = {
+    CollectionMode.DATE_RANGE: COLLECTOR_VERSION_DATE_RANGE,
+    CollectionMode.ACTIVE_LISTING: COLLECTOR_VERSION_ACTIVE_LISTING,
+}
+
+
+def collector_version_for(mode: CollectionMode) -> str:
+    """Resolve the collector version a mode is allowed to stamp."""
+
+    try:
+        return _COLLECTOR_VERSIONS[mode]
+    except KeyError:  # pragma: no cover - guards a future mode addition
+        raise ValueError(f"no collector version declared for mode {mode!r}") from None
+
+
+# Must stay equal to `_TERMINAL_SCOPE_REASONS` in `job.jobkorea_contract`: the
+# consumer decides a scope finished from the reason this producer writes, so a
+# reason outside this set is how the producer says "not complete". The contract
+# test in `tests/test_jobkorea_v3_active.py` pins the two together.
+TERMINAL_SCOPE_REASONS = frozenset({"short_page", "empty_page"})
+
+
+def _aggregate_scan_stop_reason(scope_reasons: list[dict[str, str]]) -> str:
+    """Reduce per-scope outcomes to the run's single reason.
+
+    A one-scope run reports that scope's reason, which is what the legacy
+    date-range manifest has always carried. A multi-scope run may only say
+    ``all_scopes_complete`` when every scope ended on a terminal reason --
+    otherwise it reports a non-terminal one, so neither the run nor any scope
+    can look finished when a scope never answered.
+    """
+
+    reasons = [scope["scan_stop_reason"] for scope in scope_reasons]
+    if not reasons:  # pragma: no cover - `scan_scopes` is never empty
+        return "max_pages"
+    if len(reasons) == 1:
+        return reasons[0]
+    if all(reason in TERMINAL_SCOPE_REASONS for reason in reasons):
+        return "all_scopes_complete"
+    if "first_page_empty" in reasons:
+        return "first_page_empty"
+    return "max_pages"
+
+
 DEFAULT_BASE_URL = "https://www.jobkorea.co.kr"
 DEFAULT_DUTY_CODE = "1000229"
 DEFAULT_DUTY_NAME = "백엔드개발자"
@@ -80,6 +147,33 @@ class CrawlConfig:
     user_agent: str = "GitJob-JobKoreaCrawler/0.1"
     cursor_path: Path | None = None
     now: datetime | None = None
+    collection_mode: CollectionMode = CollectionMode.DATE_RANGE
+    duty_scopes: tuple[DutyScope, ...] = ()
+
+    @property
+    def collector_version(self) -> str:
+        """The only place a run's collector version is decided."""
+
+        return collector_version_for(self.collection_mode)
+
+    @property
+    def scan_scopes(self) -> tuple[DutyScope, ...]:
+        """The scopes to scan, with the legacy single-duty run as one scope.
+
+        Expressing the legacy shape as a one-element tuple keeps a single scan
+        loop, so the date-range path cannot drift away from the active-scope
+        path as the latter grows.
+        """
+
+        if self.duty_scopes:
+            return self.duty_scopes
+        return (
+            DutyScope(
+                code=self.duty_code,
+                name=self.duty_name,
+                target_role="",
+            ),
+        )
 
     def __post_init__(self) -> None:
         if self.end_date < self.start_date:
@@ -216,10 +310,15 @@ class JobKoreaCrawler:
         )
         return f"{self.config.base_url.rstrip('/')}/Recruit/GI_Read_Comt_Ifrm?{query}"
 
-    def _list_request_data(self, page: int) -> list[tuple[str, str]]:
+    def _list_request_data(
+        self,
+        page: int,
+        *,
+        duty_code: str | None = None,
+    ) -> list[tuple[str, str]]:
         return [
             ("condition[menucode]", "duty"),
-            ("condition[duty]", self.config.duty_code),
+            ("condition[duty]", duty_code or self.config.duty_code),
             ("page", str(page)),
             ("direct", "0"),
             ("order", "2"),
@@ -230,10 +329,15 @@ class JobKoreaCrawler:
             ("profile", "0"),
         ]
 
-    def _fetch_list_page(self, page: int) -> list[JobListItem]:
+    def _fetch_list_page(
+        self,
+        page: int,
+        *,
+        duty_code: str | None = None,
+    ) -> list[JobListItem]:
         html = self.client.post(
             "/Recruit/Home/_GI_List/",
-            self._list_request_data(page),
+            self._list_request_data(page, duty_code=duty_code),
             referer=self.list_url,
             delay_seconds=self.config.request_delay,
         )
@@ -321,82 +425,130 @@ class JobKoreaCrawler:
         )
         warnings: list[str] = []
         seen_ids: set[str] = set()
-        selected: list[tuple[JobListItem, datetime]] = []
+        # Keyed by posting id: one posting listed under several duty scopes is
+        # one posting. The 2026-09-15 run saw 9,128 raw rows for 5,859 distinct
+        # postings, so this is the difference between the two numbers.
+        selected_by_id: dict[str, tuple[JobListItem, datetime | None]] = {}
         stats: Counter[str] = Counter()
-        scan_stop_reason = "max_pages"
         cursor = Cursor.load(self.config.cursor_path, self.config)
         already = set(cursor.collected_ids)
+        active_listing = self.config.collection_mode is CollectionMode.ACTIVE_LISTING
+        scopes = self.config.scan_scopes
+        scope_reasons: list[dict[str, str]] = []
+        total_page_budget = len(scopes) * self.config.max_pages
 
-        for page in range(1, self.config.max_pages + 1):
-            _notify_progress(
-                progress_callback,
-                {
-                    "stage": "list",
-                    "current": page,
-                    "total": self.config.max_pages,
-                    "message": f"목록 페이지 {page} 수집 중",
-                },
-            )
-            rows = self._fetch_list_page(page)
-            stats["pages_scanned"] += 1
-            stats["raw_rows_seen"] += len(rows)
-            if not rows:
-                if page == 1:
-                    raise JobKoreaHttpError(
-                        "JobKorea list response contained no parseable postings"
+        for scope_index, scope in enumerate(scopes):
+            scope_reason = "max_pages"
+            for page in range(1, self.config.max_pages + 1):
+                _notify_progress(
+                    progress_callback,
+                    {
+                        "stage": "list",
+                        "current": scope_index * self.config.max_pages + page,
+                        "total": total_page_budget,
+                        "message": f"{scope.name} 목록 페이지 {page} 수집 중",
+                    },
+                )
+                rows = self._fetch_list_page(page, duty_code=scope.code)
+                stats["pages_scanned"] += 1
+                stats["raw_rows_seen"] += len(rows)
+                if not rows:
+                    if page == 1:
+                        # An empty *first* page is not an exhausted list. It is
+                        # a scope that never answered -- blocked, or re-skinned
+                        # so the parser reads nothing. The legacy single-scope
+                        # run has nothing left to do and keeps raising; a v3
+                        # run records a deliberately non-terminal reason so the
+                        # other 15 scopes still run while this snapshot can
+                        # never claim `all_scopes_complete`.
+                        if not active_listing:
+                            raise JobKoreaHttpError(
+                                "JobKorea list response contained no parseable postings"
+                            )
+                        scope_reason = "first_page_empty"
+                        warnings.append(
+                            f"{scope.name}: first list page returned no parseable "
+                            "postings; scope is incomplete"
+                        )
+                        break
+                    scope_reason = "empty_page"
+                    break
+
+                page_dates: list[datetime] = []
+                unknown_date_count = 0
+                for row in rows:
+                    posted_at = parse_posted_at(
+                        row.posted_label,
+                        now=collected_at,
+                        default_year=self.config.start_date.year,
                     )
-                scan_stop_reason = "empty_page"
-                break
+                    if posted_at is None:
+                        unknown_date_count += 1
+                    else:
+                        page_dates.append(posted_at)
 
-            page_dates: list[datetime] = []
-            unknown_date_count = 0
-            for row in rows:
-                posted_at = parse_posted_at(
-                    row.posted_label,
-                    now=collected_at,
-                    default_year=self.config.start_date.year,
-                )
-                if posted_at is None:
-                    unknown_date_count += 1
-                else:
-                    page_dates.append(posted_at)
-
-                if row.posting_id in seen_ids:
-                    stats["duplicates_skipped"] += 1
-                    continue
-                seen_ids.add(row.posting_id)
-                stats["unique_rows_seen"] += 1
-                if posted_at is not None and start_at <= posted_at < end_exclusive:
-                    # Skipped before the detail request, which is the point:
-                    # a resumed run must not re-fetch a posting it already
-                    # wrote. The date shortcut below still reads every page's
-                    # labels, so skipping here cannot end the scan early.
-                    if row.posting_id in already:
-                        stats["skipped_already_collected"] += 1
+                    if row.posting_id in seen_ids:
+                        stats["duplicates_skipped"] += 1
+                        if row.posting_id in selected_by_id:
+                            stats["cross_scope_duplicates"] += 1
                         continue
-                    selected.append((row, posted_at))
+                    seen_ids.add(row.posting_id)
+                    stats["unique_rows_seen"] += 1
+                    # Active-scope selection is "the site still lists it",
+                    # which is why an unreadable registration label does not
+                    # drop the posting here.
+                    in_window = (
+                        posted_at is not None and start_at <= posted_at < end_exclusive
+                    )
+                    if active_listing or in_window:
+                        # Skipped before the detail request, which is the point:
+                        # a resumed run must not re-fetch a posting it already
+                        # wrote. The date shortcut below still reads every page's
+                        # labels, so skipping here cannot end the scan early.
+                        if row.posting_id in already:
+                            stats["skipped_already_collected"] += 1
+                            continue
+                        selected_by_id[row.posting_id] = (row, posted_at)
 
-            if unknown_date_count:
+                if unknown_date_count:
+                    warnings.append(
+                        f"{scope.name} page {page}: {unknown_date_count} row(s) had "
+                        "an unparsed registration label"
+                    )
+
+                # The POST request is explicitly sorted by registration date. Once a
+                # complete page is older than the requested range, later pages are
+                # outside the range as well. Unknown labels disable this shortcut.
+                # An active-scope run wants the whole list, so it does not stop
+                # at the window.
+                if (
+                    not active_listing
+                    and len(page_dates) == len(rows)
+                    and page_dates
+                    and max(page_dates) < start_at
+                ):
+                    scope_reason = "before_start_date"
+                    break
+                if len(rows) < self.config.page_size:
+                    scope_reason = "short_page"
+                    break
+            else:
+                boundary = "listing terminal page" if active_listing else "date boundary"
                 warnings.append(
-                    f"page {page}: {unknown_date_count} row(s) had an "
-                    "unparsed registration label"
+                    f"{scope.name}: max_pages reached before the {boundary} "
+                    "was observed"
                 )
+            scope_reasons.append(
+                {
+                    "code": scope.code,
+                    "name": scope.name,
+                    "target_role": scope.target_role,
+                    "scan_stop_reason": scope_reason,
+                }
+            )
 
-            # The POST request is explicitly sorted by registration date. Once a
-            # complete page is older than the requested range, later pages are
-            # outside the range as well. Unknown labels disable this shortcut.
-            if (
-                len(page_dates) == len(rows)
-                and page_dates
-                and max(page_dates) < start_at
-            ):
-                scan_stop_reason = "before_start_date"
-                break
-            if len(rows) < self.config.page_size:
-                scan_stop_reason = "short_page"
-                break
-        else:
-            warnings.append("max_pages reached before the date boundary was observed")
+        scan_stop_reason = _aggregate_scan_stop_reason(scope_reasons)
+        selected = list(selected_by_id.values())
 
         if not self.config.fetch_details:
             warnings.append(
@@ -604,24 +756,38 @@ class JobKoreaCrawler:
                 self.config.end_date,
             ),
             pipeline_run_id=pipeline_run_id,
-            collector_version=COLLECTOR_VERSION,
+            collector_version=self.config.collector_version,
             records=tuple(records),
         )
         manifest: dict[str, Any] = {
             "source_site": SOURCE_SITE,
-            "collector_version": COLLECTOR_VERSION,
+            "collector_version": self.config.collector_version,
             "schema_version": JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
             "pipeline_run_id": pipeline_run_id,
             "dataset_snapshot_id": batch.dataset_snapshot_id,
             "collected_at": collected_at.isoformat(),
             "source": {
                 "site": "JOBKOREA",
-                "mode": "category",
+                "mode": (
+                    CollectionMode.ACTIVE_LISTING.value
+                    if self.config.duty_scopes
+                    else "category"
+                ),
                 "duty_name": self.config.duty_name,
                 "duty_code": self.config.duty_code,
                 "list_url": self.list_url,
                 "list_request": "POST /Recruit/Home/_GI_List/ (order=2, pagesize=40)",
                 "detail_url_template": self.detail_url("{posting_id}"),
+                # Only a scoped run carries this block. `active_snapshot_metadata`
+                # hashes the codes and roles into the snapshot's `scope_key` and
+                # reads each scope's own stop reason, so the per-scope outcome has
+                # to survive into the manifest rather than being collapsed into
+                # the run-level reason.
+                **(
+                    {"duty_scopes": scope_reasons}
+                    if self.config.duty_scopes
+                    else {}
+                ),
             },
             "requested_range": {
                 "start_date": self.config.start_date.isoformat(),
@@ -660,7 +826,7 @@ class JobKoreaCrawler:
             },
             "collection": {
                 "collected_at": collected_at.isoformat(),
-                "collector_version": COLLECTOR_VERSION,
+                "collector_version": self.config.collector_version,
                 "pipeline_run_id": pipeline_run_id,
                 "fetch_details": self.config.fetch_details,
                 "ocr_images": self.config.ocr_images,
@@ -673,6 +839,11 @@ class JobKoreaCrawler:
                 "raw_rows_seen": int(stats["raw_rows_seen"]),
                 "unique_rows_seen": int(stats["unique_rows_seen"]),
                 "duplicates_skipped": int(stats["duplicates_skipped"]),
+                # The subset of `duplicates_skipped` that is one posting listed
+                # under more than one duty scope, which is expected in a scoped
+                # run rather than a sign of a re-read page. The 2026-09-15 run's
+                # 9,128 raw rows over 5,859 distinct postings is this number.
+                "cross_scope_duplicates": int(stats["cross_scope_duplicates"]),
                 # In range but already written by an earlier round. Distinct
                 # from `duplicates_skipped`, which is the same posting twice
                 # inside one round's listing.
@@ -879,6 +1050,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--duty-code", default=DEFAULT_DUTY_CODE)
     parser.add_argument(
+        "--duty-preset",
+        default=None,
+        help=(
+            "고정 duty scope 묶음으로 전체 활성 공고를 수집합니다 "
+            "(예: service-roles). 지정하면 --duty-code 대신 preset 이 쓰이고 "
+            "회차는 active_listing(v3) 이 됩니다."
+        ),
+    )
+    parser.add_argument(
         "--no-detail", action="store_true", help="상세 본문 요청을 생략합니다"
     )
     parser.add_argument(
@@ -906,33 +1086,61 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def config_from_args(args: argparse.Namespace) -> CrawlConfig:
+    """Build the run configuration from parsed CLI arguments.
+
+    Extracted from `main` so the CLI-to-config mapping is testable without a
+    crawl: `--duty-preset` is the only way to start a v3 run from this
+    repository, and a preset that silently produced a date-range run would be
+    the reproducibility gap all over again.
+    """
+
+    if args.days_back < 0:
+        raise ValueError("--days-back must not be negative")
+    start_date = args.start_date
+    if args.days_back:
+        start_date = args.end_date - timedelta(days=args.days_back)
+
+    duty_scopes: tuple[DutyScope, ...] = ()
+    collection_mode = CollectionMode.DATE_RANGE
+    duty_code = args.duty_code
+    duty_name = DEFAULT_DUTY_NAME
+    if args.duty_preset:
+        duty_scopes = resolve_duty_preset(args.duty_preset)
+        collection_mode = CollectionMode.ACTIVE_LISTING
+        # The scalar fields keep describing the run for readers of the
+        # manifest; the scope list is what the scan and the contract use.
+        duty_code = ",".join(scope.code for scope in duty_scopes)
+        duty_name = ",".join(scope.name for scope in duty_scopes)
+
+    return CrawlConfig(
+        start_date=start_date,
+        end_date=args.end_date,
+        output_dir=args.output_dir,
+        base_url=args.base_url,
+        duty_code=duty_code,
+        duty_name=duty_name,
+        max_pages=args.max_pages,
+        request_delay=args.request_delay,
+        detail_delay=args.detail_delay,
+        timeout=args.timeout,
+        max_attempts=args.max_attempts,
+        fetch_details=not args.no_detail,
+        ocr_images=not args.no_ocr,
+        ocr_device=args.ocr_device,
+        ocr_min_confidence=args.ocr_min_confidence,
+        max_images_per_posting=args.max_images_per_posting,
+        cursor_path=Path(args.cursor) if args.cursor else None,
+        collection_mode=collection_mode,
+        duty_scopes=duty_scopes,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     try:
-        if args.days_back < 0:
-            raise ValueError("--days-back must not be negative")
-        start_date = args.start_date
-        if args.days_back:
-            start_date = args.end_date - timedelta(days=args.days_back)
-        config = CrawlConfig(
-            start_date=start_date,
-            end_date=args.end_date,
-            output_dir=args.output_dir,
-            base_url=args.base_url,
-            duty_code=args.duty_code,
-            max_pages=args.max_pages,
-            request_delay=args.request_delay,
-            detail_delay=args.detail_delay,
-            timeout=args.timeout,
-            max_attempts=args.max_attempts,
-            fetch_details=not args.no_detail,
-            ocr_images=not args.no_ocr,
-            ocr_device=args.ocr_device,
-            ocr_min_confidence=args.ocr_min_confidence,
-            max_images_per_posting=args.max_images_per_posting,
-            cursor_path=Path(args.cursor) if args.cursor else None,
-        )
+        config = config_from_args(args)
         result = JobKoreaCrawler(config).run()
         paths = write_outputs(result, config.output_dir)
     except (ValueError, JobKoreaHttpError) as error:
