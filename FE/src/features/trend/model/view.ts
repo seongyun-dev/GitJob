@@ -25,7 +25,10 @@ export interface TrendRankRow {
    */
   techId: string
   techName: string
-  /** API row state is retained so unavailable values never look like rank zero. */
+  /**
+   * 순위에 올라도 상태는 따라온다 (티켓 -327). 순위는 값이 있느냐로 가르고,
+   * 근거가 얼마나 두터운지는 이 필드가 말한다 — 카드가 행마다 이것을 표시한다.
+   */
   dataStatus: DataStatus
   statusReason: string
   /** Raw observed value; strings are presentation only and must not drive bars. */
@@ -58,7 +61,10 @@ export interface TrendSourceView {
   /** Maximum among actual ranked observations in this source only. */
   maximumObservedValue: number | null
   rows: TrendRankRow[]
-  /** Null or insufficient observations are not assigned a rank. */
+  /**
+   * 값이 없는 행만 순위가 없다 (티켓 -327). 표본이 엉은 것은 이제 여기로 오지 않는다 —
+   * 측정하지 못한 것과 얇은 근거로 측정한 것은 다른 사실이다.
+   */
   unobservedRows: TrendUnobservedRow[]
   footnote: string
 }
