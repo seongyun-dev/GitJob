@@ -90,22 +90,55 @@ resolver는 알아차릴 방법이 없다. 이미 다른 경로로 검증한 주
 채운다. 후보 생성기는 NOT_FOUND나 artifact 유무를 판단하지 않는다 — 그것은
 resolver의 몫이다.
 
-### 2단계 — resolver 실행
+### 2단계 — resolver 실행 (S15P21E102-323)
 
-```powershell
-$env:PYTHONPATH='AI'
-python -m github.weekly_artifact_resolver `
-  --candidates .local/weekly-candidates.json `
-  --output .local/weekly-snapshot.json `
-  --summary-output .local/weekly-run-summary.json `
-  --failure-output .local/weekly-failures.json `
-  --state-output .local/weekly-state.json `
-  --checkpoint .local/weekly-checkpoint.json `
-  --cache .local/weekly-cache.json `
-  --artifact-root .local/weekly-artifacts `
-  --dataset-snapshot-id {weekly-snapshot-id} `
-  --pipeline-run-id {weekly-run-id}
+`Infra/scripts/weekly-artifact-resolver.sh`로 실행한다. 이전 판의 예시는
+host에서 `PYTHONPATH=AI python -m ...`을 돌리는 형태였는데, host에는 AI
+패키지의 의존성이 설치되어 있지 않아 `ModuleNotFoundError`로 끝난다.
+candidate 생성과 마찬가지로 CLI는 이미지 안에 있고 파일은 host에 있으므로
+wrapper가 그 경계를 넘긴다.
+
+```bash
+ENV_FILE=.env.data \
+COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
+PROFILES=data \
+WEEKLY_CANDIDATES=.local/weekly-artifact/weekly-candidates-{YYYY-MM-DD}.json \
+WEEKLY_ARTIFACT_STATE_ROOT=.local/weekly-artifact \
+WEEKLY_SNAPSHOT_ID={weekly-snapshot-id} \
+WEEKLY_RUN_ID={weekly-run-id} \
+  ./Infra/scripts/weekly-artifact-resolver.sh
 ```
+
+wrapper가 고정하는 것은 두 가지다.
+
+**service는 `worker`다.** `collector`에는 `REDIS_*` 블록이 없어서 그쪽에서
+resolver를 돌리면 `--enable-redis-artifact-index`를 줘도 index가 만들어지지
+않는다. 그런데 run summary의 Redis 지표는 전부 0으로 찍히고, 이는 namespace가
+정말 비어 있을 때와 구분되지 않는다. `-323`부터 orchestrator가 이 조합을
+거부하지만, wrapper는 애초에 지원되는 쪽을 실행한다.
+
+**Weekly 계약값이다.** pool 1500 / quota 100 / batch 1이며, Historical의
+Top-10000이 환경변수로 흘러들어오지 않는다.
+
+`worker`의 environment에 없는 `GITHUB_API_TOKEN`·`WEBHDFS_URL`·`WEBHDFS_USER`는
+`ENV_FILE`에서 읽어 명시 전달한다. `weekly-snapshot-publish.sh`가
+`KAFKA_BOOTSTRAP_SERVERS`를 넘기는 방식과 같다.
+
+#### Redis Artifact Index
+
+compose가 `worker`에 `WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED`를 주므로 기본
+활성화다. Production은 db 1, namespace `gitjob:weekly:artifact-index:v1`,
+TTL 30일이며 셋 다 코드 기본값이다. benchmark의 db 3 /
+`gitjob:benchmark:...`는 이 경로에서 쓰이지 않는다.
+
+Redis는 index이지 source of truth가 아니다. HIT이어도 durable artifact가
+검증을 통과해야 REUSED가 되고, broker 장애·timeout은 기존 resolver 경로로
+fail-open한다. Redis 때문에 Weekly 전체가 실패하지는 않는다.
+
+> 2026-09-17 Week A 최초 Production 실행은 lookup 270 / hit 0 / miss 270,
+> error 0 / fail-open 0이었다. 장애가 아니라 Production namespace가 비어
+> 있었기 때문이며, benchmark가 보인 단축 효과는 index가 warm해진 다음
+> Weekly부터 나타난다.
 
 Production WebHDFS publish는 `--webhdfs-artifact-root`와 `--publish-root`를
 명시적으로 함께 지정해야 하며, 이번 작업에서는 실행하지 않는다. publish가

@@ -7,9 +7,12 @@ import json
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
 from common.webhdfs import WebHdfsResponse
+from github import repo_fetch_orchestrator as orchestrator_module
 from github.client import GitHubClient, HttpResponse
 from github.contracts import (
     GitHubRepoSnapshot,
@@ -783,3 +786,97 @@ def test_webhdfs_artifact_store_validates_namespace_size_and_sha() -> None:
     assert store.validate_artifact(
         valid.model_copy(update={"uri": "hdfs://other/gitjob/artifacts/package.json"})
     ) is False
+
+
+# --- S15P21E102-323: Production default activation -------------------------
+
+
+class _StubArtifactStore:
+    materialization_context = "hdfs://nn/gitjob/artifacts"
+
+
+def test_create_orchestrator_refuses_silent_redis_disable(monkeypatch) -> None:
+    """Asking for the index and getting none must fail, not run without it.
+
+    A Weekly run started in a service with no REDIS_* block built no index and
+    reported every Redis metric as zero, which reads exactly like a cold
+    namespace. Nothing downstream could tell the two apart, so the
+    misconfiguration is refused where it is still cheap to fix.
+    """
+
+    monkeypatch.setattr(
+        orchestrator_module, "create_artifact_store", lambda _: _StubArtifactStore()
+    )
+    monkeypatch.setattr(
+        orchestrator_module, "create_redis_artifact_index", lambda **_: None
+    )
+
+    arguments = SimpleNamespace(weekly_redis_enabled=True)
+
+    with pytest.raises(ValueError) as excinfo:
+        orchestrator_module.create_orchestrator(arguments, token="t")
+
+    message = str(excinfo.value)
+    assert "enable-redis-artifact-index" in message
+    # The message has to name the service, because "set REDIS_HOST" alone does
+    # not tell an operator which compose service actually carries it.
+    assert "worker" in message
+    assert "collector" in message
+
+
+def test_redis_factory_uses_production_namespace_not_benchmark(monkeypatch) -> None:
+    monkeypatch.delenv("WEEKLY_REDIS_URL", raising=False)
+    monkeypatch.setenv("REDIS_HOST", "redis")
+    monkeypatch.delenv("WEEKLY_REDIS_ARTIFACT_INDEX_NAMESPACE", raising=False)
+    monkeypatch.delenv("WEEKLY_REDIS_DB", raising=False)
+
+    index = create_redis_artifact_index(materialization_context="file:///artifacts")
+
+    assert index is not None
+    assert index.namespace == "gitjob:weekly:artifact-index:v1"
+    assert "benchmark" not in index.namespace
+    assert index.client.connection_pool.connection_kwargs["db"] == 1
+
+
+def test_weekly_artifact_resolver_wrapper_pins_service_and_contract() -> None:
+    """The wrapper is the Production entry point, so its contract is asserted.
+
+    `collector` would silently skip the index and the Historical Top-10000 pool
+    would silently replace the Weekly 1500, and neither shows up in the output.
+    """
+
+    wrapper = (
+        Path(__file__).resolve().parents[2]
+        / "Infra"
+        / "scripts"
+        / "weekly-artifact-resolver.sh"
+    )
+    text = wrapper.read_text(encoding="utf-8")
+
+    assert "--enable-redis-artifact-index" in text
+    # the service the resolver is handed to, not a mention in a comment
+    assert "\n  worker \\\n" in text
+    assert 'pool_limit="${WEEKLY_CANDIDATE_POOL_LIMIT:-1500}"' in text
+    assert 'quota="${WEEKLY_ARTIFACT_QUOTA:-100}"' in text
+    assert 'batch_size="${WEEKLY_CANDIDATE_BATCH_SIZE:-1}"' in text
+    # benchmark isolation, judged on what the script executes: the comments do
+    # name the benchmark namespace, precisely to say it is never used here.
+    executable = [
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    ]
+    assert not any("WEEKLY_REDIS_DB" in line for line in executable)
+    assert not any("gitjob:benchmark" in line for line in executable)
+
+
+def test_compose_worker_enables_weekly_redis_index_by_default() -> None:
+    compose = Path(__file__).resolve().parents[2] / "Infra" / "compose" / "compose.yaml"
+    text = compose.read_text(encoding="utf-8")
+
+    assert (
+        "WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED: ${WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED:-1}"
+        in text
+    )
+    # Declaring these would let a benchmark shell environment reach the
+    # container; the code defaults are the Production contract.
+    assert "WEEKLY_REDIS_DB:" not in text
+    assert "WEEKLY_REDIS_ARTIFACT_INDEX_NAMESPACE:" not in text

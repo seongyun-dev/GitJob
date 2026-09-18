@@ -1294,6 +1294,24 @@ def create_orchestrator(
         redis_index = create_redis_artifact_index(
             materialization_context=artifact_store.materialization_context,
         )
+        if redis_index is None:
+            # Asking for the index and silently running without it is the one
+            # outcome that cannot be noticed from the run summary: the metrics
+            # simply read zero, exactly as they do on a genuine cold namespace.
+            # A Weekly run started in a service whose environment carries no
+            # REDIS_HOST did that, so misconfiguration is refused here instead.
+            #
+            # This is not the fail-open contract. A broker that is unreachable
+            # still constructs a client and fails at lookup time, where
+            # RedisArtifactIndex counts it and falls back to the durable path.
+            # What is refused is the index never existing at all.
+            raise ValueError(
+                "--enable-redis-artifact-index was requested but the Weekly "
+                "Redis artifact index could not be built. Set WEEKLY_REDIS_URL "
+                "or REDIS_HOST (the worker service carries the Redis "
+                "environment; collector does not), and make sure the redis "
+                "package is installed."
+            )
     return RepoFetchOrchestrator(
         client=GitHubClient(token),
         policy=create_policy(arguments),

@@ -436,6 +436,17 @@ services:
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Weekly Artifact Redis index is on by default here because this is the
+      # service the Weekly resolver runs in; collector carries no REDIS_* block
+      # and a resolver started there would have run without an index.
+      # Override to 0 only for a deliberate Redis-OFF comparison.
+      #
+      # WEEKLY_REDIS_DB and WEEKLY_REDIS_ARTIFACT_INDEX_NAMESPACE are left
+      # undeclared on purpose: the code defaults (db 1,
+      # gitjob:weekly:artifact-index:v1) are the Production contract, and not
+      # declaring them keeps a benchmark shell environment (db 3,
+      # gitjob:benchmark:...) from reaching this container at all.
+      WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED: ${WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED:-1}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_TOPIC_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_ANALYSIS_REQUESTS:-gitjob.analysis.requests}
       KAFKA_TOPIC_ANALYSIS_RESULTS: ${KAFKA_TOPIC_ANALYSIS_RESULTS:-gitjob.analysis.results}
