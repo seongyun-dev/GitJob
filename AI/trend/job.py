@@ -14,7 +14,7 @@ from trend.contracts import (
     validate_periods,
 )
 
-JOB_TREND_POLICY_VERSION = "c-job-monthly-demand/v1"
+JOB_TREND_POLICY_VERSION = "c-job-monthly-demand/v2"
 FILTER_FIELDS = ("target_role", "sources", "regions", "career_levels", "min_jobs")
 VERSION_FIELDS = (
     "registry_version",
@@ -156,6 +156,7 @@ def job_trend(
         "timezone": "Asia/Seoul",
         "month_end": "exclusive",
         "purpose": CohortPurpose.MONTHLY_DEMAND.value,
+        "date_basis": "SOURCE_POSTED_OR_MODIFIED",
         "posting_status_policy": "INCLUDE_CLOSED",
     }
     if reference:

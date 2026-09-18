@@ -9,6 +9,7 @@ from test_compute_api import PREFIX, event, snapshot_ref
 from test_compute_api import (
     client as client,  # noqa: PLC0414 - pytest fixture re-export
 )
+from test_compute_matching import MemoryStore
 from test_job_cohort import batch, criteria, posting
 from test_job_input_union import output
 from test_job_union_intake import completed, resolve
@@ -26,7 +27,7 @@ from registry.contracts import load_registry
 from registry.mapper import RegistryMapper
 from trend.job import job_trend
 from worker.api import compute_versions
-from worker.intake import _publish_job_trend_range
+from worker.intake import _publish_job_trend_range, publish_monthly_job_trends
 from worker.jobs import job_artifacts, job_stream
 from worker.store import Ticket
 from worker.trend_streams import job_trend_stream
@@ -188,6 +189,7 @@ def test_monthly_trend_carries_population_and_does_not_fill_missing_months():
     assert [point.value for point in trend.points] == [None, 1]
     assert [point.denominator for point in trend.points] == [None, 1]
     assert trend.filters["purpose"] == "MONTHLY_DEMAND"
+    assert trend.filters["date_basis"] == "SOURCE_POSTED_OR_MODIFIED"
     assert trend.filters["posting_status_policy"] == "INCLUDE_CLOSED"
     assert trend.points[1].as_of == demand.criteria.as_of.isoformat()
 
@@ -260,6 +262,52 @@ def test_monthly_intake_publishes_resolvable_trends_for_every_active_technology(
         min_jobs=1,
         registry_version=REGISTRY.registry_version,
         versions=compute_versions("TREND", REGISTRY),
+    )
+
+
+def test_monthly_intake_accepts_source_posted_or_modified_dates():
+    collected_at = datetime.fromisoformat("2026-09-15T22:30:04+00:00")
+    observed = output(
+        august_posting(
+            "modified-date",
+            collected_at=collected_at,
+            required=("Java",),
+        ),
+        at=collected_at,
+        mixed_date_semantics=True,
+    )
+    store = MemoryStore()
+
+    result = publish_monthly_job_trends(
+        (observed,),
+        (criteria(as_of=collected_at),),
+        store=store,
+        mapper=RegistryMapper(REGISTRY),
+        registry=REGISTRY,
+    )
+
+    assert result == {"status": "COMPLETED"}
+    august_demands = [
+        snapshot["payload"]
+        for snapshot in store.snapshots.values()
+        if snapshot["kind"] == "DEMAND"
+        and CohortCriteria.model_validate(
+            snapshot["payload"]["criteria"]
+        ).complete_month()
+        == "2026-08"
+    ]
+    assert len(august_demands) == 1
+    assert august_demands[0]["denominator"] == 1
+    trends = [
+        snapshot["payload"]
+        for snapshot in store.snapshots.values()
+        if snapshot["kind"] == "TREND"
+    ]
+    assert trends
+    assert all(trend["status"] != "FAILED" for trend in trends)
+    assert all(
+        trend["filters"]["date_basis"] == "SOURCE_POSTED_OR_MODIFIED"
+        for trend in trends
     )
 
 
@@ -402,7 +450,7 @@ def test_job_trend_policy_version_is_bound_to_completed_event(client, monkeypatc
     assert replay.status_code == 409
     assert replay.json()["code"] == "IDEMPOTENCY_CONFLICT"
     original = client.get(PREFIX + f"/snapshots/{trend_id}").json()["data"]["payload"]
-    assert original["algorithm_version"] == "c-job-monthly-demand/v1"
+    assert original["algorithm_version"] == "c-job-monthly-demand/v2"
 
 
 def test_latest_closed_observation_is_retained_only_in_historical_population():

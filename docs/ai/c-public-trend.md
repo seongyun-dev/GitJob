@@ -66,8 +66,11 @@ JOB point는 `criteria.purpose=MONTHLY_DEMAND`인 C1/C2 수요 결과에서 over
 FAILED 처리한다. 반대로 월별 코호트를 추천/What-if에 전달하면 거부한다.
 
 출력 schema는 `c-source-trend/v1`을 유지하고 JOB `algorithm_version`은
-`c-job-monthly-demand/v1`이다. `filters.purpose=MONTHLY_DEMAND`,
-`filters.posting_status_policy=INCLUDE_CLOSED`와 원래 직무·출처·기간·품질 버전을 보존한다.
+`c-job-monthly-demand/v2`이다. 공고 출처가 게시일과 수정일을 같은 날짜 필드로 제공하는
+경우에도 표시된 날짜를 월별 수요의 기준일로 사용하며,
+`filters.date_basis=SOURCE_POSTED_OR_MODIFIED`로 그 의미를 명시한다.
+`filters.purpose=MONTHLY_DEMAND`, `filters.posting_status_policy=INCLUDE_CLOSED`와
+원래 직무·출처·기간·품질 버전을 보존한다.
 분모는 수집·검증된 해당 월의 유효 공고 표본이지 전체 채용 시장의 공고 수가 아니다.
 비교 가능한 월이나 충분한 표본이 없으면 PREPARING/INSUFFICIENT_DATA로 남긴다.
 빈 분모·누락 월은 0 수요가 아니며, 유효 분모가 있을 때 특정 기술의 관측 0만 실제 0이다.

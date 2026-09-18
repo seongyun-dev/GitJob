@@ -48,6 +48,7 @@ def job_trend_filters(
         "timezone": "Asia/Seoul",
         "month_end": "exclusive",
         "purpose": "MONTHLY_DEMAND",
+        "date_basis": "SOURCE_POSTED_OR_MODIFIED",
         "posting_status_policy": "INCLUDE_CLOSED",
         "versions": {
             "registry_version": registry_version,

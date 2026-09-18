@@ -22,8 +22,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from registry.contracts import TechId, load_registry
-from registry.mapper import RegistryMapper
 
 from job.classifier import (
     JobClassificationRecord,
@@ -46,6 +44,8 @@ from job.requirements import (
     RequirementKind,
     extract_job_requirements,
 )
+from registry.contracts import TechId, load_registry
+from registry.mapper import RegistryMapper
 
 JOB_COHORT_SCHEMA_VERSION = "job-cohort/v1"
 JOB_QUALITY_VERSION = "job-cohort-quality/v7"
@@ -54,6 +54,19 @@ JOB_QUALITY_VERSION = "job-cohort-quality/v7"
 class CohortPurpose(StrEnum):
     ACTIVE_MATCHING = "ACTIVE_MATCHING"
     MONTHLY_DEMAND = "MONTHLY_DEMAND"
+
+
+def requires_original_posting_date(criteria: "CohortCriteria") -> bool:
+    """Whether a date range promises original-posting-date semantics.
+
+    Active matching date filters retain their strict historical meaning. Monthly
+    demand instead follows the date displayed by the source, which may be either
+    a posting date or a modification date, so those observations stay usable.
+    """
+
+    return bool(criteria.posted_from or criteria.posted_to) and (
+        criteria.purpose is not CohortPurpose.MONTHLY_DEMAND
+    )
 
 
 class CohortStatus(StrEnum):

@@ -5,11 +5,12 @@ from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
+from test_job_cohort import batch, criteria, posting
+
 from job import input_union
 from job.cohort import JobCohort
 from job.demand import aggregate_demand
 from registry.mapper import RegistryMapper
-from test_job_cohort import batch, criteria, posting
 from worker.api import default_registry
 
 
@@ -399,6 +400,16 @@ def test_mixed_posting_dates_block_only_date_constrained_union(mapper):
         input_union.build_input_union(
             (value,), criteria(posted_from="2026-09-01T00:00:00Z"), mapper
         )
+
+    monthly = criteria(
+        purpose="MONTHLY_DEMAND",
+        as_of="2026-10-01T00:00:00+09:00",
+        posted_from="2026-09-01T00:00:00+09:00",
+        posted_to="2026-10-01T00:00:00+09:00",
+    )
+    result = input_union.build_input_union((value,), monthly, mapper)
+
+    assert [job.job_id for job in result.jobs] == ["SARAMIN:job-1"]
 
 
 @pytest.mark.parametrize(

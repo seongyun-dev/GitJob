@@ -6,8 +6,6 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from registry.mapper import RegistryMapper
-
 from job.cohort import (
     CohortCriteria,
     CohortPurpose,
@@ -17,8 +15,10 @@ from job.cohort import (
     JobCohort,
     _stable_hash,
     build_cohort,
+    requires_original_posting_date,
 )
 from job.contracts import JobAnalysisInputBatch
+from registry.mapper import RegistryMapper
 
 if TYPE_CHECKING:
     from worker.intake import JobOutput
@@ -51,7 +51,7 @@ def build_input_union(
             continue
         if output.collection_issues:
             raise ValueError("incomplete collection cannot publish an observed union")
-        if output.mixed_date_semantics and (criteria.posted_from or criteria.posted_to):
+        if output.mixed_date_semantics and requires_original_posting_date(criteria):
             raise ValueError("modified dates cannot be original posting dates")
         size = getattr(output, "batch_size_bytes", 0)
         if type(size) is not int or size <= 0:

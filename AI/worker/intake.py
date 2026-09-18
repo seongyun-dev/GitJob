@@ -19,7 +19,11 @@ from zoneinfo import ZoneInfo
 import psycopg
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from job.cohort import CohortCriteria, CohortPurpose
+from job.cohort import (
+    CohortCriteria,
+    CohortPurpose,
+    requires_original_posting_date,
+)
 from job.contracts import BodyStatus, JobAnalysisInputBatch
 from job.input_union import selected_input_totals
 from job.jobkorea_contract import active_snapshot_metadata
@@ -380,7 +384,7 @@ def publish_job_output(
 
     if loaded.collection_issues:
         raise ValueError("incomplete collection requires quality-aware review")
-    if loaded.mixed_date_semantics and (criteria.posted_from or criteria.posted_to):
+    if loaded.mixed_date_semantics and requires_original_posting_date(criteria):
         raise ValueError("modified dates cannot be treated as original posting dates")
     request = {
         "intake_version": INTAKE_VERSION,
@@ -671,7 +675,7 @@ class IntakeRunner:
         )
         if not relevant or (
             any(value.mixed_date_semantics for value in relevant)
-            and (criteria.posted_from or criteria.posted_to)
+            and requires_original_posting_date(criteria)
         ):
             return None, False
         signature = digest(
@@ -921,8 +925,8 @@ class IntakeRunner:
                     input_bindings[(path, root)] = binding
                     continue
                 for criteria in self.config.criteria:
-                    if loaded.mixed_date_semantics and (
-                        criteria.posted_from or criteria.posted_to
+                    if loaded.mixed_date_semantics and requires_original_posting_date(
+                        criteria
                     ):
                         report["blocked"] += 1
                         continue
