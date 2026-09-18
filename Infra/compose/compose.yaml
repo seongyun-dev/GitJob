@@ -289,6 +289,20 @@ services:
       # so the admin hosts stay out of a public JS bundle.
       GRAFANA_ADMIN_URL: ${GRAFANA_ADMIN_URL:-}
       PROMETHEUS_ADMIN_URL: ${PROMETHEUS_ADMIN_URL:-}
+      # 기술 카드의 AI 요약. 여기서 전달하지 않아, .env 에 주소를 넣어도 컨테이너
+      # 안에서는 application.yaml 의 기본값(빈 문자열)이 쓰였다 -- 그러면
+      # TechnologySummaryClient 가 enabled=false 로 만들어져 요약을 아예 부르지
+      # 않고, 화면은 status: NONE 을 받아 요약 칸이 영구히 빈 것처럼 보인다.
+      # C_COMPUTE_URL 과 PROMETHEUS_BASE_URL 이 같은 이유로 여기 추가됐다.
+      #
+      # 기본값은 비어 있다. 주소는 tailnet 의 특정 장비(노트북 GPU)를 가리키고
+      # 이 파일은 커밋되므로, 실제 값은 .env 에만 둔다. 비어 있으면 호출하지
+      # 않는 것이 의도된 동작이다 -- 요약 서비스를 띄우지 않은 환경에서 카드가
+      # 매번 timeout 을 기다리지 않는다.
+      LLM_SUMMARY_BASE_URL: ${LLM_SUMMARY_BASE_URL:-}
+      # Spring Duration 이라 단위가 값의 일부다. 단위 없는 120 은 120ms 로 읽혀
+      # 모든 생성이 끊긴다.
+      LLM_SUMMARY_TIMEOUT: ${LLM_SUMMARY_TIMEOUT:-120s}
     expose:
       - "8080"
     healthcheck:
