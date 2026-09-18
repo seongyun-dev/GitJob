@@ -44,6 +44,7 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
   tests/test_trend_archive.py \
   tests/test_recommendation_engine.py \
   tests/test_export_c_archive_activity.py \
+  tests/test_week_public_selection.py \
   tests/test_compute_archive.py::test_archive_input_budget_supports_the_six_month_mvp_and_rejects_overage \
   tests/test_compute_archive.py::test_missing_archive_mount_is_retryable_operational_failure \
   --deselect tests/test_worker_intake.py::test_actual_app_startup_consumes_to_postgres_and_restart_deduplicates \

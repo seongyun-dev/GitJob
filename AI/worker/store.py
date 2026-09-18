@@ -954,18 +954,24 @@ def _public_payload_covers_week(result: dict, requested_week) -> bool:
     ]
     if not included:
         return False
+    week_end = requested_week + timedelta(days=6)
+    expected_period = f"{requested_week.isoformat()}/{week_end.isoformat()}"
     for record in included:
-        target_period = record.get("target_period")
-        if target_period is not None and not _target_period_covers_week(
-            target_period, requested_week
-        ):
+        # Exact, not overlapping or containing. A MONTH PUBLIC overlaps the week
+        # that starts on its last day by one day out of seven, and contains an
+        # interior week entirely, and both used to select. Either way the
+        # denominator was built over a different period than the activity rows
+        # the week carries, which is what surfaced downstream as
+        # PUBLIC_REPOSITORY_MISSING_ACTIVITY. A WEEK observation takes the PUBLIC
+        # published for that week or none at all.
+        if record.get("target_period") != expected_period:
             return False
         try:
             start = datetime.fromisoformat(str(record["activity_period_start"])).date()
             end = datetime.fromisoformat(str(record["activity_period_end"])).date()
         except (KeyError, ValueError):
             return False
-        if not _period_overlaps_week(start, end, requested_week):
+        if start != requested_week or end != week_end:
             return False
     return True
 

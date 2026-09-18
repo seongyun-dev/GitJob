@@ -632,7 +632,14 @@ def test_weekly_artifact_stream_accumulates_consecutive_points():
     assert merged["status"] == TrendStatus.READY.value
 
 
-def test_public_snapshot_period_must_cover_requested_week():
+def test_month_public_never_covers_a_week():
+    """S15P21E102-337: overlap and containment both stopped qualifying.
+
+    This used to accept the partially overlapping week (2026-07-27) and the
+    contained one (2026-08-24). Both bind a weekly observation to a monthly
+    denominator, which is what surfaced as PUBLIC_REPOSITORY_MISSING_ACTIVITY.
+    """
+
     result = {
         "records": [
             {
@@ -643,12 +650,14 @@ def test_public_snapshot_period_must_cover_requested_week():
             }
         ]
     }
-    assert _public_payload_covers_week(result, date(2026, 7, 27))
-    assert _public_payload_covers_week(result, date(2026, 8, 24))
+    assert not _public_payload_covers_week(result, date(2026, 7, 27))
+    assert not _public_payload_covers_week(result, date(2026, 8, 24))
     assert not _public_payload_covers_week(result, date(2026, 9, 7))
 
 
-def test_public_snapshot_legacy_month_covers_overlapping_partial_week():
+def test_legacy_month_shorthand_never_covers_a_week():
+    """S15P21E102-337: the monthly shorthand is a month, so it is refused too."""
+
     result = {
         "records": [
             {
@@ -659,7 +668,8 @@ def test_public_snapshot_legacy_month_covers_overlapping_partial_week():
             }
         ]
     }
-    assert _public_payload_covers_week(result, date(2026, 7, 27))
+    assert not _public_payload_covers_week(result, date(2026, 7, 27))
+    assert not _public_payload_covers_week(result, date(2026, 8, 24))
 
 
 def test_postgres_weekly_results_survive_restart_and_accumulate():

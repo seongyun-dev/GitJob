@@ -301,7 +301,7 @@ def test_bulk_head_payload_read_and_period_compatible_public_selection(store):
         reference = store.complete(ticket, [row])[0]
         return reference["snapshot_id"], payload
 
-    august_id, august = publish_public(
+    publish_public(
         str(uuid4()),
         str(uuid4()),
         "2026-08-01",
@@ -316,11 +316,30 @@ def test_bulk_head_payload_read_and_period_compatible_public_selection(store):
         "2026-09-30",
         now + timedelta(seconds=1),
     )
+    # S15P21E102-337: a WEEK observation no longer accepts the August MONTH
+    # PUBLIC that merely contains it. The week-specific PUBLIC below is what
+    # qualifies now.
+    assert (
+        store.select_public_snapshot(
+            registry_version="registry-test",
+            include_partial=False,
+            week_start="2026-08-24",
+        )
+        is None
+    )
+    week_id, week_payload = publish_public(
+        str(uuid4()),
+        str(uuid4()),
+        "2026-08-24",
+        "2026-08-30",
+        now + timedelta(seconds=2),
+        target_period="2026-08-24/2026-08-30",
+    )
     assert store.select_public_snapshot(
         registry_version="registry-test",
         include_partial=False,
         week_start="2026-08-24",
-    ) == (august_id, august)
+    ) == (week_id, week_payload)
 
     trend_ticket = store.claim(
         event_id=str(uuid4()),
