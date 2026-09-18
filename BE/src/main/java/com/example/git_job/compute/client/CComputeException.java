@@ -43,6 +43,7 @@ public class CComputeException extends RuntimeException {
     public boolean isRetryable() {
         return status == CComputeStatus.PREPARING
                 || status == CComputeStatus.COMPUTE_FAILED
+                || status == CComputeStatus.TIMEOUT
                 || status == CComputeStatus.UNAVAILABLE;
     }
 
@@ -54,6 +55,11 @@ public class CComputeException extends RuntimeException {
     public static CComputeException unreachable(String path, Throwable cause) {
         return new CComputeException(CComputeStatus.UNAVAILABLE, null,
                 "C Compute에 연결할 수 없습니다: " + path, cause);
+    }
+
+    public static CComputeException timeout(String path, Throwable cause) {
+        return new CComputeException(CComputeStatus.TIMEOUT, "C_COMPUTE_TIMEOUT",
+                "C Compute 응답 시간이 초과되었습니다: " + path, cause);
     }
 
     /** 응답은 왔는데 봉투가 아니거나 본문을 해석할 수 없다. 버전 불일치일 수 있다. */

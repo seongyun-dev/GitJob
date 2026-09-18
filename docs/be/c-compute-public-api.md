@@ -65,7 +65,8 @@ evidenceVersion = sha256(
 `event_id`는 다음 네 가지로 만든다.
 
 ```text
-event_id = "ev-" + sha256(userId, evidenceVersion, cohortSnapshotId, computeVersions)
+event_id = "ev-" + sha256(userId, evidenceVersion, cohortSnapshotId,
+                           computeVersions, computeContractVersion)
 ```
 
 `computeVersions`를 재료에 넣는 이유가 있다. C는 Registry나 알고리즘 버전이 바뀐 뒤
@@ -120,6 +121,9 @@ CREATE TABLE user_target (
 
 1. 사용자 분석이 종료되어 Evidence 버전이 바뀌었을 때 (목표 직무가 이미 있는 경우)
 2. `PUT /api/v1/me/target`으로 직무·필터가 바뀌었을 때
+
+`PUT`은 목표 조건 저장이 끝나면 즉시 응답하고 계산은 retry scheduler에 요청한다.
+따라서 C의 cohort·추천 계산 시간이나 일시 장애가 목표 조건 저장 응답 시간을 막지 않는다.
 
 목표 직무가 없는 사용자의 공개 API는 오류가 아니라 `404 MATCH-404-1`이다. FE는 이
 코드를 "목표 직무를 먼저 고르세요" CTA로 처리한다(`SHOW_EMPTY_WITH_CTA`).
@@ -378,6 +382,10 @@ V22 attempt가 없더라도, V23 복구 스케줄러는 목표와 성공 분석�
 attempt가 없는 사용자를 제한된 배치로 시작한다. 단 최신 성공 분석이 모두
 `compute_ready_at IS NOT NULL`이고 Registry/Rule Pack 계보가 있어야 한다. 계보 없는 v1
 사용자는 재분석이 필요하므로 LIMIT 후보에서 제외되어 뒤의 정상 사용자를 막지 않는다.
+V25부터 Snapshot에는 `compute_contract_version`도 저장한다. 현재 활성 매칭 계약과 다른
+기존 행은 Snapshot이 있더라도 같은 복구 배치가 다시 계산한다. 이 버전은 공고 수요 집계나
+추천 알고리즘처럼 결과의 의미가 바뀔 때 올리며, event ID와 PK에도 포함되어 같은
+Evidence·cohort의 새 결과를 이전 행과 나란히 보존한다.
 아래 진단은 배포 전후 대상 확인용이다.
 
 ```sql
@@ -653,6 +661,11 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
 한 응답에 **한 출처만** 담는다. 여러 출처를 한 표에 섞으면 분모가 다른 값이 한 축에
 들어간다. 화면 12는 출처 카드마다 이 API를 따로 호출한다.
 
+BE는 같은 출처·기간·목표 조건의 기술(최대 10개)을
+`POST /internal/v1/c/trends/resolve-batch` 한 번으로 조회한다. C는 각 기술의 준비 여부와
+Snapshot payload를 요청 순서대로 반환하므로, BE가 기술마다 resolve와 Snapshot 조회를
+반복하지 않는다.
+
 ```json
 { "sourceId": "JOB", "unit": "월별 공고 요구 건수", "dataStatus": "READY",
   "basis": "서울 · 2026-08",
@@ -722,6 +735,8 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
 `DESIGN MOCK ROLE TAXONOMY`라고 적었고 확정 목록도 조회 API도 없다. 직무를 입력받고
 그 조건의 실제 수요(`/api/v1/job-demands`)를 미리 보여 주는 형태로 바꿨다 — 지원 직무
 목록을 화면이 복제하면 C가 직무를 늘릴 때마다 FE가 뒤처진다.
+직무·지역·경력을 연속 선택할 때는 마지막 변경 후 400ms가 지난 조건만 조회한다. 버튼
+클릭마다 이전 요청을 취소하고 C 계산을 새로 시작하는 호출 폭증을 피하기 위해서다.
 
 `S6 성장 단계` 카드는 화면에서 뺐다. 세 축을 묶어 단계를 정하는 계산이 어디에도 없고,
 만드는 순간 "출처를 합쳐 종합 점수를 만들지 않는다"는 규칙과 부딪힌다.

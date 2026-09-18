@@ -876,6 +876,24 @@ class ComputeStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_head_snapshots(
+        self, *, kind: str, owner: str | None, streams: tuple[str, ...]
+    ) -> dict[str, dict[str, Any]]:
+        """Resolve bounded immutable heads and payloads in one read transaction."""
+        if not streams:
+            return {}
+        if len(streams) > 10 or len(streams) != len(set(streams)):
+            raise ValueError("invalid head stream selection")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT h.stream, h.snapshot_id, h.event_id, h.occurred_at, s.payload
+                   FROM c_compute.head h JOIN c_compute.snapshot s
+                     ON s.snapshot_id = h.snapshot_id
+                   WHERE h.kind = %s AND h.owner = %s AND h.stream = ANY(%s)""",
+                (kind, owner or "", list(streams)),
+            ).fetchall()
+        return {row["stream"]: dict(row) for row in rows}
+
     def get_head_payloads(
         self, *, kind: str, owner: str | None, streams: tuple[str, ...]
     ) -> dict[str, dict]:

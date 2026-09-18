@@ -1,6 +1,8 @@
 package com.example.git_job.compute.client;
 
 import com.example.git_job.compute.config.CComputeProperties;
+import java.net.SocketTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -166,7 +168,17 @@ public class CComputeClient {
             response = spec.retrieve().toEntity(String.class);
         } catch (ResourceAccessException e) {
             // 연결 거부·타임아웃. 관리자망 단절이거나 Worker가 내려갔다.
+            if (isTimeout(e)) {
+                throw CComputeException.timeout(path, e);
+            }
             throw CComputeException.unreachable(path, e);
+        } catch (RuntimeException e) {
+            // HTTP 구현체가 timeout을 ResourceAccessException 밖에서 한 번 더 감싸도
+            // 일반 500으로 새지 않게 cause chain을 확인한다.
+            if (isTimeout(e)) {
+                throw CComputeException.timeout(path, e);
+            }
+            throw e;
         }
 
         int status = response.getStatusCode().value();
@@ -266,5 +278,18 @@ public class CComputeClient {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private static boolean isTimeout(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 12; depth++) {
+            if (current instanceof SocketTimeoutException
+                    || current instanceof HttpTimeoutException
+                    || current instanceof java.util.concurrent.TimeoutException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

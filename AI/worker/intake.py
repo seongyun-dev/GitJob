@@ -10,10 +10,11 @@ import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Event, RLock, Thread
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import psycopg
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
@@ -34,6 +35,8 @@ MAX_JOB_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_JOB_BATCH_BYTES = 64 * 1024 * 1024
 COMMON_JOB_BATCH_FILENAME = "job_analysis_input.json"
 LEGACY_JOBKOREA_BATCH_FILENAME = "job_analysis_input_v1.json"
+MONTHLY_DEMAND_MONTHS = 12
+JOB_TREND_RANGES = (3, 6, 12)
 
 
 class PublicInputConfig(BaseModel):
@@ -130,6 +133,57 @@ class JobOutput:
     snapshot_mode: str | None = None
     snapshot_scope_key: str | None = None
     snapshot_complete: bool = False
+
+
+def _monthly_demand_criteria(outputs, templates):
+    """Build the exact completed-month scopes requested by the JOB Trend UI.
+
+    Active matching and historical demand deliberately use different cohorts. The
+    deployment config only needs the live target templates; the intake derives the
+    latest twelve completed Seoul months from the verified observation cutoff.
+    """
+
+    if not outputs:
+        return ()
+    seoul = ZoneInfo("Asia/Seoul")
+    scopes = {
+        (
+            template.target_role,
+            template.regions,
+            template.career_levels,
+        )
+        for template in templates
+        if template.purpose is CohortPurpose.ACTIVE_MATCHING
+    }
+    generated = []
+    for target_role, regions, career_levels in sorted(scopes):
+        relevant = tuple(outputs)
+        cutoff = max(output.occurred_at for output in relevant)
+        current_month = cutoff.astimezone(seoul).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        last_complete = (current_month - timedelta(days=1)).replace(day=1)
+        starts = []
+        cursor = last_complete
+        for _ in range(MONTHLY_DEMAND_MONTHS):
+            starts.append(cursor)
+            cursor = (cursor - timedelta(days=1)).replace(day=1)
+        for start in reversed(starts):
+            end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+            generated.append(
+                CohortCriteria(
+                    target_role=target_role,
+                    purpose=CohortPurpose.MONTHLY_DEMAND,
+                    as_of=cutoff,
+                    posted_from=start,
+                    posted_to=end,
+                    sources=(),
+                    regions=regions,
+                    career_levels=career_levels,
+                    min_jobs=1,
+                )
+            )
+    return tuple(generated)
 
 
 def _stamp(path: Path):
@@ -451,6 +505,117 @@ def publish_job_input_set(outputs, criteria, *, store, mapper, registry):
     return {"status": "COMPLETED", "results": results}
 
 
+def _publish_job_trend_range(demand_refs, periods, *, store, registry):
+    """Persist every Registry technology for one exact UI period selector."""
+
+    from trend.job import job_trend
+    from worker.api import compute_versions
+    from worker.store import Artifact
+    from worker.trend_streams import source_trend_stream
+
+    versions = compute_versions("TREND", registry)
+    request = {
+        "source": "JOB",
+        "periods": periods,
+        "demand_snapshot_ids": tuple(snapshot_id for snapshot_id, _ in demand_refs),
+        "compute_versions": versions,
+    }
+    ticket = store.claim(
+        event_id="job-trend-intake-" + digest(request),
+        kind="TREND",
+        owner=None,
+        occurred_at=max(demand.criteria.as_of for _, demand in demand_refs),
+        request=request,
+    )
+    if ticket.status == "COMPLETED":
+        return True
+    if ticket.token is None:
+        return False
+    try:
+        artifacts = []
+        snapshots = tuple(demand for _, demand in demand_refs)
+        for technology in registry.technologies:
+            if technology.status.value != "ACTIVE":
+                continue
+            result = job_trend(technology.tech_id, snapshots, registry, periods=periods)
+            artifacts.append(
+                Artifact(
+                    "TREND",
+                    None,
+                    result.model_dump(mode="json"),
+                    source_trend_stream(
+                        tech_id=technology.tech_id,
+                        source="JOB",
+                        periods=periods,
+                        versions=versions,
+                        filters=result.filters,
+                    ),
+                )
+            )
+        with LeaseHeartbeat(store, ticket):
+            store.complete(ticket, artifacts)
+    except Exception:
+        try:
+            store.fail(ticket, "JOB_TREND_INTAKE_FAILED")
+        except psycopg.Error:
+            LOGGER.warning("C JOB Trend intake requires lease recovery")
+        raise
+    return True
+
+
+def publish_monthly_job_trends(outputs, templates, *, store, mapper, registry):
+    """Materialize the 3/6/12-month JOB Trend heads consumed by the browser."""
+
+    from collections import defaultdict
+
+    from job.demand import DemandSnapshot
+
+    grouped = defaultdict(list)
+    for criteria in _monthly_demand_criteria(outputs, templates):
+        published = publish_job_input_set(
+            outputs, criteria, store=store, mapper=mapper, registry=registry
+        )
+        if published["status"] != "COMPLETED":
+            return {"status": "PREPARING"}
+        demand_id = next(
+            (
+                result["snapshot_id"]
+                for result in published["results"]
+                if result["kind"] == "DEMAND"
+            ),
+            None,
+        )
+        stored = (
+            store.get_snapshot(demand_id, owner=None)
+            if isinstance(demand_id, str)
+            else None
+        )
+        if stored is None or stored["kind"] != "DEMAND":
+            raise RuntimeError("monthly demand snapshot was not persisted")
+        demand = DemandSnapshot.model_validate(stored["payload"])
+        scope = (
+            demand.criteria.target_role,
+            demand.criteria.sources,
+            demand.criteria.regions,
+            demand.criteria.career_levels,
+            demand.criteria.min_jobs,
+        )
+        grouped[scope].append((demand_id, demand))
+
+    for demands in grouped.values():
+        ordered = sorted(demands, key=lambda item: item[1].criteria.complete_month())
+        for count in JOB_TREND_RANGES:
+            if len(ordered) < count:
+                continue
+            selected = tuple(ordered[-count:])
+            periods = tuple(demand.criteria.complete_month() for _, demand in selected)
+            if not _publish_job_trend_range(
+                selected, periods, store=store, registry=registry
+            ):
+                return {"status": "PREPARING"}
+    return {"status": "COMPLETED"}
+
+
 class IntakeRunner:
     def __init__(
         self,
@@ -459,12 +624,14 @@ class IntakeRunner:
         job_sink: Callable,
         public_sinks: tuple[Callable, ...] = (),
         job_set_sink: Callable | None = None,
+        job_trend_sink: Callable | None = None,
         job_input_guard: Callable | None = None,
         job_source_refresh: Callable | None = None,
     ):
         self.config, self.job_sink = config, job_sink
         self.public_sinks = public_sinks
         self.job_set_sink = job_set_sink
+        self.job_trend_sink = job_trend_sink
         self.job_input_guard = job_input_guard
         # Staged HDFS runs join the configured local roots. Held on the
         # instance rather than the frozen config because `poll_once` refreshes
@@ -475,6 +642,7 @@ class IntakeRunner:
         self._job_set_cache = {}
         self._verified_job_outputs = ()
         self._verified_job_signature = None
+        self._job_trend_signature = None
         self._job_set_lock = RLock()
         self._known_manifests = {}
         self.public_reports = [{} for _ in public_sinks]
@@ -582,6 +750,25 @@ class IntakeRunner:
                     report["failed"] += 1
                     LOGGER.warning(
                         "C input union failed error_type=%s", type(exc).__name__
+                    )
+            if self.job_trend_sink and self._job_trend_signature != signature:
+                try:
+                    trend = self.job_trend_sink(outputs, self.config.criteria)
+                    if trend and trend["status"] == "COMPLETED":
+                        self._job_trend_signature = signature
+                    else:
+                        report["pending"] += 1
+                except (
+                    ValueError,
+                    OSError,
+                    RuntimeError,
+                    KeyError,
+                    TypeError,
+                    psycopg.Error,
+                ) as exc:
+                    report["failed"] += 1
+                    LOGGER.warning(
+                        "C JOB Trend intake failed error_type=%s", type(exc).__name__
                     )
             self._current_jobs = current
 
@@ -883,6 +1070,14 @@ def configured_runner(path: Path, store: ComputeStore, mapper, registry):
         ),
         job_set_sink=partial(
             publish_job_input_set, store=store, mapper=mapper, registry=registry
+        )
+        if has_job_inputs
+        else None,
+        job_trend_sink=partial(
+            publish_monthly_job_trends,
+            store=store,
+            mapper=mapper,
+            registry=registry,
         )
         if has_job_inputs
         else None,

@@ -4,14 +4,12 @@ import com.example.git_job.compute.controller.dto.TargetRequest;
 import com.example.git_job.compute.store.UserTargetStore;
 import com.example.git_job.compute.store.UserTargetStore.Target;
 import java.time.Instant;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
  * 목표 직무 조회·저장 (S15P21E102-279).
  *
- * <p>저장 직후 C 계산을 한 번 시도한다. 직무가 바뀌면 공고 모집단이 통째로 달라져 기존
+ * <p>저장 직후 C 계산을 scheduler에 요청한다. 직무가 바뀌면 공고 모집단이 통째로 달라져 기존
  * 결과를 쓸 수 없고, 다음 저장소 분석까지 기다리면 사용자는 직무를 바꾼 뒤 아무것도 보지
  * 못한다. 계산 트리거가 둘인 이유가 이것이다 -- 분석 완료와 목표 직무 변경.</p>
  *
@@ -22,14 +20,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class TargetService {
 
-    private static final Logger log = LoggerFactory.getLogger(TargetService.class);
-
     private final UserTargetStore targets;
-    private final CComputeSyncService sync;
+    private final ComputeRetryScheduler scheduler;
 
-    public TargetService(UserTargetStore targets, CComputeSyncService sync) {
+    public TargetService(UserTargetStore targets, ComputeRetryScheduler scheduler) {
         this.targets = targets;
-        this.sync = sync;
+        this.scheduler = scheduler;
     }
 
     /** 없으면 {@code null}. 목표 직무 미선택은 오류가 아니라 화면이 다뤄야 할 상태다. */
@@ -40,12 +36,7 @@ public class TargetService {
     public Target save(long userId, TargetRequest request) {
         Target saved = targets.save(userId, request.targetRole(), request.regions(),
                 request.careerLevels(), Instant.now());
-        try {
-            sync.synchronize(userId);
-        } catch (RuntimeException unavailable) {
-            log.warn("목표 직무 저장 후 C 계산 보류: userId={}, reason={}",
-                    userId, unavailable.toString());
-        }
+        scheduler.requestInitialSync(userId);
         return saved;
     }
 }

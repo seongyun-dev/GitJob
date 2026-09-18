@@ -131,6 +131,26 @@ POST /internal/v1/c/trends/resolve
 Authorization: Bearer <server-only token>
 ```
 
+기술 비교 화면은 동일 scope에서 기술만 다른 selector를 최대 10개까지 한 번에 조회한다.
+
+```http
+POST /internal/v1/c/trends/resolve-batch
+Authorization: Bearer <server-only token>
+```
+
+```json
+{
+  "selectors": [
+    {"source":"WEEKLY_REPO_ACTIVITY","tech_id":"java","include_partial":false},
+    {"source":"WEEKLY_REPO_ACTIVITY","tech_id":"python","include_partial":false}
+  ]
+}
+```
+
+`tech_id`를 제외한 selector scope는 모두 같아야 하고 기술 ID는 중복될 수 없다. 응답은
+요청 순서를 보존하며, 준비된 항목은 immutable Snapshot payload를 함께 주고 아직 없는
+항목은 `NOT_PREPARED`로 분리한다.
+
 목표 직무별 월간 채용 수요:
 
 ```json

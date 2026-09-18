@@ -140,6 +140,7 @@ public class ComputeResultReader {
             case PREPARING -> ComputeState.computing(e.getRetryAfterSec());
             case NOT_PREPARED -> ComputeState.preparing("COHORT_NOT_PREPARED");
             case MATCHING_NOT_PREPARED -> ComputeState.preparing("MATCHING_NOT_PREPARED");
+            case TIMEOUT -> ComputeState.retrying(e.getRetryAfterSec());
             // 예산을 넘겨 게시되지 못했다. 재시도로 낫지 않으므로 기다리게 하지 않는다.
             case TOO_LARGE -> ComputeState.failed("RESULT_TOO_LARGE");
             // 우리가 저장한 Snapshot ID 인데 C 가 모른다. 사용자 잘못이 아니므로 404 로

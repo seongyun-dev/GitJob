@@ -9,7 +9,9 @@ import com.example.git_job.compute.controller.dto.TrendResponse;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,25 +120,44 @@ public class TrendService {
         List<String> normalizedRegions = values(regions);
         List<String> normalizedCareerLevels = values(careerLevels);
 
-        List<TrendResponse.Row> rows = new ArrayList<>();
-        String unit = null;
-        for (String techId : techIds) {
-            String tech = validTechId(techId);
-            String cSource = job ? "JOB"
-                    : archive ? "GH_ARCHIVE_HISTORICAL" : "WEEKLY_REPO_ACTIVITY";
-            CTrend.Selector selector = job
-                    ? CTrend.Selector.job(tech, periods, targetRole.strip(), normalizedRegions,
-                            normalizedCareerLevels)
-                    : archive ? CTrend.Selector.historical(tech, periods)
-                            : CTrend.Selector.weekly(tech);
-            String displayUnit = job ? "월별 공고 요구 건수"
-                    : archive ? "월별 commit 관측 수" : "주간 활동 저장소 수";
-            TrendResponse.Source source = source(sourceId, cSource, selector, displayUnit);
-            unit = source.unit();
-            rows.add(lastPoint(tech, source));
+        List<String> technologies = techIds.stream().map(TrendService::validTechId).toList();
+        if (technologies.stream().distinct().count() != technologies.size()) {
+            throw new CustomException(ErrorCode.TREND_CRITERIA_INVALID);
         }
-        return new TrendResponse.Compare(sourceId, job ? "JOB"
-                : archive ? "GH_ARCHIVE_HISTORICAL" : "WEEKLY_REPO_ACTIVITY", unit, rows);
+        String cSource = job ? "JOB"
+                : archive ? "GH_ARCHIVE_HISTORICAL" : "WEEKLY_REPO_ACTIVITY";
+        String displayUnit = job ? "월별 공고 요구 건수"
+                : archive ? "월별 commit 관측 수" : "주간 활동 저장소 수";
+        List<CTrend.Selector> selectors = technologies.stream().map(tech -> job
+                ? CTrend.Selector.job(tech, periods, targetRole.strip(), normalizedRegions,
+                        normalizedCareerLevels)
+                : archive ? CTrend.Selector.historical(tech, periods)
+                        : CTrend.Selector.weekly(tech)).toList();
+
+        List<TrendResponse.Row> rows = new ArrayList<>();
+        String unit = displayUnit;
+        try {
+            CTrend.Batch batch = compute.resolveTrends(selectors);
+            Map<String, CTrend.BatchItem> byTech = new HashMap<>();
+            for (CTrend.BatchItem item : batch.items()) {
+                byTech.put(item.techId(), item);
+            }
+            for (String tech : technologies) {
+                TrendResponse.Source source = batchSource(sourceId, cSource, byTech.get(tech),
+                        displayUnit);
+                if (source.metric() != null) {
+                    unit = source.unit();
+                }
+                rows.add(lastPoint(tech, source));
+            }
+        } catch (CComputeException e) {
+            ComputeState state = trendState(e, sourceId);
+            for (String tech : technologies) {
+                rows.add(lastPoint(tech,
+                        TrendResponse.Source.empty(sourceId, cSource, state, displayUnit)));
+            }
+        }
+        return new TrendResponse.Compare(sourceId, cSource, unit, rows);
     }
 
     /** 비교 표는 기간 하나만 보여 준다. 가장 마지막 점이 그 출처의 현재 값이다. */
@@ -172,11 +193,28 @@ public class TrendService {
                 return TrendResponse.Source.empty(sourceId, cSource,
                         ComputeState.ofTrend(null), unit);
             }
+            boolean hasObservedValue = payload.points() != null && payload.points().stream()
+                    .anyMatch(point -> point.value() != null || point.eventCount() != null);
             return TrendResponse.Source.of(sourceId, cSource,
-                    ComputeState.ofTrend(payload.status()), payload);
+                    ComputeState.ofTrend(payload.status(), hasObservedValue), payload);
         } catch (CComputeException e) {
             return TrendResponse.Source.empty(sourceId, cSource, trendState(e, sourceId), unit);
         }
+    }
+
+    private TrendResponse.Source batchSource(String sourceId, String cSource,
+                                              CTrend.BatchItem item, String unit) {
+        if (item == null || item.snapshot() == null || item.snapshot().payload() == null) {
+            ComputeState state = item != null && "NOT_PREPARED".equals(item.status())
+                    ? ComputeState.ofTrend(null)
+                    : ComputeState.failed("TREND_BATCH_RESULT_INVALID");
+            return TrendResponse.Source.empty(sourceId, cSource, state, unit);
+        }
+        CTrend.Payload payload = item.snapshot().payload();
+        boolean hasObservedValue = payload.points() != null && payload.points().stream()
+                .anyMatch(point -> point.value() != null || point.eventCount() != null);
+        return TrendResponse.Source.of(sourceId, cSource,
+                ComputeState.ofTrend(payload.status(), hasObservedValue), payload);
     }
 
     /**
@@ -190,6 +228,7 @@ public class TrendService {
         return switch (e.getStatus()) {
             case NOT_PREPARED, NOT_FOUND -> ComputeState.ofTrend(null);
             case PREPARING -> ComputeState.computing(e.getRetryAfterSec());
+            case TIMEOUT -> ComputeState.retrying(e.getRetryAfterSec());
             // 지원하지 않는 기술·기간이다. 요청 전체를 400으로 만들면 다른 출처도 못 본다.
             case INVALID_INPUT -> ComputeState.notSupported("TREND_SELECTOR_REJECTED");
             default -> {

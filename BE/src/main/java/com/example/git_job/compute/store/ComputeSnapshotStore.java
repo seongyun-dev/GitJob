@@ -23,6 +23,9 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class ComputeSnapshotStore {
 
+    public static final String CURRENT_COMPUTE_CONTRACT_VERSION =
+            "active-matching/job-demand-v3+recommendation-v6";
+
     private static final RowMapper<ComputeSnapshot> MAPPER = (rs, row) -> new ComputeSnapshot(
             rs.getLong("user_id"),
             rs.getString("evidence_version"),
@@ -31,6 +34,7 @@ public class ComputeSnapshotStore {
             rs.getString("recommendation_snapshot_id"),
             rs.getString("event_id"),
             rs.getString("target_key"),
+            rs.getString("compute_contract_version"),
             rs.getTimestamp("computed_at").toInstant());
 
     private static final RowMapper<ComputeAttempt> ATTEMPT_MAPPER = (rs, row) ->
@@ -47,7 +51,8 @@ public class ComputeSnapshotStore {
 
     private static final String COLUMNS = """
             user_id, evidence_version, cohort_snapshot_id, demand_snapshot_id,
-            recommendation_snapshot_id, event_id, target_key, computed_at
+            recommendation_snapshot_id, event_id, target_key, compute_contract_version,
+            computed_at
             """;
 
     private final JdbcTemplate jdbc;
@@ -85,13 +90,14 @@ public class ComputeSnapshotStore {
     public boolean save(ComputeSnapshot snapshot) {
         int inserted = jdbc.update("""
                 INSERT INTO user_c_snapshot (user_id, evidence_version, cohort_snapshot_id,
-                    demand_snapshot_id, recommendation_snapshot_id, event_id, target_key, computed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    demand_snapshot_id, recommendation_snapshot_id, event_id, target_key,
+                    compute_contract_version, computed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT DO NOTHING
                 """,
                 snapshot.userId(), snapshot.evidenceVersion(), snapshot.cohortSnapshotId(),
                 snapshot.demandSnapshotId(), snapshot.recommendationSnapshotId(),
-                snapshot.eventId(), snapshot.targetKey(),
+                snapshot.eventId(), snapshot.targetKey(), snapshot.computeContractVersion(),
                 java.sql.Timestamp.from(snapshot.computedAt()));
         return inserted > 0;
     }
@@ -130,6 +136,10 @@ public class ComputeSnapshotStore {
      * 있으면 기존 결과 조회·재시도 경로가 소유하므로 여기서 다시 시작하지 않는다.</p>
      */
     public List<Long> usersMissingComputeState(int limit) {
+        return usersMissingComputeState(CURRENT_COMPUTE_CONTRACT_VERSION, limit);
+    }
+
+    public List<Long> usersMissingComputeState(String computeContractVersion, int limit) {
         return jdbc.queryForList("""
                 SELECT ut.user_id
                 FROM user_target ut
@@ -178,6 +188,7 @@ public class ComputeSnapshotStore {
                     WHERE snapshot.user_id = ut.user_id
                       AND snapshot.target_key = ut.target_role || '|' || ut.regions || '|'
                                                 || ut.career_levels
+                      AND snapshot.compute_contract_version = ?
                 )
                   AND NOT EXISTS (
                     SELECT 1
@@ -188,7 +199,7 @@ public class ComputeSnapshotStore {
                 )
                 ORDER BY ut.updated_at, ut.user_id
                 LIMIT ?
-                """, Long.class, limit);
+                """, Long.class, computeContractVersion, limit);
     }
 
     /** 스케줄러가 읽은 정확한 실행만 지운다. 이후 재생성된 행은 token이 달라 보존된다. */
@@ -279,7 +290,15 @@ public class ComputeSnapshotStore {
 
     public record ComputeSnapshot(long userId, String evidenceVersion, String cohortSnapshotId,
             String demandSnapshotId, String recommendationSnapshotId, String eventId,
-            String targetKey, Instant computedAt) {
+            String targetKey, String computeContractVersion, Instant computedAt) {
+
+        public ComputeSnapshot(long userId, String evidenceVersion, String cohortSnapshotId,
+                String demandSnapshotId, String recommendationSnapshotId, String eventId,
+                String targetKey, Instant computedAt) {
+            this(userId, evidenceVersion, cohortSnapshotId, demandSnapshotId,
+                    recommendationSnapshotId, eventId, targetKey,
+                    CURRENT_COMPUTE_CONTRACT_VERSION, computedAt);
+        }
     }
 
     public record ComputeAttempt(long userId, String targetKey, String evidenceVersion,

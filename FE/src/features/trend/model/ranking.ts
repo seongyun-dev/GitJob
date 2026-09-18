@@ -14,8 +14,9 @@ export interface RankedTrendObservation extends Omit<TrendObservationRow, 'value
 /**
  * A source card ranks only values that were actually observed by that source.
  *
- * `READY` with zero is a real observation and remains rankable.  A null value,
- * including an insufficient sample, must not become a zero-length ranked bar.
+ * `READY` or `PARTIAL` with zero is a real observation and remains rankable.
+ * `PARTIAL` means the public aggregate has a quality limitation, not that the
+ * numeric observation disappeared. A null value must not become a ranked zero.
  */
 export function rankObservableRows(rows: readonly TrendObservationRow[]): {
   observed: RankedTrendObservation[]
@@ -26,11 +27,14 @@ export function rankObservableRows(rows: readonly TrendObservationRow[]): {
     .map((row, index) => ({ ...row, index }))
     .filter(
       (row): row is TrendObservationRow & { index: number; value: number } =>
-        row.dataStatus === 'READY' && row.value !== null,
+        (row.dataStatus === 'READY' || row.dataStatus === 'PARTIAL') && row.value !== null,
     )
     .sort((left, right) => right.value - left.value || left.index - right.index)
     .map(({ index: _index, ...row }, index) => ({ ...row, rank: index + 1 }))
-  const unobserved = rows.filter((row) => row.dataStatus !== 'READY' || row.value === null)
+  const unobserved = rows.filter(
+    (row) =>
+      (row.dataStatus !== 'READY' && row.dataStatus !== 'PARTIAL') || row.value === null,
+  )
 
   return {
     observed,

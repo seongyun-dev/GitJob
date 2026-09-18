@@ -25,7 +25,11 @@ from recommendation.evidence import consume_evidence
 from registry.contracts import load_registry
 from registry.mapper import RegistryMapper
 from trend.job import job_trend
+from worker.api import compute_versions
+from worker.intake import _publish_job_trend_range
 from worker.jobs import job_artifacts, job_stream
+from worker.store import Ticket
+from worker.trend_streams import job_trend_stream
 
 REGISTRY = load_registry(
     Path(__file__).resolve().parents[1] / "registry/data/technology_registry_v1.json",
@@ -186,6 +190,77 @@ def test_monthly_trend_carries_population_and_does_not_fill_missing_months():
     assert trend.filters["purpose"] == "MONTHLY_DEMAND"
     assert trend.filters["posting_status_policy"] == "INCLUDE_CLOSED"
     assert trend.points[1].as_of == demand.criteria.as_of.isoformat()
+
+
+def test_monthly_intake_publishes_resolvable_trends_for_every_active_technology():
+    demands = []
+    for month in (7, 8):
+        selected = monthly_criteria(
+            posted_from=f"2026-{month:02d}-01T00:00:00+09:00",
+            posted_to=f"2026-{month + 1:02d}-01T00:00:00+09:00",
+        )
+        value = august_posting(
+            f"java-{month}",
+            posted_at=f"2026-{month:02d}-10T12:00:00+09:00",
+            required=("Java",),
+        )
+        demands.append(aggregate_demand(build_cohort(batch(value), selected)))
+
+    class Store:
+        lease_seconds = 120
+
+        def __init__(self):
+            self.artifacts = []
+
+        def claim(self, **kwargs):
+            return Ticket(
+                event_id=kwargs["event_id"],
+                kind=kwargs["kind"],
+                owner=kwargs["owner"],
+                occurred_at=kwargs["occurred_at"],
+                status="RUNNING",
+                token="owned-token",
+                attempt=1,
+                results=[],
+            )
+
+        def complete(self, _ticket, artifacts):
+            self.artifacts = artifacts
+            return []
+
+        def renew(self, _ticket):
+            return True
+
+        def fail(self, *_args):
+            raise AssertionError("successful publication must not fail the ticket")
+
+    store = Store()
+    refs = tuple((f"c-demand-{index}", demand) for index, demand in enumerate(demands))
+
+    assert _publish_job_trend_range(
+        refs, ("2026-07", "2026-08"), store=store, registry=REGISTRY
+    )
+    assert len(store.artifacts) == sum(
+        technology.status.value == "ACTIVE" for technology in REGISTRY.technologies
+    )
+    java = next(
+        artifact
+        for artifact in store.artifacts
+        if artifact.payload["tech_id"] == "java"
+    )
+    assert java.payload["status"] == "READY"
+    assert [point["value"] for point in java.payload["points"]] == [1, 1]
+    assert java.stream == job_trend_stream(
+        tech_id="java",
+        periods=("2026-07", "2026-08"),
+        target_role="BACKEND",
+        sources=(),
+        regions=(),
+        career_levels=(),
+        min_jobs=1,
+        registry_version=REGISTRY.registry_version,
+        versions=compute_versions("TREND", REGISTRY),
+    )
 
 
 def test_completion_artifacts_use_disjoint_active_and_monthly_streams():
@@ -399,3 +474,42 @@ def test_automatic_intake_keeps_monthly_and_active_results_separate(runtime):
         active_id, cohort = resolve(value, active)
         assert cohort["jobs"] == []
         assert active_id != monthly_id
+
+
+def test_automatic_intake_materializes_the_job_trend_ranges_used_by_the_ui(runtime):
+    root, _, open_runtime = runtime
+    completed(
+        root,
+        "SARAMIN",
+        "august-java-trend",
+        at="2026-09-15T22:30:04Z",
+        posted_at="2026-08-10T12:00:00+09:00",
+        posting_status="CLOSED",
+        required=("Java",),
+    )
+    active = criteria(as_of="2026-09-16T00:00:00Z")
+    periods = [f"2026-{month:02d}" for month in range(3, 9)]
+
+    with open_runtime(active)[0] as client:
+        runner = client.app.state.intake_runner
+        report = runner.poll_once()
+        assert report["failed"] == 0
+        resolved = client.post(
+            PREFIX + "/trends/resolve",
+            json={
+                "source": "JOB",
+                "tech_id": "java",
+                "periods": periods,
+                "granularity": "MONTH",
+                "target_role": "BACKEND",
+                "min_jobs": 1,
+            },
+        )
+        assert resolved.status_code == 200, resolved.text
+        trend_id = resolved.json()["data"]["snapshot_id"]
+        payload = client.get(PREFIX + f"/snapshots/{trend_id}").json()["data"][
+            "payload"
+        ]
+        assert payload["source"] == "JOB"
+        assert payload["points"][-1]["period"] == "2026-08"
+        assert payload["points"][-1]["value"] == 1

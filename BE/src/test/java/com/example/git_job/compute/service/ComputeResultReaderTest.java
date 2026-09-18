@@ -213,6 +213,19 @@ class ComputeResultReaderTest {
     }
 
     @Test
+    @DisplayName("C 읽기 타임아웃은 오류 응답 대신 다시 계산 중인 상태로 내린다")
+    void mapsTimeoutToRetryingState() {
+        Computed<String> computed = reader.read(USER_ID, snapshot -> {
+            throw new CComputeException(CComputeStatus.TIMEOUT, "C_COMPUTE_TIMEOUT", null,
+                    "timeout");
+        });
+
+        assertThat(computed.hasValue()).isFalse();
+        assertThat(computed.state().dataStatus()).isEqualTo(ComputeState.PREPARING);
+        assertThat(computed.state().statusReason()).isEqualTo("COMPUTE_RETRYING");
+    }
+
+    @Test
     @DisplayName("무결성 오류는 재시도를 권하지 않는다 — B 버그이거나 저장 손상이다")
     void mapsIntegrityFailures() {
         for (CComputeStatus status : List.of(CComputeStatus.SCOPE_MISMATCH,

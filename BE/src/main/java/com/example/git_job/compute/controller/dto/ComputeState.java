@@ -24,6 +24,11 @@ public record ComputeState(String dataStatus, String statusReason, Integer retry
         return new ComputeState(READY, "NONE", null);
     }
 
+    /** 계산된 값은 있지만 해석 범위에 제한이 있다. 값은 숨기지 않고 사유를 함께 보낸다. */
+    public static ComputeState partial(String reason) {
+        return new ComputeState(PARTIAL, reason, null);
+    }
+
     /** C가 지금 계산 중이다. {@code Retry-After}를 그대로 넘겨 폴링 간격을 화면이 정한다. */
     public static ComputeState computing(Integer retryAfterSec) {
         return new ComputeState(PREPARING, "COMPUTING", retryAfterSec);
@@ -81,14 +86,23 @@ public record ComputeState(String dataStatus, String statusReason, Integer retry
      * 카드 하나에 붙는다.</p>
      */
     public static ComputeState ofTrend(String status) {
+        return ofTrend(status, false);
+    }
+
+    /** 품질 제한 상태여도 실제 관측값이 있으면 "없음"이 아니라 부분 집계다. */
+    public static ComputeState ofTrend(String status, boolean hasObservedValue) {
         if (status == null) {
             return new ComputeState(NO_DATA, "TREND_NOT_PREPARED", null);
         }
         return switch (status) {
             case "READY" -> ready();
+            case "PARTIAL" -> partial("PARTIAL_TREND_QUALITY");
             case "PREPARING" -> computing(null);
             case "INSUFFICIENT_DATA" ->
-                    new ComputeState(INSUFFICIENT_DATA, "INSUFFICIENT_TREND_SAMPLE", null);
+                    hasObservedValue
+                            ? partial("PARTIAL_TREND_QUALITY")
+                            : new ComputeState(INSUFFICIENT_DATA,
+                                    "INSUFFICIENT_TREND_SAMPLE", null);
             case "NOT_SUPPORTED" -> notSupported("TREND_NOT_SUPPORTED");
             case "FAILED" -> failed("TREND_FAILED");
             default -> new ComputeState(NO_DATA, "TREND_NOT_PREPARED", null);

@@ -3,6 +3,8 @@ package com.example.git_job.compute.service;
 import com.example.git_job.compute.store.ComputeSnapshotStore;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import java.time.Instant;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -17,15 +19,32 @@ public class ComputeRetryScheduler {
 
     private final ComputeSnapshotStore attempts;
     private final CComputeSyncService sync;
+    private final Set<Long> requestedUsers = ConcurrentHashMap.newKeySet();
 
     public ComputeRetryScheduler(ComputeSnapshotStore attempts, CComputeSyncService sync) {
         this.attempts = attempts;
         this.sync = sync;
     }
 
+    /** 목표 조건 저장처럼 응답을 막으면 안 되는 최초 계산을 다음 scheduler tick에 맡긴다. */
+    public void requestInitialSync(long userId) {
+        requestedUsers.add(userId);
+    }
+
     @Scheduled(fixedDelayString = "${gitjob.compute.retry.poll-interval:5s}",
             initialDelayString = "${gitjob.compute.retry.initial-delay:10s}")
     public void retryDue() {
+        requestedUsers.stream().limit(BATCH_SIZE).toList().forEach(userId -> {
+            requestedUsers.remove(userId);
+            try {
+                sync.synchronize(userId);
+            } catch (RuntimeException failure) {
+                // synchronize가 attempt/backoff를 저장하며, 저장 전에 실패하거나 프로세스가
+                // 종료되어도 recoverMissing이 DB 상태를 기준으로 다시 발견한다.
+                log.warn("C compute requested sync deferred: userId={}, reason={}",
+                        userId, failure.toString());
+            }
+        });
         for (ComputeAttempt due : attempts.dueAttempts(Instant.now(), BATCH_SIZE)) {
             try {
                 // target/evidence가 바뀌었으면 읽었던 token의 오래된 행만 정리한다.
@@ -46,7 +65,8 @@ public class ComputeRetryScheduler {
     @Scheduled(fixedDelayString = "${gitjob.compute.recovery.poll-interval:5m}",
             initialDelayString = "${gitjob.compute.recovery.initial-delay:15s}")
     public void recoverMissing() {
-        for (Long userId : attempts.usersMissingComputeState(BATCH_SIZE)) {
+        for (Long userId : attempts.usersMissingComputeState(
+                CComputeSyncService.COMPUTE_CONTRACT_VERSION, BATCH_SIZE)) {
             try {
                 sync.synchronize(userId);
             } catch (RuntimeException failure) {

@@ -54,6 +54,18 @@ class ResolveStore:
         return self.trend
 
 
+class BatchResolveStore:
+    def __init__(self, heads):
+        self.heads = heads
+        self.batch_calls = []
+
+    def get_head_snapshots(self, *, kind, owner, streams):
+        self.batch_calls.append((kind, owner, streams))
+        return {
+            stream: self.heads[stream] for stream in streams if stream in self.heads
+        }
+
+
 class IntakeRunner:
     job_set_sink = object()
     running = False
@@ -590,6 +602,95 @@ def test_trend_resolve_returns_404_without_a_matching_head():
 
     assert response.status_code == 404
     assert response.json()["code"] == "TREND_NOT_PREPARED"
+
+
+def test_trend_batch_returns_ready_and_missing_technologies_in_one_response():
+    result = archive_trend(
+        "java",
+        (),
+        REGISTRY,
+        periods=("2026-09-07",),
+        granularity=PeriodGranularity.WEEK,
+        include_partial=False,
+    )
+    snapshot_id = "c-" + "4" * 64
+    stream = weekly_activity_trend_stream(
+        tech_id="java",
+        registry_version=REGISTRY.registry_version,
+        include_partial=False,
+    )
+    head = {
+        "snapshot_id": snapshot_id,
+        "event_id": "trend-batch-event",
+        "occurred_at": datetime(2026, 9, 14, tzinfo=UTC),
+        "payload": result.model_dump(mode="json"),
+    }
+    stored = {
+        "snapshot_id": snapshot_id,
+        "kind": "TREND",
+        "payload": result.model_dump(mode="json"),
+    }
+    store = BatchResolveStore({stream: head})
+
+    with _client(store) as client:
+        response = client.post(
+            PREFIX + "/trends/resolve-batch",
+            json={
+                "selectors": [
+                    {"source": "WEEKLY_REPO_ACTIVITY", "tech_id": "java"},
+                    {"source": "WEEKLY_REPO_ACTIVITY", "tech_id": "python"},
+                ]
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["items"] == [
+        {
+            "tech_id": "java",
+            "status": "READY",
+            "code": None,
+            "snapshot": stored,
+        },
+        {
+            "tech_id": "python",
+            "status": "NOT_PREPARED",
+            "code": "TREND_NOT_PREPARED",
+            "snapshot": None,
+        },
+    ]
+    assert len(store.batch_calls) == 1
+    assert store.batch_calls[0][0:2] == ("TREND", None)
+    assert len(store.batch_calls[0][2]) == 2
+
+
+def test_trend_batch_rejects_mixed_sources_and_duplicate_technologies():
+    store = BatchResolveStore({})
+    mixed = {
+        "selectors": [
+            {"source": "WEEKLY_REPO_ACTIVITY", "tech_id": "java"},
+            {
+                "source": "GH_ARCHIVE_HISTORICAL",
+                "tech_id": "python",
+                "periods": ["2026-08"],
+                "granularity": "MONTH",
+            },
+        ]
+    }
+    duplicate = {
+        "selectors": [
+            {"source": "WEEKLY_REPO_ACTIVITY", "tech_id": "java"},
+            {"source": "WEEKLY_REPO_ACTIVITY", "tech_id": "java"},
+        ]
+    }
+
+    with _client(store) as client:
+        responses = [
+            client.post(PREFIX + "/trends/resolve-batch", json=request)
+            for request in (mixed, duplicate)
+        ]
+
+    assert [response.status_code for response in responses] == [422, 422]
+    assert store.batch_calls == []
 
 
 def test_trend_resolve_reports_corrupt_stored_payload_as_server_failure():

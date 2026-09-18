@@ -49,9 +49,9 @@ const COPY: Readonly<Record<string, Copy>> = {
   },
   INSUFFICIENT_EVIDENCE: {
     kind: 'EMPTY',
-    title: '비교할 기술 정보가 아직 없어요',
+    title: '추천을 확정할 기술 근거가 부족해요',
     description:
-      '저장소를 분석하면 그 결과로 공고 요구 기술과 비교합니다. 분석한 저장소가 없으면 대조할 것이 없습니다.',
+      '분석 결과는 있지만 일부 요구 기술을 보유 또는 미보유로 확정할 수 없어 다음 학습 기술을 추천하지 않았습니다.',
   },
   INSUFFICIENT_JOB_SAMPLE: {
     kind: 'INSUFFICIENT_DATA',
@@ -127,7 +127,16 @@ const FALLBACK: Readonly<Record<DataStatus, Copy>> = {
   },
 }
 
+const NO_ANALYSIS: Copy = {
+  kind: 'EMPTY',
+  title: '비교할 기술 정보가 아직 없어요',
+  description: '저장소를 분석하면 그 결과로 공고 요구 기술과 비교합니다.',
+}
+
 function copyOf(state: ComputeState): Copy {
+  if (state.statusReason === 'INSUFFICIENT_EVIDENCE' && state.dataStatus === 'NO_DATA') {
+    return NO_ANALYSIS
+  }
   return COPY[state.statusReason] ?? FALLBACK[state.dataStatus]
 }
 
@@ -205,13 +214,18 @@ export function PartialNotice({ state }: { state: ComputeState | undefined }) {
   if (state === undefined || state.dataStatus !== 'PARTIAL') {
     return null
   }
+  const message =
+    state.statusReason === 'PARTIAL_MATCHING_EVIDENCE'
+      ? '일부 요구 기술은 보유 여부를 확정하지 못했지만, 확인된 근거로 대조한 공고를 표시합니다. 미판정 기술은 미보유로 계산하지 않습니다.'
+      : state.statusReason === 'PARTIAL_SKILL_GAP_EVIDENCE'
+        ? '확인된 기술과 미판정 기술을 함께 표시합니다. 미판정 기술은 부족으로 세지 않습니다.'
+        : '일부 저장소를 분석하지 못해 결과가 달라질 수 있습니다. 분석하지 못한 저장소의 기술은 미판정으로 둡니다.'
   return (
     <p
       role="status"
       className="rounded-[14px] border border-tone-caution-bg bg-tone-caution-bg px-4 py-3 text-[12.5px] leading-[1.6] text-tone-caution"
     >
-      일부 저장소를 분석하지 못해 결과가 달라질 수 있습니다. 분석하지 못한 저장소의 기술은 미판정으로
-      둡니다.
+      {message}
     </p>
   )
 }

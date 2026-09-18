@@ -40,7 +40,7 @@ export function TrendDetailPage() {
     },
     target.isFetched,
   )
-  const series = trends.data === undefined ? [] : toTrendSeries(trends.data)
+  const series = trends.data === undefined ? [] : toTrendSeries(trends.data, periods[0])
   const charted = series.filter((item) => item.points.length > 0)
   const stateOnly = series.filter((item) => item.points.length === 0)
 

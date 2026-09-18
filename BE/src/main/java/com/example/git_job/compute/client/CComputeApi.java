@@ -8,6 +8,7 @@ import com.example.git_job.compute.client.dto.CRelatedJobs;
 import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.client.dto.CTrend;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 
@@ -97,6 +98,12 @@ public class CComputeApi {
     /** 공용 Trend의 완료 head 조회. 계산을 만들지 않는 순수 조회다. */
     public CTrend.Resolved resolveTrend(CTrend.Selector selector) {
         return client.post("/internal/v1/c/trends/resolve", selector, CTrend.Resolved.class);
+    }
+
+    /** 같은 출처의 기술 비교용. resolve와 Snapshot payload를 C 왕복 한 번에 받는다. */
+    public CTrend.Batch resolveTrends(List<CTrend.Selector> selectors) {
+        return client.post("/internal/v1/c/trends/resolve-batch",
+                new CTrend.BatchRequest(selectors), CTrend.Batch.class);
     }
 
     public CTrend.Snapshot trendSnapshot(String snapshotId) {

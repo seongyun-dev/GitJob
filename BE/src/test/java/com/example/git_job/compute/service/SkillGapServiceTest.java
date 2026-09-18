@@ -52,10 +52,10 @@ class SkillGapServiceTest {
                         "ev-1", "BACKEND|서울|신입", Instant.EPOCH)));
         service = new SkillGapService(compute,
                 reader(targets, snapshots));
-        when(compute.recommendation(anyString(), anyLong())).thenReturn(snapshot());
+        when(compute.recommendation(anyString(), anyLong())).thenReturn(snapshot("READY"));
     }
 
-    private static CSnapshot snapshot() {
+    private static CSnapshot snapshot(String status) {
         CSnapshot.Gap gap = new CSnapshot.Gap("technology-gap/v2", List.of("spring"), List.of(
                 new CSnapshot.GapTechnology("spring", "HELD", List.of(), List.of()),
                 new CSnapshot.GapTechnology("kafka", "NOT_HELD",
@@ -77,7 +77,7 @@ class SkillGapServiceTest {
                 new CSnapshot.Fact("f1", "DEMAND", "kafka", "공고 87건 중 21건이 Kafka를 요구합니다."),
                 new CSnapshot.Fact("f2", "QUALITY", null, "전체 계산에 대한 설명")));
         return new CSnapshot(RECOMMENDATION, "RECOMMENDATION",
-                new CSnapshot.Recommendation("7", "u7-x", "cohort-1", "READY", 12,
+                new CSnapshot.Recommendation("7", "u7-x", "cohort-1", status, 12,
                         List.of(candidate), demand, gap, Map.of("spring", "L2"),
                         Map.of("spring", "L3", "redis", "L1"), List.of(), explanation));
     }
@@ -154,6 +154,22 @@ class SkillGapServiceTest {
 
         // 두 화면의 숫자가 어긋나면 서로 다른 계산을 읽은 것이다.
         assertThat(whatIfFromGap).isEqualTo(whatIfFromRecommendation);
+    }
+
+    @Test
+    @DisplayName("추천을 만들 근거가 부족해도 기술별 보유와 미판정 결과는 보여 준다")
+    void keepsGapRowsVisibleWhenRecommendationEvidenceIsInsufficient() {
+        when(compute.recommendation(anyString(), anyLong()))
+                .thenReturn(snapshot("INSUFFICIENT_EVIDENCE"));
+
+        SkillGapResponse response = service.skillGap(USER_ID);
+
+        assertThat(response.dataStatus()).isEqualTo("PARTIAL");
+        assertThat(response.statusReason()).isEqualTo("PARTIAL_SKILL_GAP_EVIDENCE");
+        assertThat(response.rows()).hasSize(4);
+        assertThat(response.summary().undeterminedCount()).isEqualTo(1);
+        assertThat(service.recommendations(USER_ID).dataStatus())
+                .isEqualTo("INSUFFICIENT_DATA");
     }
 
     private Map<String, String> verdicts() {

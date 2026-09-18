@@ -10,6 +10,7 @@ import type {
   TrendSourceView,
 } from '@/features/trend/model/view'
 import { rankObservableRows } from '@/features/trend/model/ranking'
+import { pointsSinceMonth } from '@/features/trend/model/periods'
 
 /**
  * Trend DTO를 화면 타입으로 (S15P21E102-279).
@@ -48,8 +49,15 @@ function unitDisplayName(sourceId: TrendSourceId, value: string | null): string 
   return value
 }
 
-function reasonText(reasons: readonly string[], fallback: string): string {
+function reasonText(
+  reasons: readonly string[],
+  fallback: string,
+  status: TrendSourceDto['dataStatus'],
+): string {
   if (reasons.length === 0) return fallback
+  if (status === 'PARTIAL') {
+    return '일부 공개 저장소의 분석이 완료되지 않아 집계 범위에 제한이 있습니다.'
+  }
   return reasons.some((reason) => /^[A-Z0-9_:.-]+$/.test(reason))
     ? '비교할 데이터가 충분하지 않습니다.'
     : reasons.join(' · ')
@@ -86,18 +94,22 @@ function direction(absolute: number | null, relative: number | null): 'UP' | 'DO
  * 기간 배열을 그대로 쓴다. 빠진 달을 채워 넣지 않는 것이 계약이고, 채우면 없는 관측을
  * 화면이 만들어 낸다.
  */
-export function toTrendSeries(dto: TechnologyTrendDto): TrendSeriesView[] {
+export function toTrendSeries(
+  dto: TechnologyTrendDto,
+  earliestMonth?: string,
+): TrendSeriesView[] {
   return dto.sources
     .map((source) => {
       const id = toSourceId(source.sourceId)
       if (id === null) {
         return null
       }
-      const points = source.points.map((point) => ({
+      const selectedPoints = pointsSinceMonth(source.points, earliestMonth)
+      const points = selectedPoints.map((point) => ({
         period: point.period,
         value: point.value,
       }))
-      const last = source.points.at(-1)
+      const last = selectedPoints.at(-1)
       const unit = unitDisplayName(id, source.unit)
       return {
         sourceId: id,
@@ -108,7 +120,7 @@ export function toTrendSeries(dto: TechnologyTrendDto): TrendSeriesView[] {
         deltaText:
           last === undefined ? null : changeText(last.absoluteChange, last.relativeChange),
         points,
-        note: reasonText(source.reasons, FOOTNOTE[id]),
+        note: reasonText(source.reasons, FOOTNOTE[id], source.dataStatus),
       } satisfies TrendSeriesView
     })
     .filter((series): series is TrendSeriesView => series !== null)
@@ -159,7 +171,12 @@ export function toTrendSource(
     unit: unitDisplayName(id, compare.unit),
     // 한 기술도 값이 없으면 카드 전체가 비어 있는 것이다. 빈 표를 READY로 그리면
     // 사용자는 "관측했더니 전부 0"으로 읽는다.
-    status: rows.length === 0 ? unavailableStatus(unobservedRows.map((row) => row.dataStatus)) : 'READY',
+    status:
+      rows.length === 0
+        ? unavailableStatus(unobservedRows.map((row) => row.dataStatus))
+        : rows.some((row) => row.dataStatus === 'PARTIAL')
+          ? 'PARTIAL'
+          : 'READY',
     basis: compare.rows[0]?.period ?? '기간 미정',
     scopeNote: null,
     maximumObservedValue: ranking.maximumObservedValue,

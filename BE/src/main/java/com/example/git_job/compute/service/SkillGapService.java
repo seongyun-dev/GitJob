@@ -34,7 +34,14 @@ public class SkillGapService {
             return SkillGapResponse.pending(computed.state(), Basis.of(computed.target()));
         }
         CSnapshot.Recommendation recommendation = computed.value().payload();
-        return SkillGapResponse.of(ComputeState.ofRecommendation(recommendation.status()),
+        boolean hasGapRows = recommendation.gap() != null
+                && recommendation.gap().technologies() != null
+                && !recommendation.gap().technologies().isEmpty();
+        ComputeState state = "INSUFFICIENT_EVIDENCE".equals(recommendation.status())
+                && hasGapRows
+                ? ComputeState.partial("PARTIAL_SKILL_GAP_EVIDENCE")
+                : ComputeState.ofRecommendation(recommendation.status());
+        return SkillGapResponse.of(state,
                 Basis.of(computed.target(), recommendation.demand()), recommendation);
     }
 

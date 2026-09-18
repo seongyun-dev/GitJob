@@ -44,6 +44,7 @@ class CComputeClientTest {
     private final AtomicReference<String> lastQuery = new AtomicReference<>();
     private final AtomicReference<String> lastBody = new AtomicReference<>();
     private final AtomicInteger calls = new AtomicInteger();
+    private final Map<String, Long> delaysMillis = new HashMap<>();
 
     private record Response(int status, String body, String retryAfter) {
         static Response of(int status, String body) {
@@ -68,6 +69,13 @@ class CComputeClientTest {
         lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
         lastQuery.set(exchange.getRequestURI().getRawQuery());
         lastBody.set(new String(exchange.getRequestBody().readAllBytes(), UTF_8));
+
+        try {
+            Thread.sleep(delaysMillis.getOrDefault(exchange.getRequestURI().getPath(), 0L));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return;
+        }
 
         Response response = responses.getOrDefault(exchange.getRequestURI().getPath(),
                 Response.of(404, "{\"code\":\"NOT_STUBBED\",\"message\":\"NOT_STUBBED\"}"));
@@ -244,6 +252,23 @@ class CComputeClientTest {
     }
 
     @Test
+    @DisplayName("읽기 타임아웃은 일반 장애와 구분되는 재시도 상태다")
+    void mapsReadTimeout() {
+        responses.put("/slow", Response.of(200, "{\"message\":\"ok\",\"data\":{}}"));
+        delaysMillis.put("/slow", 300L);
+        CComputeClient slow = new CComputeClient(new CComputeProperties(
+                "http://127.0.0.1:" + server.getAddress().getPort(),
+                TOKEN, Duration.ofMillis(50), Duration.ofSeconds(2)));
+
+        CComputeException thrown = catchCompute(
+                () -> slow.get("/slow", Map.of(), Object.class));
+
+        assertThat(thrown.getStatus()).isEqualTo(CComputeStatus.TIMEOUT);
+        assertThat(thrown.getCode()).isEqualTo("C_COMPUTE_TIMEOUT");
+        assertThat(thrown.isRetryable()).isTrue();
+    }
+
+    @Test
     @DisplayName("요청 본문은 snake_case이고 null 필드를 생략하지 않는다")
     void serializesRequestForCContract() {
         responses.put("/internal/v1/c/analyses/completed",
@@ -300,6 +325,27 @@ class CComputeClientTest {
                 .contains("\"source\":\"WEEKLY_REPO_ACTIVITY\"")
                 .contains("\"tech_id\":\"java\"")
                 .contains("\"periods\":[]");
+    }
+
+    @Test
+    @DisplayName("Trend 비교 배치는 selector 여러 개를 한 HTTP 요청으로 보낸다")
+    void sendsTrendBatchInOneRequest() {
+        responses.put("/internal/v1/c/trends/resolve-batch", Response.of(200,
+                "{\"message\":\"ok\",\"data\":{\"items\":["
+                        + "{\"tech_id\":\"java\",\"status\":\"NOT_PREPARED\","
+                        + "\"code\":\"TREND_NOT_PREPARED\",\"snapshot\":null}]}}"));
+        CComputeApi api = new CComputeApi(client());
+
+        CTrend.Batch batch = api.resolveTrends(List.of(
+                CTrend.Selector.weekly("java"), CTrend.Selector.weekly("python")));
+
+        assertThat(calls.get()).isEqualTo(1);
+        assertThat(lastBody.get())
+                .contains("\"selectors\":[")
+                .contains("\"tech_id\":\"java\"")
+                .contains("\"tech_id\":\"python\"");
+        assertThat(batch.items()).singleElement()
+                .satisfies(item -> assertThat(item.status()).isEqualTo("NOT_PREPARED"));
     }
 
     @Test

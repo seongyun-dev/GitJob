@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.only;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -115,6 +116,38 @@ class TrendServiceTest {
     }
 
     @Test
+    @DisplayName("공개 집계에 관측값이 있으면 품질 제한을 부분 상태로 내려보낸다")
+    void exposesObservedTrendWithQualityLimits() {
+        when(compute.trendSnapshot(anyString())).thenReturn(snapshot("INSUFFICIENT_DATA"));
+
+        TrendResponse.Source source = service.trends("kafka", List.of(),
+                "BACKEND", List.of(), List.of()).sources().getFirst();
+
+        assertThat(source.dataStatus()).isEqualTo(ComputeState.PARTIAL);
+        assertThat(source.statusReason()).isEqualTo("PARTIAL_TREND_QUALITY");
+        assertThat(source.points().getFirst().value()).isEqualTo(128);
+    }
+
+    @Test
+    @DisplayName("관측값 자체가 없으면 표본 부족 상태를 유지한다")
+    void keepsInsufficientStateWhenTrendHasNoObservedValue() {
+        CTrend.Payload payload = new CTrend.Payload(
+                "c-gharchive-trend/v1", "GITHUB_GH_ARCHIVE", "kafka",
+                "gh_archive_event_count", "EVENTS", "MONTH", "INSUFFICIENT_DATA",
+                List.of("MISSING_PERIOD_INPUT"),
+                List.of(new CTrend.Point("2026-08", "INSUFFICIENT_DATA", null, null,
+                        null, null, null, null, null, List.of("MISSING_PERIOD_INPUT"))));
+        when(compute.trendSnapshot(anyString()))
+                .thenReturn(new CTrend.Snapshot("c-trend", "TREND", payload));
+
+        TrendResponse.Source source = service.trends("kafka", List.of(),
+                "BACKEND", List.of(), List.of()).sources().getFirst();
+
+        assertThat(source.dataStatus()).isEqualTo(ComputeState.INSUFFICIENT_DATA);
+        assertThat(source.statusReason()).isEqualTo("INSUFFICIENT_TREND_SAMPLE");
+    }
+
+    @Test
     @DisplayName("한 출처가 비어도 나머지는 정상 응답한다")
     void isolatesPerSourceFailure() {
         when(compute.resolveTrend(any())).thenThrow(
@@ -153,6 +186,13 @@ class TrendServiceTest {
     @Test
     @DisplayName("비교는 한 번에 한 출처만 본다")
     void compareUsesOneSource() {
+        when(compute.resolveTrends(any())).thenAnswer(invocation -> {
+            List<CTrend.Selector> selectors = invocation.getArgument(0);
+            return new CTrend.Batch(selectors.stream()
+                    .map(selector -> new CTrend.BatchItem(
+                            selector.techId(), "READY", null, snapshot("READY")))
+                    .toList());
+        });
         TrendResponse.Compare compare = service.compare("GITHUB_WEEKLY",
                 List.of("kafka", "redis"), List.of(), null, List.of(), List.of());
 
@@ -171,5 +211,35 @@ class TrendServiceTest {
         assertThatThrownBy(() -> service.compare("GITHUB_ARCHIVE", List.of("kafka"), List.of(),
                 null, List.of(), List.of()))
                 .isInstanceOf(CustomException.class);
+    }
+
+    @Test
+    @DisplayName("기술 비교는 기술 수와 무관하게 C 배치 API를 한 번만 호출한다")
+    void compareUsesOneBatchCall() {
+        when(compute.resolveTrends(any())).thenReturn(new CTrend.Batch(List.of(
+                new CTrend.BatchItem("kafka", "READY", null, snapshot("READY")),
+                new CTrend.BatchItem("redis", "NOT_PREPARED", "TREND_NOT_PREPARED", null))));
+
+        TrendResponse.Compare response = service.compare("GITHUB_WEEKLY",
+                List.of("kafka", "redis"), List.of(), null, List.of(), List.of());
+
+        verify(compute, only()).resolveTrends(any());
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows().get(1).dataStatus()).isEqualTo(ComputeState.NO_DATA);
+    }
+
+    @Test
+    @DisplayName("Trend 배치 타임아웃은 비교 화면 전체 오류가 아니라 재시도 상태다")
+    void batchTimeoutBecomesRetryingRows() {
+        when(compute.resolveTrends(any())).thenThrow(
+                new CComputeException(CComputeStatus.TIMEOUT, "C_COMPUTE_TIMEOUT", null, "x"));
+
+        TrendResponse.Compare response = service.compare("GITHUB_WEEKLY",
+                List.of("kafka", "redis"), List.of(), null, List.of(), List.of());
+
+        assertThat(response.rows()).allSatisfy(row -> {
+            assertThat(row.dataStatus()).isEqualTo(ComputeState.PREPARING);
+            assertThat(row.statusReason()).isEqualTo("COMPUTE_RETRYING");
+        });
     }
 }

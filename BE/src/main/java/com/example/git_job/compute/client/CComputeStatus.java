@@ -54,6 +54,9 @@ public enum CComputeStatus {
     /** 500 {@code COMPUTE_FAILED}. C가 같은 event로 재시도하라고 답한 경우다. */
     COMPUTE_FAILED,
 
+    /** C 읽기 제한 시간을 넘겼다. 계산 결과가 없어지는 오류가 아니라 잠시 뒤 재조회할 상태다. */
+    TIMEOUT,
+
     /**
      * 503, 401, 연결 실패, 타임아웃, 그리고 C 미설정.
      *

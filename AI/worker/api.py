@@ -273,6 +273,29 @@ class TrendResolveSelector(BaseModel):
         return common
 
 
+class TrendResolveBatchRequest(BaseModel):
+    """A bounded comparison request; every selector shares one source scope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    selectors: tuple[TrendResolveSelector, ...] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def one_source_scope(self) -> "TrendResolveBatchRequest":
+        tech_ids = tuple(selector.tech_id for selector in self.selectors)
+        if len(tech_ids) != len(set(tech_ids)):
+            raise ValueError("batch tech_ids must be unique")
+        # Lists inside the dumped values are not hashable, so compare their stable
+        # JSON representation instead of accepting subtly different periods/filters.
+        serialized_scopes = {
+            digest(selector.model_dump(mode="json", exclude={"tech_id"}))
+            for selector in self.selectors
+        }
+        if len(serialized_scopes) != 1:
+            raise ValueError("batch selectors must share one source scope")
+        return self
+
+
 class BodyLimit:
     """Enforce a limit even for chunked requests before Pydantic parses JSON."""
 
@@ -842,6 +865,7 @@ def create_compute_app(
                     TrendCompleted,
                     ArchiveTrendCompleted,
                     TrendResolveSelector,
+                    TrendResolveBatchRequest,
                 )
             },
         }
@@ -1172,14 +1196,11 @@ def create_compute_app(
             ],
         )
 
-    @app.post(prefix + "/trends/resolve", dependencies=auth)
-    def resolve_trend(selector: TrendResolveSelector):
-        from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION, ArchiveTrendResult
+    def trend_resolve_context(selector: TrendResolveSelector):
+        from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION
         from trend.archive_v2 import (
             HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION,
-            HistoricalArchiveTrendResult,
         )
-        from trend.contracts import TrendResult
         from trend.job import JOB_TREND_POLICY_VERSION
         from worker.trend_streams import (
             archive_trend_stream,
@@ -1242,9 +1263,18 @@ def create_compute_app(
                 registry_version=registry.registry_version,
                 algorithm=algorithm,
             )
-        resolved = database().get_head_snapshot("TREND", None, stream)
-        if resolved is None:
-            raise HTTPException(404, "TREND_NOT_PREPARED")
+        return stream, algorithm, expected_job_filters
+
+    def resolved_trend_data(
+        selector: TrendResolveSelector,
+        resolved: dict[str, Any],
+        algorithm: str,
+        expected_job_filters,
+    ):
+        from trend.archive import ArchiveTrendResult
+        from trend.archive_v2 import HistoricalArchiveTrendResult
+        from trend.contracts import TrendResult
+
         payload = resolved.get("payload")
         if not isinstance(payload, dict):
             raise TypeError("resolved Trend payload is invalid")
@@ -1293,27 +1323,77 @@ def create_compute_app(
         if not consistent:
             raise RuntimeError("resolved Trend scope is inconsistent")
         return {
-            "message": "C current public Trend reference",
-            "data": {
-                "snapshot_id": resolved["snapshot_id"],
-                "selector": selector.public_identity(),
-                "schema_version": result.schema_version,
-                "status": result.status.value,
-                "registry_version": result.registry_version,
-                "algorithm_version": result.algorithm_version,
-                "granularity": (
-                    result.granularity
-                    if selector.source == "JOB"
-                    else result.granularity.value
-                ),
-                "periods": periods,
-                "include_partial": include_partial,
-                "lineage": {
-                    "event_id": resolved["event_id"],
-                    "occurred_at": resolved["occurred_at"],
-                },
+            "snapshot_id": resolved["snapshot_id"],
+            "selector": selector.public_identity(),
+            "schema_version": result.schema_version,
+            "status": result.status.value,
+            "registry_version": result.registry_version,
+            "algorithm_version": result.algorithm_version,
+            "granularity": (
+                result.granularity
+                if selector.source == "JOB"
+                else result.granularity.value
+            ),
+            "periods": periods,
+            "include_partial": include_partial,
+            "lineage": {
+                "event_id": resolved["event_id"],
+                "occurred_at": resolved["occurred_at"],
             },
         }
+
+    @app.post(prefix + "/trends/resolve", dependencies=auth)
+    def resolve_trend(selector: TrendResolveSelector):
+        stream, algorithm, expected_job_filters = trend_resolve_context(selector)
+        resolved = database().get_head_snapshot("TREND", None, stream)
+        if resolved is None:
+            raise HTTPException(404, "TREND_NOT_PREPARED")
+        return {
+            "message": "C current public Trend reference",
+            "data": resolved_trend_data(
+                selector, resolved, algorithm, expected_job_filters
+            ),
+        }
+
+    @app.post(prefix + "/trends/resolve-batch", dependencies=auth)
+    def resolve_trend_batch(request: TrendResolveBatchRequest):
+        """Resolve up to ten technologies with one B-to-C HTTP round trip."""
+
+        contexts = [
+            (selector, *trend_resolve_context(selector))
+            for selector in request.selectors
+        ]
+        streams = tuple(context[1] for context in contexts)
+        resolved_by_stream = database().get_head_snapshots(
+            kind="TREND", owner=None, streams=streams
+        )
+        items = []
+        for selector, stream, algorithm, expected_job_filters in contexts:
+            resolved = resolved_by_stream.get(stream)
+            if resolved is None:
+                items.append(
+                    {
+                        "tech_id": selector.tech_id,
+                        "status": "NOT_PREPARED",
+                        "code": "TREND_NOT_PREPARED",
+                        "snapshot": None,
+                    }
+                )
+                continue
+            resolved_trend_data(selector, resolved, algorithm, expected_job_filters)
+            items.append(
+                {
+                    "tech_id": selector.tech_id,
+                    "status": "READY",
+                    "code": None,
+                    "snapshot": {
+                        "snapshot_id": resolved["snapshot_id"],
+                        "kind": "TREND",
+                        "payload": resolved["payload"],
+                    },
+                }
+            )
+        return {"message": "C public Trend batch", "data": {"items": items}}
 
     @app.post(prefix + "/trends/completed", dependencies=auth)
     def trend_completed(event: TrendCompleted):

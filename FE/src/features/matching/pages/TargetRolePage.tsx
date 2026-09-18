@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useJobDemands, useSaveTarget, useTarget } from '@/features/matching/hooks/useMatching'
 import {
@@ -29,6 +29,22 @@ interface Form {
   career: CareerSelection
 }
 
+interface JobDemandPreviewParams {
+  targetRole: TargetRole
+  regions: string[]
+  careerLevels: string[]
+}
+
+const PREVIEW_DEBOUNCE_MS = 400
+
+function previewParams(form: Form): JobDemandPreviewParams {
+  return {
+    targetRole: form.targetRole,
+    regions: form.regions,
+    careerLevels: careerValues(form.career),
+  }
+}
+
 function toggleValue(values: readonly string[], value: string): string[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
 }
@@ -45,12 +61,27 @@ export function TargetRolePage() {
   }
   const update = (patch: Partial<Form>) => setDraft({ ...form, ...patch })
   const selectedCareerLevels = careerValues(form.career)
+  const nextPreviewTargetRole = form.targetRole
+  const nextPreviewRegions = form.regions.join('\u001f')
+  const nextPreviewCareer = form.career
+  const [debouncedPreview, setDebouncedPreview] = useState<JobDemandPreviewParams>(() =>
+    previewParams(form),
+  )
 
-  const preview = useJobDemands({
-    targetRole: form.targetRole,
-    regions: form.regions,
-    careerLevels: selectedCareerLevels,
-  })
+  useEffect(() => {
+    const timeout = window.setTimeout(
+      () =>
+        setDebouncedPreview({
+          targetRole: nextPreviewTargetRole,
+          regions: nextPreviewRegions === '' ? [] : nextPreviewRegions.split('\u001f'),
+          careerLevels: careerValues(nextPreviewCareer),
+        }),
+      PREVIEW_DEBOUNCE_MS,
+    )
+    return () => window.clearTimeout(timeout)
+  }, [nextPreviewCareer, nextPreviewRegions, nextPreviewTargetRole])
+
+  const preview = useJobDemands(debouncedPreview)
   const technologies = [...(preview.data?.technologies ?? [])]
     .filter((technology) => technology.requiredCount > 0)
     .sort((left, right) => right.requiredCount - left.requiredCount)
@@ -199,7 +230,7 @@ export function TargetRolePage() {
           )}
         </form>
 
-        <DataRegion title={`${targetRoleDisplayName(form.targetRole)} 채용 기술 수요`}>
+        <DataRegion title={`${targetRoleDisplayName(debouncedPreview.targetRole)} 채용 기술 수요`}>
           <ComputeStatePanel
             isLoading={preview.isLoading}
             error={preview.error}

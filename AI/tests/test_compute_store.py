@@ -109,7 +109,9 @@ def test_unsettled_ticket_is_reclaimed_when_its_request_content_changes(store):
     ticket = claim(store, body={"analysis_id": "a1"})
     store.fail(ticket, "SOMETHING_TRANSIENT")
 
-    reclaimed = claim(store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "moved"})
+    reclaimed = claim(
+        store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "moved"}
+    )
     assert reclaimed.token is not None
     assert reclaimed.attempt == ticket.attempt + 1
 
@@ -117,7 +119,9 @@ def test_unsettled_ticket_is_reclaimed_when_its_request_content_changes(store):
     # attempt with the same content is an ordinary retry rather than a repeat
     # of the same conflict.
     store.fail(reclaimed, "AGAIN")
-    again = claim(store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "moved"})
+    again = claim(
+        store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "moved"}
+    )
     assert again.token is not None
     assert again.attempt == reclaimed.attempt + 1
 
@@ -128,7 +132,9 @@ def test_completed_ticket_still_conflicts_when_content_changes(store):
     ticket = claim(store, body={"analysis_id": "a1"})
     store.complete(ticket, [artifact()])
     with pytest.raises(IdempotencyConflict):
-        claim(store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "other"})
+        claim(
+            store, ticket.event_id, at=ticket.occurred_at, body={"analysis_id": "other"}
+        )
 
 
 def test_scope_change_conflicts_even_on_an_unsettled_ticket(store):
@@ -329,6 +335,12 @@ def test_bulk_head_payload_read_and_period_compatible_public_selection(store):
     assert store.get_head_payloads(
         kind="TREND", owner=None, streams=(stream, str(uuid4()))
     ) == {stream: payload}
+    resolved = store.get_head_snapshots(
+        kind="TREND", owner=None, streams=(stream, str(uuid4()))
+    )
+    assert set(resolved) == {stream}
+    assert resolved[stream]["payload"] == payload
+    assert resolved[stream]["event_id"] == trend_ticket.event_id
 
 
 def test_public_snapshot_is_not_visible_under_forged_personal_scope(store):

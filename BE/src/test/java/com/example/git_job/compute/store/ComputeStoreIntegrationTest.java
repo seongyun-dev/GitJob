@@ -257,10 +257,56 @@ class ComputeStoreIntegrationTest {
         });
     }
 
+    @Test
+    @DisplayName("현재 계산 계약 이전 Snapshot은 복구 대상으로 다시 고른다")
+    void findsUsersWithStaleComputeContract() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            UserTargetStore targets = new UserTargetStore(jdbc);
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            targets.save(userId, "BACKEND", List.of("서울"), List.of("신입"), now);
+            jdbc.update("""
+                    INSERT INTO analysis_job
+                        (analysis_id, user_id, repository_id, branch_name, commit_sha,
+                         status, current_stage, requested_at, completed_at,
+                         registry_version, rule_pack_version, compute_ready_at)
+                    VALUES (?, ?, ?, 'main', ?, 'SUCCEEDED', 'DONE', ?, ?,
+                            'registry-20260911.4', 'rule-pack-20260911.4', ?)
+                    """, "analysis-stale-contract", userId, "repository-1", "a".repeat(40),
+                    java.sql.Timestamp.from(now.minusSeconds(60)), java.sql.Timestamp.from(now),
+                    java.sql.Timestamp.from(now.plusSeconds(1)));
+
+            jdbc.update("""
+                    INSERT INTO user_c_snapshot
+                        (user_id, evidence_version, cohort_snapshot_id, demand_snapshot_id,
+                         recommendation_snapshot_id, event_id, target_key, computed_at,
+                         compute_contract_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'legacy')
+                    """, userId, EVIDENCE_VERSION, COHORT, DEMAND, RECOMMENDATION,
+                    "ev-legacy", "BACKEND|서울|신입", java.sql.Timestamp.from(now));
+
+            assertThat(store.usersMissingComputeState(
+                    ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, 20))
+                    .containsExactly(userId);
+
+            store.save(snapshot(userId, EVIDENCE_VERSION, "ev-current", now.plusSeconds(1),
+                    ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION));
+            assertThat(store.usersMissingComputeState(
+                    ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, 20)).isEmpty();
+        });
+    }
+
     private static ComputeSnapshot snapshot(long userId, String evidenceVersion, String eventId,
                                             Instant computedAt) {
+        return snapshot(userId, evidenceVersion, eventId, computedAt,
+                ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION);
+    }
+
+    private static ComputeSnapshot snapshot(long userId, String evidenceVersion, String eventId,
+                                            Instant computedAt, String computeContractVersion) {
         return new ComputeSnapshot(userId, evidenceVersion, COHORT, DEMAND, RECOMMENDATION,
-                eventId, "BACKEND|서울|신입", computedAt.truncatedTo(ChronoUnit.MICROS));
+                eventId, "BACKEND|서울|신입", computeContractVersion,
+                computedAt.truncatedTo(ChronoUnit.MICROS));
     }
 
     /** 마이그레이션을 전부 적용한 빈 DB와 사용자 한 명을 만들어 준다. */

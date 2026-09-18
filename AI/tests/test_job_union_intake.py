@@ -18,6 +18,7 @@ from worker.intake import (
     IntakeConfig,
     IntakeRunner,
     JobOutput,
+    _monthly_demand_criteria,
     publish_job_input_set,
 )
 from worker.store import ComputeStore, Ticket, apply_migration
@@ -176,6 +177,43 @@ def test_poll_prewarms_latest_selector_scope_before_first_http_request():
     assert selected == all_latest[0]
     assert result["status"] == "COMPLETED"
     assert len(calls) == before_resolve
+
+
+def test_monthly_demand_criteria_cover_the_last_twelve_completed_months():
+    configured = criteria(
+        as_of="2026-09-08T00:00:00Z",
+        sources=("SARAMIN",),
+        regions=("서울",),
+        career_levels=("신입",),
+        min_jobs=20,
+    )
+    source = batch(
+        posting(
+            "latest",
+            source_site="WORKNET",
+            collected_at="2026-09-15T22:30:04Z",
+        )
+    )
+    output = JobOutput(
+        batch=source,
+        occurred_at=source.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="WORKNET",
+        batch_size_bytes=len(source.model_dump_json().encode()),
+    )
+
+    monthly = _monthly_demand_criteria((output,), (configured,))
+
+    assert len(monthly) == 12
+    assert [item.complete_month() for item in monthly[:2]] == ["2025-09", "2025-10"]
+    assert monthly[-1].complete_month() == "2026-08"
+    assert all(item.purpose.value == "MONTHLY_DEMAND" for item in monthly)
+    # JOB Trend selector와 같은 범위다. 설정의 수집 source/min_jobs는 섞지 않는다.
+    assert all(not item.sources and item.min_jobs == 1 for item in monthly)
+    assert all(item.regions == ("서울",) for item in monthly)
+    assert all(item.career_levels == ("신입",) for item in monthly)
 
 
 def test_review_preparation_failure_after_claim_is_heartbeated_and_failed(

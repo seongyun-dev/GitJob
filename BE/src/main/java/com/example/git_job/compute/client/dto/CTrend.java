@@ -64,6 +64,21 @@ public final class CTrend {
     ) {
     }
 
+    public record BatchRequest(List<Selector> selectors) {
+        public BatchRequest {
+            selectors = List.copyOf(selectors);
+        }
+    }
+
+    public record Batch(List<BatchItem> items) {
+        public Batch {
+            items = items == null ? List.of() : List.copyOf(items);
+        }
+    }
+
+    public record BatchItem(String techId, String status, String code, Snapshot snapshot) {
+    }
+
     /**
      * Trend Snapshot 하나.
      *

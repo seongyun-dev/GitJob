@@ -20,6 +20,7 @@ import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.query.UserEvidenceStore;
 import com.example.git_job.compute.service.CComputeSyncService;
 import com.example.git_job.compute.service.ComputeResultReader;
+import com.example.git_job.compute.service.ComputeRetryScheduler;
 import com.example.git_job.compute.service.JobMatchService;
 import com.example.git_job.compute.service.SkillGapService;
 import com.example.git_job.compute.service.TargetService;
@@ -64,6 +65,7 @@ class MeMatchingControllerTest {
     private UserTargetStore targets;
     private ComputeSnapshotStore snapshots;
     private CComputeSyncService sync;
+    private ComputeRetryScheduler scheduler;
     private MockMvc mvc;
 
     @BeforeEach
@@ -72,6 +74,7 @@ class MeMatchingControllerTest {
         targets = mock(UserTargetStore.class);
         snapshots = mock(ComputeSnapshotStore.class);
         sync = mock(CComputeSyncService.class);
+        scheduler = mock(ComputeRetryScheduler.class);
         UserEvidenceStore evidence = mock(UserEvidenceStore.class);
 
         when(targets.find(USER_ID)).thenReturn(Optional.of(
@@ -83,7 +86,7 @@ class MeMatchingControllerTest {
 
         ComputeResultReader reader = reader(targets, snapshots);
         mvc = MockMvcBuilders.standaloneSetup(new MeMatchingController(
-                        new TargetService(targets, sync),
+                        new TargetService(targets, scheduler),
                         new JobMatchService(compute, reader),
                         new SkillGapService(compute, reader),
                         new WhatIfService(compute, reader)))
@@ -126,8 +129,9 @@ class MeMatchingControllerTest {
                 // FE 가 직무·필터에서 직접 키를 만들면 공백·순서 차이로 캐시가 두 벌 생긴다.
                 .andExpect(jsonPath("$.data.targetKey").value("BACKEND|서울|신입"));
 
-        // 직무가 바뀌면 공고 모집단이 통째로 달라진다. 다음 분석까지 기다리게 하지 않는다.
-        verify(sync).synchronize(USER_ID);
+        // 저장 요청 안에서 C를 기다리지 않고 scheduler가 다음 tick에 계산한다.
+        verify(scheduler).requestInitialSync(USER_ID);
+        verify(sync, never()).synchronize(USER_ID);
     }
 
     @Test

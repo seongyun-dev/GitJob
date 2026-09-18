@@ -55,6 +55,12 @@ public class CComputeSyncService {
 
     private static final String COHORT_RESOLVE_PATH = "/internal/v1/c/job-cohorts/resolve";
     private static final String ANALYSES_COMPLETED_PATH = "/internal/v1/c/analyses/completed";
+    /**
+     * 저장된 Snapshot을 다시 계산해야 하는 BE↔C 활성 매칭 계약.
+     * 공고 수요 집계나 추천 알고리즘 결과 의미가 바뀌면 반드시 올린다.
+     */
+    static final String COMPUTE_CONTRACT_VERSION =
+            ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION;
     private static final int MAX_ATTEMPTS = 3;
     private static final int RUNNING_LEASE_SECONDS = 120;
 
@@ -144,7 +150,8 @@ public class CComputeSyncService {
             case SCOPE_MISMATCH -> recordTerminal(attempt, "COMPUTE_SCOPE_MISMATCH");
             case INTEGRITY_FAILED -> recordTerminal(attempt, "COMPUTE_INTEGRITY_FAILED");
             case NOT_FOUND -> recordTerminal(attempt, "COMPUTE_INPUT_NOT_FOUND");
-            case PREPARING, NOT_PREPARED, MATCHING_NOT_PREPARED, COMPUTE_FAILED, UNAVAILABLE
+            case PREPARING, NOT_PREPARED, MATCHING_NOT_PREPARED, COMPUTE_FAILED, TIMEOUT,
+                    UNAVAILABLE
                     -> recordRetry(attempt, "COMPUTE_RETRYING", failure.getRetryAfterSec());
         }
     }
@@ -224,7 +231,7 @@ public class CComputeSyncService {
 
         ComputeSnapshot snapshot = new ComputeSnapshot(userId, assembled.evidenceVersion(),
                 cohort.cohortSnapshotId(), cohort.demandSnapshotId(), recommendation,
-                eventId, target.targetKey(), Instant.now());
+                eventId, target.targetKey(), COMPUTE_CONTRACT_VERSION, Instant.now());
         boolean inserted = snapshots.save(snapshot);
         log.info("C 계산 완료: userId={}, targetKey={}, recommendation={}, inserted={}",
                 userId, target.targetKey(), recommendation, inserted);
@@ -245,7 +252,9 @@ public class CComputeSyncService {
         StringBuilder canonical = new StringBuilder()
                 .append(userId).append('')
                 .append(evidenceVersion).append('')
-                .append(cohortSnapshotId);
+                .append(cohortSnapshotId).append('\u001e')
+                .append("backend_contract").append('\u001f')
+                .append(COMPUTE_CONTRACT_VERSION);
         new TreeMap<>(computeVersions == null ? Map.<String, String>of() : computeVersions)
                 .forEach((key, value) -> canonical.append('')
                         .append(key).append('').append(value));
