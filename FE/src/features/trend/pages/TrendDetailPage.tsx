@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useTarget } from '@/features/matching/hooks/useMatching'
 import { toTrendSeries } from '@/features/trend/api/adapter'
-import { TrendBarChart } from '@/features/trend/components/TrendBarChart'
+import { TrendLineChart } from '@/features/trend/components/TrendLineChart'
 import { useTechnologyTrends } from '@/features/trend/hooks/useTrends'
 import { ApiError } from '@/shared/api/client'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
@@ -101,7 +101,7 @@ export function TrendDetailPage() {
           ) : (
             charted.map((item) => (
               <DataRegion key={item.sourceId} title={item.label}>
-                <TrendBarChart series={item} />
+                <TrendLineChart series={item} />
               </DataRegion>
             ))
           ))}

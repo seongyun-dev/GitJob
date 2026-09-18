@@ -1,6 +1,7 @@
 import type {
   TechnologyTrendDto,
   TrendCompareDto,
+  TrendCompareRowDto,
   TrendSourceDto,
 } from '@/features/trend/api/trendApi'
 import type {
@@ -10,7 +11,7 @@ import type {
   TrendSourceView,
 } from '@/features/trend/model/view'
 import { rankObservableRows } from '@/features/trend/model/ranking'
-import { pointsSinceMonth } from '@/features/trend/model/periods'
+import { pointsForSource } from '@/features/trend/model/periods'
 
 /**
  * Trend DTO를 화면 타입으로 (S15P21E102-279).
@@ -36,7 +37,7 @@ const FOOTNOTE: Readonly<Record<TrendSourceId, string>> = {
   JOB: '수집된 채용공고의 월별 요구 건수입니다.',
 }
 
-function toSourceId(value: string): TrendSourceId | null {
+export function toSourceId(value: string): TrendSourceId | null {
   return SOURCE_IDS.includes(value as TrendSourceId) ? (value as TrendSourceId) : null
 }
 
@@ -104,7 +105,16 @@ export function toTrendSeries(
       if (id === null) {
         return null
       }
-      const selectedPoints = pointsSinceMonth(source.points, earliestMonth)
+      /*
+       * 주간은 월 범위로 자르지 않는다 (티켓 S15P21E102-329).
+       *
+       * 주간 head 는 누적이고 BE 는 여기에 기간 selector 를 주지 않는다
+       * (`CTrend.Selector.weekly(tech)` 는 periods 를 받지 않으며, 보내면 C 가 422 로
+       * 거절한다). 그래서 3/6/12개월 버튼은 주간과 아무 관계가 없는데도 월 하한으로
+       * 주차를 잘라내고 있었다 — 사용자가 "최근 3개월"을 눌렀다고 그보다 앞선 주차의
+       * 관측이 없어지는 것은 아니다. 월별·공고만 요청한 범위로 좁힌다.
+       */
+      const selectedPoints = pointsForSource(id, source.points, earliestMonth)
       const points = selectedPoints.map((point) => ({
         period: point.period,
         value: point.value,
@@ -140,8 +150,31 @@ export function toTrendSource(
   if (id === null) {
     return null
   }
-  const ranking = rankObservableRows(compare.rows)
-  const sourceRows = new Map(compare.rows.map((row) => [row.techId, row]))
+  return buildSourceView(
+    id,
+    compare.unit,
+    compare.rows,
+    compare.rows[0]?.period ?? '기간 미정',
+    techNames,
+  )
+}
+
+/**
+ * 한 출처 · 한 기간의 카드.
+ *
+ * `toTrendSource`(compare 응답)와 `toTrendPeriodViews`(기술별 상세 응답)가 같은 함수를
+ * 쓴다. 두 경로가 순위·상태 판정을 따로 구현하면 같은 화면의 같은 카드가 어느 요청으로
+ * 왔는지에 따라 다르게 보인다.
+ */
+export function buildSourceView(
+  id: TrendSourceId,
+  unit: string | null,
+  sourceRowList: readonly TrendCompareRowDto[],
+  basis: string,
+  techNames: ReadonlyMap<string, string>,
+): TrendSourceView {
+  const ranking = rankObservableRows(sourceRowList)
+  const sourceRows = new Map(sourceRowList.map((row) => [row.techId, row]))
   const rows: TrendRankRow[] = ranking.observed.map((row) => {
     const source = sourceRows.get(row.techId)
     return {
@@ -168,7 +201,7 @@ export function toTrendSource(
   return {
     id,
     label: LABEL[id],
-    unit: unitDisplayName(id, compare.unit),
+    unit: unitDisplayName(id, unit),
     // 한 기술도 값이 없으면 카드 전체가 비어 있는 것이다. 빈 표를 READY로 그리면
     // 사용자는 "관측했더니 전부 0"으로 읽는다.
     status:
@@ -177,7 +210,7 @@ export function toTrendSource(
         : rows.some((row) => row.dataStatus === 'PARTIAL')
           ? 'PARTIAL'
           : 'READY',
-    basis: compare.rows[0]?.period ?? '기간 미정',
+    basis,
     scopeNote: null,
     maximumObservedValue: ranking.maximumObservedValue,
     rows,

@@ -36,7 +36,32 @@ const STATE_KIND: Readonly<Record<TrendSourceView['status'], StateKind>> = {
 const RANK_COLUMNS = ['#', '기술', '비중', '전기 대비'] as const
 const RANK_TEMPLATE = '22px minmax(0,1fr) 64px 62px'
 
-export function TrendSourceCard({ source }: { source: TrendSourceView }) {
+/**
+ * 기간 이동 · 티켓 S15P21E102-329.
+ *
+ * 없으면 카드는 이전과 똑같이 기간 하나만 적는다. 이동이 가능한 카드에만 버튼이 붙고,
+ * 양 끝에서는 disabled 다 — 누를 수는 있는데 아무 일도 안 나는 버튼을 두지 않는다.
+ */
+export interface TrendPeriodNavigation {
+  periods: readonly string[]
+  selected: string
+  onSelect: (period: string) => void
+}
+
+export function TrendSourceCard({
+  source,
+  navigation,
+}: {
+  source: TrendSourceView
+  navigation?: TrendPeriodNavigation
+}) {
+  const index = navigation === undefined ? -1 : navigation.periods.indexOf(navigation.selected)
+  const previous = index > 0 ? navigation?.periods[index - 1] : undefined
+  const next =
+    navigation !== undefined && index >= 0 && index < navigation.periods.length - 1
+      ? navigation.periods[index + 1]
+      : undefined
+
   const top = source.maximumObservedValue
 
   return (
@@ -56,7 +81,41 @@ export function TrendSourceCard({ source }: { source: TrendSourceView }) {
           </span>
         )}
       </div>
-      <p className="mt-1.5 text-[12px] leading-[1.55] text-brand-faint">{source.basis}</p>
+      {navigation === undefined || navigation.periods.length <= 1 ? (
+        <p className="mt-1.5 text-[12px] leading-[1.55] text-brand-faint">{source.basis}</p>
+      ) : (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => previous !== undefined && navigation.onSelect(previous)}
+            disabled={previous === undefined}
+            aria-label="이전 기간"
+            className="flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-brand-line bg-white text-[12px] leading-none text-brand-faint transition-colors enabled:hover:text-brand-ink disabled:opacity-35"
+          >
+            ‹
+          </button>
+          <p
+            aria-live="polite"
+            className="min-w-0 flex-1 text-center text-[12px] leading-[1.55] font-[750] text-brand-ink-soft tabular-nums"
+          >
+            {source.basis}
+          </p>
+          <button
+            type="button"
+            onClick={() => next !== undefined && navigation.onSelect(next)}
+            disabled={next === undefined}
+            aria-label="다음 기간"
+            className="flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-brand-line bg-white text-[12px] leading-none text-brand-faint transition-colors enabled:hover:text-brand-ink disabled:opacity-35"
+          >
+            ›
+          </button>
+        </div>
+      )}
+      {navigation !== undefined && navigation.periods.length > 1 && (
+        <p className="mt-1 text-center text-[10.5px] text-brand-faint tabular-nums">
+          {`${index + 1} / ${navigation.periods.length} 기간`}
+        </p>
+      )}
 
       {source.rows.length === 0 ? (
         <div className="mt-4 rounded-[12px] border border-brand-line bg-[#F7F9FC] px-4 py-4">
