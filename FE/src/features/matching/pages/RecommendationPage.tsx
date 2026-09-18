@@ -79,7 +79,15 @@ export function RecommendationPage() {
                   <StateCard
                     kind="EMPTY"
                     title="추천할 기술이 없어요"
-                    description="현재 조건에서 새로 추천할 기술이 없습니다."
+                    description="현재 조건에서 새로 추천할 기술이 없습니다. 부족한 기술과 비교 기준을 다시 확인해 보세요."
+                    action={
+                      <Link
+                        to="/skill-gap"
+                        className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
+                      >
+                        부족한 기술 확인
+                      </Link>
+                    }
                   />
                 </DataRegion>
               ) : (

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
 import { HeaderAuthArea } from '@/features/auth/components/HeaderAuthArea'
 import { MAIN_PATH } from '@/features/landing/model/landingEntry'
@@ -124,6 +124,122 @@ function SubNav({
         </div>
       </div>
     </nav>
+  )
+}
+
+function MobileNavigation({
+  isLanding,
+  pathname,
+}: {
+  isLanding: boolean
+  pathname: string
+}) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+
+    window.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('pointerdown', closeOnOutsideClick)
+    }
+  }, [open])
+
+  return (
+    <div ref={menuRef} className="relative ml-auto lg:hidden">
+      <button
+        type="button"
+        aria-label="전체 메뉴"
+        aria-expanded={open}
+        aria-controls="mobile-primary-navigation"
+        onClick={() => setOpen((current) => !current)}
+        className={`grid size-10 place-items-center rounded-xl border transition-colors ${
+          isLanding
+            ? 'border-white/30 text-white hover:bg-white/10'
+            : 'border-brand-line bg-white text-brand-ink hover:border-brand-line-active hover:bg-brand-box/50'
+        }`}
+      >
+        <span aria-hidden className="grid gap-[4px]">
+          <span className="block h-[2px] w-[18px] rounded-full bg-current" />
+          <span className="block h-[2px] w-[18px] rounded-full bg-current" />
+          <span className="block h-[2px] w-[18px] rounded-full bg-current" />
+        </span>
+      </button>
+
+      {open && (
+        <nav
+          id="mobile-primary-navigation"
+          aria-label="모바일 주요 화면"
+          className="fixed top-[68px] right-4 left-4 z-50 max-h-[calc(100dvh-84px)] overflow-y-auto rounded-2xl border border-brand-line bg-white p-2 shadow-[0_20px_55px_rgba(16,24,40,0.18)]"
+        >
+          <ul className="grid gap-1">
+            {PRIMARY_NAV.map((item) => {
+              if ('kind' in item) {
+                return (
+                  <li key={item.label}>
+                    <Link
+                      to={MAIN_PATH}
+                      onClick={() => setOpen(false)}
+                      className="block rounded-xl px-4 py-3 text-[14px] font-[750] text-brand-ink hover:bg-tone-accent-bg"
+                    >
+                      {item.label}
+                    </Link>
+                  </li>
+                )
+              }
+
+              const active = findActiveNav(pathname) === item
+              return (
+                <li key={item.label} className="rounded-xl px-2 py-2">
+                  <Link
+                    to={item.to}
+                    onClick={() => setOpen(false)}
+                    className={`block rounded-lg px-2 py-1.5 text-[14px] font-[750] ${
+                      active ? 'text-brand-600' : 'text-brand-ink'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                  {item.children !== undefined && item.children.length > 1 && (
+                    <ul className="mt-1 grid grid-cols-2 gap-1 border-t border-brand-line/70 pt-2">
+                      {item.children.map((child) => {
+                        const childActive = isNavChildActive(child, pathname)
+                        return (
+                          <li key={child.to}>
+                            <Link
+                              to={child.to}
+                              aria-current={childActive ? 'page' : undefined}
+                              onClick={() => setOpen(false)}
+                              className={`block rounded-lg px-2 py-2 text-[13px] font-semibold ${
+                                childActive
+                                  ? 'bg-tone-accent-bg text-brand-600'
+                                  : 'text-brand-muted hover:bg-brand-box/60 hover:text-brand-ink'
+                              }`}
+                            >
+                              {child.label}
+                            </Link>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </nav>
+      )}
+    </div>
   )
 }
 
@@ -268,12 +384,14 @@ export function SiteHeader({ variant }: { variant: Variant }) {
           </ul>
         </nav>
 
+        <MobileNavigation isLanding={isLanding} pathname={pathname} />
+
         {/*
           인증 영역은 좁은 폭에서도 남긴다 — 메뉴를 감춘 화면에서 로그인 진입점까지
           사라지면 안 된다. 폭을 미리 잡아 두어야 로그인/프로필 전환에 메뉴 가운데
           정렬이 흔들리지 않는다(`HeaderAuthArea`도 같은 이유로 자리를 비워 둔다).
         */}
-        <div className="flex flex-1 shrink-0 justify-end lg:flex-none lg:min-w-[120px]">
+        <div className="flex shrink-0 justify-end lg:min-w-[120px]">
           <HeaderAuthArea tone={isLanding ? 'light' : 'dark'} />
         </div>
       </div>

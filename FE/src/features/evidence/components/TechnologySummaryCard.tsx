@@ -3,6 +3,10 @@ import {
   profileErrorMessage,
   useTechnologySummary,
 } from '@/features/evidence/hooks/useTechnologyProfile'
+import {
+  evidenceSummaryText,
+  missingEvidenceGuide,
+} from '@/features/evidence/model/summaryPresentation'
 import { StateCard } from '@/shared/ui/StateCard'
 
 /**
@@ -47,10 +51,9 @@ export function TechnologySummaryCard({
 
   return (
     <section className={SURFACE[variant]}>
-      <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">AI 요약</p>
+      <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">근거 요약</p>
       <p className="mt-1.5 text-[12.5px] leading-[1.6] text-brand-muted">
-        아래 문장은 판정 결과와 근거를 바탕으로 AI가 쓴 것입니다. 수준은 규칙으로 판정하며 AI가
-        정하지 않습니다.
+        확인된 사용 근거를 쉽게 풀어쓴 설명입니다.
       </p>
 
       <div className="mt-4">
@@ -135,24 +138,24 @@ function SummaryBody({
       {/* headline 은 40자 이내이고 Level 문자열을 담지 않는다 -- Level 은 위에 따로 있다. */}
       {data.headline !== null && (
         <h3 className="max-w-[64ch] text-[16px] leading-[1.4] font-[750] tracking-[-0.02em] text-brand-ink">
-          {data.headline}
+          {evidenceSummaryText(data.headline)}
         </h3>
       )}
       <p className="mt-2 max-w-[64ch] text-[13.5px] leading-[1.75] text-brand-ink-soft">
-        {data.summary}
+        {evidenceSummaryText(data.summary)}
       </p>
 
       {/*
         `gap` 은 다음 수준까지 무엇이 비었는지다. 도달 가능한 최고 수준이면 null 이라
         **줄 자체를 그리지 않는다.** 빈 자리를 남기면 "부족한 것이 없다"로 읽힌다.
       */}
-      {data.gap !== null && (
+      {missingEvidenceGuide(data.gap) !== null && (
         <div className="mt-4 rounded-[14px] border border-brand-line bg-tone-accent-bg/40 px-4 py-3">
           <p className="text-[11px] font-extrabold tracking-[0.12em] text-brand-600">
             아직 확인되지 않은 것
           </p>
           <p className="mt-1.5 max-w-[64ch] text-[12.5px] leading-[1.7] text-brand-ink-soft">
-            {data.gap}
+            {missingEvidenceGuide(data.gap)}
           </p>
         </div>
       )}

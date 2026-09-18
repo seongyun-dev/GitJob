@@ -33,7 +33,7 @@ export function ReinforcementPanel({ items }: { items?: readonly ReinforcementIt
             근거 보강 필요
           </p>
           <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
-            저장소에는 있지만 내 근거가 부족한 기술
+            저장소에는 있지만 내 코드에서는 확인되지 않은 기술
           </h2>
         </div>
         {items !== undefined && (
@@ -73,12 +73,18 @@ export function ReinforcementPanel({ items }: { items?: readonly ReinforcementIt
                   두 Level을 화살표로 잇는다. "지금 여기, 저장소는 저기"가 한 눈에
                   보여야 이 패널의 뜻이 전달된다.
                 */}
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <LevelBadge level={item.personalLevel} />
+                <div className="flex shrink-0 items-end gap-1.5">
+                  <div className="grid justify-items-center gap-1">
+                    <span className="text-[10.5px] text-brand-faint">내 코드</span>
+                    <LevelBadge level={item.personalLevel} />
+                  </div>
                   <span aria-hidden className="text-[11px] text-brand-faint">
                     →
                   </span>
-                  <LevelBadge level={item.repoLevel} variant="repository" />
+                  <div className="grid justify-items-center gap-1">
+                    <span className="text-[10.5px] text-brand-faint">저장소</span>
+                    <LevelBadge level={item.repoLevel} variant="repository" />
+                  </div>
                 </div>
               </li>
             ))}
@@ -137,10 +143,15 @@ export function AnalysisContextPanel({
                     근거 {repo.evidenceCount.toLocaleString('ko-KR')}건
                   </p>
                 </div>
-                <p className="mt-1 truncate text-[11.5px] text-brand-muted">
-                  기준 버전 <span className="font-mono">{repo.commitSha.slice(0, 7)}</span> ·{' '}
-                  {new Date(repo.analyzedAt).toLocaleString('ko-KR')}
-                </p>
+                <details className="mt-2 text-[12px] text-brand-muted">
+                  <summary className="w-fit cursor-pointer font-semibold text-brand-muted hover:text-brand-ink">
+                    분석 정보 보기
+                  </summary>
+                  <p className="mt-1.5 break-all font-evidence text-[11.5px] text-brand-faint">
+                    기준 버전 {repo.commitSha.slice(0, 7)} ·{' '}
+                    {new Date(repo.analyzedAt).toLocaleString('ko-KR')}
+                  </p>
+                </details>
               </li>
             ))}
           </ul>
@@ -148,7 +159,7 @@ export function AnalysisContextPanel({
       </div>
 
       <p className="mt-4 text-[12.5px] leading-[1.6] text-brand-faint">
-        {footer ?? '저장소별 최신 성공 분석의 기준 커밋과 분석 시각입니다.'}
+        {footer ?? '저장소별 최신 성공 분석을 기준으로 표시합니다.'}
       </p>
     </section>
   )

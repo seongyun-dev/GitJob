@@ -22,3 +22,12 @@ test('부족한 기술 화면은 행동할 수 없는 미판정 분류표를 숨
   assert.equal(page.includes('판단 근거 부족'), false)
   assert.equal(page.includes('LEGEND'), false)
 })
+
+test('추천과 배웠을 때 변화의 빈 상태는 다음 행동을 제공한다', () => {
+  const recommendation = source('pages/RecommendationPage.tsx')
+  const whatIf = source('pages/WhatIfPage.tsx')
+
+  assert.match(recommendation, /title="추천할 기술이 없어요"[\s\S]{0,500}action=/)
+  assert.match(whatIf, /title="가정해 볼 후보가 없어요"[\s\S]{0,500}action=/)
+  assert.match(whatIf, /title="새로 부합하는 공고가 없어요"[\s\S]{0,500}action=/)
+})

@@ -145,9 +145,9 @@ export function EvidenceScene() {
         </div>
 
         <div className="flex items-center justify-between gap-3 text-[14px] text-white/70">
-          <span>파일 위치와 본인 Commit까지 연결</span>
+          <span>파일 위치와 내가 작성한 코드까지 연결</span>
           <span className="inline-flex items-center gap-2 font-bold text-white">
-            <i className="h-2 w-2 animate-pulse rounded-full bg-[#4ADE80]" />본인 Commit 확인
+            <i className="h-2 w-2 animate-pulse rounded-full bg-[#4ADE80]" />내 코드 확인
           </span>
         </div>
       </Rise>

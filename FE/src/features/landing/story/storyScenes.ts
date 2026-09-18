@@ -63,8 +63,8 @@ export const SCENES: readonly Scene[] = [
   },
   {
     id: 's4',
-    label: 'WHAT-IF',
-    title: '04 What-if',
+    label: 'CHANGE',
+    title: '04 배웠을 때 변화',
     chrome: 'onLight',
     background: [
       'radial-gradient(900px 600px at 50% 40%, rgba(255,255,255,.55), transparent 65%)',

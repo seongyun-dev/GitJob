@@ -77,7 +77,7 @@ export const TEAM_GROUPS: readonly TeamGroup[] = [
       'GitHub 연동',
       'Evidence 판정',
       '사용자 프로필',
-      'Skill Gap',
+      '부족한 기술 분석',
       '매칭 공고 변화 계산',
       '프로젝트 추천',
       'Backend/API/UI',

@@ -108,7 +108,7 @@ export function TeamPage() {
         </h2>
         <p className="mt-3 max-w-[68ch] text-[14px] leading-[1.8] break-keep text-brand-body">
           GitJob은 GitHub 저장소를 분석해 사용자의 기술 사용 근거를 만들고, 목표 직무의
-          채용 수요와 비교해 Skill Gap과 다음 학습 기술을 제안하는 서비스입니다.
+          채용 수요와 비교해 부족한 기술과 다음 학습 기술을 제안하는 서비스입니다.
         </p>
         <p className="mt-3 max-w-[68ch] text-[14px] leading-[1.8] break-keep text-brand-muted">
           기술 레벨은 숙련도나 채용 가능성의 확률이 아니라, 등록된 규칙에 의해 판정된

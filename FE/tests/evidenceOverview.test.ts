@@ -42,7 +42,7 @@ test('evidence side panels are derived from the profile response without fixture
       techName: 'Spring Boot',
       personalLevel: 'L1',
       repoLevel: 'L2',
-      reason: '본인 Commit 근거가 Repository 판정보다 낮습니다.',
+      reason: '저장소에서는 확인됐지만 내가 작성한 코드에서는 아직 확인되지 않았어요.',
     },
   ])
   assert.deepEqual(panels.repositories, [

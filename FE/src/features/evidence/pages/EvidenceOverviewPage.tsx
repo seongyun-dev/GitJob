@@ -220,10 +220,15 @@ function StatDetailModal({
                   근거 {repository.evidenceCount.toLocaleString('ko-KR')}건
                 </p>
               </div>
-              <p className="mt-1 text-[11.5px] text-brand-muted">
-                <span className="font-mono">{repository.commitSha.slice(0, 7)}</span> ·{' '}
-                {formatDateTime(repository.analyzedAt)}
-              </p>
+              <details className="mt-2 text-[12px] text-brand-muted">
+                <summary className="w-fit cursor-pointer font-semibold hover:text-brand-ink">
+                  분석 정보 보기
+                </summary>
+                <p className="mt-1.5 break-all font-evidence text-[11.5px] text-brand-faint">
+                  기준 버전 {repository.commitSha.slice(0, 7)} ·{' '}
+                  {formatDateTime(repository.analyzedAt)}
+                </p>
+              </details>
             </li>
           ))}
         </ul>

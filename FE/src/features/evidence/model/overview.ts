@@ -49,7 +49,7 @@ export function buildEvidenceOverviewPanels(
           techName: technology.displayName,
           personalLevel: technology.personalLevel,
           repoLevel: technology.repositoryLevel,
-          reason: '본인 Commit 근거가 Repository 판정보다 낮습니다.',
+          reason: '저장소에서는 확인됐지만 내가 작성한 코드에서는 아직 확인되지 않았어요.',
         },
       ]
     }),

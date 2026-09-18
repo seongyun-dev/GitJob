@@ -59,7 +59,7 @@ export function WhatIfPage() {
         to="/recommendations"
         className="inline-block text-[13px] font-semibold text-brand-muted hover:text-brand-ink"
       >
-        ← 다음 학습 기술
+        ← 학습 추천
       </Link>
 
       <div className="mt-3">
@@ -120,7 +120,15 @@ export function WhatIfPage() {
           <StateCard
             kind="EMPTY"
             title="가정해 볼 후보가 없어요"
-            description="추천 후보가 있어야 그 기술을 채웠을 때의 변화를 계산할 수 있습니다."
+            description="학습 추천에서 후보를 확인한 뒤, 기술을 배웠을 때의 공고 변화를 볼 수 있습니다."
+            action={
+              <Link
+                to="/recommendations"
+                className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
+              >
+                학습 추천 확인
+              </Link>
+            }
           />
         )}
 
@@ -215,6 +223,14 @@ export function WhatIfPage() {
                   kind="EMPTY"
                   title="새로 부합하는 공고가 없어요"
                   description="이 기술을 채워도 필수를 모두 충족하게 되는 공고는 이번 비교 집합에 없습니다."
+                  action={
+                    <Link
+                      to="/jobs"
+                      className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
+                    >
+                      현재 공고 보기
+                    </Link>
+                  }
                 />
               ) : (
                 <>

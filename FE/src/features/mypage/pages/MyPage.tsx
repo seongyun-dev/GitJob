@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { useMe } from '@/features/auth/hooks/useMe'
 import { useTechnologyProfile } from '@/features/evidence/hooks/useTechnologyProfile'
@@ -9,6 +10,7 @@ import {
 import { useAnalysisHistory } from '@/features/mypage/hooks/useAnalysisHistory'
 import type { AnalysisHistory, AnalysisHistoryStatus } from '@/features/mypage/api/types'
 import { accountName, analysisSettingsRows } from '@/features/mypage/model/analysisSettings'
+import { newestAnalysisFirst } from '@/features/mypage/model/analysisHistoryPresentation'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { withDesignFixture } from '@/mocks/designFixtures'
 import { ANALYSIS_HISTORY } from '@/mocks/fixtures/analysisFlow'
@@ -152,7 +154,7 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 function toHistoryRows(history: AnalysisHistory | undefined): HistoryRow[] {
-  return (history?.items ?? []).map((item) => ({
+  return newestAnalysisFirst(history?.items ?? []).map((item) => ({
     id: item.analysisId,
     at: formatAnalyzedAt(item.analyzedAt).date,
     atTime: formatAnalyzedAt(item.analyzedAt).time,
@@ -163,6 +165,7 @@ function toHistoryRows(history: AnalysisHistory | undefined): HistoryRow[] {
 }
 
 export function MyPage() {
+  const [showAllHistory, setShowAllHistory] = useState(false)
   /*
    * 계정 카드는 인증이 이미 쓰는 값으로 그린다 · 티켓 S15P21E102-318.
    *
@@ -200,7 +203,9 @@ export function MyPage() {
     analyzedRepositoryCount: profileQuery.data?.summary.repositoryCount ?? null,
   })
 
-  const historyQuery = useAnalysisHistory()
+  // 서버 허용 상한까지 받아 표시 완료 시각으로 다시 정렬한다. 기본 20건만 받으면
+  // 요청 순서와 완료 순서가 엇갈렸을 때 실제 최신 분석이 다음 페이지에 남을 수 있다.
+  const historyQuery = useAnalysisHistory({ size: 50 })
   const history = withDesignFixture<readonly HistoryRow[]>(toHistoryRows(historyQuery.data), () =>
     ANALYSIS_HISTORY.map((item: AnalysisHistoryFixture, index) => ({
       ...item,
@@ -213,6 +218,7 @@ export function MyPage() {
     두 번 부르면 두 카드가 서로 다른 분석을 가리키는 순간이 생긴다.
   */
   const latest = history[0] ?? null
+  const visibleHistory = showAllHistory ? history : history.slice(0, 10)
 
   return (
     <div>
@@ -501,7 +507,7 @@ export function MyPage() {
                 </div>
 
                 <div className="divide-y divide-[#F1F4F9]">
-                  {history.map((item) => (
+                  {visibleHistory.map((item) => (
                     <div
                       key={item.id}
                       className="grid items-center gap-4 rounded-[10px] px-2.5 py-3.5 transition-colors max-lg:grid-cols-1 hover:bg-[#F8FAFD]"
@@ -537,9 +543,23 @@ export function MyPage() {
                 </div>
               </div>
 
-              <p className="mt-3 text-[11.5px] text-brand-faint">
-                이력 {historyQuery.data?.totalCount ?? history.length}건
-              </p>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[12px] text-brand-faint">
+                  전체 {historyQuery.data?.totalCount ?? history.length}건
+                  {!showAllHistory && history.length > visibleHistory.length
+                    ? ` 중 최근 ${visibleHistory.length}건`
+                    : ''}
+                </p>
+                {history.length > 10 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllHistory((current) => !current)}
+                    className="rounded-lg border border-brand-line bg-white px-3 py-2 text-[12.5px] font-bold text-brand-ink transition-colors hover:border-brand-line-active hover:bg-brand-box/40"
+                  >
+                    {showAllHistory ? '최근 10건만 보기' : '이력 더 보기'}
+                  </button>
+                )}
+              </div>
             </DataRegion>
           )}
         </div>

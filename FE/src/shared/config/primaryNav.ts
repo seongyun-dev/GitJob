@@ -86,7 +86,7 @@ export const PRIMARY_NAV: readonly PrimaryNavItem[] = [
     children: [
       { label: '공고 대시보드', to: '/jobs', match: ['/jobs/'] },
       { label: '목표 직무', to: '/roles' },
-      { label: 'Skill Gap', to: '/skill-gap' },
+      { label: '부족한 기술', to: '/skill-gap' },
     ],
   },
 
@@ -99,8 +99,8 @@ export const PRIMARY_NAV: readonly PrimaryNavItem[] = [
     label: '다음 기술',
     to: '/recommendations',
     children: [
-      { label: '추천 기술', to: '/recommendations', match: ['/technologies/'] },
-      { label: 'What-if', to: '/what-if' },
+      { label: '학습 추천', to: '/recommendations', match: ['/technologies/'] },
+      { label: '배웠을 때 변화', to: '/what-if' },
     ],
   },
 
