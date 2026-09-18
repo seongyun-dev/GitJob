@@ -10,6 +10,8 @@ import type {
   TrendSourceId,
   TrendSourceView,
 } from '@/features/trend/model/view'
+import type { MarketDemandView } from '@/features/trend/model/marketDemand'
+import { marketRankRows } from '@/features/trend/model/marketDemand'
 import { rankObservableRows } from '@/features/trend/model/ranking'
 import { pointsForSource } from '@/features/trend/model/periods'
 
@@ -225,6 +227,52 @@ function unavailableStatus(statuses: readonly TrendSourceView['status'][]): Tren
   if (statuses.includes('FAILED')) return 'FAILED'
   if (statuses.includes('NOT_SUPPORTED')) return 'NOT_SUPPORTED'
   return 'NO_DATA'
+}
+
+/**
+ * 현재 채용시장 분포를 `채용공고 수요` 카드로 · 티켓 S15P21E102-342.
+ *
+ * 상단에 큰 섹션을 따로 두면 아래 세 카드가 한 줄에서 같은 크기로 읽히지 않는다.
+ * 그래서 시장 분포를 다른 두 출처와 **같은 카드 컴포넌트**에 넣는다.
+ *
+ * `unit`은 카드 제목이라 세 카드의 제목 체계를 그대로 따른다. 보조 라벨은 카드 안의
+ * eyebrow(`label`)와 기준 문구로만 쓰고 별도 대형 제목을 만들지 않는다.
+ */
+export function marketDemandSource(
+  view: MarketDemandView,
+  basis: string,
+  statusNote: string | null,
+  techNames: ReadonlyMap<string, string>,
+  limit: number,
+): TrendSourceView {
+  const rows = marketRankRows(view, limit).map((row) => ({
+    ...row,
+    techName: techNames.get(row.techId) ?? row.techId,
+  }))
+  return {
+    id: 'JOB',
+    label: LABEL.JOB,
+    // eyebrow 가 출처 이름이고 제목은 무엇을 세는지다 — 옆 카드의 `GitHub 활동`·`저장소`와
+    // 같은 자리다. 둘 다 출처 이름을 쓰면 카드 머리에 같은 말이 두 번 적힌다.
+    unit: '공고 요구 건수',
+    // 값이 없는 상태는 카드가 배지와 안내문으로 말한다. 빈 표를 READY로 그리면
+    // 사용자는 "세어 봤더니 하나도 없다"로 읽는다. 값이 없을 때의 판정은 서버가 준
+    // 것을 그대로 쓴다 -- FAILED 를 "준비 중"으로 그리면 기다리면 낫는 상태가 된다.
+    status:
+      view.kind === 'ROWS'
+        ? view.status === 'PARTIAL'
+          ? 'PARTIAL'
+          : 'READY'
+        : view.kind === 'EMPTY'
+          ? 'NO_DATA'
+          : view.status,
+    basis,
+    scopeNote: statusNote,
+    maximumObservedValue: rows.length === 0 ? null : view.topCount,
+    rows,
+    unobservedRows: [],
+    footnote: '지금 수집된 채용공고 전체에서 요구된 기술입니다. 목표 직무와 무관합니다.',
+  }
 }
 
 /** 조회조차 하지 못한 출처. 빈 표 대신 이유를 남긴다. */

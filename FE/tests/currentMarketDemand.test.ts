@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { jobDemandsPath } from '../src/features/matching/model/jobDemandsQuery.ts'
-import { marketDemandView } from '../src/features/trend/model/marketDemand.ts'
+import { marketDemandView, marketRankRows } from '../src/features/trend/model/marketDemand.ts'
 import { hasComputedValue } from '../src/shared/api/computeState.ts'
 import { queryKeys } from '../src/shared/api/queryKeys.ts'
 import type { JobDemandDto } from '../src/features/matching/api/types.ts'
@@ -176,4 +176,55 @@ test('a view without data is pending rather than empty', () => {
   assert.equal(view.kind, 'PENDING')
   assert.deepEqual(view.rows, [])
   assert.equal(view.jobCount, null)
+})
+
+/*
+ * 카드 한 장으로 옮긴 뒤 · 티켓 S15P21E102-342.
+ *
+ * 분포는 상단 대형 섹션이 아니라 `채용공고 수요` 카드 안에 들어간다. 카드는 세 출처가
+ * 공유하므로, 여기서 만드는 줄의 모양이 옆 카드와 같아야 열 너비와 높이가 갈라지지 않는다.
+ */
+
+test('card rows keep the server rank and cap at the card limit', () => {
+  const rows = marketRankRows(viewOf(dto()), 1)
+
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.rank, 1)
+  assert.equal(rows[0]?.techId, 'java')
+})
+
+test('card row shows the posting count, and the bar reads the raw value', () => {
+  const rows = marketRankRows(viewOf(dto()), 10)
+
+  assert.equal(rows[0]?.share, '284건')
+  assert.equal(rows[0]?.observedValue, 284)
+})
+
+test('a snapshot has no previous period, so the change column stays empty', () => {
+  const rows = marketRankRows(viewOf(dto()), 10)
+
+  assert.ok(rows.every((row) => row.delta === '—'))
+  assert.ok(rows.every((row) => row.direction === null))
+})
+
+test('nothing to draw yields no card rows at all', () => {
+  assert.deepEqual(marketRankRows(viewOf(undefined), 10), [])
+  assert.deepEqual(marketRankRows(viewOf(dto({ technologies: [] })), 10), [])
+})
+
+test('a failed market keeps the server verdict instead of looking like waiting', () => {
+  const view = viewOf(dto({ dataStatus: 'FAILED', statusReason: 'COMPUTE_FAILED' }))
+
+  assert.equal(view.kind, 'PENDING')
+  // FAILED 를 PREPARING 으로 그리면 기다리면 낫는 상태로 읽힌다.
+  assert.equal(view.status, 'FAILED')
+})
+
+test('the server verdict rides along on every kind', () => {
+  assert.equal(viewOf(dto()).status, 'READY')
+  assert.equal(viewOf(dto({ technologies: [] })).status, 'READY')
+  assert.equal(viewOf(dto({ dataStatus: 'PARTIAL' })).status, 'PARTIAL')
+  assert.equal(viewOf(dto({ dataStatus: 'NO_DATA' })).status, 'NO_DATA')
+  // 아직 조회 전이라 판정 자체가 없을 때만 준비 중이다.
+  assert.equal(viewOf(undefined).status, 'PREPARING')
 })

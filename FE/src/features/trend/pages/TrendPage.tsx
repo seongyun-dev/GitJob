@@ -1,17 +1,25 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { useJobDemands, useTarget } from '@/features/matching/hooks/useMatching'
+import type { JobDemandDto } from '@/features/matching/api/types'
+import {
+  useCurrentMarketDemands,
+  useJobDemands,
+  useTarget,
+} from '@/features/matching/hooks/useMatching'
+import { formatCollectedAt } from '@/features/matching/model/presentation'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
-import { unavailableSource } from '@/features/trend/api/adapter'
+import { marketDemandSource, unavailableSource } from '@/features/trend/api/adapter'
 import { toTrendPeriodViews } from '@/features/trend/api/periodViews'
-import { MarketDemandSection } from '@/features/trend/components/MarketDemandSection'
 import { TrendSourceCard } from '@/features/trend/components/TrendSourceCard'
+import type { MarketDemandView } from '@/features/trend/model/marketDemand'
+import { marketDemandView } from '@/features/trend/model/marketDemand'
 import { useTechnologyTrendsBatch } from '@/features/trend/hooks/useTrends'
 import {
   resolveEmptySourceStatus,
   summarizeTrendLoad,
 } from '@/features/trend/model/sourceStatus'
 import type { TrendSourceId, TrendSourceView } from '@/features/trend/model/view'
+import { hasComputedValue } from '@/shared/api/computeState'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { PageHero } from '@/shared/ui/PageHero'
@@ -28,6 +36,41 @@ function completedMonths(count: number): string[] {
   })
 }
 
+/** 이 분포가 무엇을 기준으로 나온 것인지. 기준을 숨기면 숫자를 절대값으로 읽는다. */
+function marketBasisText(view: MarketDemandView, isLoading: boolean): string {
+  if (isLoading) {
+    return '불러오는 중'
+  }
+  if (view.jobCount === null) {
+    return '기준 미정'
+  }
+  return `공고 ${view.jobCount.toLocaleString('ko-KR')}건 기준 · ${formatCollectedAt(view.asOf)}`
+}
+
+/** 값이 없을 때 카드 안에 적을 이유. 없으면 카드가 각주를 쓴다. */
+function marketStatusNote(
+  demand: JobDemandDto | undefined,
+  isLoading: boolean,
+  error: unknown,
+): string | null {
+  if (isLoading) {
+    return '현재 채용공고의 기술 수요를 불러오는 중입니다.'
+  }
+  if (error !== null && error !== undefined) {
+    return '기술 수요를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'
+  }
+  if (demand === undefined) {
+    return null
+  }
+  if (demand.dataStatus === 'PREPARING') {
+    return '비교할 공고를 준비하고 있습니다. 준비되면 자동으로 표시됩니다.'
+  }
+  if (demand.dataStatus === 'FAILED') {
+    return '기술 수요를 만들지 못했습니다. 잠시 후 다시 확인해 주세요.'
+  }
+  return null
+}
+
 export function TrendPage() {
   const target = useTarget()
   const demands = useJobDemands({
@@ -41,6 +84,25 @@ export function TrendPage() {
     .map((technology) => technology.techId)
   const techNames = new Map(techIds.map((techId) => [techId, technologyDisplayName(techId)]))
   const periods = completedMonths(OVERVIEW_MONTHS)
+
+  /*
+   * 현재 채용시장 분포 · 티켓 S15P21E102-342(-339에서 상단 대형 섹션이던 것).
+   *
+   * 목표 직무와 무관한 공용 집계라 `enabled` 조건 없이 바로 조회한다. 아래에서 세 카드
+   * 중 `채용공고 수요` 칸으로 들어간다.
+   */
+  const market = useCurrentMarketDemands({ regions: [], careerLevels: [] })
+  const marketDemand = marketDemandView(market.data, hasComputedValue(market.data))
+  const marketTechNames = new Map(
+    marketDemand.rows.map((row) => [row.techId, technologyDisplayName(row.techId)]),
+  )
+  const marketView = marketDemandSource(
+    marketDemand,
+    marketBasisText(marketDemand, market.isLoading),
+    marketStatusNote(market.data, market.isLoading, market.error),
+    marketTechNames,
+    COMPARE_LIMIT,
+  )
 
   /*
    * 기술별 상세를 모아 기간별 순위를 만든다 · 티켓 S15P21E102-329.
@@ -97,6 +159,17 @@ export function TrendPage() {
 
   const sources: { view: TrendSourceView; periods: readonly string[]; selected: string }[] = []
   for (const id of ['GITHUB_WEEKLY', 'GITHUB_ARCHIVE', 'JOB'] as const) {
+    if (id === 'JOB') {
+      /*
+       * 채용공고 수요 칸은 현재 시장 분포다 · 티켓 S15P21E102-342.
+       *
+       * 월별 JOB Trend가 아니라 지금 확보한 공고 전체의 분포를 넣는다. 월별 쪽은 목표
+       * 직무와 기간이 모두 있어야 조회되어 대부분 빈 카드로 남았고, 직무를 고르기 전에
+       * 볼 것이 없다는 문제가 그대로였다.
+       */
+      sources.push({ view: marketView, periods: [], selected: '' })
+      continue
+    }
     const entry = periodViews.get(id)
     if (entry === undefined || entry.periods.length === 0) {
       /*
@@ -148,12 +221,6 @@ export function TrendPage() {
       </div>
 
       <div className="mt-7 grid gap-4">
-        {/*
-         * 직무와 무관한 시장 전체가 먼저다 · 티켓 S15P21E102-339. 아래 원천별 카드는
-         * 목표 직무를 골라야 채워지는데, 무엇을 고를지 정하려면 시장을 먼저 봐야 한다.
-         */}
-        <MarketDemandSection limit={COMPARE_LIMIT} />
-
         <ComputeStatePanel
           isLoading={target.isLoading || demands.isLoading}
           error={target.error ?? demands.error}
