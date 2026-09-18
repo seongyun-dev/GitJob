@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+
 from common.webhdfs import WebHdfsClient, WebHdfsResponse
 from job.collector.analysis_input import JobPostingAnalysisInputPublisher
 from job.collector.backfill import (
@@ -22,6 +23,7 @@ from job.collector.backfill import (
     discover_raw_runs,
     materialize_run,
 )
+from job.jobkorea_contract import JOBKOREA_V3_DUTY_ROLE_PAIRS
 
 BASE_URL = "http://hdfs-namenode:9870/webhdfs/v1"
 DATANODE = "http://hdfs-datanode:9864/upload"
@@ -299,6 +301,83 @@ def test_a_run_c_would_decline_is_not_published(kwargs, expected):
 
     assert summary.outcomes[0].state == "BLOCKED"
     assert expected in summary.outcomes[0].detail
+    assert _published(hdfs) == []
+
+
+def _jobkorea_v3_manifest(run_id: str, *, scope_reason: str) -> dict[str, object]:
+    """A v3 active-scope manifest, complete or not, in the producer's shape."""
+
+    batch = json.dumps({"records": "batch"}, ensure_ascii=False).encode()
+    scopes = [
+        {
+            "code": code,
+            "name": code,
+            "target_role": role,
+            "scan_stop_reason": "short_page",
+        }
+        for code, role in sorted(JOBKOREA_V3_DUTY_ROLE_PAIRS)
+    ]
+    scopes[0]["scan_stop_reason"] = scope_reason
+    run_reason = (
+        "all_scopes_complete" if scope_reason in {"short_page", "empty_page"} else scope_reason
+    )
+    return {
+        "schema_version": "job-analysis-input/v1",
+        "source_site": "JOBKOREA",
+        "collector_version": "jobkorea-crawler/v3",
+        "pipeline_run_id": run_id,
+        "dataset_snapshot_id": "JOBKOREA-2026-09-09-2026-09-09",
+        "collected_at": "2026-09-09T00:10:00+00:00",
+        "counts": {"records": 3, "detail_errors": 0, "invalid_records": 0},
+        "stopped_reason": None,
+        "outputs": {"job_analysis_input.json": "job_analysis_input.json"},
+        "output_sha256": {
+            "job_analysis_input.json": hashlib.sha256(batch).hexdigest()
+        },
+        "source": {"site": "JOBKOREA", "mode": "active_listing", "duty_scopes": scopes},
+        "stats": {"scan_stop_reason": run_reason},
+    }
+
+
+def _seed_jobkorea_v3(hdfs: FakeHdfs, run_id: str, *, scope_reason: str) -> None:
+    files = _run_files(source="jobkorea", run_id=run_id)
+    files["manifest.json"] = json.dumps(
+        _jobkorea_v3_manifest(run_id, scope_reason=scope_reason),
+        ensure_ascii=False,
+    ).encode()
+    for name, content in files.items():
+        hdfs.stored[f"/gitjob/raw/jobkorea/dt=2026-09-09/{run_id}/{name}"] = content
+
+
+def test_a_complete_v3_run_is_published_without_a_second_crawl():
+    """The publish-only half of S15P21E102-340.
+
+    An 11-hour v3 crawl uploads Raw and stops. Approval then publishes from
+    Raw, so the collection is never repeated.
+    """
+
+    hdfs = FakeHdfs()
+    _seed_jobkorea_v3(hdfs, "JOBKOREA-V3-OK", scope_reason="short_page")
+
+    summary = _run(hdfs)
+
+    assert [o.state for o in summary.outcomes] == ["PUBLISHED"]
+    assert _published(hdfs) != []
+
+
+def test_a_v3_run_with_an_unanswered_scope_is_refused_by_publish_only():
+    """`first_page_empty` must block here too, not only inside the crawler.
+
+    Deferring publication moves the decision to this path, so the scope
+    completeness gate has to hold on this side of the split as well.
+    """
+
+    hdfs = FakeHdfs()
+    _seed_jobkorea_v3(hdfs, "JOBKOREA-V3-BLOCKED", scope_reason="first_page_empty")
+
+    summary = _run(hdfs)
+
+    assert [o.state for o in summary.outcomes] == ["BLOCKED"]
     assert _published(hdfs) == []
 
 

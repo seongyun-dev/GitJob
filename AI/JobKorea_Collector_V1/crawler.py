@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urljoin
 
+from pydantic import ValidationError
+
 from job.collector import dataset_snapshot_id_for, pipeline_run_id_for
 from job.collector.analysis_input import publish_from_env
 from job.collector.raw_sink import sink_from_env, write_upload_record
@@ -28,7 +30,6 @@ from job.contracts import (
     JobAnalysisInputBatch,
     JobPostingInput,
 )
-from pydantic import ValidationError
 
 from .adapter import SOURCE_SITE, normalize_jobkorea_posting
 from .client import (
@@ -1037,6 +1038,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="WEBHDFS_URL이 설정되어도 HDFS Raw 업로드를 생략합니다",
     )
     parser.add_argument(
+        "--no-publish-analysis-input",
+        action="store_true",
+        help=(
+            "Raw 업로드·검증까지만 하고 analysis_input 게시는 생략합니다. "
+            "회차를 먼저 검토한 뒤 승인해 게시하려는 경우에 씁니다 — 게시는 "
+            "`python -m job.collector.backfill_cli --source jobkorea --execute` "
+            "로 crawl 없이 따로 수행합니다. Raw 까지 건너뛰려면 "
+            "--no-upload-raw 를 쓰십시오."
+        ),
+    )
+    parser.add_argument(
         "--cursor",
         default=None,
         help="resume-state file; omit to collect without resume support",
@@ -1186,6 +1198,19 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            if args.no_publish_analysis_input:
+                # Raw is uploaded and verified, so the run is durable and can
+                # be reviewed before it becomes a C input. Publishing it later
+                # needs no second crawl: `job.collector.backfill_cli` reads the
+                # run back out of Raw and applies the same
+                # `analysis_input.release_blockers` gate.
+                print(
+                    "analysis_input=deferred (--no-publish-analysis-input); "
+                    "publish with: python -m job.collector.backfill_cli "
+                    "--source jobkorea --execute",
+                    file=sys.stderr,
+                )
+                return 0 if result.batch.records else 1
             published = publish_from_env(
                 run_dir,
                 source=SOURCE_SITE,

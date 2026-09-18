@@ -98,10 +98,44 @@ v3 선택 기준은 "사이트가 목록에 올려둠" 이므로, 등록일 labe
 실제 등록일과 구분할 수가 없다. 미파싱 행 수는 scope·페이지 단위 warning 으로
 남는다.
 
-## Production publication 은 별도 절차
+## 수집과 publication 을 나눠 실행한다 (S15P21E102-340)
 
-이 문서와 이 코드는 **회차를 재현 가능하게 만드는 것** 까지다. Production
-publication 은 이 작업 범위가 아니며 다음이 각각 확인돼야 한다.
+기본 실행은 한 프로세스에서 **collect → local → Raw upload → Raw verify →
+analysis_input 게시** 까지 끝낸다. 스위치는 `WEBHDFS_URL` 하나이고 Production
+collector 컨테이너에 설정돼 있으므로, **full v3 run 을 그냥 시작하면 게시까지
+수행된다.** 11시간 회차를 먼저 검토하고 게시를 나중에 승인하려면 두 단계로
+나눈다.
+
+### 1단계 — 수집과 Raw 검증까지
+
+```bash
+python -m JobKorea_Collector_V1 --duty-preset service-roles \
+  --max-pages 300 --output-dir /data/jobkorea-active \
+  --no-publish-analysis-input
+```
+
+`--no-publish-analysis-input` 은 Raw 업로드와 read-back 검증을 **그대로 수행하고**
+analysis_input 게시만 건너뛴다. 회차는 HDFS Raw 에 durable 하게 남고 C 입력은
+아직 되지 않는다.
+
+`--no-upload-raw` 와 섞지 말 것 — 그쪽은 Raw 업로드·검증까지 생략하므로 나중에
+게시할 대상 자체가 남지 않는다.
+
+### 2단계 — 검토 후 게시 (crawl 재실행 없음)
+
+```bash
+# dry-run 이 기본. 무엇을 게시할지와 바이트 총량만 보고하고 아무것도 쓰지 않는다
+python -m job.collector.backfill_cli --source jobkorea
+# 승인 후
+python -m job.collector.backfill_cli --source jobkorea --execute
+```
+
+`backfill_cli` 는 HDFS Raw 에 있는 회차를 읽어 게시하며, 게이트를 다시 정의하지
+않고 `analysis_input.release_blockers` 를 그대로 쓴다. 따라서 scope 하나가
+`first_page_empty` 인 회차는 **이 경로에서도 거부된다**
+(`tests/test_job_analysis_input_backfill.py`).
+
+### 게시 전 확인 사항
 
 - `S15P21E102-333` (COHORT `mapping_context` payload 축소) **배포** 완료
   — merge 만으로는 부족하고 데이터호스트 checkout 에 반영돼야 한다
