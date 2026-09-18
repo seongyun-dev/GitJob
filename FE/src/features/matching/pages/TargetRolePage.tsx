@@ -95,7 +95,7 @@ export function TargetRolePage() {
         <PageHero title="어떤 직무 공고와 비교할까요?" />
         <Link
           to="/evidence"
-          className="shrink-0 rounded-xl border border-brand-line bg-white px-5 py-3 text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+          className="gj-clickable shrink-0 rounded-xl border border-brand-line bg-white px-5 py-3 text-[13.5px] font-[750] text-brand-ink"
         >
           ← 내 기술
         </Link>
@@ -124,10 +124,10 @@ export function TargetRolePage() {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => update({ targetRole: option.value })}
-                    className={`rounded-[10px] border px-3 py-2.5 text-[13px] font-[700] transition ${
+                    className={`gj-clickable rounded-[10px] border px-3 py-2.5 text-[13px] font-[700] ${
                       selected
-                        ? 'border-brand-600 bg-brand-50 text-brand-700'
-                        : 'border-brand-line bg-white text-brand-muted hover:border-brand-line-active'
+                        ? 'border-brand-600 bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] text-white shadow-[0_10px_22px_rgba(47,94,235,0.24)]'
+                        : 'border-[#C8D8FF] bg-white text-brand-ink-soft'
                     }`}
                   >
                     {option.label}
@@ -144,10 +144,10 @@ export function TargetRolePage() {
                 type="button"
                 aria-pressed={form.regions.length === 0}
                 onClick={() => update({ regions: [] })}
-                className={`rounded-full border px-3 py-1.5 text-[12.5px] font-[700] transition ${
+                className={`gj-clickable rounded-full border px-3 py-1.5 text-[12.5px] font-[700] ${
                   form.regions.length === 0
-                    ? 'border-brand-600 bg-brand-50 text-brand-700'
-                    : 'border-brand-line bg-white text-brand-muted hover:border-brand-line-active'
+                    ? 'border-brand-600 bg-brand-600 text-white shadow-[0_8px_18px_rgba(47,94,235,0.22)]'
+                    : 'border-[#C8D8FF] bg-white text-brand-ink-soft'
                 }`}
               >
                 전체
@@ -160,10 +160,10 @@ export function TargetRolePage() {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => update({ regions: toggleValue(form.regions, region) })}
-                    className={`rounded-full border px-3 py-1.5 text-[12.5px] font-[700] transition ${
+                    className={`gj-clickable rounded-full border px-3 py-1.5 text-[12.5px] font-[700] ${
                       selected
-                        ? 'border-brand-600 bg-brand-50 text-brand-700'
-                        : 'border-brand-line bg-white text-brand-muted hover:border-brand-line-active'
+                        ? 'border-brand-600 bg-brand-600 text-white shadow-[0_8px_18px_rgba(47,94,235,0.22)]'
+                        : 'border-[#C8D8FF] bg-white text-brand-ink-soft'
                     }`}
                   >
                     {region}
@@ -184,10 +184,10 @@ export function TargetRolePage() {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => update({ career: option.value })}
-                    className={`rounded-[10px] border px-3 py-2.5 text-[13px] font-[700] transition ${
+                    className={`gj-clickable rounded-[10px] border px-3 py-2.5 text-[13px] font-[700] ${
                       selected
-                        ? 'border-brand-600 bg-brand-50 text-brand-700'
-                        : 'border-brand-line bg-white text-brand-muted hover:border-brand-line-active'
+                        ? 'border-brand-600 bg-brand-600 text-white shadow-[0_8px_18px_rgba(47,94,235,0.22)]'
+                        : 'border-[#C8D8FF] bg-white text-brand-ink-soft'
                     }`}
                   >
                     {option.label}
@@ -200,7 +200,7 @@ export function TargetRolePage() {
           <button
             type="submit"
             disabled={save.isPending}
-            className="mt-6 w-full rounded-[10px] bg-brand-ink px-4 py-3 text-[13.5px] font-[750] text-white disabled:cursor-not-allowed disabled:bg-[#B9C4D6]"
+            className="gj-clickable-primary mt-6 w-full rounded-[10px] bg-brand-ink px-4 py-3 text-[13.5px] font-[750] text-white shadow-[0_10px_24px_rgba(16,26,46,0.2)] disabled:cursor-not-allowed disabled:bg-[#B9C4D6] disabled:shadow-none"
           >
             {save.isPending ? '저장 중…' : '조건 저장'}
           </button>
@@ -288,7 +288,7 @@ export function TargetRolePage() {
 
           <Link
             to="/jobs"
-            className="mt-5 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
+            className="gj-clickable-primary mt-5 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
           >
             공고 매칭 보기
           </Link>

@@ -22,10 +22,8 @@ import { StateCard } from '@/shared/ui/StateCard'
  *
  * ## 이 화면이 지키는 구분
  *
- * **"해석하지 못한 요구"를 "충족하지 못한 요구"와 합치지 않는다.** 수집한 공고 중에는
- * 본문이 이미지뿐이라(`body_status=IMAGE_ONLY`) 기술을 하나도 뽑지 못한 것이 있다.
- * 그런 공고를 "요건 0개 충족"으로 그리면 화면이 없는 판정을 주장하게 된다. 그래서
- * `UNKNOWN` 절과 `unresolved` 를 분수 밖에 따로 적는다.
+ * **"해석하지 못한 요구"를 "충족하지 못한 요구"로 보여주지 않는다.** 판정하지 않은
+ * 요구는 사용자 행동으로 이어지지 않으므로 화면에서 숨기고 확인된 기술만 표시한다.
  *
  * 값을 만들지 않는다. 충족률(`fulfillmentRatio`)도 C가 계산한 것을 받아 표시만 한다.
  */
@@ -118,6 +116,8 @@ export function JobPostingDetailPage() {
   const detail = useJobMatch(target.data?.targetKey, jobId)
   const item = detail.data?.item ?? null
   const posting = item === null ? null : toJobPosting(item)
+  const required = posting?.required.filter((requirement) => requirement.mark !== 'UNKNOWN') ?? []
+  const preferred = posting?.preferred.filter((requirement) => requirement.mark !== 'UNKNOWN') ?? []
 
   return (
     <div>
@@ -159,39 +159,8 @@ export function JobPostingDetailPage() {
       {posting !== null && (
         <div className="gj-split mt-4">
           <div className="grid gap-3">
-            <RequirementBlock title="필수" requirements={posting.required} />
-            <RequirementBlock title="우대" requirements={posting.preferred} />
-
-            {/* 자동 판정을 보류한 요구는 위 분수에 넣지 않고 별도 안내한다. */}
-            {posting.unresolved.length > 0 && (
-              <section className="rounded-[14px] border border-tone-caution/35 bg-tone-caution-bg/25 p-[18px]">
-                <p className="text-[11px] font-extrabold tracking-[0.1em] text-tone-caution">
-                  자동 판정이 필요한 요구사항
-                </p>
-                <p className="mt-2 text-[12.5px] leading-[1.7] text-brand-muted">
-                  아래 요구는 자동 판정을 확정하지 못했습니다. 충족하지 못한 것이 아니라
-                  판정을 보류한 것이라 위 분수에 넣지 않았습니다.
-                </p>
-                <ul className="mt-3 grid gap-1.5">
-                  {posting.unresolved.map((entry, index) => (
-                    <li
-                      key={`${entry.requirementLabel}-${index}`}
-                      className="rounded-[10px] border border-brand-line bg-white/70 px-3 py-2 text-[12.5px] text-brand-ink-soft"
-                    >
-                      <p>
-                        <span className="font-semibold">{entry.requirementLabel}</span>
-                        <span className="text-brand-muted"> · {entry.reasonText}</span>
-                      </p>
-                      {entry.technologyNames.length > 0 && (
-                        <p className="mt-1 text-brand-faint">
-                          확인된 기술: {entry.technologyNames.join(', ')}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+            <RequirementBlock title="필수" requirements={required} />
+            <RequirementBlock title="우대" requirements={preferred} />
           </div>
 
           <div className="grid gap-4">
@@ -215,7 +184,7 @@ export function JobPostingDetailPage() {
                   href={posting.sourceUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-4 block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+                  className="gj-clickable mt-4 block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink"
                 >
                   원문 공고 보기 ↗
                 </a>
@@ -225,7 +194,7 @@ export function JobPostingDetailPage() {
             <DataRegion title="부족한 기술">
               <Link
                 to="/skill-gap"
-                className="block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+                className="gj-clickable block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink"
               >
                 부족한 기술 보기 →
               </Link>

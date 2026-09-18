@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { toJobPosting } from '@/features/matching/api/adapter'
-import { DataGapNotice } from '@/features/matching/components/DataGapNotice'
 import { JobPostingCard } from '@/features/matching/components/JobPostingCard'
 import { JobRequirementDrawer } from '@/features/matching/components/JobRequirementDrawer'
 import { useJobMatches, useTarget } from '@/features/matching/hooks/useMatching'
+import {
+  formatJobPagePosition,
+  JOBS_PER_PAGE,
+} from '@/features/matching/model/jobListPresentation'
 import { formatCollectedAt } from '@/features/matching/model/presentation'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
 import type { JobPostingView } from '@/features/matching/model/view'
@@ -33,9 +36,6 @@ import { StateCard } from '@/shared/ui/StateCard'
  * **기술요건 충족만 보여준다.** 합격 가능성이나 지원 가능 여부를 판정하지 않는다.
  */
 
-/** 한 쪽에 담을 공고 수. C의 상한이 50이라 그보다 작게 둔다. */
-const PER_PAGE = 20
-
 function toStats(
   summary: { totalCount: number; fullMatchCount: number | null } | null,
   scopeText: string,
@@ -53,16 +53,6 @@ function toStats(
           ? '대조 후 표시'
           : `${summary.fullMatchCount}건`,
       caption: '모든 필수 기술 보유',
-    },
-    {
-      /*
-        세 번째 칸이 "75~99%"가 아닌 이유. C가 충족도 분포를 주지 않아 그 구간을
-        셀 수 없고, 목록을 모아 세면 그것이 부합 판정 재계산이다(계약 §6-1).
-        빈 칸을 남기는 대신 셀 수 있는 것을 보여준다.
-      */
-      label: '조건부 제외',
-      note: summary === null ? '대조 후 표시' : '목록에서 제외',
-      caption: '자격 조건이 확정되지 않아 대조하지 않은 공고',
     },
   ]
 }
@@ -105,7 +95,7 @@ export function JobMatchPage() {
   const target = useTarget()
   const matches = useJobMatches(target.data?.targetKey, {
     page,
-    perPage: PER_PAGE,
+    perPage: JOBS_PER_PAGE,
     includeConditional: true,
   })
 
@@ -155,12 +145,6 @@ export function JobMatchPage() {
               <>
                 <StatStrip items={toStats(data.summary, scopeText)} />
 
-                {data.summary !== null && data.summary.excludedConditionalCount > 0 && (
-                  <p className="text-[12px] leading-[1.6] text-brand-faint">
-                    자격 조건이 확정되지 않아 {data.summary.excludedConditionalCount}건을 목록에서
-                    제외했습니다. 충족하지 못한 공고가 아니라 대조하지 않은 공고입니다.
-                  </p>
-                )}
               </>
             )}
 
@@ -174,7 +158,7 @@ export function JobMatchPage() {
                     action={
                       <Link
                         to="/roles"
-                        className="inline-block rounded-xl border border-brand-line px-4 py-2.5 text-[13px] font-[750] text-brand-ink hover:border-brand-line-active"
+                        className="gj-clickable inline-block rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
                       >
                         목표 직무 바꾸기
                       </Link>
@@ -196,20 +180,18 @@ export function JobMatchPage() {
                         type="button"
                         disabled={page <= 1}
                         onClick={() => setPage((current) => Math.max(1, current - 1))}
-                        className="rounded-xl border border-brand-line px-4 py-2 text-[13px] font-[750] text-brand-ink disabled:cursor-not-allowed disabled:text-brand-faint"
+                        className="gj-clickable rounded-xl border border-brand-line bg-white px-4 py-2 text-[13px] font-[750] text-brand-ink disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         이전
                       </button>
                       <p className="text-[12px] text-brand-faint">
-                        {data.summary === null
-                          ? `${page}쪽`
-                          : `${data.summary.totalCount}건 중 ${page}쪽`}
+                        {formatJobPagePosition(page, data.summary?.totalCount ?? null)}
                       </p>
                       <button
                         type="button"
                         disabled={!data.hasNext}
                         onClick={() => setPage((current) => current + 1)}
-                        className="rounded-xl border border-brand-line px-4 py-2 text-[13px] font-[750] text-brand-ink disabled:cursor-not-allowed disabled:text-brand-faint"
+                        className="gj-clickable rounded-xl border border-brand-line bg-white px-4 py-2 text-[13px] font-[750] text-brand-ink disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         다음
                       </button>
@@ -219,18 +201,19 @@ export function JobMatchPage() {
               </DataRegion>
 
               <div className="grid gap-4">
-                <DataRegion title="부족한 기술">
-                  <DataGapNotice gaps={data.dataGaps} className="mt-4" />
-
+                <DataRegion title="다음 단계">
+                  <p className="text-[12.5px] leading-[1.65] text-brand-muted">
+                    공고에서 자주 요구하는 기술과 다음에 준비할 기술을 확인하세요.
+                  </p>
                   <Link
                     to="/skill-gap"
-                    className="mt-4 block rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+                    className="gj-clickable mt-4 block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink"
                   >
                     부족한 기술 자세히 보기
                   </Link>
                   <Link
                     to="/recommendations"
-                    className="mt-2.5 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
+                    className="gj-clickable-primary mt-2.5 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
                   >
                     다음 기술 추천 보기
                   </Link>

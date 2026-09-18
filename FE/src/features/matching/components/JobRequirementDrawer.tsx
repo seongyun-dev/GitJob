@@ -6,7 +6,7 @@ import { MeterBar } from '@/shared/ui/MeterBar'
  * 공고 기술요건 상세 드로어 · 화면 02 Job Match.
  *
  * 확정 디자인 `Final v2`는 공고를 누르면 오른쪽에서 436px 패널이 밀려 나온다.
- * 목록에서는 칩으로 요약하고, 여기서는 기술 하나하나에 판정 문구를 붙인다.
+ * 목록에서는 칩으로 요약하고, 여기서는 사용자가 확인할 수 있는 기술만 펼친다.
  *
  * 드로어를 화면 컴포넌트 안에 인라인으로 두지 않은 이유는 열림 상태와 무관하게
  * 항상 DOM에 있어야 `transform` 전환이 되기 때문이다. 열릴 때 마운트하면 미끄러지지
@@ -68,8 +68,10 @@ export function JobRequirementDrawer({
   onClose: () => void
 }) {
   const open = posting !== null
-  const requiredHave = posting?.required.filter((item) => item.mark === 'HAVE').length ?? 0
-  const preferredHave = posting?.preferred.filter((item) => item.mark === 'HAVE').length ?? 0
+  const required = posting?.required.filter((item) => item.mark !== 'UNKNOWN') ?? []
+  const preferred = posting?.preferred.filter((item) => item.mark !== 'UNKNOWN') ?? []
+  const requiredHave = required.filter((item) => item.mark === 'HAVE').length
+  const preferredHave = preferred.filter((item) => item.mark === 'HAVE').length
 
   return (
     <>
@@ -121,35 +123,29 @@ export function JobRequirementDrawer({
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="text-[11.5px] text-brand-faint">필수 충족</p>
+                  <p className="text-[11.5px] text-brand-faint">확인된 필수 기술</p>
                   <p className="mt-1 text-[20px] leading-none font-[850] tracking-[-0.04em] text-brand-ink">
                     {requiredHave}
-                    <span className="text-[13px] font-bold text-brand-faint">
-                      {' / '}
-                      {posting.required.length}
-                    </span>
+                    <span className="text-[13px] font-bold text-brand-faint">개 보유</span>
                   </p>
                   <div className="mt-2">
                     <MeterBar
                       value={requiredHave}
-                      total={posting.required.length}
+                      total={required.length}
                       height={6}
                     />
                   </div>
                 </div>
                 <div>
-                  <p className="text-[11.5px] text-brand-faint">우대 충족</p>
+                  <p className="text-[11.5px] text-brand-faint">확인된 우대 기술</p>
                   <p className="mt-1 text-[20px] leading-none font-[850] tracking-[-0.04em] text-brand-ink-soft">
                     {preferredHave}
-                    <span className="text-[13px] font-bold text-brand-faint">
-                      {' / '}
-                      {posting.preferred.length}
-                    </span>
+                    <span className="text-[13px] font-bold text-brand-faint">개 보유</span>
                   </p>
                   <div className="mt-2">
                     <MeterBar
                       value={preferredHave}
-                      total={posting.preferred.length}
+                      total={preferred.length}
                       tone="muted"
                       height={6}
                     />
@@ -158,38 +154,8 @@ export function JobRequirementDrawer({
               </div>
 
               <div className="mt-6 grid gap-5">
-                <RequirementList title="필수 기술" requirements={posting.required} />
-                <RequirementList title="우대 기술" requirements={posting.preferred} />
-
-                {/* 자동 판정을 보류한 요구는 사용자의 부족으로 세지 않고 따로 적는다. */}
-                {posting.unresolved.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">
-                      자동 판정이 필요한 요구사항
-                    </p>
-                    <ul className="mt-2 grid gap-1.5">
-                      {posting.unresolved.map((item, index) => (
-                        <li
-                          key={`${item.requirementLabel}-${index}`}
-                          className="rounded-[10px] border border-brand-line bg-[#F7F9FC] px-3.5 py-2.5 text-[12.5px] leading-[1.6] text-brand-muted"
-                        >
-                          <p>
-                            <span className="font-semibold text-brand-ink-soft">
-                              {item.requirementLabel}
-                            </span>
-                            {' · '}
-                            {item.reasonText}
-                          </p>
-                          {item.technologyNames.length > 0 && (
-                            <p className="mt-1 text-brand-faint">
-                              확인된 기술: {item.technologyNames.join(', ')}
-                            </p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                <RequirementList title="필수 기술" requirements={required} />
+                <RequirementList title="우대 기술" requirements={preferred} />
               </div>
             </>
           )}
@@ -205,7 +171,7 @@ export function JobRequirementDrawer({
             <Link
               to={`/jobs/${encodeURIComponent(posting.id)}`}
               onClick={onClose}
-              className="mb-3 block rounded-xl bg-brand-600 px-4 py-2.5 text-center text-[13px] font-[750] text-white hover:bg-brand-400"
+              className="gj-clickable-primary mb-3 block rounded-xl bg-brand-600 px-4 py-2.5 text-center text-[13px] font-[750] text-white shadow-[0_10px_22px_rgba(47,94,235,0.22)]"
             >
               공고 상세 보기 →
             </Link>
@@ -215,7 +181,7 @@ export function JobRequirementDrawer({
               href={posting.sourceUrl}
               target="_blank"
               rel="noreferrer noopener"
-              className="mb-3 block rounded-xl border border-brand-line px-4 py-2.5 text-center text-[13px] font-[750] text-brand-ink hover:border-brand-line-active"
+              className="gj-clickable mb-3 block rounded-xl border border-brand-line bg-white px-4 py-2.5 text-center text-[13px] font-[750] text-brand-ink"
             >
               원문 공고 보기{posting.sourceSite === null ? '' : ` · ${posting.sourceSite}`}
             </a>

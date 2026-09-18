@@ -116,10 +116,13 @@ const VERDICT_TEXT: Readonly<Record<SkillGapVerdict, string>> = {
 const GROUP_TITLE: Readonly<Record<SkillGapVerdict, { title: string; description: string }>> = {
   MET: { title: '충족', description: '공고가 요구하는 수준을 충족합니다' },
   LEVEL_SHORT: {
-    title: '수준 부족',
-    description: '근거는 있지만 공고가 요구하는 수준에는 미치지 못합니다',
+    title: '보완이 필요한 기술',
+    description: '현재 확인된 수준보다 더 높은 수준을 요구합니다',
   },
-  NO_EVIDENCE: { title: '미보유', description: '선언·설정·구현 어느 것도 확인되지 않았습니다' },
+  NO_EVIDENCE: {
+    title: '새로 준비할 기술',
+    description: '공고에서 요구하지만 현재 분석에서 사용 근거를 찾지 못했습니다',
+  },
   UNDETERMINED: {
     title: '판단 근거 부족',
     description: '평가하지 않은 기술입니다. 부족으로 세지 않습니다',

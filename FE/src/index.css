@@ -121,6 +121,53 @@ html {
 
 @layer components {
   /*
+   * 매칭 흐름의 클릭 affordance.
+   *
+   * 흰 카드가 정적인 정보 상자처럼 보이지 않도록 테두리·그림자·위치를 함께 바꾼다.
+   * 키보드 포커스도 같은 계열로 보여 클릭 가능한 요소라는 사실을 입력 방식에 관계없이
+   * 드러낸다. disabled 요소에는 움직임을 주지 않는다.
+   */
+  .gj-clickable,
+  .gj-clickable-card,
+  .gj-clickable-primary {
+    transition:
+      transform 180ms ease,
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 180ms ease,
+      color 180ms ease;
+  }
+
+  .gj-clickable:not(:disabled):hover,
+  .gj-clickable-card:not(:disabled):hover {
+    transform: translateY(-3px);
+    border-color: var(--color-brand-400);
+    box-shadow: 0 14px 30px rgba(47, 94, 235, 0.17);
+  }
+
+  .gj-clickable-card:not(:disabled):hover {
+    background-color: #f7faff;
+  }
+
+  .gj-clickable-primary:not(:disabled):hover {
+    transform: translateY(-3px);
+    box-shadow: 0 16px 34px rgba(47, 94, 235, 0.34);
+  }
+
+  .gj-clickable:not(:disabled):active,
+  .gj-clickable-card:not(:disabled):active,
+  .gj-clickable-primary:not(:disabled):active {
+    transform: translateY(0);
+  }
+
+  .gj-clickable:focus-visible,
+  .gj-clickable-card:focus-visible,
+  .gj-clickable-primary:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--color-brand-400) 38%, transparent);
+    outline-offset: 3px;
+  }
+
+  /*
    * 두 헤더가 공유하는 높이. blur 는 여기 두지 않는다 — Tailwind v4 빌드가
    * @layer components 안의 `backdrop-filter` 를 떨궈서, 각 헤더가 `backdrop-blur-[14px]`
    * 유틸리티로 같은 값을 쓴다.

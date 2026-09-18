@@ -1,6 +1,5 @@
 import { Link } from 'react-router'
 import { toNextSkills } from '@/features/matching/api/adapter'
-import { DataGapNotice } from '@/features/matching/components/DataGapNotice'
 import { NextSkillCard } from '@/features/matching/components/NextSkillCard'
 import { useRecommendations, useTarget } from '@/features/matching/hooks/useMatching'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
@@ -53,7 +52,7 @@ export function RecommendationPage() {
           )}
           <Link
             to="/skill-gap"
-            className="rounded-xl border border-brand-line bg-white px-5 py-3 text-[13.5px] font-[750] text-brand-ink hover:border-brand-line-active"
+            className="gj-clickable rounded-xl border border-brand-line bg-white px-5 py-3 text-[13.5px] font-[750] text-brand-ink"
           >
             ← 부족한 기술
           </Link>
@@ -108,8 +107,6 @@ export function RecommendationPage() {
               ) : (
                 rest.map((skill) => <NextSkillCard key={skill.techId} skill={skill} />)
               )}
-
-              {data !== undefined && <DataGapNotice gaps={data.dataGaps} />}
             </div>
           </div>
         )}

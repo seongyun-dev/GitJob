@@ -28,6 +28,7 @@ export type StatItem = {
  * 문자열을 조립하지 않고 미리 적어 둔다.
  */
 const COLUMNS: Readonly<Record<number, string>> = {
+  2: 'lg:grid-cols-2',
   3: 'lg:grid-cols-3',
   4: 'lg:grid-cols-4',
 }

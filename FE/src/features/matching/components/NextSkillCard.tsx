@@ -40,7 +40,7 @@ export function NextSkillCard({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-extrabold tracking-[0.14em] text-brand-600">
-          #{skill.rank} RECOMMENDED
+          {skill.rank}순위
         </p>
         <div className="flex items-center gap-1.5">
           {/*
@@ -49,7 +49,7 @@ export function NextSkillCard({
           */}
           {skill.fromLevel === null ? (
             <span className="rounded-lg border border-brand-line bg-white px-2 py-1 text-[11.5px] font-[750] text-brand-faint">
-              현재 미판정
+              분석 전
             </span>
           ) : (
             <LevelBadge level={skill.fromLevel} />
@@ -70,7 +70,7 @@ export function NextSkillCard({
         <p className="text-[11.5px] text-brand-faint">필수 기술을 모두 충족하는 공고</p>
         {!hasCounts ? (
           <p className="mt-2 text-[12.5px] leading-[1.6] text-brand-muted">
-            이 후보의 공고 수 변화는 아직 계산되지 않았습니다. 화면에서 만들지 않습니다.
+            공고 변화를 집계하고 있습니다.
           </p>
         ) : (
           <>
@@ -119,7 +119,7 @@ export function NextSkillCard({
         )}
       </div>
 
-      <p className="mt-5 text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">추천 근거</p>
+      <p className="mt-5 text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">추천 이유</p>
       {skill.reasons.length === 0 ? (
         <p className="mt-2 text-[12.5px] leading-[1.6] text-brand-faint">
           근거 문장이 아직 준비되지 않았습니다.
@@ -138,16 +138,6 @@ export function NextSkillCard({
       )}
 
       {/*
-        선행 기술 중 판정하지 못한 것을 밝힌다. 누락된 선행과 섞으면 "배워야 할 것"이
-        실제보다 많아 보인다.
-      */}
-      {skill.unknownPrerequisiteTechIds.length > 0 && (
-        <p className="mt-3 text-[11.5px] leading-[1.6] text-tone-neutral">
-          선행 기술 {skill.unknownPrerequisiteTechIds.join(', ')}는 판정하지 못했습니다.
-        </p>
-      )}
-
-      {/*
         What-if 화면으로 넘긴다. 어느 기술을 볼지가 쿼리로 실려야 두 화면이
         같은 후보를 가리킨다.
       */}
@@ -156,8 +146,8 @@ export function NextSkillCard({
         onClick={onSelect}
         className={`mt-6 block rounded-xl px-4 py-3.5 text-center text-[13.5px] font-[750] ${
           emphasis
-            ? 'bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]'
-            : 'border border-brand-line bg-white text-brand-ink hover:border-brand-line-active'
+            ? 'gj-clickable-primary bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]'
+            : 'gj-clickable border border-brand-line bg-white text-brand-ink'
         }`}
       >
         {increasedCount === null ? '새로 충족되는 공고 보기' : `새로 충족 ${increasedCount}개 보기`}
