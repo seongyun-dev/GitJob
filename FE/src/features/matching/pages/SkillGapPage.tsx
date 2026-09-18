@@ -1,10 +1,22 @@
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { toSkillGapGroups, toSkillGapSummary } from '@/features/matching/api/adapter'
-import { SkillGapRows, SKILL_GAP_TEMPLATE } from '@/features/matching/components/SkillGapRows'
+import {
+  SkillGapRows,
+  SKILL_GAP_TEMPLATE,
+  VerdictBadge,
+} from '@/features/matching/components/SkillGapRows'
 import { useSkillGap, useTarget } from '@/features/matching/hooks/useMatching'
-import type { SkillGapSummaryView } from '@/features/matching/model/view'
+import {
+  SKILL_GAP_DETAIL_TEXT,
+  skillGapDetailRows,
+} from '@/features/matching/model/skillGapDetail'
+import type { SkillGapStatDetail } from '@/features/matching/model/skillGapDetail'
+import type { SkillGapRowView, SkillGapSummaryView } from '@/features/matching/model/view'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel, PartialNotice } from '@/shared/ui/ComputeStatePanel'
+import { LevelBadge } from '@/shared/ui/LevelBadge'
+import { Modal } from '@/shared/ui/Modal'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StatStrip } from '@/shared/ui/StatStrip'
 import type { StatItem } from '@/shared/ui/StatStrip'
@@ -28,30 +40,97 @@ const GAP_COLUMNS = ['기술', '필수 요구', '우대 요구', '내 수준', '
  *
  * 합을 화면에서 다시 만들지 않는다. 서버 값과 어긋났을 때 그 사실이 드러나야 한다.
  * `판단 근거 부족`이 `부족`과 다른 칸에 있는 것이 이 화면의 규칙이다.
+ *
+ * 네 칸 모두 **무언가를 센 값**이라 그 대상 목록을 열 수 있다(`내 기술` 화면과 같은
+ * 규칙). 셀 대상이 없으면(0개) `onOpen`을 넘기지 않는다 -- 눌러도 빈 목록만 나오는
+ * 버튼은 "볼 게 있다"는 거짓말이 된다.
  */
-function toStats(summary: SkillGapSummaryView | null): readonly StatItem[] {
+function toStats(
+  summary: SkillGapSummaryView | null,
+  rows: readonly SkillGapRowView[],
+  onOpen: (detail: SkillGapStatDetail) => void,
+): readonly StatItem[] {
+  const opener = (detail: SkillGapStatDetail) =>
+    skillGapDetailRows(rows, detail).length > 0 ? () => onOpen(detail) : undefined
+
   return [
     {
       label: '요구 기술',
       note: summary === null ? '대조 후 표시' : String(summary.requiredTechCount),
       caption: '필수 또는 우대로 1건 이상 언급',
+      onOpen: opener('required'),
     },
     {
       label: '충족',
       note: summary === null ? '대조 후 표시' : String(summary.metCount),
       caption: '요구 Level 이상 보유',
+      onOpen: opener('met'),
     },
     {
       label: '부족',
       note: summary === null ? '대조 후 표시' : String(summary.gapCount),
       caption: summary?.gapBreakdown ?? '미보유 · Level 부족',
+      onOpen: opener('gap'),
     },
     {
       label: '판단 근거 부족',
       note: summary === null ? '대조 후 표시' : String(summary.undeterminedCount),
       caption: '평가하지 않음 · Gap으로 세지 않음',
+      onOpen: opener('undetermined'),
     },
   ]
+}
+
+/**
+ * 지표가 센 기술을 그대로 펼쳐 보이는 모달.
+ *
+ * 열리는 목록은 지표 caption과 **같은 기준**이라야 한다. 다른 기준의 목록을 보여주면
+ * 숫자와 목록이 어긋난다. 행은 표와 같은 판정 배지·Level 배지를 써서 표에서 본 것과
+ * 모달에서 본 것이 같은 사실로 읽히게 한다.
+ */
+function SkillGapDetailModal({
+  detail,
+  rows,
+  onClose,
+}: {
+  detail: SkillGapStatDetail
+  rows: readonly SkillGapRowView[]
+  onClose: () => void
+}) {
+  const text = SKILL_GAP_DETAIL_TEXT[detail]
+  const items = skillGapDetailRows(rows, detail)
+
+  return (
+    <Modal title={text.title} description={text.description} onClose={onClose}>
+      <ul className="grid gap-2">
+        {items.map((row) => (
+          <li
+            key={row.techName}
+            className="flex items-center gap-3 rounded-[14px] border border-brand-line px-4 py-3"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-[750] text-brand-ink">{row.techName}</p>
+              {/* 수요 집계에 없는 축은 0건이 아니라 `—`다. 표의 규칙과 같다 */}
+              <p className="mt-0.5 truncate text-[11.5px] tabular-nums text-brand-muted">
+                필수 {row.requiredCount === null ? '—' : `${row.requiredCount}건`} · 우대{' '}
+                {row.preferredCount === null ? '—' : `${row.preferredCount}건`}
+              </p>
+            </div>
+            <span className="shrink-0">
+              {row.personalLevel === null ? (
+                <span className="text-[12.5px] text-brand-faint">없음</span>
+              ) : (
+                <LevelBadge level={row.personalLevel} />
+              )}
+            </span>
+            <span className="shrink-0">
+              <VerdictBadge row={row} />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Modal>
+  )
 }
 
 const LEGEND = [
@@ -77,6 +156,11 @@ export function SkillGapPage() {
   const groups = data === undefined ? [] : toSkillGapGroups(data.rows)
   const summary = data === undefined ? null : toSkillGapSummary(data)
   const ready = hasComputedValue(data)
+  /** 지표 모달이 여는 대상. 묶음 순서를 그대로 이어 붙여 표와 같은 차례로 보이게 한다. */
+  const rows = groups.flatMap((group) => group.rows)
+
+  /** 어느 지표의 목록이 열려 있는지. 한 번에 하나만 연다. */
+  const [openDetail, setOpenDetail] = useState<SkillGapStatDetail | null>(null)
 
   return (
     <div>
@@ -112,7 +196,7 @@ export function SkillGapPage() {
 
         {ready && (
           <>
-            <StatStrip items={toStats(summary)} />
+            <StatStrip items={toStats(summary, rows, setOpenDetail)} />
 
             <div className="gj-split">
               <div className="overflow-hidden rounded-[18px] border border-brand-line bg-white shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
@@ -188,6 +272,13 @@ export function SkillGapPage() {
         )}
       </div>
 
+      {openDetail !== null && (
+        <SkillGapDetailModal
+          detail={openDetail}
+          rows={rows}
+          onClose={() => setOpenDetail(null)}
+        />
+      )}
     </div>
   )
 }

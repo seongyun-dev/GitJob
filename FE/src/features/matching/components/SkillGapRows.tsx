@@ -25,9 +25,22 @@ const VERDICT_STYLE: Readonly<Record<SkillGapVerdict, { mark: string; className:
   UNDETERMINED: { mark: '?', className: 'bg-tone-neutral-bg text-tone-neutral' },
 }
 
-function GapRow({ row }: { row: SkillGapRowView }) {
+/** 판정 배지. 표와 지표 모달이 같은 얼굴로 같은 판정을 말하게 한다. */
+export function VerdictBadge({ row }: { row: SkillGapRowView }) {
   const style = VERDICT_STYLE[row.verdict]
+  return (
+    <span
+      className={`inline-flex w-fit items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-[750] ${style.className}`}
+    >
+      <span aria-hidden className="font-black">
+        {style.mark}
+      </span>
+      {row.verdictText}
+    </span>
+  )
+}
 
+function GapRow({ row }: { row: SkillGapRowView }) {
   return (
     <div
       className="grid items-center gap-4 rounded-[12px] px-[10px] py-2.5 max-lg:grid-cols-2"
@@ -51,14 +64,7 @@ function GapRow({ row }: { row: SkillGapRowView }) {
           <LevelBadge level={row.personalLevel} />
         )}
       </div>
-      <span
-        className={`inline-flex w-fit items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-[750] ${style.className}`}
-      >
-        <span aria-hidden className="font-black">
-          {style.mark}
-        </span>
-        {row.verdictText}
-      </span>
+      <VerdictBadge row={row} />
       <p
         className={`text-[13px] font-[850] tabular-nums ${
           row.fillDelta === null || row.fillDelta === 0 ? 'text-brand-faint' : 'text-brand-600'
