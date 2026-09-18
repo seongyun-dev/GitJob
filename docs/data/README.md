@@ -1291,6 +1291,19 @@ C조 범위다.
 - 주의: A(Before) 대비 wall -32.8% 는 A 에 포함된 rate-limit 대기 275.87s 때문이라 공식 수치로 쓰지 않는다. B(publish warm)는 artifact 백엔드가 hdfs/file 혼합이라 control 이 아니다. 각 조건 1회 실행(n=1)
 - 상세: [Weekly Artifact Redis Index 성능 벤치마크](2026-09-17-redis-artifact-index-benchmark.md)
 
+## Fixed cohort Weekly PUBLIC snapshot bundle 생성기
+
+- Jira: `S15P21E102-331`
+- 목적: Historical 주차의 weekly PUBLIC publication을 GitHub 재수집 없이 기존 durable artifact만으로 만든다
+- cohort: 2026-03~2026-08 월별 Top10k 중 유효 durable artifact가 남은 repo의 **합집합 10,419** (Top10000이 아니다). identity는 repository ID
+- week scoping: record의 `target_period` / `activity_period_start` / `activity_period_end`를 그 주 월~일로 좁힌다. 월 단위 period를 상속하면 head 선택이 겹쳐 **다른 주차 denominator가 선택되고 이벤트가 거절·소실된다**
+- rank: 그 주 `event_count` 기준 1..N 재계산. summary rank와 `activity_rank`가 일치해야 `snapshot_input._reconcile`을 통과한다
+- schema: 기존 `github-repo-snapshot/v1` · `github-repo-fetch-run-summary/v1` · `github-repo-fetch-failures/v1` · `github-repo-snapshot-publish-manifest/v1` 재사용. 신규 schema 없음
+- 검증: 2026-08-10 운영 구조 재현에서 `load_published_snapshot` PASS (records 890 / candidates 890 / failures 0). 후보 필터는 2,198→890으로 줄이면서 denominator 679는 동일
+- 멱등: 같은 입력 → 같은 바이트. CLI는 기존 출력 디렉터리를 덮어쓰지 않는다
+- 범위: bundle 생성까지. HDFS publish / intake 등록 / export / Kafka 처리는 별도 승인 절차
+- 상세: [GitHub Weekly → Artifact → Trend 연결 Runbook](2026-09-15-github-weekly-artifact-trend-runbook.md) 3단계
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)

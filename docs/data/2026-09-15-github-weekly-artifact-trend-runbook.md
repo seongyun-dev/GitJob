@@ -153,6 +153,84 @@ manifest/row digest에 결속된 bounded export를 만들고
 bounded export의 upstream binding이 맞지 않는다는 뜻이다. 따라서 Resolver가
 생성한 A Snapshot만으로 C 완료를 주장하지 않는다.
 
+### 3단계 — fixed cohort weekly PUBLIC bundle (S15P21E102-331)
+
+2단계 resolver는 그 주의 후보를 GitHub에서 새로 가져온다. Historical 구간을
+그 방식으로 메우면 주차마다 GitHub fetch가 다시 필요하고, 이미 durable하게
+가지고 있는 Artifact를 쓰지 못한다. 3단계는 그 재수집을 없애기 위한 경로다.
+
+#### fixed analyzed repo cohort
+
+"Top10000"이 아니다. 2026-03~2026-08 월별 Top10k 수집에서 **유효한 durable
+artifact가 남아 있는 repo의 합집합**이며, 2026-09-18 기준 10,419개다. 6개월
+전부에 등장하는 repo는 130개뿐이므로 월별 Top10k는 서로 다른 집합이고, 이
+cohort는 그 합집합으로만 정의된다. repo identity는 이름이 아니라 GitHub
+repository ID다. 이름은 rename으로 바뀌지만 ID는 바뀌지 않는다.
+
+cohort는 기존 published snapshot을 입력으로 재현한다. `select_cohort_records`가
+여러 snapshot을 순서대로 받아 repo_id별 첫 레코드를 남기므로, freshness 정책은
+호출자가 인자 순서로 정한다.
+
+#### week scoping — 월 단위 period를 절대 상속하지 않는다
+
+C의 head 선택(`worker.store._public_payload_covers_week`)은 record의
+`target_period`와 `activity_period_start/end`를 **포함이 아니라 겹침**으로
+판정한다. 월 단위 period를 그대로 물려주면 그 달의 모든 주차가 매칭되고,
+`select_public_snapshot`은 `occurred_at DESC`로 가장 최신 head를 고른다.
+그러면 어떤 주차가 다른 주차의 denominator를 받게 되고, 소비자는 그 export를
+`weekly export rows are outside selected PUBLIC_GITHUB`로 거절한다. 거절은
+offset을 커밋하므로 **그 주차 이벤트는 재시도되지 않고 사라진다.**
+
+그래서 생성기는 각 record의 `target_period`를 `<월>/<일>`로, `activity_period_start/end`를
+그 주 월요일과 일요일로 좁힌다. 이렇게 하면 주차별 head가 자기 주차에만
+매칭되고 선택이 1:1이 된다.
+
+#### rank 재계산
+
+`snapshot_input._reconcile`은 `disposition.rank == record.activity_rank`를
+요구하고 `_index`는 `top_n_limit`을 넘는 rank를 거부한다. 월간 publication의
+부분집합은 rank가 연속도 아니고 그 주를 설명하지도 않으므로, 그 주
+`event_count` 기준으로 1..N을 다시 매긴다. `activity_count`도 그 주 값으로
+바꾼다.
+
+summary는 `github-repo-fetch-run-summary/v1`을 쓴다. bootstrap schema를 쓰면
+전수 커버리지(`len(by_id) == top_n_limit`) 규칙에 걸린다.
+
+수집 실패(`FAILED`) repo는 재사용할 증거가 없으므로 그 주 후보가 아니다.
+실패 사실은 그 repo를 실제로 가져온 publication의 failures 객체에 이미 남아
+있다. artifact도 language metadata도 없는 repo 역시 denominator에 도달할 수
+없으므로 후보에서 제외한다. 2026-08-10 운영 구조로 확인한 결과 이 필터는
+후보를 2,198건에서 890건으로 줄이면서 denominator는 679건으로 **동일**했다.
+
+#### 생성 명령
+
+```bash
+python -m github.weekly_cohort_snapshot_cli   --week-start 2026-08-10   --cohort-snapshot <월별 snapshot.json>   --week-activity <그 주 repo_id/event_count NDJSON>   --dataset-snapshot-id s15p21e102-weekcohort-2026-08-10-v1   --pipeline-run-id weekcohort-2026-08-10-001   --publication-root hdfs:///gitjob/analysis_input/github/repo_snapshot/snapshot_id=s15p21e102-weekcohort-2026-08-10-v1   --generated-at 2026-09-18T12:00:00+00:00   --artifact-uri-prefix hdfs:///gitjob/analysis_input/github/repo_snapshot   --dry-run
+```
+
+`--cohort-snapshot`은 반복 지정하며 앞에 온 snapshot이 우선한다.
+`--artifact-uri-prefix`는 하드코딩하지 않고 주입한다. C의
+`ReadOnlyWebHdfsReader`는 `path.startswith(prefix + "/")`로만 검사하므로
+`hdfs:///gitjob/analysis_input/github/repo_snapshot` **하나면 29개 artifact
+root를 모두 덮는다.** leaf root를 쓰면 주차마다 6개가 필요해 4개 상한에 걸린다.
+`--dry-run`은 무엇이 만들어질지만 출력하고 아무것도 쓰지 않는다.
+
+#### idempotency
+
+같은 입력은 같은 바이트를 만든다. JSON은 `sort_keys=True`,
+`separators=(",", ":")`로 직렬화한다. `store_immutable`이 기존 객체와 바이트를
+비교하므로 같은 내용의 재실행은 no-op이고, 내용이 달라지면 쓰기가 거부된다.
+CLI도 같은 이유로 이미 존재하는 출력 디렉터리를 덮어쓰지 않고 종료 코드 1로
+거절한다. 입력이 실제로 달라졌다면 새 `--dataset-snapshot-id`가 필요하다.
+
+#### Production 실행은 별도 절차
+
+이 생성기는 bundle을 만들 뿐이다. HDFS publish, `C_INTAKE_CONFIG`에 public
+source 등록(최대 8개)과 worker 재시작, bounded export 생성, Kafka 완료 이벤트
+처리는 모두 별도 승인 절차다. 특히 운영 `PUBLIC_GITHUB` head 목록을 read-only로
+확인해 기존 head가 대상 주차와 겹치지 않는지 판정하기 전에는 canary를 실행하지
+않는다.
+
 ## 오프라인 검증 계약
 
 `AI/tests/test_weekly_artifact_resolver.py`는 다음을 검증한다.
@@ -164,6 +242,20 @@ bounded export의 upstream binding이 맞지 않는다는 뜻이다. 따라서 R
 - repo rename/transfer에서도 repo_id + SHA identity 유지
 - replay 중복 Artifact 생성 방지
 - 기존 snapshot publication contract를 생성하고 C handoff 경계를 넘지 않음
+
+`AI/tests/test_weekly_cohort_snapshot.py`와
+`AI/tests/test_weekly_cohort_snapshot_cli.py`는 3단계를 검증한다.
+
+- 그 주 활동한 repo만 후보가 되고, 활동 없는 repo는 빠진다
+- 재사용 가능한 증거가 없는 repo와 `FAILED` 수집은 후보가 아니다
+- `target_period`와 `activity_period_start/end`가 그 주 월~일로 좁혀진다
+- `activity_rank`가 1..N으로 재계산되고 summary rank와 일치한다
+- summary가 weekly run schema를 쓰고 개수가 정합한다
+- 같은 입력이 같은 바이트를 만든다
+- 한 주차 bundle이 다른 주차를 cover하지 않는다
+- 실제 `load_published_snapshot()`이 생성물을 그대로 받아들인다
+- `--artifact-uri-prefix` 밖의 artifact URI를 거부한다
+- CLI가 기존 출력 디렉터리를 덮어쓰지 않고, 다른 주차 activity 행을 거부한다
 
 Production에서 최종 Trend PASS를 기록하려면 별도로 Weekly `_SUCCESS.json`,
 `PUBLIC_GITHUB` compatible head, C export manifest/metadata/data checksum 및
