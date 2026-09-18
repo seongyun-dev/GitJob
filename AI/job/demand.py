@@ -4,7 +4,9 @@ from typing import Literal
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
+from job.classifier import MatchStatus, RequirementClass
 from job.cohort import (
+    MARKET_SCOPE_EXCLUSIONS,
     CohortCriteria,
     CohortModel,
     CohortPurpose,
@@ -82,6 +84,15 @@ class DemandSnapshot(CohortModel):
                 or self.denominator > self.input_count
             ):
                 raise ValueError("active demand must use the matching population")
+        elif self.criteria.purpose is CohortPurpose.CURRENT_MARKET:
+            # 시장 분모는 품질 제외/검토를 포함하므로 strict 집합보다 크고, 재전달
+            # 중복과 선언한 범위 밖 공고를 뺀 만큼 input_count보다 작다.
+            if (
+                self.matching_count is not None
+                or strict_count > self.denominator
+                or self.denominator > self.input_count - self.duplicate_count
+            ):
+                raise ValueError("market demand must use every in-scope posting")
         else:
             if strict_count != self.denominator:
                 raise ValueError("demand counts do not reconcile")
@@ -112,6 +123,111 @@ class DemandSnapshot(CohortModel):
         return self
 
 
+def _demand_rows(
+    counts: dict[str, dict[str, set[str]]], denominator: int
+) -> tuple[TechnologyDemand, ...]:
+    """Rank by posting count descending, then tech_id, for every category."""
+
+    ranks = {
+        category: {
+            tech_id: rank
+            for rank, (tech_id, _) in enumerate(
+                sorted(
+                    (
+                        (tech_id, ids)
+                        for tech_id, ids in counts.items()
+                        if ids[category]
+                    ),
+                    key=lambda item: (-len(item[1][category]), item[0]),
+                ),
+                start=1,
+            )
+        }
+        for category in ("required", "preferred", "general", "total")
+    }
+    rows = []
+    for rank, (tech_id, category_ids) in enumerate(
+        sorted(counts.items(), key=lambda item: (-len(item[1]["total"]), item[0])),
+        start=1,
+    ):
+        values = {
+            f"{category}_count": len(ids) for category, ids in category_ids.items()
+        }
+        ratios = {
+            f"{category}_ratio": len(ids) / denominator
+            for category, ids in category_ids.items()
+        }
+        category_ranks = {
+            f"{category}_rank": ranking.get(tech_id)
+            for category, ranking in ranks.items()
+        }
+        rows.append(
+            TechnologyDemand(
+                tech_id=tech_id, rank=rank, **values, **ratios, **category_ranks
+            )
+        )
+    return tuple(rows)
+
+
+def _aggregate_current_market(cohort: JobCohort) -> DemandSnapshot:
+    """Count every valid distinct posting we hold, included or not.
+
+    The market population is ``jobs + exclusions`` because a posting that failed
+    the role or quality gate still occupies the market. Only Registry-resolved
+    REQUIRED/PREFERRED observations are counted: an unmapped mention has no
+    stable identity to rank, and a MENTIONED one is a sighting rather than a
+    requirement. Postings whose requirements never resolved stay in the
+    denominator so the ratio is not inflated by shrinking it.
+    """
+
+    counts: dict[str, dict[str, set[str]]] = {}
+    postings: set[str] = set()
+    for item in (*cohort.jobs, *cohort.exclusions):
+        if MARKET_SCOPE_EXCLUSIONS.intersection(getattr(item, "reasons", ())):
+            # 선언한 범위 밖이거나 기준 시각에 관측되지 않은 공고는 시장이 아니다.
+            continue
+        # 같은 공고가 다른 source_record_id로 다시 들어와도 한 건이다.
+        posting_id = f"{item.source_site}:{item.source_posting_id}"
+        postings.add(posting_id)
+        categories: dict[str, set[str]] = {
+            "required": set(),
+            "preferred": set(),
+            "general": set(),
+        }
+        for observation in item.technologies:
+            if (
+                observation.tech_id is None
+                or observation.match_status is not MatchStatus.MATCHED
+            ):
+                continue
+            if observation.requirement_class is RequirementClass.REQUIRED:
+                categories["required"].add(observation.tech_id)
+            elif observation.requirement_class is RequirementClass.PREFERRED:
+                categories["preferred"].add(observation.tech_id)
+        for category, tech_ids in categories.items():
+            for tech_id in tech_ids:
+                counts.setdefault(
+                    tech_id,
+                    {
+                        name: set()
+                        for name in ("required", "preferred", "general", "total")
+                    },
+                )
+                counts[tech_id][category].add(posting_id)
+                counts[tech_id]["total"].add(posting_id)
+    denominator = len(postings)
+    metadata = cohort.model_dump(
+        exclude={"schema_version", "jobs", "exclusions", "input_union", "matching_jobs"}
+    )
+    metadata["status"] = CohortStatus.for_size(denominator, cohort.criteria.min_jobs)
+    return DemandSnapshot(
+        **metadata,
+        denominator=denominator,
+        matching_count=None,
+        technologies=_demand_rows(counts, denominator),
+    )
+
+
 def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
     """Count an OR alternative as a mentioned required option, not an AND gate.
 
@@ -123,6 +239,8 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
         cohort.criteria.purpose is CohortPurpose.ACTIVE_MATCHING
         and cohort.matching_jobs is not None
     )
+    if cohort.criteria.purpose is CohortPurpose.CURRENT_MARKET:
+        return _aggregate_current_market(cohort)
     population = cohort.matching_jobs if active_matching else cohort.jobs
     strict_by_id = {job.job_id: job for job in cohort.jobs}
     assert population is not None
@@ -168,44 +286,7 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
                 counts[tech_id][category].add(job.job_id)
                 counts[tech_id]["total"].add(job.job_id)
     denominator = len(population)
-    ranks = {
-        category: {
-            tech_id: rank
-            for rank, (tech_id, _) in enumerate(
-                sorted(
-                    (
-                        (tech_id, ids)
-                        for tech_id, ids in counts.items()
-                        if ids[category]
-                    ),
-                    key=lambda item: (-len(item[1][category]), item[0]),
-                ),
-                start=1,
-            )
-        }
-        for category in ("required", "preferred", "general", "total")
-    }
-    rows = []
-    for rank, (tech_id, category_ids) in enumerate(
-        sorted(counts.items(), key=lambda item: (-len(item[1]["total"]), item[0])),
-        start=1,
-    ):
-        values = {
-            f"{category}_count": len(ids) for category, ids in category_ids.items()
-        }
-        ratios = {
-            f"{category}_ratio": len(ids) / denominator
-            for category, ids in category_ids.items()
-        }
-        category_ranks = {
-            f"{category}_rank": ranking.get(tech_id)
-            for category, ranking in ranks.items()
-        }
-        rows.append(
-            TechnologyDemand(
-                tech_id=tech_id, rank=rank, **values, **ratios, **category_ranks
-            )
-        )
+    rows = _demand_rows(counts, denominator)
     metadata = cohort.model_dump(
         exclude={"schema_version", "jobs", "exclusions", "input_union", "matching_jobs"}
     )

@@ -89,6 +89,40 @@ Snapshot의 해시·목록 형식을 유지한다. MONTHLY_DEMAND는 criteria/�
 명시된다. 월별 코호트는 추천·What-if에서 거부하며, 기존 활성 DemandSnapshot도 월별 Trend로
 재해석하지 않는다. 월별 지표의 분모·누락·0 처리와 호출은 [Trend 계약](c-public-trend.md)을 따른다.
 
+### 현재 시장 기술 수요
+
+`purpose=CURRENT_MARKET`은 지금 확보한 유효 공고 전체의 기술 수요다. 시계열이 아니라
+한 시점의 Snapshot이므로 `target_role`과 `posted_from`/`posted_to`를 모두 거부한다.
+역할을 받으면 직무 코호트가 되어 저장된 lineage가 실제 모집단과 어긋나고, 기간을 받으면
+게시일 의미를 약속하게 된다. `sources`·`regions`·`career_levels`는 기존과 동일하게 쓴다.
+
+모집단은 `jobs + exclusions`의 서로 다른 `source_site:source_posting_id`다. 직무·품질
+게이트에서 빠진 공고도 같은 기술을 놓고 경쟁하므로 분모에 남긴다. 분모를 좁혀 비율을
+올리지 않는다.
+
+단 호출자가 선언한 범위 밖은 애초에 시장이 아니다. `MARKET_SCOPE_EXCLUSIONS`
+(`SOURCE_NOT_MATCHED`, `REGION_NOT_MATCHED`, `CAREER_LEVEL_NOT_MATCHED`,
+`COLLECTED_AFTER_AS_OF`, `POSTED_AFTER_AS_OF`)에 해당하는 공고는 모집단에서 뺀다.
+공식 출처를 JOBKOREA·SARAMIN으로 지정하면 WORKNET·GAMEJOB·CAREER는 분모에도
+기술 건수에도 들어가지 않는다. 기준 시각 이후에 관측된 공고도 지금의 Snapshot이 아니다.
+반면 본문 미확보·상태 미상·요구 미해석은 시장 안에 있으나 해석하지 못한 것이므로 남는다.
+따라서 `strict_count <= denominator <= input_count - duplicate_count`이다.
+
+같은 공고가 JOBKOREA와 SARAMIN에 동시에 올라와도 현재는 각각 독립 공고로 센다.
+cross-source 병합은 `canonical_job_id` 생산자가 생긴 뒤 ACTIVE_MATCHING과
+CURRENT_MARKET에 **동일하게** 적용할 별도 작업이다. 두 purpose가 서로 다른 identity
+정책을 쓰지 않는다.
+
+집계 대상은 Registry가 해석한 관측뿐이다. `match_status=MATCHED`이고
+`requirement_class`가 REQUIRED 또는 PREFERRED인 기술만 센다. 매핑되지 않은 언급은
+순위를 매길 안정된 ID가 없고, SKILL(입력의 MENTIONED)은 요구가 아니라 목격이므로
+`general_count`는 항상 0이다. 한 공고에서 같은 기술이 여러 번 나와도 공고 1건이다.
+
+역할별 `matching_jobs`를 합쳐 시장 Snapshot을 만들지 않는다. 5개 직무 결과의 합집합은
+같은 공고를 여러 번 세고, 어떤 직무에도 매칭되지 않은 공고를 통째로 잃는다.
+CURRENT_MARKET은 추천·What-if와 월별 Trend에서 모두 거부된다.
+회귀: `tests/test_current_market_demand.py`.
+
 ## 품질과 조건
 
 본문이 TEXT_AVAILABLE이어야 한다. 입력의 필수 제목/회사명/URL 등은 기존 -90

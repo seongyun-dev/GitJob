@@ -22,7 +22,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
 from job.classifier import (
     JobClassificationRecord,
     RequirementClass,
@@ -54,6 +53,9 @@ JOB_QUALITY_VERSION = "job-cohort-quality/v7"
 class CohortPurpose(StrEnum):
     ACTIVE_MATCHING = "ACTIVE_MATCHING"
     MONTHLY_DEMAND = "MONTHLY_DEMAND"
+    # 현재 확보한 공고 전체의 기술 수요. 직무도 기간도 없다 -- 개인화 결과가 아니라
+    # 시장 Snapshot이므로 역할로 모집단을 줄이면 그 순간 다른 질문에 답하게 된다.
+    CURRENT_MARKET = "CURRENT_MARKET"
 
 
 def requires_original_posting_date(criteria: "CohortCriteria") -> bool:
@@ -67,6 +69,20 @@ def requires_original_posting_date(criteria: "CohortCriteria") -> bool:
     return bool(criteria.posted_from or criteria.posted_to) and (
         criteria.purpose is not CohortPurpose.MONTHLY_DEMAND
     )
+
+
+# 시장 밖으로 나가는 제외 사유. 호출자가 선언한 범위(출처·지역·경력)를 벗어났거나
+# 기준 시각에 아직 관측되지 않은 공고는 "우리 시장"이 아니다. 나머지 제외·검토 사유는
+# 시장 안에 있지만 아직 해석하지 못했다는 뜻이므로 분모에 남는다.
+MARKET_SCOPE_EXCLUSIONS = frozenset(
+    {
+        "SOURCE_NOT_MATCHED",
+        "REGION_NOT_MATCHED",
+        "CAREER_LEVEL_NOT_MATCHED",
+        "COLLECTED_AFTER_AS_OF",
+        "POSTED_AFTER_AS_OF",
+    }
+)
 
 
 class CohortStatus(StrEnum):
@@ -177,7 +193,11 @@ def normalize_cohort_filters(
 
 
 class CohortCriteria(CohortModel):
-    target_role: StrictStr
+    # CURRENT_MARKET에서만 비어 있다. 기존 snapshot은 항상 값이 있으므로 저장된
+    # JSON의 바이트 모양과 cohort_id 해시는 그대로 유지된다.
+    target_role: StrictStr | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     as_of: datetime
     purpose: CohortPurpose = Field(
         default=CohortPurpose.ACTIVE_MATCHING,
@@ -193,7 +213,9 @@ class CohortCriteria(CohortModel):
 
     @field_validator("target_role")
     @classmethod
-    def normalize_role(cls, value: str) -> str:
+    def normalize_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         role = _ROLE_LOOKUP.get(value.strip().casefold())
         if role is None:
             raise ValueError(
@@ -230,6 +252,15 @@ class CohortCriteria(CohortModel):
             raise ValueError("posted_from must precede posted_to (exclusive)")
         if self.purpose is CohortPurpose.MONTHLY_DEMAND:
             self.complete_month()
+        if self.purpose is CohortPurpose.CURRENT_MARKET:
+            # 역할을 받으면 시장이 아니라 직무 코호트가 되고, 저장된 lineage가
+            # 실제 모집단과 어긋난다. 기간을 받으면 게시일 의미를 약속하게 된다.
+            if self.target_role is not None:
+                raise ValueError("CURRENT_MARKET must not carry a target_role")
+            if self.posted_from or self.posted_to:
+                raise ValueError("CURRENT_MARKET must not carry a posting period")
+        elif self.target_role is None:
+            raise ValueError("target_role is required outside CURRENT_MARKET")
         return self
 
     def complete_month(self) -> str:
@@ -534,7 +565,11 @@ def _quality_reasons(
     excluded, review = [], []
     if criteria.sources and record.source_site.strip().upper() not in criteria.sources:
         excluded.append("SOURCE_NOT_MATCHED")
-    if not _matches_role(record, criteria.target_role):
+    # 역할이 없는 것은 "모든 역할"이다. 시장 Snapshot은 지원 직무에 매칭되지 않는
+    # 공고도 같은 기술을 놓고 경쟁하므로 분모에 남긴다.
+    if criteria.target_role is not None and not _matches_role(
+        record, criteria.target_role
+    ):
         excluded.append("ROLE_NOT_MATCHED")
     if record.body_status is not BodyStatus.TEXT_AVAILABLE:
         review.append("BODY_UNAVAILABLE")
