@@ -9,7 +9,7 @@ import {
   fetchWhatIf,
   saveTarget,
 } from '@/features/matching/api/matchingApi'
-import { pollInterval } from '@/features/matching/model/polling'
+import { marketPollInterval, pollInterval } from '@/features/matching/model/polling'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 /**
@@ -159,6 +159,13 @@ export function useCurrentMarketDemands(params: {
     queryKey: queryKeys.currentMarketDemands(params.regions, params.careerLevels),
     queryFn: () =>
       fetchJobDemands({ regions: params.regions, careerLevels: params.careerLevels }),
-    refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
+    /*
+     * 값이 생긴 뒤에도 느리게 다시 묻는다 · 티켓 S15P21E102-343. 새 채용공고가 들어오면
+     * BE 가 최신 cutoff 를 다시 골라 주므로, 묻는 것만으로 화면이 최신화된다.
+     *
+     * 탭이 뒤에 있을 때는 호출하지 않는다 -- `refetchIntervalInBackground` 기본값이
+     * `false` 라 보이지 않는 화면을 위해 10분마다 서버를 때리지 않는다.
+     */
+    refetchInterval: (query) => marketPollInterval(query.state.data, query.state.error !== null),
   })
 }
