@@ -101,7 +101,7 @@ export function JobRequirementDrawer({
             <p className="mt-1 text-[12px] text-brand-faint">
               {posting === null
                 ? ''
-                : [posting.companyName, posting.region, posting.career, posting.deadline]
+                : [posting.companyName, posting.region, posting.career, posting.deadlineText]
                     .filter((value) => value !== null && value !== '')
                     .join(' · ')}
             </p>
@@ -161,23 +161,30 @@ export function JobRequirementDrawer({
                 <RequirementList title="필수 기술" requirements={posting.required} />
                 <RequirementList title="우대 기술" requirements={posting.preferred} />
 
-                {/*
-                  해석하지 못한 요구. 부족으로 세지 않고 따로 적는다 -- 공고가 무엇을
-                  요구했는지 우리가 읽지 못한 것이지, 사용자가 못 갖춘 것이 아니다.
-                */}
+                {/* 자동 판정을 보류한 요구는 사용자의 부족으로 세지 않고 따로 적는다. */}
                 {posting.unresolved.length > 0 && (
                   <div>
                     <p className="text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">
-                      해석하지 못한 요구
+                      자동 판정이 필요한 요구사항
                     </p>
                     <ul className="mt-2 grid gap-1.5">
-                      {posting.unresolved.map((item) => (
+                      {posting.unresolved.map((item, index) => (
                         <li
-                          key={`${item.requirementKind}-${item.reason}`}
+                          key={`${item.requirementLabel}-${index}`}
                           className="rounded-[10px] border border-brand-line bg-[#F7F9FC] px-3.5 py-2.5 text-[12.5px] leading-[1.6] text-brand-muted"
                         >
-                          {item.requirementKind === 'REQUIRED' ? '필수' : '우대'} · {item.reason}
-                          {item.knownTechIds.length > 0 && ` (${item.knownTechIds.join(', ')})`}
+                          <p>
+                            <span className="font-semibold text-brand-ink-soft">
+                              {item.requirementLabel}
+                            </span>
+                            {' · '}
+                            {item.reasonText}
+                          </p>
+                          {item.technologyNames.length > 0 && (
+                            <p className="mt-1 text-brand-faint">
+                              확인된 기술: {item.technologyNames.join(', ')}
+                            </p>
+                          )}
                         </li>
                       ))}
                     </ul>

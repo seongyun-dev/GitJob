@@ -31,6 +31,13 @@ export interface JobRequirement {
   requiredLevel: EvidenceLevel | null
 }
 
+/** 자동 판정을 보류한 요구의 사용자용 표현. API 내부 enum과 tech_id는 담지 않는다. */
+export interface UnresolvedRequirementView {
+  requirementLabel: string
+  reasonText: string
+  technologyNames: string[]
+}
+
 /** 공고 한 건 · 화면 02. */
 export interface JobPostingView {
   id: string
@@ -40,8 +47,8 @@ export interface JobPostingView {
   region: string | null
   /** 경력 조건. 공고가 밝히지 않았으면 `null`. */
   career: string | null
-  /** 마감 표기. 원본이 없으면 `null`이고 화면은 그 칸을 비운다. */
-  deadline: string | null
+  /** Asia/Seoul 기준으로 정규화한 마감 날짜·시각. 원본이 없거나 잘못됐으면 `null`. */
+  deadlineText: string | null
   sourceSite: string | null
   sourceUrl: string | null
   /** `FULL`만 "필수 전체 충족"이다. 나머지는 배지를 붙이지 않는다. */
@@ -59,7 +66,7 @@ export interface JobPostingView {
   required: JobRequirement[]
   preferred: JobRequirement[]
   /** 해석하지 못한 요구. 부족으로 세지 않고 따로 보여 준다. */
-  unresolved: { requirementKind: string; reason: string; knownTechIds: string[] }[]
+  unresolved: UnresolvedRequirementView[]
 }
 
 /**

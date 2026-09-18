@@ -1,6 +1,87 @@
 import type { Basis } from '@/features/matching/api/types'
 
 const KOREAN_NUMBER = new Intl.NumberFormat('ko-KR')
+const SEOUL_DEADLINE = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+const UNRESOLVED_REASON_TEXT: Readonly<Record<string, string>> = {
+  TECHNOLOGY_MAPPING_UNRESOLVED:
+    '일부 기술 표현을 확인하지 못해 자동 판정에서 제외했습니다.',
+  EVIDENCE_NOT_LOCATED:
+    '요구사항이 나온 원문 위치를 확인하지 못해 자동 판정에서 제외했습니다.',
+  NEGATION_UNSUPPORTED:
+    '제외·부정 조건이 포함되어 자동 판정을 보류했습니다.',
+  CARDINALITY_UNSUPPORTED:
+    '기술 개수 조건이 포함되어 자동 판정을 보류했습니다.',
+  LOGIC_UNSUPPORTED:
+    '복합 조건을 정확하게 해석할 수 없어 자동 판정을 보류했습니다.',
+}
+
+export interface UnresolvedRequirementPresentation {
+  requirementLabel: string
+  reasonText: string
+  technologyNames: string[]
+}
+
+/**
+ * API의 마감 시각을 공고 화면의 날짜·시각 표기로 바꾼다.
+ *
+ * 계산 API의 값은 timezone을 포함한 ISO instant다. 브라우저·운영체제 timezone에 따라
+ * 날짜가 달라지지 않도록 서비스 기준 시간인 Asia/Seoul을 명시한다. 파싱할 수 없는
+ * 값은 원문을 노출하지 않는다.
+ */
+export function formatJobDeadline(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === '') {
+    return null
+  }
+
+  const deadline = new Date(value)
+  if (Number.isNaN(deadline.getTime())) {
+    return null
+  }
+
+  const parts = SEOUL_DEADLINE.formatToParts(deadline)
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((candidate) => candidate.type === type)?.value ?? ''
+  const dateText = `${part('year')}.${part('month')}.${part('day')}.`
+  const timeText = `${part('hour')}:${part('minute')}`
+
+  // 수집기의 날짜형 마감은 다음 날 00:00 종료 경계로 정규화된다. 현재 API에는
+  // 날짜형과 실제 자정 마감을 구분하는 필드가 없으므로 00:00만 날짜로 표시한다.
+  return timeText === '00:00' ? dateText : `${dateText} ${timeText}`
+}
+
+/** 계산기의 판정 보류 사유를 사용자 문장으로 바꾸고 내부 enum·tech_id를 숨긴다. */
+export function presentUnresolvedRequirement(
+  item: {
+    requirementKind: string
+    reason: string
+    knownTechIds: readonly string[]
+  },
+  technologyNameFor: (techId: string) => string,
+): UnresolvedRequirementPresentation {
+  const requirementLabel =
+    item.requirementKind === 'REQUIRED'
+      ? '필수'
+      : item.requirementKind === 'PREFERRED'
+        ? '우대'
+        : '요구'
+
+  return {
+    requirementLabel,
+    reasonText:
+      UNRESOLVED_REASON_TEXT[item.reason] ??
+      '자동으로 해석하지 못해 판정을 보류한 요구사항입니다.',
+    technologyNames: item.knownTechIds.map(technologyNameFor),
+  }
+}
 
 /** API의 ISO 시각을 공고 화면에서 쓰는 고정 KST 표기로 바꾼다. */
 export function formatCollectedAt(value: string | null | undefined): string {

@@ -36,7 +36,7 @@ function metaItems(posting: JobPostingView): { label: string; value: string }[] 
     { label: '회사', value: posting.companyName },
     { label: '근무지', value: posting.region ?? '' },
     { label: '경력', value: posting.career ?? '' },
-    { label: '마감', value: posting.deadline ?? '' },
+    { label: '마감', value: posting.deadlineText ?? '' },
     { label: '출처', value: posting.sourceSite ?? '' },
   ].filter((item) => item.value !== '')
 }
@@ -162,27 +162,31 @@ export function JobPostingDetailPage() {
             <RequirementBlock title="필수" requirements={posting.required} />
             <RequirementBlock title="우대" requirements={posting.preferred} />
 
-            {/*
-              해석하지 못한 요구. 위 분수에 들어가지 않는 값이라 자리를 따로 둔다.
-              본문이 이미지뿐인 공고가 여기에 걸린다.
-            */}
+            {/* 자동 판정을 보류한 요구는 위 분수에 넣지 않고 별도 안내한다. */}
             {posting.unresolved.length > 0 && (
               <section className="rounded-[14px] border border-tone-caution/35 bg-tone-caution-bg/25 p-[18px]">
                 <p className="text-[11px] font-extrabold tracking-[0.1em] text-tone-caution">
-                  해석하지 못한 요구
+                  자동 판정이 필요한 요구사항
                 </p>
                 <p className="mt-2 text-[12.5px] leading-[1.7] text-brand-muted">
-                  아래 요구는 문장을 기술로 옮기지 못했습니다. 충족하지 못한 것이 아니라
-                  판정하지 않은 것이라 위 분수에 넣지 않았습니다.
+                  아래 요구는 자동 판정을 확정하지 못했습니다. 충족하지 못한 것이 아니라
+                  판정을 보류한 것이라 위 분수에 넣지 않았습니다.
                 </p>
                 <ul className="mt-3 grid gap-1.5">
                   {posting.unresolved.map((entry, index) => (
                     <li
-                      key={`${entry.requirementKind}-${index}`}
+                      key={`${entry.requirementLabel}-${index}`}
                       className="rounded-[10px] border border-brand-line bg-white/70 px-3 py-2 text-[12.5px] text-brand-ink-soft"
                     >
-                      <span className="font-semibold">{entry.requirementKind}</span>
-                      <span className="text-brand-muted"> · {entry.reason}</span>
+                      <p>
+                        <span className="font-semibold">{entry.requirementLabel}</span>
+                        <span className="text-brand-muted"> · {entry.reasonText}</span>
+                      </p>
+                      {entry.technologyNames.length > 0 && (
+                        <p className="mt-1 text-brand-faint">
+                          확인된 기술: {entry.technologyNames.join(', ')}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>

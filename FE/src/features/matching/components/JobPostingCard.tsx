@@ -22,7 +22,7 @@ function countHave(requirements: readonly { mark: string }[]): number {
 
 /** 값이 없는 축은 뺀다. `서울 · · D-11` 같은 빈칸을 남기지 않는다. */
 function metaText(posting: JobPostingView): string {
-  return [posting.companyName, posting.region, posting.career, posting.deadline]
+  return [posting.companyName, posting.region, posting.career, posting.deadlineText]
     .filter((value) => value !== null && value !== '')
     .join(' · ')
 }

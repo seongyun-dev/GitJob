@@ -22,6 +22,10 @@ import { EVIDENCE_LEVELS } from '@/shared/types/domain'
 import type { EvidenceLevel } from '@/shared/types/domain'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
+import {
+  formatJobDeadline,
+  presentUnresolvedRequirement,
+} from '@/features/matching/model/presentation'
 
 /**
  * 서버 DTO를 화면 타입으로 옮긴다 (S15P21E102-279).
@@ -73,14 +77,17 @@ export function toJobPosting(item: JobMatchItemDto): JobPostingView {
     companyName: item.companyName ?? '',
     region: item.region,
     career: item.careerLevel,
-    deadline: item.deadline,
+    deadlineText: formatJobDeadline(item.deadline),
     sourceSite: item.sourceSite,
     sourceUrl: item.sourceUrl,
     requiredStatus: item.requiredStatus ?? 'UNKNOWN',
     fulfillmentRatio: item.fulfillmentRatio,
     required: toRequirements(item.required),
     preferred: toRequirements(item.preferred),
-    unresolved: [...(item.required?.unresolved ?? []), ...(item.preferred?.unresolved ?? [])],
+    unresolved: [
+      ...(item.required?.unresolved ?? []),
+      ...(item.preferred?.unresolved ?? []),
+    ].map((unresolved) => presentUnresolvedRequirement(unresolved, technologyDisplayName)),
   }
 }
 
