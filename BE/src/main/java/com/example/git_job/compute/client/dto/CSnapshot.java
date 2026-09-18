@@ -16,7 +16,7 @@ import java.util.Map;
 public record CSnapshot(String snapshotId, String kind, Recommendation payload) {
 
     /**
-     * {@code recommendation-snapshot/v2}에서 화면이 쓰는 것만.
+     * {@code recommendation-snapshot/v2~v3}에서 화면이 쓰는 것만.
      *
      * <p>{@code currentCount}가 "지금 필수 전체 충족 공고 수"다. 이 값을 B가 목록에서
      * 세지 않는다 -- 세는 순간 C의 부합 판정을 다시 구현하는 것이 되고, 페이지 단위로

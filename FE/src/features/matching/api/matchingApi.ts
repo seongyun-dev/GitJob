@@ -35,8 +35,8 @@ export function saveTarget(body: {
 /**
  * 공고 매칭 목록.
  *
- * @param includeConditional 기본은 꺼져 있다. 조건부 공고는 자격 자체가 확정되지 않아
- *                           충족 여부를 말할 수 없고, 섞으면 충족 건수가 커 보인다.
+ * @param includeConditional 조건부 공고도 목록에 포함할지 결정한다. 포함해도 C가 판정을
+ *                           UNKNOWN으로 유지하므로 충족 공고로 승격되지 않는다.
  */
 export function fetchJobMatches(params: {
   page: number

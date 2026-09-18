@@ -128,16 +128,16 @@ repository proof와 C의 held/coverage 검증을 통과한 기술만 소비한�
 ## 버전과 저장 조회 호환
 
 - 현재 confirmed 정책: c-confirmed/eligible-observation/v1
-- 현재 추천 결과 schema: recommendation-snapshot/v2; v3 personal 입력 계산은
-  c-recommendation/lexicographic/v4, v4 aggregate ceiling 입력 계산은
-  c-recommendation/lexicographic/v5
+- 현재 추천 결과 schema: recommendation-snapshot/v3; 실제 비교 후보 전체를 쓰는 계산은
+  c-recommendation/lexicographic/v6이다. 이전 v3 personal 입력 계산 v4와
+  v4 aggregate ceiling 입력 계산 v5는 저장된 결과 조회용으로 유지한다.
 - 현재 설명: c-fact-explanation/v2
 - 구 결과의 c-held/project-participation/v1 정책은 신규 계산에 사용하지 않는다.
 - LegacyHeldTechnologySelection / LegacyGapSnapshot은 기존 출력 모양 그대로 분리해 읽는다. RecommendationSnapshot은 schema discriminator로 구/신 결과를 구분한다.
 - 기존 snapshot에 새 default 필드를 끼워 넣거나 조회 시 재계산하지 않으므로 구 JSON payload/hash와 CURRENT/WHAT_IF 목록이 유지된다.
 - 신규 profile 저장 조회에서도 consumed flags, proof 검증 결과, 지원 근거와 범위를 재검증한다.
-- matching/recommendation v4는 v3 personal_level을, v5는 v4 aggregate와 ceiling을
-  추가 소비하지만, v1~v3 envelope과 기존 recommendation v1~v4 snapshot은 historical 결과를 재계산하거나 새 필드로
+- matching/recommendation v6는 v3 personal_level 또는 v4 aggregate와 ceiling을
+  실제 비교 후보 전체에 적용하지만, v1~v3 envelope과 기존 recommendation v1~v5 snapshot은 historical 결과를 재계산하거나 새 필드로
   보정하지 않는다.
 
 ## Calibration과 검증 범위

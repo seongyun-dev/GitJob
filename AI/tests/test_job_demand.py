@@ -21,7 +21,9 @@ def test_distinct_counts_union_ratios_and_deterministic_ranks_match_hand_counts(
     )
     demand = aggregate_demand(cohort)
     technologies = {item.tech_id: item for item in demand.technologies}
-    assert demand.denominator == 3
+    # ACTIVE_MATCHING 수요는 화면에서 실제 비교하는 후보 전체를 분모로 쓴다.
+    # 요구 기술을 찾지 못한 공고도 공고 목록에는 남지만 기술 건수를 부풀리지는 않는다.
+    assert demand.denominator == 4
     assert demand.matching_count == 4
     assert demand.input_count == 4
     assert demand.review_count == 1
@@ -29,8 +31,8 @@ def test_distinct_counts_union_ratios_and_deterministic_ranks_match_hand_counts(
     assert technologies["java"].preferred_count == 1
     assert technologies["java"].general_count == 1
     assert technologies["java"].total_count == 2
-    assert technologies["java"].total_ratio == 2 / 3
-    assert technologies["redis"].preferred_ratio == 2 / 3
+    assert technologies["java"].total_ratio == 2 / 4
+    assert technologies["redis"].preferred_ratio == 2 / 4
     assert technologies["redis"].preferred_rank == 1
     assert technologies["java"].required_rank == 1
     assert technologies["java"].total_rank == technologies["java"].rank

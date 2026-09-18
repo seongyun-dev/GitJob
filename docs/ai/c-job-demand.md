@@ -33,7 +33,7 @@ payload = demand.model_dump(mode="json")
 | 결과 | schema_version | 계산 버전 |
 |---|---|---|
 | JobCohort | `job-cohort/v1` | `job-cohort-quality/v5` |
-| DemandSnapshot | `job-demand-snapshot/v1` | `job-demand-aggregation/v2` |
+| DemandSnapshot | `job-demand-snapshot/v1` | `job-demand-aggregation/v3` |
 
 DTO는 Pydantic의 `extra="forbid", frozen=True`와 tuple 필드를 사용한다.
 `model_dump_json()` / `model_validate_json()`으로 저장·복원한다. 입력 snapshot/run,
@@ -185,7 +185,8 @@ mapping context/attempts/evidence/candidates를 모두 보존한다. Registry �
 ## 집계와 상태
 
 각 tech_id의 REQUIRED/PREFERRED/GENERAL/전체 distinct 공고 수와 비율을 반환한다.
-분모는 `len(cohort.jobs)`로 고정한다. 한 공고에서 같은 기술이 필수와 우대에 모두
+ACTIVE_MATCHING의 분모는 사용자가 실제 비교하는 `len(cohort.matching_jobs)`이고,
+MONTHLY_DEMAND와 과거 결과는 기존 `len(cohort.jobs)` 의미를 유지한다. 한 공고에서 같은 기술이 필수와 우대에 모두
 등장할 수 있으므로 전체 수는 세 수의 합이 아닌 공고 ID의 합집합이다. OR 대안은
 필수 기술로 언급된 공고에 포함하며, 해당 기술 하나만의 절대 필수 여부로 해석하지 않는다.
 
@@ -204,11 +205,12 @@ DTO 복원 시에도 분모, 합집합 수 경계, 비율과 중복 기술 ID를
 통계 기준이 아니다. 표본 품질 기준은 호출자가 입력과 함께 고정한다. 준비중/실패는
 실행기 상태이며 이 집계 함수가 EMPTY나 수요 0으로 변환하지 않는다.
 관측된 비어 있지 않은 코호트에서 특정 기술이 없을 때의 관측 0과 코호트 EMPTY는
-별개다. `input_count = denominator + duplicate_count + excluded_count + review_count`이다.
-`ACTIVE_MATCHING` 결과의 `matching_count`는 직무·상태·지역·경력 필터를 통과해
-상세 비교 후보로 남은 수이며 `denominator <= matching_count <= input_count`다.
-`denominator`는 그중 요구 기술 논리까지 엄격히 해석된 수요 산정 모집단이다. 과거
-Snapshot과 `MONTHLY_DEMAND`에는 `matching_count`가 없을 수 있다.
+별개다. v2와 MONTHLY_DEMAND는
+`input_count = denominator + duplicate_count + excluded_count + review_count`를 유지한다.
+v3 ACTIVE_MATCHING은 `denominator = matching_count`이며 직무·상태·지역·경력 필터를
+통과해 상세 비교에 남은 공고를 모두 센다. 요구 기술이 없거나 일부 미해석인 공고도
+분모에는 남지만 확인되지 않은 기술을 REQUIRED/PREFERRED 건수로 만들지 않는다.
+과거 Snapshot과 `MONTHLY_DEMAND`에는 `matching_count`가 없을 수 있다.
 
 ## 검증과 출처
 

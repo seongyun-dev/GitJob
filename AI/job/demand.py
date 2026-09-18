@@ -4,10 +4,16 @@ from typing import Literal
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
-from job.cohort import CohortCriteria, CohortModel, CohortStatus, JobCohort
+from job.cohort import (
+    CohortCriteria,
+    CohortModel,
+    CohortPurpose,
+    CohortStatus,
+    JobCohort,
+)
 from registry.contracts import TechId
 
-JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v2"
+JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v3"
 
 
 class TechnologyDemand(CohortModel):
@@ -57,18 +63,32 @@ class DemandSnapshot(CohortModel):
             self.denominator, self.criteria.min_jobs
         ):
             raise ValueError("demand status must reflect denominator and min_jobs")
-        if (
+        strict_count = (
             self.input_count
-            != self.denominator
-            + self.duplicate_count
-            + self.excluded_count
-            + self.review_count
-        ):
+            - self.duplicate_count
+            - self.excluded_count
+            - self.review_count
+        )
+        if strict_count < 0:
             raise ValueError("demand counts do not reconcile")
-        if self.matching_count is not None and not (
-            self.denominator <= self.matching_count <= self.input_count
+        if (
+            self.aggregation_version == "job-demand-aggregation/v3"
+            and (self.criteria.purpose is CohortPurpose.ACTIVE_MATCHING)
+            and self.matching_count is not None
         ):
-            raise ValueError("matching count must contain the strict denominator")
+            if (
+                self.matching_count != self.denominator
+                or strict_count > self.denominator
+                or self.denominator > self.input_count
+            ):
+                raise ValueError("active demand must use the matching population")
+        else:
+            if strict_count != self.denominator:
+                raise ValueError("demand counts do not reconcile")
+            if self.matching_count is not None and not (
+                self.denominator <= self.matching_count <= self.input_count
+            ):
+                raise ValueError("matching count must contain the strict denominator")
         if len({item.tech_id for item in self.technologies}) != len(self.technologies):
             raise ValueError("demand technology IDs must be unique")
         for item in self.technologies:
@@ -99,16 +119,43 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
     ascending. Requirement categories overlap, so total uses their set union.
     """
     counts: dict[str, dict[str, set[str]]] = {}
-    for job in cohort.jobs:
-        categories = {
-            "required": {
-                tech_id for clause in job.required_clauses for tech_id in clause
-            },
-            "preferred": set(job.preferred_tech_ids),
-            # The classifier SKILL field is explicitly adapted to GENERAL in
-            # CohortJob.general_tech_ids. The A contract stays MENTIONED.
-            "general": set(job.general_tech_ids),
-        }
+    active_matching = (
+        cohort.criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+        and cohort.matching_jobs is not None
+    )
+    population = cohort.matching_jobs if active_matching else cohort.jobs
+    strict_by_id = {job.job_id: job for job in cohort.jobs}
+    assert population is not None
+    for job in population:
+        if active_matching:
+            strict = strict_by_id.get(job.job_id)
+            categories = {
+                "required": {
+                    tech_id
+                    for clause in job.requirements.required
+                    for tech_id in clause.tech_ids
+                },
+                "preferred": {
+                    tech_id
+                    for clause in job.requirements.preferred
+                    for tech_id in clause.tech_ids
+                },
+                # GENERAL은 기존 strict 공고에 보존된 분류만 사용한다. 미확정 공고의
+                # 언급을 필수/우대로 승격하지 않는다.
+                "general": set(strict.general_tech_ids)
+                if strict is not None
+                else set(),
+            }
+        else:
+            categories = {
+                "required": {
+                    tech_id for clause in job.required_clauses for tech_id in clause
+                },
+                "preferred": set(job.preferred_tech_ids),
+                # The classifier SKILL field is explicitly adapted to GENERAL in
+                # CohortJob.general_tech_ids. The A contract stays MENTIONED.
+                "general": set(job.general_tech_ids),
+            }
         for category, tech_ids in categories.items():
             for tech_id in tech_ids:
                 counts.setdefault(
@@ -120,7 +167,7 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
                 )
                 counts[tech_id][category].add(job.job_id)
                 counts[tech_id]["total"].add(job.job_id)
-    denominator = len(cohort.jobs)
+    denominator = len(population)
     ranks = {
         category: {
             tech_id: rank
@@ -162,11 +209,13 @@ def aggregate_demand(cohort: JobCohort) -> DemandSnapshot:
     metadata = cohort.model_dump(
         exclude={"schema_version", "jobs", "exclusions", "input_union", "matching_jobs"}
     )
+    if active_matching:
+        metadata["status"] = CohortStatus.for_size(
+            denominator, cohort.criteria.min_jobs
+        )
     return DemandSnapshot(
         **metadata,
         denominator=denominator,
-        matching_count=(
-            len(cohort.matching_jobs) if cohort.matching_jobs is not None else None
-        ),
+        matching_count=denominator if active_matching else None,
         technologies=tuple(rows),
     )

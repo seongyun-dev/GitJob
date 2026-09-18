@@ -3,6 +3,10 @@
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
+from test_evidence_consumption import analysis_payload
+from test_job_cohort import batch, criteria, posting
+
 from job.cohort import CohortCriteria, CohortJob, CohortStatus, JobCohort, build_cohort
 from job.requirements import (
     RequirementClause,
@@ -11,7 +15,6 @@ from job.requirements import (
     RequirementLevelEvidence,
     RequirementLevelEvidenceSource,
 )
-from pydantic import ValidationError
 from recommendation.engine import (
     PrerequisiteRule,
     PrerequisiteSnapshot,
@@ -22,8 +25,6 @@ from recommendation.engine import (
     simulate_what_if,
 )
 from recommendation.evidence import EvidenceAnalysis, consume_evidence
-from test_evidence_consumption import analysis_payload
-from test_job_cohort import batch, criteria, posting
 
 
 def make_job(job_id: str, clauses, preferred=()) -> CohortJob:
@@ -124,6 +125,25 @@ def test_current_and_what_if_use_same_cohort_and_what_if_list_contains_only_adde
     assert result.gap.missing_tech_ids == ("docker", "redis")
 
 
+def test_active_recommendation_uses_all_matching_candidates_without_vacuous_matches():
+    cohort = build_cohort(
+        batch(posting("java", required=("Java",)), posting("no-tech", required=())),
+        criteria(),
+    )
+    payload = make_analysis().model_dump(mode="json")
+    payload["registry_version"] = cohort.registry_version
+
+    result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
+
+    assert len(cohort.jobs) == 1
+    assert len(cohort.matching_jobs or ()) == 2
+    assert result.algorithm_version == "c-recommendation/lexicographic/v6"
+    assert result.demand.denominator == 2
+    assert result.demand.matching_count == 2
+    assert len(result.matching_jobs or ()) == 2
+    assert "no-tech" not in result.current_job_ids
+
+
 def test_valid_l1_and_language_implementation_are_current_not_repeat_candidates():
     from test_evidence_profiles import profile_payload
 
@@ -156,7 +176,7 @@ def test_v3_without_personal_levels_never_falls_back_to_held_only_matching():
 
     result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
 
-    assert result.algorithm_version == "c-recommendation/lexicographic/v4"
+    assert result.algorithm_version == "c-recommendation/lexicographic/v6"
     assert result.current_count == 0
     assert result.current_job_ids == ()
     assert result.status == "INSUFFICIENT_EVIDENCE"
@@ -574,7 +594,7 @@ def test_raw_classified_cohort_demand_and_related_lists_agree_through_json_round
         update={"registry_version": cohort.registry_version}
     )
     result = recommend(cohort, evidence)
-    assert result.demand.denominator == 3
+    assert result.demand.denominator == 4
     assert result.demand.duplicate_count == 1
     assert result.demand.review_count == 1
     docker = next(item for item in result.candidates if item.tech_id == "docker")
@@ -591,7 +611,8 @@ def test_raw_classified_cohort_demand_and_related_lists_agree_through_json_round
     assert page.total_count == docker.what_if.increased_count
     assert {job.job_id for job in page.items} == {"alternative", "delta"}
     assert all(
-        job.technologies and str(job.source_url).startswith("https://example.com/")
+        job.requirements.required
+        and str(job.source_url).startswith("https://example.com/")
         for job in page.items
     )
 

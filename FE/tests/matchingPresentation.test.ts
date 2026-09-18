@@ -13,7 +13,7 @@ const technologyNameFor = (techId: string) =>
   ({ csharp: 'C#', dotnet: '.NET', sql: 'SQL' })[techId as 'csharp' | 'dotnet' | 'sql'] ??
   '알 수 없는 기술'
 
-test('demand basis distinguishes observed, comparable, and strict denominator counts', () => {
+test('demand basis presents the active matching population without a strict subset', () => {
   assert.equal(
     formatDemandBasis({
       targetRole: 'BACKEND',
@@ -27,7 +27,7 @@ test('demand basis distinguishes observed, comparable, and strict denominator co
       reviewJobCount: 279,
       matchingJobCount: 253,
     }),
-    '관측 1,744건 · 상세 비교 후보 253건 · 수요 산정 13건',
+    '관측 1,744건 · 공고 253건',
   )
 })
 
@@ -80,6 +80,25 @@ test('unresolved requirement codes and registry ids become user-facing labels', 
   )
 })
 
+test('unresolved requirement passes only the technology id to a multi-argument name resolver', () => {
+  const technologyNameWithSuppliedFallback = (
+    techId: string,
+    suppliedName?: string | null,
+  ) => suppliedName?.trim() || technologyNameFor(techId)
+
+  assert.deepEqual(
+    presentUnresolvedRequirement(
+      {
+        requirementKind: 'REQUIRED',
+        reason: 'TECHNOLOGY_MAPPING_UNRESOLVED',
+        knownTechIds: ['csharp', 'dotnet'],
+      },
+      technologyNameWithSuppliedFallback,
+    ).technologyNames,
+    ['C#', '.NET'],
+  )
+})
+
 test('unknown unresolved requirement values never leak raw internal codes', () => {
   const presented = presentUnresolvedRequirement(
     {
@@ -112,7 +131,7 @@ test('internal data gap codes are grouped into user-facing messages', () => {
   ])
 
   assert.deepEqual(messages, [
-    '검토가 필요한 공고 278건은 계산에서 제외했습니다.',
+    '검토가 필요한 공고 278건이 있어 일부 결과를 미판정으로 표시합니다.',
     '저장소 2개의 분석 범위가 불완전해 일부 기술은 미판정으로 처리했습니다.',
     '일부 기술은 사용 근거 또는 개인 기여 범위가 충분하지 않아 보수적으로 판정했습니다.',
   ])

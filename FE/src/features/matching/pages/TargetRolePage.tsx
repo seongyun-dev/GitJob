@@ -11,7 +11,10 @@ import {
   targetRoleDisplayName,
 } from '@/features/matching/model/targetOptions'
 import type { CareerSelection, TargetRole } from '@/features/matching/model/targetOptions'
-import { formatCollectedAt } from '@/features/matching/model/presentation'
+import {
+  activeMatchingJobCount,
+  formatCollectedAt,
+} from '@/features/matching/model/presentation'
 import { ApiError } from '@/shared/api/client'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
@@ -52,6 +55,8 @@ export function TargetRolePage() {
     .filter((technology) => technology.requiredCount > 0)
     .sort((left, right) => right.requiredCount - left.requiredCount)
   const topCount = Math.max(0, ...technologies.map((technology) => technology.requiredCount))
+  const previewJobCount =
+    preview.data === undefined ? null : activeMatchingJobCount(preview.data.basis)
 
   return (
     <div>
@@ -214,9 +219,9 @@ export function TargetRolePage() {
             ) : (
               <>
                 <p className="text-[12px] text-brand-faint">
-                  {preview.data.basis.jobCount === null
+                  {previewJobCount === null
                     ? '공고 수 미집계'
-                    : `공고 ${preview.data.basis.jobCount.toLocaleString('ko-KR')}건 기준`}
+                    : `공고 ${previewJobCount.toLocaleString('ko-KR')}건 기준`}
                   {' · '}
                   {formatCollectedAt(preview.data.basis.asOf)}
                 </p>

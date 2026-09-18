@@ -78,6 +78,10 @@ class JobMatchServiceTest {
     }
 
     private static CMatching matching(CMatching.Clause clause) {
+        return matching(clause, List.of("JOB_LEVEL_REQUIREMENT_UNRESOLVED"));
+    }
+
+    private static CMatching matching(CMatching.Clause clause, List<String> dataGaps) {
         CMatching.Condition required = new CMatching.Condition(List.of(clause), List.of(),
                 3, 1, 0, 0.75);
         CMatching.Job job = new CMatching.Job("job-1", "saramin", "https://example.test/1",
@@ -86,7 +90,7 @@ class JobMatchServiceTest {
         CMatching.Item item = new CMatching.Item(job, required,
                 new CMatching.Condition(List.of(), List.of(), 0, 0, 0, null), "PARTIAL");
         return new CMatching(RECOMMENDATION, "calc-1", "cohort-1", 87, 5, 5, 0, 20, true,
-                List.of(item), List.of("JOB_LEVEL_REQUIREMENT_UNRESOLVED"));
+                List.of(item), dataGaps);
     }
 
     @Test
@@ -161,6 +165,20 @@ class JobMatchServiceTest {
         assertThat(response.dataStatus()).isEqualTo(ComputeState.PARTIAL);
         assertThat(response.statusReason()).isEqualTo("PARTIAL_ANALYSIS");
         // 부분이라고 목록을 비우지 않는다. 있는 근거로 나온 결과는 보여 준다.
+        assertThat(response.items()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("추천 근거가 부족해도 저장된 공고 매칭 결과는 숨기지 않는다")
+    void matchingStateDoesNotDependOnRecommendationState() {
+        when(compute.recommendation(anyString(), anyLong()))
+                .thenReturn(recommendation("INSUFFICIENT_EVIDENCE", 0));
+        when(compute.matching(anyString(), anyLong(), anyInt(), anyInt(), anyBoolean()))
+                .thenReturn(matching(clause("UNKNOWN", false), List.of()));
+
+        JobMatchResponse response = service.matches(USER_ID, 1, 20, false);
+
+        assertThat(response.dataStatus()).isEqualTo(ComputeState.READY);
         assertThat(response.items()).isNotEmpty();
     }
 

@@ -79,7 +79,7 @@ export function presentUnresolvedRequirement(
     reasonText:
       UNRESOLVED_REASON_TEXT[item.reason] ??
       '자동으로 해석하지 못해 판정을 보류한 요구사항입니다.',
-    technologyNames: item.knownTechIds.map(technologyNameFor),
+    technologyNames: item.knownTechIds.map((techId) => technologyNameFor(techId)),
   }
 }
 
@@ -119,7 +119,7 @@ export function summarizeDataGaps(gaps: readonly string[]): string[] {
     .find((value) => value !== undefined)
   if (reviewCount !== undefined) {
     messages.push(
-      `검토가 필요한 공고 ${KOREAN_NUMBER.format(Number(reviewCount))}건은 계산에서 제외했습니다.`,
+      `검토가 필요한 공고 ${KOREAN_NUMBER.format(Number(reviewCount))}건이 있어 일부 결과를 미판정으로 표시합니다.`,
     )
   }
 
@@ -164,18 +164,21 @@ export function summarizeDataGaps(gaps: readonly string[]): string[] {
 
   return messages
 }
-/** 서로 다른 공고 모집단을 한 숫자인 것처럼 보이지 않게 단계별로 표시한다. */
+/** 사용자가 실제로 비교하는 공고 수. 이전 Snapshot은 matchingJobCount를 우선한다. */
+export function activeMatchingJobCount(basis: Basis): number | null {
+  return basis.matchingJobCount ?? basis.jobCount
+}
+
+/** 내부 strict 집합을 노출하지 않고 실제 비교 모집단을 표시한다. */
 export function formatDemandBasis(basis: Basis): string {
   const format = (value: number) => value.toLocaleString('ko-KR')
   const parts: string[] = []
   if (basis.inputJobCount != null) {
     parts.push(`관측 ${format(basis.inputJobCount)}건`)
   }
-  if (basis.matchingJobCount != null) {
-    parts.push(`상세 비교 후보 ${format(basis.matchingJobCount)}건`)
-  }
-  if (basis.jobCount != null) {
-    parts.push(`수요 산정 ${format(basis.jobCount)}건`)
+  const activeCount = activeMatchingJobCount(basis)
+  if (activeCount != null) {
+    parts.push(`공고 ${format(activeCount)}건`)
   }
   return parts.join(' · ')
 }

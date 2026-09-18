@@ -4,6 +4,7 @@ import { DataGapNotice } from '@/features/matching/components/DataGapNotice'
 import { NextSkillCard } from '@/features/matching/components/NextSkillCard'
 import { useRecommendations, useTarget } from '@/features/matching/hooks/useMatching'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
+import { activeMatchingJobCount } from '@/features/matching/model/presentation'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel, PartialNotice } from '@/shared/ui/ComputeStatePanel'
 import { DataRegion } from '@/shared/ui/DataRegion'
@@ -32,6 +33,7 @@ export function RecommendationPage() {
   const rest = skills.slice(1)
   const ready = hasComputedValue(data)
   const basis = data?.basis
+  const jobCount = basis === undefined ? null : activeMatchingJobCount(basis)
 
   return (
     <div>
@@ -41,11 +43,11 @@ export function RecommendationPage() {
           description="배우면 지원할 수 있는 공고가 많이 늘어나는 순서예요."
         />
         <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-          {basis !== undefined && basis.jobCount !== null && (
+          {basis !== undefined && jobCount !== null && (
             <div className="rounded-[14px] border border-brand-line bg-white px-5 py-3.5">
               <p className="text-[12px] text-brand-faint">비교 집합</p>
               <p className="mt-1 text-[13.5px] font-[750] text-brand-ink-soft">
-                {targetRoleDisplayName(basis.targetRole)} 공고 {basis.jobCount}건
+                {targetRoleDisplayName(basis.targetRole)} 공고 {jobCount}건
               </p>
             </div>
           )}

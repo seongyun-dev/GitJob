@@ -21,6 +21,7 @@ import type {
 import { EVIDENCE_LEVELS } from '@/shared/types/domain'
 import type { EvidenceLevel } from '@/shared/types/domain'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
+import { activeMatchingJobCount } from '@/features/matching/model/presentation'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import {
   formatJobDeadline,
@@ -164,7 +165,7 @@ export function toSkillGapSummary(dto: SkillGapDto): SkillGapSummaryView | null 
   if (dto.summary === null) {
     return null
   }
-  const jobCount = dto.basis.jobCount
+  const jobCount = activeMatchingJobCount(dto.basis)
   const role = targetRoleDisplayName(dto.basis.targetRole)
   return {
     basisText: jobCount === null ? role : `${role} · 수요 산정 공고 ${jobCount}건`,

@@ -106,7 +106,7 @@ export function JobMatchPage() {
   const matches = useJobMatches(target.data?.targetKey, {
     page,
     perPage: PER_PAGE,
-    includeConditional: false,
+    includeConditional: true,
   })
 
   const data = matches.data

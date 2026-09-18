@@ -4,11 +4,12 @@ import json
 from hashlib import sha256
 from typing import Annotated, Literal
 
+from pydantic import Field, StrictInt, field_validator, model_validator
+
 from job.cohort import CohortJob, CohortPurpose, CohortStatus, JobCohort
 from job.demand import DemandSnapshot, TechnologyDemand, aggregate_demand
-from pydantic import Field, StrictInt, field_validator, model_validator
-from registry.contracts import TechId
-
+from job.matching import MatchingJobInput
+from job.requirements import RequirementKind
 from recommendation.evidence import (
     HELD_POLICY_VERSION,
     EvidenceAnalysis,
@@ -25,8 +26,9 @@ from recommendation.evidence import (
     consume_personal_assessments,
     consume_personal_levels,
 )
+from registry.contracts import TechId
 
-RECOMMENDATION_ALGORITHM_VERSION = "c-recommendation/lexicographic/v5"
+RECOMMENDATION_ALGORITHM_VERSION = "c-recommendation/lexicographic/v6"
 PREREQUISITE_POLICY_VERSION = "c-learning-prerequisites/v1"
 LEGACY_TIE_BREAK_RULE = "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
 TIE_BREAK_RULE = "gain-desc,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
@@ -102,22 +104,55 @@ def matches_required_clauses(
     )
 
 
+RecommendationJob = CohortJob | MatchingJobInput
+
+
+def _required_clauses(job: RecommendationJob) -> tuple[tuple[str, ...], ...]:
+    if isinstance(job, MatchingJobInput):
+        return tuple(clause.tech_ids for clause in job.requirements.required)
+    return job.required_clauses
+
+
+def _levelled_required_clauses(job: RecommendationJob):
+    if isinstance(job, MatchingJobInput):
+        clauses = job.requirements.required
+        return (
+            clauses
+            if all(clause.required_level is not None for clause in clauses)
+            else None
+        )
+    return job.levelled_required_clauses
+
+
+def _has_unresolved_required(job: RecommendationJob) -> bool:
+    return isinstance(job, MatchingJobInput) and any(
+        item.requirement_kind is RequirementKind.REQUIRED
+        for item in job.requirements.unresolved
+    )
+
+
+def _is_eligible(job: RecommendationJob) -> bool:
+    return not isinstance(job, MatchingJobInput) or job.eligibility == "ELIGIBLE"
+
+
 def _matching_job_ids(
-    jobs: tuple[CohortJob, ...], held: frozenset[str]
+    jobs: tuple[RecommendationJob, ...], held: frozenset[str]
 ) -> tuple[str, ...]:
     return tuple(
         sorted(
             {
                 job.job_id
                 for job in jobs
-                if matches_required_clauses(job.required_clauses, held)
+                if _is_eligible(job)
+                and not _has_unresolved_required(job)
+                and matches_required_clauses(_required_clauses(job), held)
             }
         )
     )
 
 
 def _level_matching_job_ids(
-    jobs: tuple[CohortJob, ...], personal_levels: dict[str, str]
+    jobs: tuple[RecommendationJob, ...], personal_levels: dict[str, str]
 ) -> tuple[str, ...]:
     """Required clauses only; PREFERRED is deliberately not an eligibility gate."""
     rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
@@ -125,23 +160,34 @@ def _level_matching_job_ids(
         sorted(
             job.job_id
             for job in jobs
-            if job.levelled_required_clauses is not None
+            if _is_eligible(job)
+            and not _has_unresolved_required(job)
+            and _levelled_required_clauses(job)
             and all(
                 any(
                     rank.get(personal_levels.get(tech), -1)
                     >= rank[clause.required_level.value]
                     for tech in clause.tech_ids
                 )
-                for clause in job.levelled_required_clauses
+                for clause in _levelled_required_clauses(job) or ()
             )
         )
     )
 
 
-def _unlevelled_required_job_ids(jobs: tuple[CohortJob, ...]) -> tuple[str, ...]:
+def _unlevelled_required_job_ids(
+    jobs: tuple[RecommendationJob, ...],
+) -> tuple[str, ...]:
     """Jobs with only legacy clauses cannot be promoted by v3 held evidence."""
     return tuple(
-        sorted(job.job_id for job in jobs if job.levelled_required_clauses is None)
+        sorted(
+            job.job_id
+            for job in jobs
+            if _required_clauses(job)
+            and (
+                _levelled_required_clauses(job) is None or _has_unresolved_required(job)
+            )
+        )
     )
 
 
@@ -171,15 +217,17 @@ def _level_what_if(
     held,
     *,
     data_gaps: tuple[str, ...],
+    jobs: tuple[RecommendationJob, ...] | None = None,
 ):
-    current = _level_matching_job_ids(cohort.jobs, levels)
-    projected = _level_matching_job_ids(cohort.jobs, {**levels, tech_id: "L1"})
+    calculation_jobs = cohort.jobs if jobs is None else jobs
+    current = _level_matching_job_ids(calculation_jobs, levels)
+    projected = _level_matching_job_ids(calculation_jobs, {**levels, tech_id: "L1"})
     newly = tuple(sorted(set(projected) - set(current)))
     return WhatIfResult(
         tech_id=tech_id,
         cohort_id=cohort.cohort_id,
         held_policy_version=held.held_policy_version,
-        denominator=len(cohort.jobs),
+        denominator=len(calculation_jobs),
         current_count=len(current),
         projected_count=len(projected),
         increased_count=len(newly),
@@ -233,6 +281,8 @@ def simulate_what_if(
     cohort: JobCohort,
     selection: HeldTechnologySelection,
     tech_id: str,
+    *,
+    jobs: tuple[RecommendationJob, ...] | None = None,
 ) -> WhatIfResult:
     """Compare the held set with exactly one evaluated, nonheld technology added."""
     if cohort.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
@@ -245,14 +295,15 @@ def simulate_what_if(
     if decision is None or decision.status is HeldStatus.UNKNOWN:
         raise ValueError("What-if technology has unconfirmed Evidence coverage")
     held = frozenset(selection.held_tech_ids)
-    current = _matching_job_ids(cohort.jobs, held)
-    projected = _matching_job_ids(cohort.jobs, held | {tech_id})
+    calculation_jobs = cohort.jobs if jobs is None else jobs
+    current = _matching_job_ids(calculation_jobs, held)
+    projected = _matching_job_ids(calculation_jobs, held | {tech_id})
     newly_matched = tuple(sorted(set(projected) - set(current)))
     return WhatIfResult(
         tech_id=tech_id,
         cohort_id=cohort.cohort_id,
         held_policy_version=selection.held_policy_version,
-        denominator=len(cohort.jobs),
+        denominator=len(calculation_jobs),
         current_count=len(current),
         projected_count=len(projected),
         increased_count=len(newly_matched),
@@ -278,8 +329,19 @@ class RecommendationCandidate(EvidenceModel):
 
 class _RecommendationContent(EvidenceModel):
     schema_version: Literal[
-        "recommendation-snapshot/v1", "recommendation-snapshot/v2"
+        "recommendation-snapshot/v1",
+        "recommendation-snapshot/v2",
+        "recommendation-snapshot/v3",
     ] = "recommendation-snapshot/v2"
+    evidence_input_version: (
+        Literal[
+            "evidence-consumption-input/v1",
+            "evidence-consumption-input/v2",
+            "evidence-consumption-input/v3",
+            "evidence-consumption-input/v4",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
     user_id: NonBlank
     analysis_id: NonBlank
     cohort_id: NonBlank
@@ -296,6 +358,7 @@ class _RecommendationContent(EvidenceModel):
         "c-recommendation/lexicographic/v3",
         "c-recommendation/lexicographic/v4",
         "c-recommendation/lexicographic/v5",
+        "c-recommendation/lexicographic/v6",
     ] = RECOMMENDATION_ALGORITHM_VERSION
     prerequisite_policy_version: NonBlank
     prerequisite_snapshot: PrerequisiteSnapshot
@@ -315,6 +378,9 @@ class _RecommendationContent(EvidenceModel):
     current_job_ids: tuple[NonBlank, ...]
     candidates: tuple[RecommendationCandidate, ...] = Field(max_length=3)
     jobs: tuple[CohortJob, ...]
+    matching_jobs: tuple[MatchingJobInput, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     data_gaps: tuple[NonBlank, ...]
     personal_levels: dict[TechId, Literal["L0", "L1", "L2", "L3"]] = Field(
         default_factory=dict, exclude_if=lambda value: not value
@@ -346,6 +412,7 @@ class RecommendationSnapshot(_RecommendationContent):
                 "c-recommendation/lexicographic/v3",
                 "c-recommendation/lexicographic/v4",
                 "c-recommendation/lexicographic/v5",
+                "c-recommendation/lexicographic/v6",
             }
             else LEGACY_TIE_BREAK_RULE
         )
@@ -362,20 +429,47 @@ class RecommendationSnapshot(_RecommendationContent):
             raise ValueError("snapshot Evidence/Gap identity mismatch")
         if self.held.held_policy_version != self.gap.held_policy_version:
             raise ValueError("snapshot Evidence/Gap policy mismatch")
+        expanded = self.algorithm_version == "c-recommendation/lexicographic/v6"
+        if expanded and (
+            self.schema_version != "recommendation-snapshot/v3"
+            or self.evidence_input_version is None
+            or self.matching_jobs is None
+        ):
+            raise ValueError("v6 recommendation requires expanded matching inputs")
+        if not expanded and self.matching_jobs is not None:
+            raise ValueError("expanded matching inputs require recommendation v6")
+        calculation_jobs: tuple[RecommendationJob, ...] = (
+            self.matching_jobs
+            if expanded and self.matching_jobs is not None
+            else self.jobs
+        )
         if self.cohort_id != self.demand.cohort_id or self.demand.denominator != len(
-            self.jobs
+            calculation_jobs
         ):
             raise ValueError("snapshot cohort/demand mismatch")
-        expected_current = (
-            _level_matching_job_ids(self.jobs, self.personal_levels)
-            if self.algorithm_version
+        level_aware = (
+            self.evidence_input_version
+            in {"evidence-consumption-input/v3", "evidence-consumption-input/v4"}
+            if expanded
+            else self.algorithm_version
             in {
                 "c-recommendation/lexicographic/v4",
                 "c-recommendation/lexicographic/v5",
             }
-            else _matching_job_ids(self.jobs, frozenset(self.held.held_tech_ids))
         )
-        if self.algorithm_version == "c-recommendation/lexicographic/v5":
+        expected_current = (
+            _level_matching_job_ids(calculation_jobs, self.personal_levels)
+            if level_aware
+            else _matching_job_ids(calculation_jobs, frozenset(self.held.held_tech_ids))
+        )
+        ceiling_aware = (
+            self.algorithm_version == "c-recommendation/lexicographic/v5"
+            or (
+                expanded
+                and self.evidence_input_version == "evidence-consumption-input/v4"
+            )
+        )
+        if ceiling_aware:
             if set(self.assessment_ceilings) != set(self.personal_levels):
                 raise ValueError("v5 personal levels require assessment ceilings")
             if not set(self.level_assessment_complete_tech_ids) <= set(
@@ -410,25 +504,18 @@ class RecommendationSnapshot(_RecommendationContent):
             raise ValueError("duplicate recommendation candidate")
         for candidate in self.candidates:
             if candidate.tech_id not in self.gap.missing_tech_ids and not (
-                self.algorithm_version
-                in {
-                    "c-recommendation/lexicographic/v4",
-                    "c-recommendation/lexicographic/v5",
-                }
-                and self.personal_levels.get(candidate.tech_id) == "L0"
+                level_aware and self.personal_levels.get(candidate.tech_id) == "L0"
             ):
                 raise ValueError("candidate must be an evaluated missing technology")
             projected = (
                 _level_matching_job_ids(
-                    self.jobs, {**self.personal_levels, candidate.tech_id: "L1"}
+                    calculation_jobs,
+                    {**self.personal_levels, candidate.tech_id: "L1"},
                 )
-                if self.algorithm_version
-                in {
-                    "c-recommendation/lexicographic/v4",
-                    "c-recommendation/lexicographic/v5",
-                }
+                if level_aware
                 else _matching_job_ids(
-                    self.jobs, frozenset(self.held.held_tech_ids) | {candidate.tech_id}
+                    calculation_jobs,
+                    frozenset(self.held.held_tech_ids) | {candidate.tech_id},
                 )
             )
             if (
@@ -467,6 +554,13 @@ def build_recommendations(
     if cohort.registry_version != analysis.registry_version:
         raise ValueError("Registry versions must match for recommendation")
     prerequisites = prerequisites or default_prerequisites()
+    expanded = cohort.matching_jobs is not None
+    calculation_jobs: tuple[RecommendationJob, ...] = (
+        cohort.matching_jobs if cohort.matching_jobs is not None else cohort.jobs
+    )
+    calculation_status = CohortStatus.for_size(
+        len(calculation_jobs), cohort.criteria.min_jobs
+    )
     demand = aggregate_demand(cohort)
     demand_ids = {row.tech_id for row in demand.technologies}
     prerequisite_rules = {rule.tech_id: rule for rule in prerequisites.rules}
@@ -496,13 +590,13 @@ def build_recommendations(
         "evidence-consumption-input/v4",
     }
     current_ids = (
-        _level_matching_job_ids(cohort.jobs, personal_levels)
+        _level_matching_job_ids(calculation_jobs, personal_levels)
         if level_aware
-        else _matching_job_ids(cohort.jobs, frozenset(held.held_tech_ids))
+        else _matching_job_ids(calculation_jobs, frozenset(held.held_tech_ids))
     )
     data_gaps = set(gap.data_gaps)
     unlevelled_required_job_ids = (
-        _unlevelled_required_job_ids(cohort.jobs) if level_aware else ()
+        _unlevelled_required_job_ids(calculation_jobs) if level_aware else ()
     )
     data_gaps.update(
         f"REQUIRED_LEVEL_UNCONFIRMED:{job_id}" for job_id in unlevelled_required_job_ids
@@ -523,8 +617,8 @@ def build_recommendations(
     if analysis.schema_version == "evidence-consumption-input/v4":
         complete_level_ids = set(level_assessment_complete_tech_ids)
         rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
-        for job in cohort.jobs:
-            for clause in job.levelled_required_clauses or ():
+        for job in calculation_jobs:
+            for clause in _levelled_required_clauses(job) or ():
                 required = clause.required_level.value
                 if any(
                     rank.get(personal_levels.get(tech), -1) >= rank[required]
@@ -544,12 +638,12 @@ def build_recommendations(
                         data_gaps.add(f"PERSONAL_LEVEL_SCOPE_INCOMPLETE:{tech}")
     if cohort.review_count:
         data_gaps.add(f"COHORT_RECORDS_REQUIRE_REVIEW:{cohort.review_count}")
-    if cohort.status is not CohortStatus.READY:
-        data_gaps.add(f"COHORT_{cohort.status.value}")
+    if calculation_status is not CohortStatus.READY:
+        data_gaps.add(f"COHORT_{calculation_status.value}")
 
     ranked: list[tuple[tuple, dict]] = []
     for row in demand.technologies:
-        if cohort.status is not CohortStatus.READY or (
+        if calculation_status is not CohortStatus.READY or (
             row.tech_id not in gap.missing_tech_ids
             and not (level_aware and personal_levels.get(row.tech_id) == "L0")
         ):
@@ -573,9 +667,10 @@ def build_recommendations(
                 personal_levels,
                 held,
                 data_gaps=tuple(sorted(data_gaps)),
+                jobs=calculation_jobs,
             )
             if level_aware
-            else simulate_what_if(cohort, held, row.tech_id)
+            else simulate_what_if(cohort, held, row.tech_id, jobs=calculation_jobs)
         )
         reasons = {
             "DEMAND_IN_SELECTED_COHORT",
@@ -640,7 +735,7 @@ def build_recommendations(
             sorted(ranked, key=lambda item: item[0])[:3], start=1
         )
     )
-    if cohort.status is not CohortStatus.READY:
+    if calculation_status is not CohortStatus.READY:
         status = "INSUFFICIENT_DATA"
     elif not candidates and (
         gap.unknown_tech_ids
@@ -653,6 +748,10 @@ def build_recommendations(
     else:
         status = "PARTIAL" if data_gaps else "READY"
     content = _RecommendationContent(
+        schema_version=(
+            "recommendation-snapshot/v3" if expanded else "recommendation-snapshot/v2"
+        ),
+        evidence_input_version=(analysis.schema_version if expanded else None),
         user_id=user_id,
         analysis_id=analysis_id,
         cohort_id=cohort.cohort_id,
@@ -666,9 +765,16 @@ def build_recommendations(
         current_job_ids=current_ids,
         candidates=candidates,
         jobs=tuple(sorted(cohort.jobs, key=lambda job: job.job_id)),
+        matching_jobs=(
+            tuple(sorted(cohort.matching_jobs, key=lambda job: job.job_id))
+            if cohort.matching_jobs is not None
+            else None
+        ),
         data_gaps=tuple(sorted(data_gaps)),
         algorithm_version=(
-            "c-recommendation/lexicographic/v5"
+            "c-recommendation/lexicographic/v6"
+            if expanded
+            else "c-recommendation/lexicographic/v5"
             if analysis.schema_version == "evidence-consumption-input/v4"
             and level_aware
             else "c-recommendation/lexicographic/v4"
@@ -695,7 +801,7 @@ class RelatedJobsPage(EvidenceModel):
     current_count: StrictInt = Field(ge=0)
     projected_count: StrictInt = Field(ge=0)
     increased_count: StrictInt = Field(ge=0)
-    items: tuple[CohortJob, ...]
+    items: tuple[CohortJob | MatchingJobInput, ...]
     data_gaps: tuple[NonBlank, ...]
 
 
@@ -739,7 +845,13 @@ def list_related_jobs(
         )
     else:
         raise ValueError("view must be CURRENT or WHAT_IF")
-    jobs = {job.job_id: job for job in snapshot.jobs}
+    source_jobs: tuple[RecommendationJob, ...] = (
+        snapshot.matching_jobs
+        if snapshot.algorithm_version == "c-recommendation/lexicographic/v6"
+        and snapshot.matching_jobs is not None
+        else snapshot.jobs
+    )
+    jobs = {job.job_id: job for job in source_jobs}
     return RelatedJobsPage(
         snapshot_id=snapshot.snapshot_id,
         cohort_id=snapshot.cohort_id,

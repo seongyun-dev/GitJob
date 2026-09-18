@@ -1,4 +1,4 @@
-"""Same saved assessment is used by list/detail; strict What-if stays separate."""
+"""Same saved assessment is used by list/detail and active-population What-if."""
 
 import json
 import os
@@ -9,11 +9,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from job.cohort import JobCohort
-from job.matching import build_job_matching, restore_job_assessment
 from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
 from test_job_cohort import batch, criteria, posting
 from test_recommendation_engine import make_analysis
+
+from job.cohort import JobCohort
+from job.matching import build_job_matching, restore_job_assessment
 from worker.api import create_compute_app
 from worker.store import (
     Artifact,
@@ -214,7 +215,7 @@ def _prepare(client):
     return result_id, request, reply
 
 
-def test_partial_matching_roundtrip_pages_detail_and_strict_whatif(client):
+def test_partial_matching_roundtrip_pages_detail_and_active_whatif(client):
     result_id, request, original = _prepare(client)
     listing_url = PREFIX + f"/recommendations/{result_id}/matching-job-postings"
     response = client.get(listing_url, params={"user_id": "user-1", "size": 1})

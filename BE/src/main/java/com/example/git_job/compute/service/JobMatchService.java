@@ -43,10 +43,18 @@ public class JobMatchService {
         CSnapshot.Recommendation recommendation = computed.value().recommendation();
         CMatching matching = computed.value().matching();
         return JobMatchResponse.of(
-                ComputeState.ofRecommendation(recommendation.status()),
+                matchingState(matching),
                 Basis.of(computed.target(), recommendation.demand()),
                 summary(recommendation, matching),
                 matching, page, perPage);
+    }
+
+    /** 매칭 결과가 존재하면 추천 후보 상태와 무관하게 그 결과를 표시한다. */
+    private ComputeState matchingState(CMatching matching) {
+        if (matching.dataGaps() != null && !matching.dataGaps().isEmpty()) {
+            return new ComputeState(ComputeState.PARTIAL, "PARTIAL_ANALYSIS", null);
+        }
+        return ComputeState.ready();
     }
 
     public JobMatchResponse.Detail detail(long userId, String jobId) {

@@ -21,6 +21,13 @@ snapshot에 고정한다. 요구 수준이 analyzer 상한보다 높으면
 `ASSESSMENT_CEILING_BELOW_REQUIREMENT:{tech_id}:{level}`, 귀속·coverage가 불완전하면
 `PERSONAL_LEVEL_SCOPE_INCOMPLETE:{tech_id}`를 품질 gap으로 남긴다. 이를 사용자 수준
 부족이나 기술 미보유로 바꾸지 않는다.
+
+신규 `c-recommendation/lexicographic/v6`는 ACTIVE_MATCHING의 `matching_jobs` 전체를
+CURRENT·What-if·수요 분모에 사용한다. 요구 기술이 없는 공고는 목록에는 남지만
+자동 충족으로 세지 않으며, REQUIRED 일부가 미해석인 공고도 CURRENT나 증가분으로
+승격하지 않는다. 지역·경력 조건이 미확정인 CONDITIONAL 공고도 목록과 분모에는
+남지만 현재 충족·What-if 증가분으로 세지 않는다. 저장된 v1~v5 결과의 계산식과
+Snapshot ID는 유지한다.
 동일 cohort의 필수·우대·일반 수요 중 `NOT_HELD`, 또는 명시적 personal L0 기술만 후보가
 될 수 있고 후보 최대 수는 3개다. `UNKNOWN`은 Gap의 `unknown_tech_ids`와 `data_gaps`로
 전달하며 학습 부족으로 표현하지 않는다.
