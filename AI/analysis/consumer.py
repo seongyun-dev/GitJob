@@ -56,6 +56,12 @@ from analysis.judge import (
 from analysis.manifests import DependencyReport, ManifestScanner
 from analysis.parse import ParseReport, RepositoryParser
 from analysis.personal_level import assess_personal_levels
+from analysis.progress import (
+    STAGE_ANALYZING_REPOSITORY,
+    STAGE_ATTRIBUTING_CONTRIBUTION,
+    ProgressPublisher,
+    Stage,
+)
 from analysis.publish import ResultPublisher, completed_result, failed_result
 from analysis.results import (
     SCHEMA_VERSION,
@@ -117,6 +123,12 @@ class AnalysisConsumer:
     results_v4: ResultPublisher | None = None
     identity_resolver: CommitAuthorIdentityResolver | None = None
     attributor: GitEvidenceAttributor | None = None
+    #: Where stage transitions go, when a progress topic is configured.
+    #:
+    #: `None` is the shape this worker had before the progress screen existed:
+    #: the analysis runs and finishes exactly the same, and the job moves from
+    #: QUEUED straight to its terminal state.
+    progress: ProgressPublisher | None = None
     dlq_topic: str | None = None
     dlq_transport: KafkaTransport | None = None
     poll_timeout_ms: int = 1_000
@@ -221,6 +233,9 @@ class AnalysisConsumer:
                 result.bytes_on_disk,
                 request.trace_id,
             )
+            # 여기부터가 시간을 쓰는 구간이다. 클론 전에 알리면 화면은 "분석중"이라
+            # 말하는데 실제로는 아직 받아오는 중이고, 그 둘의 길이가 크게 다르다.
+            self._report_progress(request, payload, STAGE_ANALYZING_REPOSITORY)
 
             # Parsing runs inside the same claim: the checkout only exists until
             # the `finally` below, so there is nowhere to resume from later.
@@ -256,6 +271,11 @@ class AnalysisConsumer:
 
             configs = (self.config_scanner or ConfigScanner()).scan(result.path)
             judgement = self._judge(request, payload, dependencies, configs, report)
+            # `_authorship` 이 실제로 blame 을 도는 조건과 같은 조건에서만 알린다.
+            # 끄고 돌리는 배포에서 이 단계를 알리면, 화면은 아무도 하지 않는 일을
+            # 진행 중이라고 말한 채로 완료까지 간다.
+            if judgement is not None and self.attribute_authors:
+                self._report_progress(request, payload, STAGE_ATTRIBUTING_CONTRIBUTION)
             authorship = self._authorship(result.path, judgement)
 
             attributed_evidence = None
@@ -530,6 +550,24 @@ class AnalysisConsumer:
                 detail,
                 schema_version=schema,
             )
+        )
+
+    def _report_progress(
+        self, request: RepositoryAnalysisRequest, payload, stage: Stage
+    ) -> None:
+        """Announce a stage, if anyone is listening.
+
+        No return value on purpose. There is nothing a caller could do with a
+        failure here that would be better than carrying on with the analysis,
+        and offering the answer invites someone to branch on it later.
+        """
+        if self.progress is None:
+            return
+        self.progress.report(
+            analysis_id=payload.analysis_id,
+            request_event_id=request.event_id,
+            trace_id=request.trace_id,
+            stage=stage,
         )
 
     def _authorship(

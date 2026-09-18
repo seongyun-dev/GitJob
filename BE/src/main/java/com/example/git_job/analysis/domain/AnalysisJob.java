@@ -32,6 +32,18 @@ import org.springframework.data.domain.Persistable;
 public class AnalysisJob implements Persistable<String> {
 
     public static final String STATUS_QUEUED = "QUEUED";
+    /**
+     * 워커가 이 분석을 집어 일하고 있다.
+     *
+     * <p>새 값이 아니다. {@link #IN_PROGRESS_STATUSES} 와 응답 경계의
+     * {@code normalize()} 가 이미 알고 있던 값이고, 여태 아무도 쓰지 않았을 뿐이다.
+     * 그래서 이 상태를 쓰기 시작해도 중복 요청 판정과 FE 계약은 그대로다 --
+     * 화면에는 {@code RUNNING} 으로 나간다.</p>
+     *
+     * <p>세부 단계는 여기가 아니라 {@code currentStage} 가 나른다. 상태를 늘리면
+     * 응답 계약의 다섯 값을 넘게 되고, 계약 밖 값은 화면에서 실패로 접힌다.</p>
+     */
+    public static final String STATUS_ANALYZING = "ANALYZING";
     /** Terminal. docs/fe/shared-api-contract.md §JobStatus. */
     public static final String STATUS_SUCCEEDED = "SUCCEEDED";
     public static final String STATUS_FAILED = "FAILED";
@@ -136,6 +148,54 @@ public class AnalysisJob implements Persistable<String> {
                 Objects.requireNonNull(branchName, "branchName must not be null"),
                 Objects.requireNonNull(commitSha, "commitSha must not be null"),
                 Objects.requireNonNull(requestedAt, "requestedAt must not be null"));
+    }
+
+    /**
+     * 워커가 알려 온 단계로 옮긴다.
+     *
+     * <p>진행 이벤트는 표시용이다. 옮기지 못했다고 해서 잘못된 것은 없고, 화면이
+     * 한 단계 늦게 움직일 뿐이다. 그래서 예외 대신 {@code false} 를 돌려준다.</p>
+     *
+     * <h2>움직이지 않는 세 경우</h2>
+     *
+     * <ol>
+     *   <li><b>이미 종료됐다.</b> 진행 토픽과 결과 토픽은 서로 다른 토픽이라 순서가
+     *       보장되지 않는다. 결과가 먼저 닿으면 완료된 분석에 진행 이벤트가 뒤늦게
+     *       도착하는데, 그때 상태를 되돌리면 끝난 분석이 다시 도는 것처럼 보인다.</li>
+     *   <li><b>뒤로 가는 단계다.</b> 클레임 테이크오버로 같은 분석이 처음부터 다시
+     *       돌면 1단계 이벤트가 다시 온다. 실제로 다시 돌고 있는 것은 맞지만, 화면이
+     *       거꾸로 가면 사용자는 앞서 본 진행이 취소됐다고 읽는다.</li>
+     *   <li><b>같은 단계다.</b> at-least-once 전달이라 같은 이벤트가 두 번 온다.
+     *       위의 순서 비교가 이것도 함께 막는다.</li>
+     * </ol>
+     *
+     * <p>모르는 {@code currentStage} 위에서는 옮기는 쪽을 고른다. 여기에 도달하는
+     * 미지의 값은 이 코드보다 새로운 워커가 쓴 것이고, 그때는 멈춰 있는 화면보다
+     * 한 칸 건너뛴 화면이 낫다.</p>
+     *
+     * @param at 이 서비스가 이벤트를 받은 시각. 워커의 시계를 쓰지 않는 것은
+     *           {@code completedAt} 과 같은 이유다 -- 두 호스트의 시차가 진행을
+     *           요청보다 앞서게 만들 수 있다.
+     * @return 실제로 옮겼으면 {@code true}, 무시했으면 {@code false}
+     */
+    public boolean progress(AnalysisStage next, Instant at) {
+        Objects.requireNonNull(next, "next must not be null");
+        Objects.requireNonNull(at, "at must not be null");
+        if (!next.reportableByWorker() || !IN_PROGRESS_STATUSES.contains(status)) {
+            return false;
+        }
+        int current = AnalysisStage.parse(currentStage).map(AnalysisStage::order).orElse(-1);
+        if (next.order() <= current) {
+            return false;
+        }
+        this.status = STATUS_ANALYZING;
+        this.currentStage = next.name();
+        // 두 번째 단계로 곧장 들어온 분석도 시작 시각을 갖는다. 이미 있으면 덮지
+        // 않는다 -- 처음 움직인 시각이 사용자가 기다린 시간의 기준이다.
+        if (this.startedAt == null) {
+            this.startedAt = at;
+        }
+        return true;
     }
 
     /**

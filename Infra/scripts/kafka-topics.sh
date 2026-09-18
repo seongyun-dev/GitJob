@@ -118,6 +118,13 @@ TOPICS=(
   "gitjob.repository-analysis.results.v3:3:-1"
   "gitjob.repository-analysis.dlq.v1:3:-1"
   "gitjob.repository-analysis.results.dlq.v1:3:-1"
+  # 진행 단계. 요청·결과와 같은 키(analysis_id)를 쓰므로 파티션 수도 같게 둔다.
+  #
+  # 유일하게 retention.ms 가 -1 이 아닌 repository-analysis 토픽이다. 처음부터
+  # 재생하는 것이 설계의 근거인 다른 토픽들과 달리, 지나간 진행은 화면에 보여 줄
+  # 곳이 없다 -- 그 분석은 이미 끝나 있어 backend 가 전부 무시한다. 24시간은
+  # 어제 난 장애를 들여다볼 수 있을 만큼 길고, 쌓이지 않을 만큼 짧다.
+  "gitjob.repository-analysis.progress.v1:3:86400000"
   "gitjob.repo-activity-weekly.completed.v1:1:-1"
 )
 

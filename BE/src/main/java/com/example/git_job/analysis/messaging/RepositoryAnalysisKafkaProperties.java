@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /** Kafka destinations owned by repository analysis. */
 @ConfigurationProperties(prefix = "gitjob.kafka.topics.repository-analysis")
 public record RepositoryAnalysisKafkaProperties(
-        String requests, String results, String resultsV3, String resultsDlq) {
+        String requests, String results, String resultsV3, String resultsDlq, String progress) {
 
     public RepositoryAnalysisKafkaProperties {
         requests = require(requests, "requests");
@@ -14,6 +14,22 @@ public record RepositoryAnalysisKafkaProperties(
         results = require(results, "results");
         resultsV3 = resultsV3 == null ? "" : resultsV3.strip();
         resultsDlq = require(resultsDlq, "results-dlq");
+        progress = progress == null ? "" : progress.strip();
+    }
+
+    /**
+     * 진행 단계 토픽. 선택값이다.
+     *
+     * <p>비워 두면 이 서비스는 구독하지 않고 워커도 발행하지 않는다. 그때 분석은
+     * 예전처럼 {@code QUEUED} 에서 종료 상태로 한 번에 움직인다 -- 화면이 중간
+     * 단계를 못 보여 줄 뿐 아무것도 깨지지 않는다.</p>
+     *
+     * <p>기본값을 두지 않는 것은 {@code resultsV3} 와 같은 이유다. 존재하지 않는
+     * 토픽을 구독하면 로그가 경고로 가득 찬다. 이 값을 채우는 것이 곧 기능을 켜는
+     * 일이고, 그래서 BE 를 먼저 배포해도 아무 일도 일어나지 않는다.</p>
+     */
+    public boolean hasProgress() {
+        return !progress.isEmpty();
     }
 
     /**

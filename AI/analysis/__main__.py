@@ -21,6 +21,7 @@ from analysis.consumer import AnalysisConsumer, work_root_from_env
 from analysis.credentials import HttpCredentialBroker
 from analysis.manifests import ManifestScanner
 from analysis.parse import RepositoryParser, verify_grammars
+from analysis.progress import ProgressPublisher
 from analysis.publish import ResultPublisher
 from analysis.results import SCHEMA_VERSION, SCHEMA_VERSION_V2, SCHEMA_VERSION_V3
 from analysis.rules import RegistryStore
@@ -36,6 +37,10 @@ DEFAULT_DLQ_TOPIC = "gitjob.repository-analysis.dlq.v1"
 DEFAULT_RESULTS_TOPIC = "gitjob.repository-analysis.results.v1"
 V2_RESULTS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V2"
 V3_RESULTS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3"
+# 진행 단계 토픽. 기본값이 없는 것은 의도다 -- 이 이름을 채우는 것이 곧 진행 표시를
+# 켜는 일이고, 비워 두면 워커는 예전과 똑같이 결과만 발행한다. B 쪽 설정 이름도
+# 같다(gitjob.kafka.topics.repository-analysis.progress).
+PROGRESS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS"
 
 
 def build() -> AnalysisConsumer:
@@ -149,10 +154,23 @@ def build() -> AnalysisConsumer:
             schema_version=SCHEMA_VERSION_V3,
         )
 
+    progress = None
+    progress_topic = (os.getenv(PROGRESS_TOPIC_ENV) or "").strip()
+    if progress_topic:
+        progress_transport = transport_from_env(
+            default_client_id="gitjob-analysis-progress"
+        )
+        # 결과 전송과 달리 SystemExit 을 던지지 않는다. 브로커가 없으면 결과도
+        # 못 보내므로 위에서 이미 멈춘 뒤이고, 여기서 다시 멈출 이유는 표시용
+        # 토픽 하나뿐이다 -- 그 이유로 워커를 못 뜨게 하지 않는다.
+        if progress_transport is not None:
+            progress = ProgressPublisher(progress_transport, progress_topic)
+
     return AnalysisConsumer(
         transport=transport,
         claims=claims,
         cloner=cloner,
+        progress=progress,
         credential_broker=credential_broker,
         parser=parser,
         scanner=scanner,

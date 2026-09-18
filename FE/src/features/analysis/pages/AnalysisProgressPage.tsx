@@ -5,6 +5,7 @@ import { AnalysisStepList } from '@/features/analysis/components/AnalysisStepLis
 import { useAnalysisStatus } from '@/features/analysis/hooks/useRepositoryAnalysis'
 import {
   analysisPhase,
+  analysisSteps,
   failureCopy,
   failureKind,
   hasResult,
@@ -22,15 +23,15 @@ import { queryKeys } from '@/shared/api/queryKeys'
 /**
  * 분석 진행 · 티켓 S15P21E102-204 (확정 디자인 `Final v2`의 `07 Analysis Progress`).
  *
- * v2 구조: hero → 진행 영역(단계 4칸) + 우측 `PARTIAL RESULT` 패널(958/372).
+ * v2 구조: hero → 진행 영역(단계 칸) + 우측 `PARTIAL RESULT` 패널(958/372).
  * 단계 목록은 `AnalysisStepList`로 옮겨 이 페이지는 배치만 맡는다.
  *
  * 진행 상태는 `GET /analyses/{analysisId}`에서 읽는다. 다음 호출 간격은 서버가
  * 주는 `pollAfterSeconds`를 따르고, 종료 상태면 BE가 null 을 줘서 폴링이 멈춘다.
  *
- * 남은 시간을 표시하지 않는다. 워커가 중간 진행을 발행하지 않아 지금은 저장소
- * 단위 0% 또는 100%만 나오고, 그 위에서 시간을 추정하면 지어낸 값이 된다. v2 의
- * `72%`·`약 1분 남음`은 아트보드의 demo 값이다.
+ * 단계는 서버가 준 `currentStage`로 그린다(S15P21E102-136). 남은 시간과 퍼센트는
+ * 여전히 표시하지 않는다 — 아는 것은 "지금 어느 단계인가"뿐이고, 한 단계가 얼마나
+ * 걸릴지는 저장소마다 다르다. v2 의 `72%`·`약 1분 남음`은 아트보드의 demo 값이다.
  *
  * v2 hero 우측의 `상태 미리보기 · 진행 중 · RATE_LIMITED`는 아트보드에서 상태를
  * 바꿔 보기 위한 디자인 도구 장치이지 제품 컨트롤이 아니라 옮기지 않는다.
@@ -79,7 +80,11 @@ export function AnalysisProgressPage() {
         <DataRegion
           title="분석 진행"
         >
-          <AnalysisStepList />
+          {/*
+            상태를 아직 못 읽었으면 대기로 그린다. 국면을 정하지 않은 채 칸을
+            비워 두는 것과 같은 모습이고, 무엇이 진행 중인지는 아래 카드가 말한다.
+          */}
+          <AnalysisStepList steps={analysisSteps(phase ?? 'QUEUED', data?.currentStage)} />
           <div className="mt-3">
             <ProgressState
               loading={status.isPending}

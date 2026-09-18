@@ -7,6 +7,7 @@ import { RepositoryStateBadge } from '@/features/analysis/components/RepositoryS
 import { useAnalysisStatus, useBranchList } from '@/features/analysis/hooks/useRepositoryAnalysis'
 import {
   analysisPhase,
+  currentStepLabel,
   failureCopy,
   failureKind,
   hasResult,
@@ -165,6 +166,7 @@ export function SelectedRepositoryCard({
 
           <AnalysisPhaseBlock
             phase={phase}
+            currentStage={status.data?.currentStage}
             requestedAt={status.data?.requestedAt ?? null}
             errorCode={status.data?.errorCode ?? null}
             unreachable={status.isError}
@@ -203,11 +205,13 @@ export function SelectedRepositoryCard({
  */
 function AnalysisPhaseBlock({
   phase,
+  currentStage,
   requestedAt,
   errorCode,
   unreachable,
 }: {
   phase: ReturnType<typeof analysisPhase>
+  currentStage: string | undefined
   requestedAt: string | null
   errorCode: string | null
   unreachable: boolean
@@ -265,6 +269,7 @@ function AnalysisPhaseBlock({
   }
 
   const waited = requestedAt === null ? null : waitedMinutes(requestedAt)
+  const stepLabel = currentStepLabel(phase, currentStage)
 
   return (
     <div
@@ -288,6 +293,14 @@ function AnalysisPhaseBlock({
         {copy.title}
       </p>
       <p className="mt-1 text-[11.5px] leading-[1.5] text-brand-muted">{copy.description}</p>
+      {/*
+        지금 어느 단계인지. 패널이 372px 라 칸 셋을 펼 자리가 없어 한 줄로 적는다.
+        `/analyses/:analysisId` 의 칸 목록과 같은 모델에서 나오므로 두 화면이 같은
+        단계를 가리킨다.
+      */}
+      {stepLabel !== null && (
+        <p className="mt-1 text-[11px] font-semibold text-tone-accent tabular-nums">{stepLabel}</p>
+      )}
       {/*
         경과 시간은 사실이라 적는다. 남은 시간은 알 수 없어 적지 않는다.
         워커가 내려가 있으면 이 숫자만 늘어나고, 그것이 지금 화면이 말할 수 있는 전부다.

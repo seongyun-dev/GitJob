@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   analysisPhase,
+  analysisSteps,
+  currentStepLabel,
   failureKind,
   hasResult,
   isPending,
@@ -73,4 +75,76 @@ test('경과 시간은 1분부터 세고 파싱에 실패하면 말하지 않는
   assert.equal(waitedMinutes(requestedAt, base + 60_000), 1)
   assert.equal(waitedMinutes(requestedAt, base + 185_000), 3)
   assert.equal(waitedMinutes('어제', base), null)
+})
+
+/*
+ * 단계 표시 · S15P21E102-136.
+ *
+ * 워커가 단계 전환을 발행하기 시작해서 생긴 값이다. 여기서 지키는 것은 "잘 그린다"가
+ * 아니라 **모르는 것을 아는 척하지 않는다**로, 이 화면이 진행률과 남은 시간을 거절해 온
+ * 이유와 같다.
+ */
+test('대기 중에는 어떤 단계도 진행 중이 아니다', () => {
+  const steps = analysisSteps('QUEUED', 'WAITING_FOR_WORKER')
+
+  assert.equal(steps.length, 3)
+  assert.deepEqual(
+    steps.map((step) => step.state),
+    ['WAITING', 'WAITING', 'WAITING'],
+  )
+})
+
+test('서버가 알려 준 단계에 불을 켜고 그 앞은 끝난 것으로 둔다', () => {
+  assert.deepEqual(
+    analysisSteps('RUNNING', 'ANALYZING_REPOSITORY').map((step) => step.state),
+    ['RUNNING', 'WAITING', 'WAITING'],
+  )
+  assert.deepEqual(
+    analysisSteps('RUNNING', 'ATTRIBUTING_CONTRIBUTION').map((step) => step.state),
+    ['DONE', 'RUNNING', 'WAITING'],
+  )
+})
+
+/*
+ * 워커와 화면은 따로 배포된다. 새 단계가 먼저 도착했을 때 아무 칸도 켜지 않으면
+ * 분석이 돌고 있는데도 화면은 멈춰 보인다.
+ */
+test('모르는 단계여도 진행 중이면 멈춰 보이지 않는다', () => {
+  const states = analysisSteps('RUNNING', 'SUMMARIZING').map((step) => step.state)
+
+  assert.equal(states[0], 'RUNNING')
+  assert.ok(states.includes('RUNNING'))
+})
+
+/*
+ * 기여도 판정을 끄고 돌리는 배포에서는 두 번째 전환이 아예 오지 않고, 켜져 있어도
+ * 5초 폴링이 그 사이를 놓칠 수 있다. 화면은 둘을 구분할 수 없다.
+ */
+test('끝난 분석은 지나친 단계까지 완료로 그린다', () => {
+  assert.deepEqual(
+    analysisSteps('SUCCEEDED', 'COMPLETED').map((step) => step.state),
+    ['DONE', 'DONE', 'DONE'],
+  )
+  assert.deepEqual(
+    analysisSteps('PARTIAL', 'ANALYZING_REPOSITORY').map((step) => step.state),
+    ['DONE', 'DONE', 'DONE'],
+  )
+})
+
+/*
+ * BE가 실패 시 current_stage를 FAILED로 덮어써서 어디까지 갔는지 남지 않는다.
+ * 남지 않은 것을 그리면 지어낸 값이 된다 — 사유는 실패 카드가 말한다.
+ */
+test('실패한 분석은 어디까지 갔는지 말하지 않는다', () => {
+  assert.deepEqual(
+    analysisSteps('FAILED', 'FAILED').map((step) => step.state),
+    ['WAITING', 'WAITING', 'WAITING'],
+  )
+})
+
+test('좁은 패널의 한 줄은 진행 중일 때만 나온다', () => {
+  assert.equal(currentStepLabel('RUNNING', 'ATTRIBUTING_CONTRIBUTION'), '2/3 · 개인 기여도 판정')
+  assert.equal(currentStepLabel('QUEUED', 'WAITING_FOR_WORKER'), null)
+  assert.equal(currentStepLabel('SUCCEEDED', 'COMPLETED'), null)
+  assert.equal(currentStepLabel('FAILED', 'FAILED'), null)
 })

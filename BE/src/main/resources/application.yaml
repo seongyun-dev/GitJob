@@ -113,9 +113,18 @@ gitjob:
         # 워커의 KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ 와는 다른 토픽이다. 그쪽은 처리하지
         # 못한 요청이 가는 곳이고 payload 모양이 다르다.
         results-dlq: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_DLQ:gitjob.repository-analysis.results.dlq.v1}
+        # 워커가 단계 전환을 알리는 토픽. 선택값이라 비워 두면 구독하지 않고,
+        # 분석은 예전처럼 QUEUED 에서 종료로 한 번에 움직인다. 이 값을 채우는 것이
+        # 곧 진행 표시를 켜는 일이므로 BE 를 먼저 배포해도 동작이 바뀌지 않는다.
+        #
+        # 결과 토픽과 달리 DLQ 가 없다. 잃으면 화면이 한 단계 늦을 뿐이고, 표시용
+        # 메시지 하나가 파티션을 세우는 편이 훨씬 비싸다.
+        progress: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS:}
     consumer:
       repository-analysis-results:
         group-id: ${ANALYSIS_RESULTS_CONSUMER_GROUP:gitjob-analysis-results}
+      repository-analysis-progress:
+        group-id: ${ANALYSIS_PROGRESS_CONSUMER_GROUP:gitjob-analysis-progress}
   compute:
     # C Compute(데이터 서버 Worker 8080)의 내부 주소와 토큰. 둘 다 서버 설정으로만
     # 주입하고 브라우저에 전달하지 않는다. 기본값을 넣지 않는 이유는 관리자망

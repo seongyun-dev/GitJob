@@ -257,7 +257,7 @@ class AnalysisOutboxCdcIntegrationTest {
         context.registerBean(RepositoryAnalysisKafkaProperties.class,
                 () -> new RepositoryAnalysisKafkaProperties(
                         TOPIC, "gitjob.repository-analysis.results.v1", "",
-                        "gitjob.repository-analysis.results.dlq.v1"));
+                        "gitjob.repository-analysis.results.dlq.v1", ""));
         context.registerBean(JsonMapper.class, () -> mapper);
         context.registerBean(AnalysisRequestService.class);
         context.refresh();

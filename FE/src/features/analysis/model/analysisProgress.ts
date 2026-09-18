@@ -20,13 +20,17 @@ import type { StateKind } from '@/shared/ui/StateCard'
  * 이 제품에서 이것은 "판정하지 않음"과 "충족하지 못함"을 합치는 것과 같은 종류의
  * 잘못이다. 대기와 진행은 서로 다른 사실이다.
  *
- * ## 진행률을 만들지 않는다
+ * ## 단계는 받고, 진행률은 여전히 만들지 않는다
  *
- * 서버가 주는 `progressPercent`는 0 또는 100뿐이고 `AnalysisJob`의 stage 상수도
- * `WAITING_FOR_WORKER`·`COMPLETED`·`FAILED` 세 개뿐이다 — 중간이 없다. BE의
- * `AnalysisStatusResponse` 주석이 "워커가 중간 진행을 발행하지 않아 그 사이 값을
- * 만들 근거가 없다"고 적어 두었다. 그래서 여기서도 퍼센트·남은 시간·단계별 진척을
- * 계산하지 않는다. 워커가 중간 진행을 발행하기 시작하면 그때 이 모듈이 받는다.
+ * 워커가 이제 단계 전환을 발행한다 — 저장소 분석을 시작할 때와 기여도 판정을
+ * 시작할 때. 그 값이 `currentStage`로 내려오므로 {@link analysisSteps}가 어느 칸에
+ * 불을 켤지 안다.
+ *
+ * 그래도 퍼센트와 남은 시간은 만들지 않는다. 알게 된 것은 "지금 어느 단계인가"
+ * 하나뿐이고, 한 단계가 얼마나 걸릴지는 저장소마다 다르며 서버도 알려 주지 않는다.
+ * `progressPercent`는 여전히 0 또는 100만 온다. 단계 수로 막대를 채우면 그것은
+ * 진척이 아니라 단계의 개수를 그린 것이고, 시간으로 채우면 이 화면이 처음부터
+ * 거절해 온 지어낸 값이 된다.
  */
 
 /**
@@ -68,6 +72,116 @@ export function hasResult(phase: AnalysisPhase): boolean {
 /** 아직 끝나지 않은 국면인지. 폴링과 로딩 표시를 이 값으로 정한다. */
 export function isPending(phase: AnalysisPhase): boolean {
   return phase === 'QUEUED' || phase === 'RUNNING'
+}
+
+export type AnalysisStepState = 'WAITING' | 'RUNNING' | 'DONE'
+
+export interface AnalysisStepView {
+  name: string
+  detail: string
+  state: AnalysisStepState
+}
+
+/**
+ * 화면이 그리는 단계와, 그 단계를 알려 주는 서버 `currentStage`.
+ *
+ * ## 왜 셋뿐인가
+ *
+ * 워커가 실제로 알리는 전환이 둘이기 때문이다 — 클론을 마치고 판정을 시작할 때와,
+ * git blame 으로 기여자를 가리기 시작할 때. 세 번째는 일이 아니라 끝났다는 표시다.
+ *
+ * 디자인 `Final v2`의 네 칸(저장소 확인 · 파일 구조 분석 · Evidence 판정 · 사용자
+ * 기여 확인)을 그대로 두지 않은 것은, 가운데 두 칸을 채울 값이 서버에 없기 때문이다.
+ * 워커는 그 셋을 한 구간으로 돌고 중간에 아무것도 발행하지 않는다. 네 칸을 유지하면
+ * 남은 두 칸은 시간으로 칠하는 수밖에 없고, 그것은 이 화면이 진행률·남은 시간과
+ * 함께 이미 거절한 종류의 값이다.
+ */
+const STEPS = [
+  {
+    stage: 'ANALYZING_REPOSITORY',
+    name: '저장소 분석',
+    detail: '의존성 선언과 소스 트리를 읽어 기술 사용 근거를 찾습니다',
+  },
+  {
+    stage: 'ATTRIBUTING_CONTRIBUTION',
+    name: '개인 기여도 판정',
+    detail: '커밋 작성자를 대조해 본인이 쓴 근거를 가립니다',
+  },
+  {
+    stage: 'COMPLETED',
+    name: '완료',
+    detail: '확인된 기술과 근거를 볼 수 있습니다',
+  },
+] as const
+
+/**
+ * 국면과 `currentStage`로 단계별 표시를 만든다.
+ *
+ * ## 끝난 분석은 전부 완료로 그린다
+ *
+ * 기여도 판정을 끄고 돌리는 배포가 있고(`ANALYSIS_ATTRIBUTE_AUTHORS`), 그때는 두
+ * 번째 전환이 아예 발행되지 않는다. 폴링이 5초마다 물으므로 켜져 있는 배포에서도
+ * 그 단계를 지나치는 순간을 놓칠 수 있다. 화면은 이 둘을 구분할 수 없다 — 성공한
+ * 분석에서 한 칸만 비워 두면, 무엇이 빠졌는지 알 수 없는 채로 남는다.
+ *
+ * ## 실패하면 어디까지 갔는지 말하지 않는다
+ *
+ * BE 가 실패 시 `current_stage` 를 `FAILED` 로 덮어써서 도달한 단계가 남지 않는다.
+ * 화면이 마지막으로 본 단계를 기억해 둘 수도 있지만 새로고침하면 사라지는 기억이고,
+ * 그러면 같은 분석이 탭마다 다른 곳에서 멈춘 것처럼 보인다. 실패의 내용은 사유
+ * 카드가 말한다.
+ */
+export function analysisSteps(
+  phase: AnalysisPhase,
+  currentStage: string | undefined,
+): AnalysisStepView[] {
+  const reached = STEPS.findIndex((step) => step.stage === currentStage)
+
+  return STEPS.map((step, index) => ({
+    name: step.name,
+    detail: step.detail,
+    state: stepState(phase, index, reached),
+  }))
+}
+
+function stepState(phase: AnalysisPhase, index: number, reached: number): AnalysisStepState {
+  if (hasResult(phase)) {
+    return 'DONE'
+  }
+  if (phase === 'QUEUED' || phase === 'FAILED') {
+    return 'WAITING'
+  }
+  /*
+   * 진행 중인데 모르는 단계면 첫 칸을 진행으로 둔다. 워커가 이 화면보다 새 단계를
+   * 쓰기 시작했다는 뜻이고, 그때 아무 칸도 켜지 않으면 화면은 멈춰 보인다.
+   */
+  const current = reached < 0 ? 0 : reached
+  if (index < current) {
+    return 'DONE'
+  }
+  return index === current ? 'RUNNING' : 'WAITING'
+}
+
+/**
+ * 좁은 자리에 쓰는 한 줄. 저장소 선택 화면의 패널(372px)은 칸 셋을 펼 폭이 없다.
+ *
+ * 진행 중이 아닐 때 `null` 인 것은, 대기·완료·실패의 문구를 이미 국면 쪽
+ * ({@link phaseCopy})이 말하고 있어 같은 자리에 두 번 적을 이유가 없기 때문이다.
+ */
+export function currentStepLabel(
+  phase: AnalysisPhase,
+  currentStage: string | undefined,
+): string | null {
+  if (phase !== 'RUNNING') {
+    return null
+  }
+  const steps = analysisSteps(phase, currentStage)
+  const index = steps.findIndex((step) => step.state === 'RUNNING')
+  const running = steps[index]
+  if (running === undefined) {
+    return null
+  }
+  return `${index + 1}/${steps.length} · ${running.name}`
 }
 
 export interface PhaseCopy {

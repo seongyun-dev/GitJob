@@ -152,7 +152,7 @@ class RepositoryAnalysisResultDeadLetterIntegrationTest {
         kafkaProperties.getConsumer().setGroupId("results-" + UUID.randomUUID());
 
         var topics = new RepositoryAnalysisKafkaProperties(
-                "gitjob.repository-analysis.requests.v1", RESULTS, "", DLQ);
+                "gitjob.repository-analysis.requests.v1", RESULTS, "", DLQ, "");
 
         var factory = new RepositoryAnalysisKafkaConfiguration()
                 .repositoryAnalysisResultListenerFactory(

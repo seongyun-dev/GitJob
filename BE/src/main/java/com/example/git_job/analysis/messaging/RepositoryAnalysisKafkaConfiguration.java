@@ -1,6 +1,8 @@
 package com.example.git_job.analysis.messaging;
 
+import com.example.git_job.analysis.event.RepositoryAnalysisProgressEvent;
 import com.example.git_job.analysis.event.RepositoryAnalysisResultEvent;
+import com.example.git_job.analysis.service.AnalysisProgressService;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -10,6 +12,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -195,5 +198,71 @@ class RepositoryAnalysisKafkaConfiguration {
 
         return new DefaultErrorHandler(
                 recoverer, new FixedBackOff(Duration.ofSeconds(2).toMillis(), 3));
+    }
+
+    /**
+     * 진행 토픽을 구독하는 리스너. 토픽이 설정됐을 때만 존재한다.
+     *
+     * <p>결과 컨슈머처럼 {@code @Component} 로 두면 토픽 이름이 빈 환경에서 Spring 이
+     * 이름 없는 토픽을 구독하려다 기동에서 실패한다. 조건을 리스너 자신이 아니라
+     * 여기에 두는 이유는, 애너테이션의 플레이스홀더가 풀리기 전에 빈의 존재 여부가
+     * 정해져야 하기 때문이다.</p>
+     */
+    @Bean
+    @ConditionalOnExpression("'${gitjob.kafka.topics.repository-analysis.progress:}' != ''")
+    RepositoryAnalysisProgressConsumer repositoryAnalysisProgressConsumer(
+            AnalysisProgressService progress) {
+        return new RepositoryAnalysisProgressConsumer(progress);
+    }
+
+    /**
+     * 진행 이벤트 전용 팩토리.
+     *
+     * <p>결과 팩토리와 나눈 이유는 <b>실패했을 때의 처리가 반대</b>이기 때문이다.
+     * 결과는 잃으면 분석이 QUEUED 에 남으므로 DLQ 까지 두고 지킨다. 진행은 잃어도
+     * 화면이 한 단계 늦을 뿐이라, 몇 번 재시도한 뒤 버리고 다음 메시지로 간다.
+     * 같은 팩토리를 쓰면 표시용 메시지 하나가 결과 DLQ 를 오염시키고, 최악의 경우
+     * 파티션을 세워 그 뒤의 모든 분석을 멈춘다.</p>
+     */
+    @Bean
+    ConcurrentKafkaListenerContainerFactory<String, RepositoryAnalysisProgressEvent>
+            repositoryAnalysisProgressListenerFactory(KafkaProperties kafka) {
+        var factory =
+                new ConcurrentKafkaListenerContainerFactory<String,
+                        RepositoryAnalysisProgressEvent>();
+        factory.setConsumerFactory(progressConsumerFactory(kafka));
+        // recoverer 없는 기본 동작이 여기서는 정답이다: 재시도해도 안 되면 로그를
+        // 남기고 커밋한다. 결과 토픽에서 이 동작이 문제였던 것은 잃으면 안 되는
+        // 메시지였기 때문이고, 진행 이벤트는 그렇지 않다.
+        factory.setCommonErrorHandler(
+                new DefaultErrorHandler(new FixedBackOff(Duration.ofSeconds(1).toMillis(), 2)));
+        factory.setAutoStartup(kafka.getListener().isAutoStartup());
+        return factory;
+    }
+
+    /** 결과 쪽과 같은 이유로 타입 헤더를 믿지 않고, 모르는 필드는 흘려보낸다. */
+    static JacksonJsonDeserializer<RepositoryAnalysisProgressEvent> progressValueDeserializer() {
+        var value = new JacksonJsonDeserializer<>(
+                RepositoryAnalysisProgressEvent.class,
+                JsonMapper.builder()
+                        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                        .build());
+        value.setUseTypeHeaders(false);
+        return value;
+    }
+
+    private ConsumerFactory<String, RepositoryAnalysisProgressEvent> progressConsumerFactory(
+            KafkaProperties kafka) {
+        Map<String, Object> config = kafka.buildConsumerProperties();
+        config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        // 새 그룹이 과거 진행을 전부 다시 읽어도 해롭지 않다 -- 그 분석들은 이미
+        // 종료돼 있어 AnalysisJob.progress 가 전부 무시한다. 재생이 무해하면
+        // 결과 토픽과 같은 설정을 쓰는 편이 운영할 때 외울 것이 적다.
+        config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        return new DefaultKafkaConsumerFactory<>(
+                config,
+                new ErrorHandlingDeserializer<>(new StringDeserializer()),
+                new ErrorHandlingDeserializer<>(progressValueDeserializer()));
     }
 }
