@@ -112,12 +112,6 @@ export function JobMatchPage() {
   const data = matches.data
   const postings = sortByFulfillment(data?.items.map(toJobPosting) ?? [])
   const basis = data?.basis
-  // 공고 목록은 추천 계산 상태와 별개다. BE 는 `INSUFFICIENT_DATA`·`INSUFFICIENT_EVIDENCE`
-  // 에서도 items 를 그대로 싣는데(`JobMatchResponse.of`), 추천 상태로 목록까지 막으면
-  // 수집된 공고가 수십 건 있어도 화면에는 안내 문구만 남는다. 그래서 목록은 items 유무로
-  // 연다. 통계는 그대로 계산 상태를 따른다 -- 표본이 부족한 채로 비율을 보여주면 그 숫자가
-  // 실제보다 확정적으로 읽힌다.
-  const hasJobItems = data !== undefined && Array.isArray(data.items) && data.items.length > 0
   const scopeText =
     basis === undefined
       ? '선택한 직무의 수집된 공고 전체'
@@ -149,19 +143,15 @@ export function JobMatchPage() {
           onRetry={() => void matches.refetch()}
         />
 
-        {(hasComputedValue(data) || hasJobItems) && data !== undefined && (
+        {hasComputedValue(data) && data !== undefined && (
           <>
-            {hasComputedValue(data) && (
-              <>
-                <StatStrip items={toStats(data.summary, scopeText)} />
+            <StatStrip items={toStats(data.summary, scopeText)} />
 
-                {data.summary !== null && data.summary.excludedConditionalCount > 0 && (
-                  <p className="text-[12px] leading-[1.6] text-brand-faint">
-                    자격 조건이 확정되지 않아 {data.summary.excludedConditionalCount}건을 목록에서
-                    제외했습니다. 충족하지 못한 공고가 아니라 대조하지 않은 공고입니다.
-                  </p>
-                )}
-              </>
+            {data.summary !== null && data.summary.excludedConditionalCount > 0 && (
+              <p className="text-[12px] leading-[1.6] text-brand-faint">
+                자격 조건이 확정되지 않아 {data.summary.excludedConditionalCount}건을 목록에서
+                제외했습니다. 충족하지 못한 공고가 아니라 대조하지 않은 공고입니다.
+              </p>
             )}
 
             <div className="gj-split">

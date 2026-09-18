@@ -57,15 +57,6 @@ export function TrendSourceCard({ source }: { source: TrendSourceView }) {
         )}
       </div>
       <p className="mt-1.5 text-[12px] leading-[1.55] text-brand-faint">{source.basis}</p>
-      {/*
-        순위는 보이되 신뢰도는 과장하지 않는다 (티켓 -327). 값이 있어 순위에 올랐지만
-        근거가 얇은 줄이 하나라도 있으면 그것을 카드가 먼저 말한다.
-      */}
-      {source.rows.some((row) => row.dataStatus !== 'READY') && (
-        <p className="mt-1 text-[11.5px] leading-[1.55] text-brand-faint">
-          표본이 적어 참고용으로 제공됩니다.
-        </p>
-      )}
 
       {source.rows.length === 0 ? (
         <div className="mt-4 rounded-[12px] border border-brand-line bg-[#F7F9FC] px-4 py-4">
@@ -101,28 +92,12 @@ export function TrendSourceCard({ source }: { source: TrendSourceView }) {
                       `Apache Kafka` → `apache-kafka`가 되는데 실제 id는 `kafka`라
                       상세 화면이 기술을 찾지 못한다.
                     */}
-                    {/*
-                      순위에 올라온 값이라고 근거까지 충분한 것은 아니다 (티켓 -327).
-                      상태를 이름 옆에 붙여, 이 줄이 READY 관측과 같은 무게로 읽히지
-                      않게 한다. 배지 하나로 카드 전체를 덮으면 어느 줄이 얇은
-                      표본인지 알 수 없다.
-                    */}
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <Link
-                        to={`/trends/${row.techId}`}
-                        className="truncate text-[13px] font-[750] text-brand-ink hover:text-brand-600"
-                      >
-                        {row.techName}
-                      </Link>
-                      {row.dataStatus !== 'READY' && (
-                        <span
-                          className="shrink-0 rounded-full border border-brand-line px-1.5 py-px text-[9.5px] font-bold text-brand-faint"
-                          title={row.statusReason}
-                        >
-                          {stateKindDisplayName(STATE_KIND[row.dataStatus])}
-                        </span>
-                      )}
-                    </span>
+                    <Link
+                      to={`/trends/${row.techId}`}
+                      className="truncate text-[13px] font-[750] text-brand-ink hover:text-brand-600"
+                    >
+                      {row.techName}
+                    </Link>
                     <span className="text-[13px] font-[750] tabular-nums text-brand-ink-soft">
                       {row.share}
                     </span>
