@@ -47,7 +47,10 @@ from registry.contracts import TechId, load_registry
 from registry.mapper import RegistryMapper
 
 JOB_COHORT_SCHEMA_VERSION = "job-cohort/v1"
-JOB_QUALITY_VERSION = "job-cohort-quality/v7"
+# v8: cohort에 싣는 기술 분류에서 `mapping_context`를 비운다(티켓 S15P21E102-333).
+# 판정 결과는 그대로지만 저장되는 payload의 의미가 달라지므로, 같은 조건이라도 예전
+# snapshot을 재사용하지 않고 다시 계산하도록 버전을 올린다.
+JOB_QUALITY_VERSION = "job-cohort-quality/v8"
 
 
 class CohortPurpose(StrEnum):
@@ -802,6 +805,36 @@ def _matching_required_clauses(
     return clauses, ()
 
 
+def _served_technologies(
+    technologies: tuple[TechnologyClassification, ...],
+) -> tuple[TechnologyClassification, ...]:
+    """Cohort에 실을 사본. 분류 근거는 두고 전체 문맥만 비운다 · 티켓 S15P21E102-333.
+
+    `mapping_context`는 `title + evidence_section + evidence_text + description_text`라
+    mention 하나마다 본문이 한 벌씩 붙는다. 공고당 평균 2.5개 mention이므로 같은 본문이
+    두세 벌씩 snapshot에 쌓이고, 2026-09-18 실측에서 COHORT payload의 66.4%였다.
+
+    비워도 잃는 것이 없다. 남는 셋(`title`·`evidence_section`·`evidence_text`)은 이미
+    같은 객체의 별도 필드이고, 빠지는 `description_text`는 바로 위 `CohortExclusion`이
+    `exclude={"description_text", ...}`로 이미 뺀 값이다. 그 본문은 HDFS
+    `analysis_input`에 불변으로 남아 있어 `classify_job_batch`를 다시 돌리면 같은 문맥이
+    바이트 단위로 재생성된다.
+
+    값이 필요한 두 소비자는 이 사본을 보지 않는다. `registry.mapper`는 분류 도중
+    메모리의 원본을 받고, `registry.review`는 `worker.jobs.job_review_records`가 따로
+    돌린 분류 결과로 `registry_review.record.context`를 만든다.
+
+    빈 문자열로 두는 이유는 필드를 지울 수 없기 때문이다. `TechnologyClassification`이
+    `extra="forbid"`라 필드를 없애면 이미 저장된 snapshot을 다시 읽지 못한다. 대신
+    `exclude_if`가 빈 값을 직렬화에서 빼므로 payload에는 키 자체가 남지 않는다.
+    """
+
+    return tuple(
+        technology.model_copy(update={"mapping_context": ""})
+        for technology in technologies
+    )
+
+
 def build_cohort(
     batch: JobAnalysisInputBatch,
     criteria: CohortCriteria,
@@ -919,7 +952,7 @@ def build_cohort(
                     ),
                     decision="EXCLUDED" if excluded else "REVIEW_REQUIRED",
                     reasons=tuple(sorted(set(excluded + review))),
-                    technologies=classification.technologies,
+                    technologies=_served_technologies(classification.technologies),
                 )
             )
             continue
@@ -971,7 +1004,7 @@ def build_cohort(
                         }
                     )
                 ),
-                technologies=classification.technologies,
+                technologies=_served_technologies(classification.technologies),
             )
         )
     status = CohortStatus.for_size(len(jobs), criteria.min_jobs)

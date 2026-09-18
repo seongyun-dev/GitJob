@@ -67,7 +67,21 @@ class TechnologyClassification(BaseModel):
     evidence_section: StrictStr | None
     parsed_section: StrictStr | None
     evidence_text: StrictStr
-    mapping_context: StrictStr
+    # 분류 도중에만 필요한 전체 문맥 · 티켓 S15P21E102-333.
+    #
+    # 두 곳이 이 값을 쓴다. `registry.mapper`가 짧은 언어명(`c`·`r`·`go`)을 가릴 때 보고,
+    # `registry.review`가 사람이 검토할 근거로 `registry_review.record.context`에 남긴다.
+    # 둘 다 분류 단계에서 끝난다. 서빙은 읽지 않는다 — BE의 어떤 DTO도
+    # `jobs[].technologies`를 선언하지 않아 Jackson이 통째로 버리고 FE에는 참조가 없다.
+    #
+    # 그런데 mention 하나마다 본문이 한 벌씩 붙으므로, 공고당 평균 2.5벌이 snapshot에
+    # 쌓인다. 2026-09-18 운영 실측에서 COHORT payload의 66.4%가 이 값이었다. 그래서
+    # `build_cohort`가 cohort에 싣는 사본에서만 비우고, 비면 직렬화에서 빠진다.
+    #
+    # 필드를 없애지 않는 이유는 기존 snapshot 때문이다. 이 모델은 `extra="forbid"`이고
+    # `worker.api`가 과거 payload를 그대로 `model_validate`하므로, 필드가 사라지면 이미
+    # 저장된 COHORT·RECOMMENDATION을 다시 읽을 수 없다.
+    mapping_context: StrictStr = Field(default="", exclude_if=lambda value: not value)
     location: ClassificationLocation
     mapping_attempts: tuple[MapperResult, ...]
     mapping_evidence: MatchEvidence

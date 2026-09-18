@@ -212,7 +212,15 @@ REVIEW_REQUIRED로, 단어 근거만 있으면 cohort 원문행 검사로 검토
 Review 저장은 실행기의 책임이다. 기존 `classify_job_batch(batch, mapper)` 결과를
 `ReviewStore.ingest(classified)`에 전달하면 기존 수동 검토/재처리 경로를 재사용한다.
 코호트의 제외/검토 항목도 raw technology, evidence text/section/location,
-mapping context/attempts/evidence/candidates를 모두 보존한다. Registry 매핑이
+mapping attempts/evidence/candidates를 모두 보존한다. 다만 mapping context는
+코호트 payload에 싣지 않는다(티켓 S15P21E102-333). 이 값은 title·evidence section·
+evidence text·본문을 이어 붙인 문자열이라 기술 언급 하나마다 본문이 한 벌씩 붙고,
+2026-09-18 실측에서 COHORT payload의 66.4%를 차지했다. 서빙은 읽지 않으며, 필요한
+두 소비자는 코호트를 보지 않는다 — Registry mapper는 분류 도중 메모리 값을 쓰고,
+사람이 검토하는 근거는 `registry_review.record.context`에 그대로 남는다. 본문은
+HDFS `analysis_input`에 불변으로 있어 `classify_job_batch`를 다시 돌리면 같은 문맥이
+재생성된다. 필드 자체는 과거 snapshot 호환을 위해 남겨 두고 빈 값일 때만 직렬화에서
+빠진다. Registry 매핑이
 수동 승인되어도 논리 미확정 조건까지 자동 승인되는 것은 아니다. 승인된 Registry와
 동일 원본 입력으로 코호트와 수요를 다시 계산한다.
 
