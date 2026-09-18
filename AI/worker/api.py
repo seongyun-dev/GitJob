@@ -33,6 +33,7 @@ from job.classifier import JOB_REQUIREMENT_PARSER_VERSION
 from job.cohort import (
     JOB_QUALITY_VERSION,
     CohortCriteria,
+    CohortPurpose,
     JobCohort,
     normalize_cohort_filters,
 )
@@ -126,12 +127,22 @@ class ArchiveTrendCompleted(Event, ArchiveTrendFields):
 
 
 class JobCohortResolveSelector(BaseModel):
-    """Stable B selector for one currently verified ACTIVE_MATCHING receipt."""
+    """Stable B selector for one currently verified receipt.
+
+    The selector names a scope, never a time: C binds `as_of` to the newest
+    verified observation. `purpose` picks which question that scope answers --
+    a role's active matching cohort, or the whole current market. The role rules
+    are not restated here; `criteria_at` builds the real `CohortCriteria` and
+    lets the contract judge, so a market can never quietly carry a role.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["job-cohort-resolve-selector/v1"]
-    target_role: StrictStr
+    # Absent for CURRENT_MARKET only. Kept ahead of `purpose` so the stored
+    # request shape of every existing ACTIVE_MATCHING selector is unchanged.
+    target_role: StrictStr | None = None
+    purpose: CohortPurpose = CohortPurpose.ACTIVE_MATCHING
     sources: tuple[StrictStr, ...] | None = None
     regions: tuple[StrictStr, ...] = ()
     career_levels: tuple[StrictStr, ...] = ()
@@ -139,10 +150,19 @@ class JobCohortResolveSelector(BaseModel):
 
     @field_validator("target_role")
     @classmethod
-    def normalize_role(cls, value: str) -> str:
+    def normalize_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return CohortCriteria.model_validate(
             {"target_role": value, "as_of": "2020-01-01T00:00:00Z"}
         ).target_role
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "JobCohortResolveSelector":
+        # Reject an impossible scope now rather than at the first poll, so the
+        # caller sees 422 instead of a cohort that never resolves.
+        self.criteria_at(datetime(2020, 1, 1, tzinfo=UTC))
+        return self
 
     @field_validator("sources", "regions", "career_levels")
     @classmethod
@@ -161,6 +181,7 @@ class JobCohortResolveSelector(BaseModel):
     def criteria_at(self, as_of: datetime) -> CohortCriteria:
         return CohortCriteria(
             target_role=self.target_role,
+            purpose=self.purpose,
             as_of=as_of,
             sources=self.sources or (),
             regions=self.regions,

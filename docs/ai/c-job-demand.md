@@ -123,6 +123,27 @@ CURRENT_MARKET에 **동일하게** 적용할 별도 작업이다. 두 purpose가
 CURRENT_MARKET은 추천·What-if와 월별 Trend에서 모두 거부된다.
 회귀: `tests/test_current_market_demand.py`.
 
+#### 어떻게 요청하는가
+
+`job-cohort-resolve-selector/v1`의 `purpose`로 지정한다. 생략하면 `ACTIVE_MATCHING`이라
+기존 요청은 형식도 결과도 그대로다. `CURRENT_MARKET`에는 `target_role`을 넣지 않으며
+넣으면 422다. 판정은 selector가 따로 갖지 않고 위의 `CohortCriteria`가 내린다.
+
+```json
+{
+  "schema_version": "job-cohort-resolve-selector/v1",
+  "purpose": "CURRENT_MARKET",
+  "sources": ["JOBKOREA", "SARAMIN"]
+}
+```
+
+공식 모집단은 이렇게 criteria로 명시하며 코드에 고정하지 않는다. 고정하면 모집단이 바뀔
+때 계약이 아니라 배포를 고쳐야 하고, 저장된 criteria만으로는 무엇을 셌는지 알 수 없다.
+자동 intake 설정에 같은 criteria를 두면 poll이 최신 관측 시각에 바인딩해 미리 계산한다.
+이때 지정한 source 범위만 준비하므로 조회 쪽도 같은 source를 보내야 한다.
+실행 경로와 precompute 규칙은 [런타임](c-compute-runtime.md)을 따른다.
+회귀: `tests/test_current_market_resolve.py`.
+
 ## 품질과 조건
 
 본문이 TEXT_AVAILABLE이어야 한다. 입력의 필수 제목/회사명/URL 등은 기존 -90

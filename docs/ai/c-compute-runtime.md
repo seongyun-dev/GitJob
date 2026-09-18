@@ -70,10 +70,21 @@ JOB 집계 정책 버전은 Trend event의 계산 identity에도 포함하므로
 `CohortCriteria` 요청도 이 입력으로 계산할 수 있고, B 화면은 시각을 보내지 않는 안정된
 `job-cohort-resolve-selector/v1`을 사용한다.
 
-selector는 `target_role`, 선택 `sources`, `regions`, `career_levels`, `min_jobs`를 받는다.
-C는 selector가 지정한 source의 검증된 `JobOutput.occurred_at` 중 최댓값을 canonical
-`as_of`로 정하고, source를 생략하면 전체 검증 입력의 최댓값을 사용해
-`purpose=ACTIVE_MATCHING`인 criteria를 만든다. 운영 config의 고정 `as_of`와 기본 criteria는
+selector는 `target_role`, 선택 `purpose`, `sources`, `regions`, `career_levels`, `min_jobs`를
+받는다. C는 selector가 지정한 source의 검증된 `JobOutput.occurred_at` 중 최댓값을 canonical
+`as_of`로 정하고, source를 생략하면 전체 검증 입력의 최댓값을 사용한다.
+
+`purpose`는 생략하면 `ACTIVE_MATCHING`이므로 기존 요청의 형식과 결과가 그대로다.
+`CURRENT_MARKET`을 지정하면 `target_role`을 **보내지 않아야** 하고, 보내면 422다. 역할을
+받는 순간 시장이 아니라 직무 코호트가 되어 저장된 lineage가 실제 모집단과 어긋나기
+때문이다. 반대로 `ACTIVE_MATCHING`에는 `target_role`이 계속 필수다. 이 판정은 selector가
+따로 갖지 않고 [수요 계약](c-job-demand.md)의 `CohortCriteria`가 그대로 내린다.
+
+공식 현재 시장의 모집단은 selector의 `sources`로 **명시**한다(`["JOBKOREA", "SARAMIN"]`).
+출처 목록을 코드에 고정하지 않는 이유는, 그렇게 하면 모집단이 바뀔 때 계약이 아니라
+배포를 고쳐야 하고 저장된 criteria만 봐서는 무엇을 셌는지 알 수 없기 때문이다.
+
+운영 config의 고정 `as_of`와 기본 criteria는
 시작 시 precompute 용도이며 selector의 현재 cutoff를 고정하지 않는다. 따라서 FE의 직무,
 지역, 경력 조건은 추천·매칭 후 B에서 숫자만 잘라내지 않고 같은 필터의 COHORT·DEMAND와
 공고 목록을 함께 계산한다.
@@ -114,12 +125,18 @@ hash 검증을 통과한 마지막 불변 입력으로 계속 응답하며, 응�
 }
 ```
 
-intake poll은 설정된 `ACTIVE_MATCHING` 직무·필터를 고정 기준 시각으로 계산하는 것과
+intake poll은 설정된 직무·필터를 고정 기준 시각으로 계산하는 것과
 별도로, 최신 검증 입력의 `occurred_at`에 바인딩한 selector 범위도 미리 계산한다. 이때
 HTTP selector와 같은 규칙을 사용한다. `sources`가 있으면 그 source들만의 최신 시각,
 없으면 전체 source의 최신 시각을 쓰고, BE가 `min_jobs`를 생략하므로 기본값 1로 계산한다.
-설정 criteria가 source를 제한해도 BE가 보내는 전체-source selector를 추가로 준비하고
-용량 검사한다.
+`ACTIVE_MATCHING` 설정 criteria가 source를 제한해도 BE가 보내는 전체-source selector를
+추가로 준비하고 용량 검사한다.
+
+`CURRENT_MARKET` 설정 criteria는 **지정된 source 범위만** 미리 계산한다. 전체-source
+범위까지 만들면 WORKNET·GAMEJOB·CAREER를 포함한 "현재 시장" Snapshot이 하나 더 생기고,
+그것을 읽은 쪽은 공식 수치와 다른 분모를 보게 된다. 따라서 BE는 시장을 조회할 때
+selector에 공식 source를 명시해야 하며, 생략하면 준비되지 않은 다른 범위를 요청하게 된다.
+`MONTHLY_DEMAND`는 완료된 달을 고정으로 잡으므로 최신 관측에 다시 바인딩하지 않는다.
 따라서 Worker 재시작 뒤 해당 범위의 첫 HTTP 요청이 전체 cohort 계산 시간을 떠안지
 않는다. 설정에 없는 직무·필터 조합은 여전히 최초 요청에서 멱등 계산될 수 있다.
 

@@ -704,6 +704,7 @@ class IntakeRunner:
             criteria = self._selector_criteria(
                 self._verified_job_outputs,
                 target_role=selector.target_role,
+                purpose=selector.purpose,
                 sources=selector.sources or (),
                 regions=selector.regions,
                 career_levels=selector.career_levels,
@@ -786,17 +787,24 @@ class IntakeRunner:
         """
         selectors = []
         for template in self.config.criteria:
-            if template.purpose is not CohortPurpose.ACTIVE_MATCHING:
+            if template.purpose is CohortPurpose.MONTHLY_DEMAND:
+                # 월별은 완료된 달을 고정으로 잡으므로 최신 관측에 다시 묶지 않는다.
                 continue
             # 설정 criteria는 월별 계산과 검증용으로 min_jobs/as_of를 고정할 수 있다.
             # BE selector는 min_jobs를 보내지 않아 1이고 sources도 생략한다. 설정에
             # source가 있으면 그 exact selector와 BE의 전체-source selector를 모두
             # 준비해야 첫 HTTP 요청이 다른 key로 다시 계산하지 않는다.
             source_scopes = (template.sources, ()) if template.sources else ((),)
+            if template.purpose is CohortPurpose.CURRENT_MARKET:
+                # 시장은 공식 모집단이 곧 정의다. 전체-source scope까지 미리 계산하면
+                # WORKNET/GAMEJOB/CAREER를 포함한 "현재 시장" snapshot이 하나 더
+                # 생기고, 그것을 읽은 쪽은 공식 수치와 다른 분모를 보게 된다.
+                source_scopes = (template.sources,)
             for sources in source_scopes:
                 current = self._selector_criteria(
                     outputs,
                     target_role=template.target_role,
+                    purpose=template.purpose,
                     sources=sources,
                     regions=template.regions,
                     career_levels=template.career_levels,
@@ -817,6 +825,7 @@ class IntakeRunner:
         regions,
         career_levels,
         min_jobs,
+        purpose=CohortPurpose.ACTIVE_MATCHING,
     ):
         """Use one identity rule for poll prewarm, capacity and HTTP resolution."""
         relevant = tuple(
@@ -826,6 +835,7 @@ class IntakeRunner:
             return None
         return CohortCriteria(
             target_role=target_role,
+            purpose=purpose,
             as_of=max(output.occurred_at for output in relevant),
             sources=sources,
             regions=regions,
