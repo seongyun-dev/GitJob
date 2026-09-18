@@ -180,7 +180,8 @@ public class CComputeSyncService {
     private ComputeSnapshot compute(long userId, Target target, Assembled assembled,
                                     boolean retryOnConflict) {
         CohortResolved cohort = client.post(COHORT_RESOLVE_PATH,
-                CohortSelector.of(target.targetRole(), target.regions(), target.careerLevels()),
+                CohortSelector.activeMatching(target.targetRole(), target.regions(),
+                        target.careerLevels()),
                 CohortResolved.class);
         if (cohort == null || !cohort.isComplete()) {
             // 200인데 쌍이 아니면 C가 준비되지 않은 것이다. 하나만 들고 계산하면 추천의

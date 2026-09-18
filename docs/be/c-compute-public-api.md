@@ -506,11 +506,27 @@ C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-postings
 C 원천: `.../matching-job-posting?job_id=`. 항목 모양은 4.2의 `items[]`와 같고
 `unresolved`(요구 해석 실패 절) 배열이 추가된다. 없는 `jobId`는 `404 MATCH-404-2`.
 
-### 4.4 `GET /api/v1/job-demands` — 직무별 기술 수요
+### 4.4 `GET /api/v1/job-demands` — 직무별 기술 수요와 현재 시장
 
-쿼리: `targetRole`(필수), `regions`, `careerLevels`, `limit`(기본 20, 최대 50)
+쿼리: `targetRole`(선택), `regions`, `careerLevels`, `limit`(기본 20, 최대 50)
+
+`targetRole`을 주면 그 직무의 활성 수요, 주지 않으면 **지금 확보한 공고 전체의 시장
+수요**다. 응답 모양은 같고 `basis.targetRole`이 어느 쪽이었는지를 말한다 — 시장이면
+`null`이다. 경로를 나누지 않은 이유는 FE의 조회와 상태 분기가 두 벌이 되면 언젠가
+갈라지기 때문이다.
 
 C 원천: `job-cohorts/resolve` → `GET /internal/v1/c/snapshots/{demandSnapshotId}`
+
+| 요청 | C selector |
+|---|---|
+| `?targetRole=BACKEND` | `purpose=ACTIVE_MATCHING`, `target_role=BACKEND`, `sources` 없음 |
+| `targetRole` 없음 | `purpose=CURRENT_MARKET`, `target_role=null`, `sources=["JOBKOREA","SARAMIN"]` |
+
+시장 모집단의 출처를 명시해서 보내는 이유는 두 가지다. C가 출처를 코드에 고정하지 않고
+criteria로 받으므로 "무엇이 공식인지"는 부르는 쪽이 정해야 하고, C의 intake도 지정된
+출처 범위만 미리 계산하기 때문이다. 생략하면 전체 출처라는 다른 모집단을 요청하게 된다.
+WORKNET·GAMEJOB·CAREER는 현재 공식 모집단이 아니다. 계약은
+[수요 계약](../ai/c-job-demand.md)과 [C 런타임](../ai/c-compute-runtime.md)을 따른다.
 
 ```json
 {

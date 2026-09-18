@@ -16,10 +16,15 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 /**
- * 직무별 기술 수요 (S15P21E102-279).
+ * 직무별 기술 수요와 현재 시장 수요 (S15P21E102-279, -338).
  *
  * <p>개인 결과가 아니다. 사용자가 고른 조건으로 공용 COHORT·DEMAND를 고르고 그 수요
  * 집계를 그대로 옮긴다. 로그인은 확인하지만 소유권 검사는 없다.</p>
+ *
+ * <p>목표 직무를 주면 그 직무의 활성 코호트, 주지 않으면 지금 확보한 공고 전체의 시장
+ * 수요다. 두 질문은 분모가 다르므로 여기서 selector를 나눠 보낸다. 직무가 없다고 해서
+ * 5개 직무 결과를 합치지는 않는다 — 합집합은 같은 공고를 여러 번 세고, 어떤 직무에도
+ * 매칭되지 않은 공고를 통째로 잃는다.</p>
  *
  * <p>순위와 비율을 다시 계산하지 않는다. C가 중복 제거·품질 제외를 거쳐 만든 분모를 우리가
  * 모르기 때문에, 건수를 다시 나누면 같은 화면의 두 수치가 어긋난다.</p>
@@ -40,8 +45,8 @@ public class JobDemandService {
         Target target = new Target(targetRole, regions, careerLevels, Instant.EPOCH);
         Basis basis = Basis.of(target);
         try {
-            CohortResolved cohort = compute.resolveCohort(
-                    CohortSelector.of(targetRole, regions, careerLevels));
+            CohortResolved cohort = compute.resolveCohort(selector(targetRole, regions,
+                    careerLevels));
             if (cohort == null || !cohort.isComplete()) {
                 return JobDemandResponse.pending(
                         ComputeState.preparing("COHORT_NOT_PREPARED"), basis);
@@ -62,5 +67,19 @@ public class JobDemandService {
             // 계산 대기·미준비는 상태로, 장애는 예외로 나간다. 판단은 한곳에 모은다.
             return JobDemandResponse.pending(reader.translate(e, userId), basis);
         }
+    }
+
+    /**
+     * 목표 직무의 유무가 곧 질문의 종류다.
+     *
+     * <p>빈 문자열도 "고르지 않음"으로 읽는다. 쿼리 문자열에서 {@code targetRole=}은
+     * 사용자가 값을 지운 모습이고, 그것을 직무 이름으로 C에 보내면 422가 난다.</p>
+     */
+    private static CohortSelector selector(String targetRole, List<String> regions,
+                                           List<String> careerLevels) {
+        if (targetRole == null || targetRole.isBlank()) {
+            return CohortSelector.currentMarket(regions, careerLevels);
+        }
+        return CohortSelector.activeMatching(targetRole, regions, careerLevels);
     }
 }

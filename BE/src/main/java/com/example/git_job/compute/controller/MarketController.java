@@ -40,15 +40,21 @@ public class MarketController {
     private final TrendService trends;
 
     /**
-     * 직무별 기술 수요.
+     * 직무별 기술 수요, 또는 목표 직무가 없으면 현재 시장 전체의 기술 수요.
      *
      * <p>목표 직무를 저장하지 않은 사용자도 조건을 직접 넣어 볼 수 있어야 하므로 조건을
      * 쿼리로 받는다. 개인 결과가 아니라 공용 집계라 이것이 안전하다.</p>
+     *
+     * <p>{@code targetRole}이 선택인 것은 "직무를 고르기 전에도 볼 것이 있어야 한다"는
+     * 요구 때문이다. 직무가 없으면 지금 확보한 공고 전체의 수요를 답한다. 같은 URI를
+     * 쓰는 이유는 응답이 같은 모양이기 때문이다 — 경로를 나누면 FE의 조회와 상태 분기가
+     * 두 벌이 되고, 두 벌은 언젠가 갈라진다. 어느 모집단이었는지는 응답의
+     * {@code basis}가 말한다({@code targetRole}이 비면 시장 전체).</p>
      */
     @GetMapping("/job-demands")
     public ResponseEntity<ApiResponse<JobDemandResponse>> jobDemands(
             @AuthenticationPrincipal AuthenticatedUser user,
-            @RequestParam String targetRole,
+            @RequestParam(required = false) String targetRole,
             @RequestParam(required = false) List<String> regions,
             @RequestParam(required = false) List<String> careerLevels,
             @RequestParam(required = false) Integer limit

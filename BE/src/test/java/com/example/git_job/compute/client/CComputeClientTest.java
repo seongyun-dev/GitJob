@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.git_job.compute.client.dto.CSnapshot;
+import com.example.git_job.compute.client.dto.CohortSelector;
 import com.example.git_job.compute.client.dto.CTrend;
 import com.example.git_job.compute.config.CComputeProperties;
 import com.sun.net.httpserver.HttpExchange;
@@ -310,6 +311,45 @@ class CComputeClientTest {
                 .contains("\"regions\":[\"서울\"]")
                 .contains("\"career_levels\":[\"신입\"]")
                 .contains("\"min_jobs\":1");
+    }
+
+    @Test
+    @DisplayName("현재 시장 cohort selector는 직무 없이 purpose와 공식 출처를 보낸다")
+    void serializesCurrentMarketCohortSelector() {
+        responses.put("/internal/v1/c/job-cohorts/resolve",
+                Response.of(200, "{\"message\":\"ok\",\"data\":{\"cohort_snapshot_id\":\"c-1\"}}"));
+
+        client().post("/internal/v1/c/job-cohorts/resolve",
+                CohortSelector.currentMarket(List.of(), List.of()), Object.class);
+
+        assertThat(lastBody.get())
+                .contains("\"schema_version\":\"job-cohort-resolve-selector/v1\"")
+                .contains("\"purpose\":\"CURRENT_MARKET\"")
+                // C는 시장에 직무가 붙으면 422를 준다. 생략이 아니라 null 로 보낸다.
+                .contains("\"target_role\":null")
+                // 출처를 빼면 C 는 전체 출처라는 다른 모집단으로 읽는다.
+                .contains("\"sources\":[\"JOBKOREA\",\"SARAMIN\"]")
+                .contains("\"regions\":[]")
+                .contains("\"career_levels\":[]");
+    }
+
+    @Test
+    @DisplayName("활성 매칭 cohort selector는 기존 요청 모양을 유지한다")
+    void serializesActiveMatchingCohortSelector() {
+        responses.put("/internal/v1/c/job-cohorts/resolve",
+                Response.of(200, "{\"message\":\"ok\",\"data\":{\"cohort_snapshot_id\":\"c-1\"}}"));
+
+        client().post("/internal/v1/c/job-cohorts/resolve",
+                CohortSelector.activeMatching("BACKEND", List.of("서울"), List.of("신입")),
+                Object.class);
+
+        assertThat(lastBody.get())
+                .contains("\"purpose\":\"ACTIVE_MATCHING\"")
+                .contains("\"target_role\":\"BACKEND\"")
+                .contains("\"regions\":[\"서울\"]")
+                .contains("\"career_levels\":[\"신입\"]")
+                // 직무 코호트는 출처를 좁히지 않는다. C 는 null 을 "전체"로 읽는다.
+                .contains("\"sources\":null");
     }
 
     @Test

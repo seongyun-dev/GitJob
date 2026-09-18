@@ -29,4 +29,23 @@ class BasisTest {
         assertThat(basis.excludedJobCount()).isEqualTo(1_452);
         assertThat(basis.reviewJobCount()).isEqualTo(279);
     }
+
+    @Test
+    @DisplayName("시장 수요는 직무가 없고, 없다고 해서 분모까지 잃지 않는다")
+    void keepsTheMarketDenominatorWithoutARole() {
+        // CURRENT_MARKET criteria 에는 target_role 자체가 없다. fallback 도 null 이므로
+        // 기준 직무는 비지만, 나머지 기준은 그대로 표시할 수 있어야 한다.
+        CSnapshot.Demand demand = new CSnapshot.Demand("cohort-market", "READY", 1_621,
+                1_700, 12, 67, 0, 747,
+                Map.of("purpose", "CURRENT_MARKET", "as_of", "2026-09-18T03:00:00Z"),
+                List.of());
+
+        Basis basis = Basis.of(
+                new Target(null, List.of(), List.of(), Instant.EPOCH), demand);
+
+        assertThat(basis.targetRole()).isNull();
+        assertThat(basis.asOf()).isEqualTo("2026-09-18T03:00:00Z");
+        assertThat(basis.jobCount()).isEqualTo(1_621);
+        assertThat(basis.matchingJobCount()).isEqualTo(747);
+    }
 }
