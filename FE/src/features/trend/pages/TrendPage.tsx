@@ -96,16 +96,14 @@ function githubRankingSource(
 }
 
 /**
- * 카드 기준 문구. 기간과 모집단을 함께 적는다 · 티켓 S15P21E102-346.
+ * 카드 기준 문구. 기간만 적는다.
  *
- * 모집단을 숨기면 `60.2%`가 무엇에 대한 비중인지 알 수 없고, 주차마다 크기가 달라
- * (2026-08-31 = 4,045 · 09-07 = 133) 두 기간의 값을 같은 것으로 읽게 된다.
+ * 모집단(`sampleRepoCount`)은 응답에 그대로 있고 비중(%) 계산에도 계속 쓰이지만,
+ * 카드 문구로는 내보내지 않는다 — 카드가 묻는 것은 "이 기간에 무엇이 많이 관측됐나"
+ * 이고, 표본 크기는 그 답을 읽는 데 필요하지 않다(-346에서 함께 적던 것을 되돌린다).
  */
 function rankingBasis(data: TrendRankingDto): string {
-  const period = data.period ?? '기간 미정'
-  return data.sampleRepoCount === null
-    ? period
-    : `${period} · 저장소 ${data.sampleRepoCount.toLocaleString('ko-KR')}개 기준`
+  return data.period ?? '기간 미정'
 }
 
 /**
