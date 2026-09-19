@@ -8,10 +8,10 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, StrictBool, StrictInt
 
@@ -525,6 +525,7 @@ def run_public_pipeline(
     manifest_sha256: str | None = None,
     registry_sha256: str | None = None,
     max_new_partitions: int | None = None,
+    cache_factory: Callable[[], Any] | None = None,
 ) -> PipelineProgress:
     """Run/resume a single local writer; only return final output after full validation."""
     if max_new_partitions is not None and (
@@ -600,8 +601,15 @@ def run_public_pipeline(
             try:
                 if mapper.registry_version != plan.registry_version:
                     raise ValueError("Registry version changed during execution")
+                # A fresh cache context per partition: its directory listings
+                # describe what is there now, and carrying them across polls
+                # would quietly turn an observation into an assumption.
                 result = analyze_public_batch(
-                    subset, reader, mapper, include_partial=include_partial
+                    subset,
+                    reader,
+                    mapper,
+                    include_partial=include_partial,
+                    cache=cache_factory() if cache_factory is not None else None,
                 )
                 if mapper.registry_version != plan.registry_version:
                     raise ValueError("Registry version changed during execution")

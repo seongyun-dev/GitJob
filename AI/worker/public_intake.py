@@ -30,6 +30,7 @@ class PublicPipelineConsumer:
         include_partial: bool = False,
         max_records: int = 500,
         max_declared_bytes: int = 50_000_000,
+        artifact_analysis_cache_enabled: bool = False,
     ):
         # Snapshot contracts contain mutable nested values: own a validated copy.
         self._published = PublishedSnapshot.model_validate_json(
@@ -48,6 +49,11 @@ class PublicPipelineConsumer:
             "source_sha256": self._published.source_sha256,
             "manifest_sha256": self._published.manifest_sha256,
             "registry_sha256": registry_sha256,
+            "cache_factory": _cache_factory(
+                enabled=artifact_analysis_cache_enabled,
+                reader=reader,
+                registry_version=self._mapper.registry_version,
+            ),
         }
         self._plan = plan_public_pipeline(
             self._published.batch, self._mapper, **self._options
@@ -136,3 +142,40 @@ class PublicPipelineConsumer:
                 )
             raise
         return {**report, "status": "COMPLETED", "results": results}
+
+
+def _cache_factory(*, enabled: bool, reader, registry_version: str):
+    """Build partition-scoped caches, or nothing at all when it is switched off.
+
+    Off is the default and means exactly the old code: no Redis client is
+    constructed, so a worker with no Redis reachable behaves as it did before
+    S15P21E102-347. On, an unreachable Redis still yields `None` here rather
+    than an exception -- the cache exists to remove work, and failing to build
+    it must not stop the publication.
+    """
+
+    if not enabled:
+        return None
+    from github.public_analysis import (
+        PUBLIC_MANIFEST_PARSER_VERSION,
+        PUBLIC_PARSER_VERSION,
+    )
+    from github.redis_artifact_analysis_cache import (
+        ArtifactAnalysisCacheContext,
+        create_redis_client,
+    )
+
+    client = create_redis_client()
+    if client is None:
+        return None
+    parser_version = f"{PUBLIC_PARSER_VERSION}+{PUBLIC_MANIFEST_PARSER_VERSION}"
+
+    def build():
+        return ArtifactAnalysisCacheContext.build(
+            client,
+            reader,
+            registry_version=registry_version,
+            parser_version=parser_version,
+        )
+
+    return build

@@ -9,9 +9,10 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import unquote, urlsplit
 
 import tomllib
@@ -1010,7 +1011,118 @@ def _shared_manifest_candidates(
     return candidates, unresolved, not unresolved
 
 
+def _encode_parse(
+    candidates: list[Candidate],
+    unresolved: list[UnresolvedObservation],
+    analysis: ArtifactAnalysis,
+) -> dict[str, Any]:
+    return {
+        "candidates": [
+            {
+                "request": candidate.request.model_dump(mode="json"),
+                "scope": candidate.scope,
+                "line": candidate.line,
+                "observed_value": candidate.observed_value,
+            }
+            for candidate in candidates
+        ],
+        "unresolved": [item.model_dump(mode="json") for item in unresolved],
+        # `uri` is deliberately dropped. The key is the artifact's content and
+        # path, so two repositories holding an identical `package.json` share
+        # one entry -- which is most of the reuse. Keeping the first
+        # repository's URI in it would hand that URI to the second one.
+        "analysis": {
+            key: value
+            for key, value in analysis.model_dump(mode="json").items()
+            if key != "uri"
+        },
+    }
+
+
+def _decode_parse(
+    payload: Mapping[str, Any], artifact: RepoArtifact
+) -> tuple[list[Candidate], list[UnresolvedObservation], ArtifactAnalysis]:
+    """Rebuild a parse result, or raise so the caller falls back to reading.
+
+    The URI comes from the artifact being analysed, never from the stored
+    entry: the entry is shared by every artifact with these bytes at this
+    path, and they do not all live in the same repository.
+    """
+
+    candidates = [
+        Candidate(
+            request=MapperInput.model_validate(row["request"]),
+            scope=row["scope"],
+            line=row["line"],
+            observed_value=row["observed_value"],
+        )
+        for row in payload["candidates"]
+    ]
+    unresolved = [
+        UnresolvedObservation.model_validate(row) for row in payload["unresolved"]
+    ]
+    return (
+        candidates,
+        unresolved,
+        ArtifactAnalysis.model_validate({**payload["analysis"], "uri": artifact.uri}),
+    )
+
+
 def _read_candidates(
+    artifact: RepoArtifact,
+    reader: ArtifactReader,
+    *,
+    companion_files: dict[str, bytes] | None = None,
+    preloaded: bytes | ArtifactAnalysis | object = _NOT_PRELOADED,
+    cache: Any = None,
+) -> tuple[list[Candidate], list[UnresolvedObservation], ArtifactAnalysis]:
+    """Parse one artifact, reusing an earlier identical parse when it is safe.
+
+    Without `cache` this is exactly `_parse_candidates`, which is the path every
+    caller took before S15P21E102-347. With it, a stored parse is used only when
+    Redis returns the entry recorded for this artifact's verified identity *and*
+    the durable object has been listed at the same size in this run. Anything
+    else -- miss, unreachable Redis, corrupt bytes, an unconfirmed listing --
+    reads the artifact and parses it, which is what would have happened anyway.
+    """
+
+    if cache is None or preloaded is not _NOT_PRELOADED:
+        return _parse_candidates(
+            artifact, reader, companion_files=companion_files, preloaded=preloaded
+        )
+    digest = cache.cache.companion_digest(companion_files)
+    stored = cache.cache.lookup(
+        content_hash=artifact.content_hash,
+        path=artifact.path,
+        size_bytes=artifact.size_bytes,
+        uri=artifact.uri,
+        companion_digest=digest,
+        validator=cache.validator,
+    )
+    if stored is not None:
+        try:
+            return _decode_parse(stored, artifact)
+        except (KeyError, TypeError, ValueError):
+            # A decodable-looking entry that this build cannot rebuild is a
+            # miss, not a failure: the artifact is still right there.
+            cache.cache.metrics.durable_fallback_count += 1
+    candidates, unresolved, analysis = _parse_candidates(
+        artifact, reader, companion_files=companion_files, preloaded=preloaded
+    )
+    if analysis.status is not TrendStatus.FAILED:
+        # FAILED covers ARTIFACT_UNAVAILABLE and HASH_MISMATCH, which describe
+        # the fetch rather than the artifact, so they must not be remembered.
+        cache.cache.put(
+            content_hash=artifact.content_hash,
+            path=artifact.path,
+            size_bytes=artifact.size_bytes,
+            companion_digest=digest,
+            **_encode_parse(candidates, unresolved, analysis),
+        )
+    return candidates, unresolved, analysis
+
+
+def _parse_candidates(
     artifact: RepoArtifact,
     reader: ArtifactReader,
     *,
@@ -1138,8 +1250,15 @@ def analyze_public_batch(
     mapper: RegistryMapper,
     *,
     include_partial: bool = False,
+    cache: Any = None,
 ) -> PublicBatchResult:
-    """Preserve partial positive evidence and verified artifact identity per repository."""
+    """Preserve partial positive evidence and verified artifact identity per repository.
+
+    `cache` is an optional `ArtifactAnalysisCacheContext` (S15P21E102-347). It
+    only ever removes work: the directories this batch will touch are listed up
+    front so a reused parse can still be shown to exist, and nothing about the
+    result depends on Redis being reachable.
+    """
     if type(include_partial) is not bool:
         raise ValueError("include_partial must be an explicit boolean")
     allowed = {RepoCollectionStatus.COMPLETE, RepoCollectionStatus.REUSED}
@@ -1160,6 +1279,16 @@ def analyze_public_batch(
     records = []
     repos_by_tech = defaultdict(set)
     analyzed = 0
+    if cache is not None:
+        # One LISTSTATUS per directory, before the loop rather than inside it:
+        # the alternative is asking the NameNode about every artifact, which
+        # costs more than the content reads this is meant to avoid.
+        cache.preload(
+            artifact.uri
+            for record in batch.records
+            if record.collection_status in allowed
+            for artifact in record.artifacts
+        )
     for record in sorted(batch.records, key=lambda item: item.activity_rank):
         observations, unresolved, artifacts, languages = [], [], [], []
         quality_reasons = (
@@ -1225,6 +1354,7 @@ def analyze_public_batch(
                 reader,
                 companion_files=companion_files,
                 preloaded=preloaded_artifacts.get(artifact.path, _NOT_PRELOADED),
+                cache=cache,
             )
             artifacts.append(analysis)
             unresolved.extend(parser_unresolved)

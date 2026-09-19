@@ -57,6 +57,9 @@ class PublicInputConfig(BaseModel):
         default=50_000_000, ge=1, le=100_000_000, strict=True
     )
     max_requests: int = Field(default=8000, ge=1, le=100000, strict=True)
+    # S15P21E102-347. Off unless a configuration says otherwise: deploying
+    # the code must not change how an existing publication is ingested.
+    artifact_analysis_cache_enabled: StrictBool = False
 
     @model_validator(mode="after")
     def validate_source(self):
@@ -1138,6 +1141,9 @@ class _PublicSource:
                 include_partial=self.config.include_partial,
                 max_records=self.config.max_records,
                 max_declared_bytes=self.config.max_declared_bytes,
+                artifact_analysis_cache_enabled=(
+                    self.config.artifact_analysis_cache_enabled
+                ),
             )
         result = self.consumer.poll_once(max_new_partitions=1)
         return {**result, "reader_stats": dict(self.reader.stats)}
