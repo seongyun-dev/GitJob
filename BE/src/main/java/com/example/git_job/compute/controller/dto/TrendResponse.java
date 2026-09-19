@@ -44,10 +44,18 @@ public record TrendResponse(String techId, List<Source> sources) {
         public static Source of(String sourceId, String cSource, ComputeState state,
                                 CTrend.Payload payload) {
             List<CTrend.Point> points = payload.points() == null ? List.of() : payload.points();
+            boolean github = CTrend.isGithubTrend(cSource);
+            /*
+             * GitHub 계열은 payload 가 선언한 unit 을 쓰지 않는다 · 티켓 S15P21E102-348.
+             *
+             * 그 값은 `EVENTS` 인데 그건 `event_count` 의 단위이고, 우리가 싣는 것은
+             * 저장소 수다. 그대로 내보내면 화면이 저장소 수를 "GitHub 활동"이라고 읽는다.
+             */
+            String unit = github ? CTrend.GITHUB_TREND_UNIT : payload.unit();
             return new Source(sourceId, cSource, state.dataStatus(), state.statusReason(),
-                    payload.unit(), payload.metric(), payload.granularity(),
+                    unit, payload.metric(), payload.granularity(),
                     points.stream().map(CTrend.Point::period).toList(),
-                    points.stream().map(Point::of).toList(),
+                    points.stream().map(point -> Point.of(point, github)).toList(),
                     payload.reasons() == null ? List.of() : payload.reasons());
         }
     }
@@ -58,15 +66,32 @@ public record TrendResponse(String techId, List<Source> sources) {
      * <p>{@code value}가 {@code null}일 수 있다. 미완료 기간을 0으로 채우지 않는 것이
      * 계약이고, 0으로 채우면 화면이 "그 달에는 아무 일도 없었다"고 말한다.</p>
      *
-     * <p>Archive 계열은 {@code event_count}를, 공통 형식은 {@code value}를 센다. 단위가
-     * 다르므로 하나의 {@code value}로 합치되 {@code unit}을 반드시 함께 표시한다.</p>
+     * <p>출처 계열마다 값을 싣는 필드가 다르다. 하나의 {@code value}로 모으되 어느 필드를
+     * 읽을지는 <b>stream 계약</b>이 정한다. 단위가 다르므로 {@code unit}을 반드시 함께
+     * 표시한다.</p>
      */
     public record Point(String period, String status, Integer value, Integer denominator,
             Double ratio, Integer absoluteChange, Double relativeChange) {
 
-        static Point of(CTrend.Point point) {
-            Integer value = point.value() != null ? point.value() : point.eventCount();
-            return new Point(point.period(), point.status(), value, point.denominator(),
+        /**
+         * 값을 어느 필드에서 읽을지는 계열이 정한다 · 티켓 S15P21E102-348.
+         *
+         * <p>GitHub 계열은 {@code active_repo_count} — 그 기간에 그 기술이 관측된 저장소
+         * 수다. 같은 point 의 {@code event_count} 를 쓰지 않는다: 그것은 기술의 이벤트가
+         * 아니라 <b>그 기술을 쓰는 저장소들의 전체 활동 합</b>이라, 한 저장소가 여러 기술을
+         * 쓰면 그 활동량이 기술마다 통째로 다시 더해진다(운영 실측 주간 약 3.9배, 월별 약
+         * 2.2배). 개요 순위가 저장소 수를 쓰므로(S15P21E102-346) 여기서 이벤트 수를 쓰면
+         * 같은 기술·같은 주가 두 화면에서 다른 수로 보인다.</p>
+         *
+         * <p>{@code value → activeRepoCount → eventCount} 같은 일반 fallback 을 두지
+         * 않는다. 그렇게 하면 어떤 payload 가 오느냐에 따라 단위가 조용히 바뀐다.
+         * GitHub 계열에 저장소 수가 없으면 값이 없는 것이다 — 운영 point 793건에서 세
+         * 필드는 언제나 함께 있거나 함께 없다.</p>
+         */
+        static Point of(CTrend.Point point, boolean githubTrend) {
+            Integer value = githubTrend ? point.activeRepoCount() : point.value();
+            Integer denominator = githubTrend ? point.sampleRepoCount() : point.denominator();
+            return new Point(point.period(), point.status(), value, denominator,
                     point.ratio(), point.absoluteChange(), point.relativeChange());
         }
     }

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { rankObservableRows } from '../src/features/trend/model/ranking.ts'
+import {
+  observedValueText,
+  rankObservableRows,
+} from '../src/features/trend/model/ranking.ts'
 
 test('ranks READY and PARTIAL observations by numeric value and retains missing rows separately', () => {
   const result = rankObservableRows([
@@ -92,4 +95,28 @@ test('states whose numbers cannot be trusted are still kept out', () => {
     const result = rankObservableRows([{ techId: 'x', dataStatus, value: 99 }])
     assert.deepEqual(result.observed, [], `${dataStatus} must not be ranked`)
   }
+})
+
+/*
+ * 상세 화면의 최신 값 표기 · 티켓 S15P21E102-348.
+ *
+ * 상세가 event_count 를 그리던 것을 저장소 수로 바꾸면서 분모가 필요해졌다. 저장소
+ * 수만 적으면 모집단이 다른 주차끼리 값을 비교하게 된다.
+ */
+
+test('분모가 있으면 저장소 수와 비중을 함께 적는다', () => {
+  // 개요의 python / 2026-08-31 과 같은 값이어야 한다.
+  assert.equal(observedValueText(2434, 4045), '2,434 / 4,045 (60.2%)')
+  assert.equal(observedValueText(339, 695), '339 / 695 (48.8%)')
+})
+
+test('분모를 모르면 값만 적는다', () => {
+  // 없는 모집단을 지어내지 않는다.
+  assert.equal(observedValueText(2434, null), '2,434')
+  assert.equal(observedValueText(2434, undefined), '2,434')
+  assert.equal(observedValueText(2434, 0), '2,434')
+})
+
+test('값이 없으면 0 으로 채우지 않는다', () => {
+  assert.equal(observedValueText(null, 4045), '—')
 })

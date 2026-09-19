@@ -92,3 +92,25 @@ export function observedShareText(
   }
   return `${((value / denominator) * 100).toFixed(1)}%`
 }
+
+/**
+ * 상세 화면의 최신 값 표기 · 티켓 S15P21E102-348.
+ *
+ * 분모가 있으면 함께 적는다. GitHub 관측은 주차마다 모집단이 달라(2026-08-31 = 4,045 ·
+ * 09-07 = 133) 저장소 수만 보면 기간을 옮겼을 때 관심이 식은 것처럼 읽힌다.
+ *
+ * 분모를 모르면 값만 적는다 — 없는 모집단을 지어내지 않는다.
+ */
+export function observedValueText(
+  value: number | null,
+  denominator: number | null | undefined,
+): string {
+  if (value === null) {
+    return '—'
+  }
+  const counted = value.toLocaleString('ko-KR')
+  if (denominator === null || denominator === undefined || denominator <= 0) {
+    return counted
+  }
+  return `${counted} / ${denominator.toLocaleString('ko-KR')} (${observedShareText(value, denominator)})`
+}

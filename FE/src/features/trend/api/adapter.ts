@@ -13,7 +13,11 @@ import type {
 } from '@/features/trend/model/view'
 import type { MarketDemandView } from '@/features/trend/model/marketDemand'
 import { marketRankRows } from '@/features/trend/model/marketDemand'
-import { observedShareText, rankObservableRows } from '@/features/trend/model/ranking'
+import {
+  observedShareText,
+  observedValueText,
+  rankObservableRows,
+} from '@/features/trend/model/ranking'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { pointsForSource } from '@/features/trend/model/periods'
 
@@ -130,7 +134,7 @@ export function toTrendSeries(
         label: LABEL[id],
         status: source.dataStatus,
         axisLabel: unit,
-        latestText: last === undefined ? null : numberText(last.value),
+        latestText: last === undefined ? null : observedValueText(last.value, last.denominator),
         deltaText:
           last === undefined ? null : changeText(last.absoluteChange, last.relativeChange),
         points,

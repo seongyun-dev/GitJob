@@ -20,6 +20,27 @@ public final class CTrend {
     }
 
     /**
+     * GitHub Trend 계열 stream인지 (S15P21E102-348).
+     *
+     * <p>여기서 갈리는 것은 <b>값을 어느 필드에서 읽는가</b>다. GitHub 계열 payload는
+     * {@code value}가 비어 있고 저장소 수({@code active_repo_count})와 이벤트 합
+     * ({@code event_count})을 따로 싣는다. JOB은 {@code value}를 쓴다.</p>
+     *
+     * <p>판정 기준을 payload의 {@code source}(운영에서 {@code GITHUB_GH_ARCHIVE})가 아니라
+     * <b>selector source</b>로 두는 이유는, 그것이 우리가 무엇을 물었는지를 말하는 계약
+     * 값이기 때문이다. payload의 source는 저장한 쪽이 붙인 이름이고 두 namespace는 다르다
+     * — 주간 head도 payload에는 {@code GITHUB_GH_ARCHIVE}로 적힌다.</p>
+     */
+    public static boolean isGithubTrend(String cSource) {
+        return "WEEKLY_REPO_ACTIVITY".equals(cSource)
+                || "GH_ARCHIVE".equals(cSource)
+                || "GH_ARCHIVE_HISTORICAL".equals(cSource);
+    }
+
+    /** GitHub Trend 값의 단위. Ranking API와 같은 토큰이라 화면이 같은 말로 읽는다. */
+    public static final String GITHUB_TREND_UNIT = "REPOSITORIES";
+
+    /**
      * resolve 요청.
      *
      * @param periods      {@code WEEKLY_REPO_ACTIVITY}는 받지 않는다(주차를 누적하는 head다).
@@ -111,7 +132,9 @@ public final class CTrend {
      * 값이 없는 점은 값이 없는 채로 화면까지 간다.</p>
      *
      * @param value      {@code c-source-trend/v1}의 값
-     * @param eventCount {@code c-gharchive-trend/v1}의 값. 단위가 다르므로 별도 필드다.
+     * @param eventCount GH Archive 가 싣는 이벤트 합. <b>화면에 값으로 내보내지 않는다</b>
+     *                   (S15P21E102-348) — 기술의 이벤트가 아니라 그 기술을 쓰는 저장소들의
+     *                   전체 활동 합이라 기술마다 중복 계산된다. 계약을 보이기 위해 남긴다.
      */
     public record Point(
             String period,
@@ -122,7 +145,10 @@ public final class CTrend {
             Integer absoluteChange,
             Double relativeChange,
             Integer eventCount,
+            /** GitHub 계열의 값: 그 기간에 그 기술이 관측된 저장소 수. */
             Integer activeRepoCount,
+            /** {@code activeRepoCount}의 분모. 주차마다 코호트 크기가 다르다. */
+            Integer sampleRepoCount,
             List<String> reasons
     ) {
     }

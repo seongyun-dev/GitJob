@@ -50,9 +50,9 @@ class TrendServiceTest {
                 "c-gharchive-trend/v1", "GITHUB_GH_ARCHIVE", "kafka", "gh_archive_event_count",
                 "EVENTS", "MONTH", status, List.of(),
                 List.of(new CTrend.Point("2026-07", "READY", null, null, null, null, null,
-                                128, 40, List.of()),
+                                128, 40, 100, List.of()),
                         new CTrend.Point("2026-08", "PARTIAL", null, null, null, null, null,
-                                null, null, List.of("INCOMPLETE_MONTH")))));
+                                null, null, null, List.of("INCOMPLETE_MONTH")))));
     }
 
     @Test
@@ -109,7 +109,9 @@ class TrendServiceTest {
                 .getFirst().points();
 
         assertThat(points).hasSize(2);
-        assertThat(points.getFirst().value()).isEqualTo(128);
+        // GitHub 계열의 값은 저장소 수다. event_count(128)가 아니다 (S15P21E102-348).
+        assertThat(points.getFirst().value()).isEqualTo(40);
+        assertThat(points.getFirst().denominator()).isEqualTo(100);
         // 미완료 월이다. 0 을 넣으면 "그 달에는 아무 일도 없었다"가 된다.
         assertThat(points.get(1).value()).isNull();
         assertThat(points.get(1).status()).isEqualTo("PARTIAL");
@@ -125,7 +127,7 @@ class TrendServiceTest {
 
         assertThat(source.dataStatus()).isEqualTo(ComputeState.PARTIAL);
         assertThat(source.statusReason()).isEqualTo("PARTIAL_TREND_QUALITY");
-        assertThat(source.points().getFirst().value()).isEqualTo(128);
+        assertThat(source.points().getFirst().value()).isEqualTo(40);
     }
 
     @Test
@@ -136,7 +138,8 @@ class TrendServiceTest {
                 "gh_archive_event_count", "EVENTS", "MONTH", "INSUFFICIENT_DATA",
                 List.of("MISSING_PERIOD_INPUT"),
                 List.of(new CTrend.Point("2026-08", "INSUFFICIENT_DATA", null, null,
-                        null, null, null, null, null, List.of("MISSING_PERIOD_INPUT"))));
+                        null, null, null, null, null, null,
+                        List.of("MISSING_PERIOD_INPUT"))));
         when(compute.trendSnapshot(anyString()))
                 .thenReturn(new CTrend.Snapshot("c-trend", "TREND", payload));
 
@@ -241,5 +244,143 @@ class TrendServiceTest {
             assertThat(row.dataStatus()).isEqualTo(ComputeState.PREPARING);
             assertThat(row.statusReason()).isEqualTo("COMPUTE_RETRYING");
         });
+    }
+
+    // ---- S15P21E102-348: 상세가 개요와 같은 지표를 보여야 한다 ----
+
+    /** 주간·월별을 각자 다른 payload 로 답하게 한다. 기간이 섞이는지 보려면 달라야 한다. */
+    private void stubGithubDetailPerStream() {
+        when(compute.resolveTrend(any())).thenAnswer(call -> {
+            CTrend.Selector selector = call.getArgument(0);
+            return new CTrend.Resolved("snap-" + selector.source(), "c-gharchive-trend/v1",
+                    "READY", "registry-20260911.4", "algo/v1",
+                    "WEEKLY_REPO_ACTIVITY".equals(selector.source()) ? "WEEK" : "MONTH",
+                    List.of(), false);
+        });
+        when(compute.trendSnapshot(anyString())).thenAnswer(call -> {
+            String id = call.getArgument(0);
+            boolean weekly = id.contains("WEEKLY_REPO_ACTIVITY");
+            return new CTrend.Snapshot(id, "TREND", new CTrend.Payload(
+                    weekly ? "c-gharchive-trend/v1" : "c-gharchive-historical-trend/v2",
+                    "GITHUB_GH_ARCHIVE", "python", "gh_archive_event_count", "EVENTS",
+                    weekly ? "WEEK" : "MONTH", "INSUFFICIENT_DATA", List.of(),
+                    weekly
+                            ? List.of(new CTrend.Point("2026-08-31", "INSUFFICIENT_DATA",
+                                    null, null, null, null, null, 175383, 2434, 4045,
+                                    List.of()))
+                            : List.of(new CTrend.Point("2026-08", "INSUFFICIENT_DATA",
+                                    null, null, null, null, null, 726639, 339, 695,
+                                    List.of()))));
+        });
+    }
+
+    private TrendResponse.Source githubSource(String sourceId) {
+        return service.trends("python", List.of("2026-08"), "BACKEND", List.of(), List.of())
+                .sources().stream()
+                .filter(source -> sourceId.equals(source.sourceId()))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    @Test
+    @DisplayName("주간 상세는 저장소 수를 값으로 쓴다 — 개요의 2434 / 4045 와 같다")
+    void weeklyDetailShowsTheRepositoryCount() {
+        stubGithubDetailPerStream();
+
+        TrendResponse.Source weekly = githubSource("GITHUB_WEEKLY");
+
+        assertThat(weekly.points()).hasSize(1);
+        assertThat(weekly.points().getFirst().value()).isEqualTo(2434);
+        assertThat(weekly.points().getFirst().denominator()).isEqualTo(4045);
+        // 이벤트 합(175,383)은 값으로 새어 나오지 않는다.
+        assertThat(weekly.points().getFirst().value()).isNotEqualTo(175383);
+    }
+
+    @Test
+    @DisplayName("월별 상세도 같은 기준이다 — 개요의 339 / 695 와 같다")
+    void monthlyDetailShowsTheSameBasis() {
+        stubGithubDetailPerStream();
+
+        TrendResponse.Source monthly = githubSource("GITHUB_ARCHIVE");
+
+        assertThat(monthly.points().getFirst().value()).isEqualTo(339);
+        assertThat(monthly.points().getFirst().denominator()).isEqualTo(695);
+    }
+
+    @Test
+    @DisplayName("주간과 월별은 서로 다른 stream 이라 기간이 섞이지 않는다")
+    void weeklyAndMonthlyDoNotShareTheirPeriods() {
+        stubGithubDetailPerStream();
+
+        assertThat(githubSource("GITHUB_WEEKLY").periods()).containsExactly("2026-08-31");
+        assertThat(githubSource("GITHUB_ARCHIVE").periods()).containsExactly("2026-08");
+    }
+
+    @Test
+    @DisplayName("selector source 는 그대로다 — 이 이름이 C 의 head 조회 키다")
+    void keepsTheStreamSelectorSources() {
+        stubGithubDetailPerStream();
+        githubSource("GITHUB_WEEKLY");
+
+        ArgumentCaptor<CTrend.Selector> captor = ArgumentCaptor.forClass(CTrend.Selector.class);
+        verify(compute, atLeastOnce()).resolveTrend(captor.capture());
+        assertThat(captor.getAllValues()).extracting(CTrend.Selector::source)
+                .contains("WEEKLY_REPO_ACTIVITY", "GH_ARCHIVE_HISTORICAL");
+        // 주간은 기간을 보내지 않는다. 보내면 C 가 422 로 거절한다.
+        assertThat(captor.getAllValues()).filteredOn(
+                        selector -> "WEEKLY_REPO_ACTIVITY".equals(selector.source()))
+                .allSatisfy(selector -> assertThat(selector.periods()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("GitHub 계열의 단위는 순위 API 와 같은 토큰이다")
+    void githubDetailDeclaresTheRepositoryUnit() {
+        stubGithubDetailPerStream();
+
+        assertThat(githubSource("GITHUB_WEEKLY").unit()).isEqualTo("REPOSITORIES");
+        assertThat(githubSource("GITHUB_ARCHIVE").unit()).isEqualTo("REPOSITORIES");
+    }
+
+    @Test
+    @DisplayName("이벤트 수만 있고 저장소 수가 없으면 관측이 없는 것이다")
+    void anEventCountAloneIsNotAnObservation() {
+        /*
+         * generic fallback 을 두지 않는 이유다. event_count 로 "값이 있다"고 판정하면
+         * 저장소 수가 없는 기간에도 READY 가 붙어 빈 카드가 준비된 것처럼 보인다.
+         */
+        CTrend.Payload payload = new CTrend.Payload(
+                "c-gharchive-trend/v1", "GITHUB_GH_ARCHIVE", "python",
+                "gh_archive_event_count", "EVENTS", "WEEK", "INSUFFICIENT_DATA",
+                List.of("MISSING_PERIOD_INPUT"),
+                List.of(new CTrend.Point("2026-08-31", "INSUFFICIENT_DATA", null, null,
+                        null, null, null, 175383, null, null, List.of())));
+        when(compute.trendSnapshot(anyString()))
+                .thenReturn(new CTrend.Snapshot("c-trend", "TREND", payload));
+
+        TrendResponse.Source weekly = service.trends("python", List.of(), "BACKEND",
+                List.of(), List.of()).sources().getFirst();
+
+        assertThat(weekly.dataStatus()).isEqualTo(ComputeState.INSUFFICIENT_DATA);
+        assertThat(weekly.points().getFirst().value()).isNull();
+    }
+
+    @Test
+    @DisplayName("JOB 계열의 값 의미는 그대로다")
+    void jobKeepsItsOwnValueField() {
+        when(compute.resolveTrend(any())).thenReturn(
+                new CTrend.Resolved("c-job", "c-source-trend/v1", "READY",
+                        "registry-20260911.4", "algo/v1", "MONTH", List.of("2026-08"), false));
+        when(compute.trendSnapshot(anyString())).thenReturn(new CTrend.Snapshot(
+                "c-job", "TREND", new CTrend.Payload("c-source-trend/v1", "JOB", "python",
+                        "job_demand", "JOB_POSTINGS", "MONTH", "READY", List.of(),
+                        List.of(new CTrend.Point("2026-08", "READY", 54, 900, 0.06,
+                                null, null, null, null, null, List.of())))));
+
+        TrendResponse.Source job = githubSource("JOB");
+
+        assertThat(job.points().getFirst().value()).isEqualTo(54);
+        assertThat(job.points().getFirst().denominator()).isEqualTo(900);
+        // 단위도 payload 가 선언한 것을 그대로 쓴다.
+        assertThat(job.unit()).isEqualTo("JOB_POSTINGS");
     }
 }

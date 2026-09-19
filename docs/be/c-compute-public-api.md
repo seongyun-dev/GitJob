@@ -643,11 +643,11 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
   "techId": "kafka",
   "sources": [
     { "sourceId": "GITHUB_WEEKLY", "cSource": "WEEKLY_REPO_ACTIVITY",
-      "dataStatus": "READY", "unit": "주간 활동 저장소 수",
-      "basis": "공개 저장소 주간 증분", "points": [{"period":"2026-W36","value":128}] },
+      "dataStatus": "PARTIAL", "unit": "REPOSITORIES",
+      "points": [{"period":"2026-08-31","value":2434,"denominator":4045}] },
     { "sourceId": "GITHUB_ARCHIVE", "cSource": "GH_ARCHIVE_HISTORICAL",
-      "dataStatus": "PARTIAL", "unit": "월별 commit 관측 수",
-      "basis": "2026-06~2026-08", "points": [] },
+      "dataStatus": "PARTIAL", "unit": "REPOSITORIES",
+      "points": [{"period":"2026-08","value":339,"denominator":695}] },
     { "sourceId": "JOB", "cSource": "JOB_MONTHLY_DEMAND",
       "dataStatus": "READY", "statusReason": "NONE",
       "unit": "월별 공고 요구 건수", "points": [{"period":"2026-08","value":54}] }
@@ -658,6 +658,17 @@ C 원천: `POST /internal/v1/c/trends/resolve`를 출처별로 각각 부른 뒤
 - 출처는 **배열로 분리해서** 내려보낸다. 합성 점수 필드를 만들지 않는다.
   `WEEKLY_REPO_ACTIVITY`·`GH_ARCHIVE`·`GH_ARCHIVE_HISTORICAL`은 서로 다른 series이고
   JOB은 또 다른 축이다.
+- **`cSource`는 stream identity이지 Snapshot payload의 `source`가 아니다**(S15P21E102-348).
+  주간 head도 payload에는 `GITHUB_GH_ARCHIVE`로 적힌다. 두 이름은 다른 namespace이고,
+  head를 찾는 키는 `cSource` 쪽이다(`AI/worker/trend_streams.py`). payload의 `source`가
+  다르다고 selector를 바꾸면 정상 조회가 깨진다.
+- GitHub 계열(`WEEKLY_REPO_ACTIVITY`·`GH_ARCHIVE`·`GH_ARCHIVE_HISTORICAL`)의 `value`는
+  **`active_repo_count`**, `denominator`는 `sample_repo_count`다. 단위는 순위 API와 같은
+  `REPOSITORIES` 토큰이다(§4.10). 같은 point의 `event_count`는 값으로 내보내지 않는다 —
+  그 기술을 쓰는 저장소들의 전체 활동 합이라 기술마다 중복 계산되고(주간 약 3.9배, 월별
+  약 2.2배) 분모가 없다. 값을 어느 필드에서 읽을지는 `cSource`가 정하며,
+  `value → activeRepoCount → eventCount` 같은 일반 fallback을 두지 않는다.
+- JOB 계열은 그대로 payload의 `value`·`denominator`·`unit`을 쓴다.
 - 미완료 기간을 0으로 채우지 않는다. 값이 없으면 `points`가 비고 `dataStatus`가
   `NO_DATA`·`PARTIAL`이 된다.
 - 한 출처가 404여도 나머지는 정상 응답한다. 출처 하나의 미준비는 요청 실패가 아니다.

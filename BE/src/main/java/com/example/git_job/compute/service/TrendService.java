@@ -80,7 +80,7 @@ public class TrendService {
                 "주간 활동 저장소 수"));
         if (!periods.isEmpty()) {
             sources.add(source(ARCHIVE, "GH_ARCHIVE_HISTORICAL",
-                    CTrend.Selector.historical(tech, periods), "월별 commit 관측 수"));
+                    CTrend.Selector.historical(tech, periods), "월별 활동 저장소 수"));
             if (targetRole != null && !targetRole.isBlank()) {
                 sources.add(source(JOB, "JOB", CTrend.Selector.job(tech, periods,
                         targetRole.strip(), normalizedRegions, normalizedCareerLevels),
@@ -218,8 +218,10 @@ public class TrendService {
         }
         String cSource = job ? "JOB"
                 : archive ? "GH_ARCHIVE_HISTORICAL" : "WEEKLY_REPO_ACTIVITY";
+        // GitHub 계열은 저장소 수를 센다 · 티켓 S15P21E102-348. 값 매핑을 상세와 공유하므로
+        // (batchSource -> Point.of) 라벨만 이벤트 수로 남겨 두면 값과 어긋난다.
         String displayUnit = job ? "월별 공고 요구 건수"
-                : archive ? "월별 commit 관측 수" : "주간 활동 저장소 수";
+                : archive ? "월별 활동 저장소 수" : "주간 활동 저장소 수";
         List<CTrend.Selector> selectors = technologies.stream().map(tech -> job
                 ? CTrend.Selector.job(tech, periods, targetRole.strip(), normalizedRegions,
                         normalizedCareerLevels)
@@ -285,10 +287,9 @@ public class TrendService {
                 return TrendResponse.Source.empty(sourceId, cSource,
                         ComputeState.ofTrend(null), unit);
             }
-            boolean hasObservedValue = payload.points() != null && payload.points().stream()
-                    .anyMatch(point -> point.value() != null || point.eventCount() != null);
             return TrendResponse.Source.of(sourceId, cSource,
-                    ComputeState.ofTrend(payload.status(), hasObservedValue), payload);
+                    ComputeState.ofTrend(payload.status(), hasObservedValue(cSource, payload)),
+                    payload);
         } catch (CComputeException e) {
             return TrendResponse.Source.empty(sourceId, cSource, trendState(e, sourceId), unit);
         }
@@ -303,10 +304,25 @@ public class TrendService {
             return TrendResponse.Source.empty(sourceId, cSource, state, unit);
         }
         CTrend.Payload payload = item.snapshot().payload();
-        boolean hasObservedValue = payload.points() != null && payload.points().stream()
-                .anyMatch(point -> point.value() != null || point.eventCount() != null);
         return TrendResponse.Source.of(sourceId, cSource,
-                ComputeState.ofTrend(payload.status(), hasObservedValue), payload);
+                ComputeState.ofTrend(payload.status(), hasObservedValue(cSource, payload)),
+                payload);
+    }
+
+    /**
+     * 이 출처에 실제 관측이 하나라도 있는지 · 티켓 S15P21E102-348.
+     *
+     * <p>계열마다 값을 싣는 필드가 달라, 읽지도 않을 필드로 "값이 있다"고 판정하면 안
+     * 된다. GitHub 계열에서 {@code event_count} 로 판정하면 저장소 수가 없는 point 도
+     * 값이 있는 것으로 세어 빈 카드에 READY 가 붙는다.</p>
+     */
+    private static boolean hasObservedValue(String cSource, CTrend.Payload payload) {
+        if (payload.points() == null) {
+            return false;
+        }
+        boolean github = CTrend.isGithubTrend(cSource);
+        return payload.points().stream().anyMatch(point ->
+                github ? point.activeRepoCount() != null : point.value() != null);
     }
 
     /**
