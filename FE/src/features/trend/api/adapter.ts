@@ -2,6 +2,7 @@ import type {
   TechnologyTrendDto,
   TrendCompareDto,
   TrendCompareRowDto,
+  TrendRankingDto,
   TrendSourceDto,
 } from '@/features/trend/api/trendApi'
 import type {
@@ -12,7 +13,8 @@ import type {
 } from '@/features/trend/model/view'
 import type { MarketDemandView } from '@/features/trend/model/marketDemand'
 import { marketRankRows } from '@/features/trend/model/marketDemand'
-import { rankObservableRows } from '@/features/trend/model/ranking'
+import { observedShareText, rankObservableRows } from '@/features/trend/model/ranking'
+import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { pointsForSource } from '@/features/trend/model/periods'
 
 /**
@@ -230,6 +232,53 @@ function unavailableStatus(statuses: readonly TrendSourceView['status'][]): Tren
 }
 
 /**
+ * 기간별 기술 순위를 출처 카드로 · 티켓 S15P21E102-346.
+ *
+ * 서버가 Registry 전체를 놓고 정렬한 결과를 그대로 옮긴다. 화면은 어느 기술을 보여
+ * 줄지 고르지 않는다 — 기간이 바뀌면 기술 종류도 바뀌는 것이 정상이다.
+ *
+ * `dataStatus` 는 행마다 서버 판정을 그대로 싣는다. 표본이 얇아도 값은 값이므로
+ * 순위에 남기고, 그 사실은 카드가 아래 한 줄로만 말한다(S15P21E102-327).
+ */
+export function trendRankingSource(
+  id: TrendSourceId,
+  unit: string,
+  basis: string | null,
+  ranking: TrendRankingDto,
+): TrendSourceView {
+  const rows: TrendRankRow[] = ranking.technologies.map((item) => ({
+    rank: item.rank,
+    techId: item.techId,
+    /*
+     * 이름은 서버 것이 먼저다. 없으면 화면 사전을 보고, 그래도 없으면 tech_id 를
+     * 그대로 쓴다 — id 를 알면서 "알 수 없는 기술"이라고 적으면 아는 것을 버리는 것이다.
+     */
+    techName: item.displayName ?? technologyDisplayName(item.techId, item.techId),
+    dataStatus: item.dataStatus,
+    statusReason: ranking.statusReason,
+    observedValue: item.value,
+    // 분모가 있으면 비중으로 적는다. 주차마다 모집단이 달라(4,045 vs 133) raw count
+    // 를 그대로 두면 기간을 옮겼을 때 값이 줄어든 것처럼 읽힌다.
+    share: observedShareText(item.value, ranking.sampleRepoCount),
+    // 한 기간의 순위라 전기(前期)가 없다. 0 으로 채우면 없는 관측을 주장하게 된다.
+    delta: '—',
+    direction: null,
+  }))
+  return {
+    id,
+    label: LABEL[id],
+    unit,
+    status: rows.length === 0 ? 'NO_DATA' : 'READY',
+    basis: basis ?? '기간 미정',
+    scopeNote: null,
+    maximumObservedValue: rows[0]?.observedValue ?? null,
+    rows,
+    unobservedRows: [],
+    footnote: FOOTNOTE[id],
+  }
+}
+
+/**
  * 현재 채용시장 분포를 `채용공고 수요` 카드로 · 티켓 S15P21E102-342.
  *
  * 상단에 큰 섹션을 따로 두면 아래 세 카드가 한 줄에서 같은 크기로 읽히지 않는다.
@@ -275,18 +324,25 @@ export function marketDemandSource(
   }
 }
 
-/** 조회조차 하지 못한 출처. 빈 표 대신 이유를 남긴다. */
+/**
+ * 그릴 값이 없는 출처. 빈 표 대신 이유를 남긴다.
+ *
+ * @param basis 기준 문구. 조회가 아직 끝나지 않았으면 "조회 불가"가 아니다 —
+ *     묻고 있는 중인데 못 묻는다고 적으면 카드가 사실과 다른 말을 한다
+ *     (티켓 S15P21E102-345).
+ */
 export function unavailableSource(
   id: TrendSourceId,
   status: TrendSourceView['status'],
   scopeNote: string,
+  basis = '조회 불가',
 ): TrendSourceView {
   return {
     id,
     label: LABEL[id],
     unit: id === 'JOB' ? '채용공고 수요' : 'GitHub 활동',
     status,
-    basis: '조회 불가',
+    basis,
     scopeNote,
     maximumObservedValue: null,
     rows: [],

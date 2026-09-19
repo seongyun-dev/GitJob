@@ -1,40 +1,29 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router'
 import type { JobDemandDto } from '@/features/matching/api/types'
-import {
-  useCurrentMarketDemands,
-  useJobDemands,
-  useTarget,
-} from '@/features/matching/hooks/useMatching'
+import { useCurrentMarketDemands, useTarget } from '@/features/matching/hooks/useMatching'
 import { formatCollectedAt } from '@/features/matching/model/presentation'
 import { targetRoleDisplayName } from '@/features/matching/model/targetOptions'
-import { marketDemandSource, unavailableSource } from '@/features/trend/api/adapter'
-import { toTrendPeriodViews } from '@/features/trend/api/periodViews'
+import type { TrendRankingDto } from '@/features/trend/api/trendApi'
+import {
+  marketDemandSource,
+  trendRankingSource,
+  unavailableSource,
+} from '@/features/trend/api/adapter'
+import type { TrendPeriodNavigation } from '@/features/trend/components/TrendSourceCard'
 import { TrendSourceCard } from '@/features/trend/components/TrendSourceCard'
+import { useTrendRankings } from '@/features/trend/hooks/useTrends'
+import { pendingSourceStatus } from '@/features/trend/model/githubTrendTechnologies'
+import { periodNavigation } from '@/features/trend/model/periodNavigation'
 import type { MarketDemandView } from '@/features/trend/model/marketDemand'
 import { marketDemandView } from '@/features/trend/model/marketDemand'
-import { useTechnologyTrendsBatch } from '@/features/trend/hooks/useTrends'
-import {
-  resolveEmptySourceStatus,
-  summarizeTrendLoad,
-} from '@/features/trend/model/sourceStatus'
 import type { TrendSourceId, TrendSourceView } from '@/features/trend/model/view'
 import { hasComputedValue } from '@/shared/api/computeState'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
-import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { PageHero } from '@/shared/ui/PageHero'
-import { StateCard } from '@/shared/ui/StateCard'
 
-const COMPARE_LIMIT = 10
-const OVERVIEW_MONTHS = 6
-
-function completedMonths(count: number): string[] {
-  const now = new Date()
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (count - index), 1))
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
-  })
-}
+/** 화면 한 장이 읽을 수 있는 순위 길이. 무엇 중의 10개인지는 카드가 따로 밝힌다. */
+const TOP_N = 10
 
 /** 이 분포가 무엇을 기준으로 나온 것인지. 기준을 숨기면 숫자를 절대값으로 읽는다. */
 function marketBasisText(view: MarketDemandView, isLoading: boolean): string {
@@ -71,25 +60,86 @@ function marketStatusNote(
   return null
 }
 
+/**
+ * GitHub 한 출처의 카드 · 티켓 S15P21E102-346.
+ *
+ * 값이 없어도 카드는 사라지지 않는다. 카드가 보이는 것과 값이 있는 것은 다른 사실이고,
+ * 자리를 비우면 화면은 그 출처가 아예 없는 것처럼 읽힌다.
+ */
+function githubRankingSource(
+  id: TrendSourceId,
+  unit: string,
+  query: {
+    data: TrendRankingDto | undefined
+    isLoading: boolean
+    error: unknown
+  },
+): TrendSourceView {
+  if (query.error !== null && query.error !== undefined) {
+    return unavailableSource(id, 'FAILED', '이 출처의 데이터를 불러오지 못했습니다.')
+  }
+  if (query.data === undefined) {
+    const pending = pendingSourceStatus()
+    return unavailableSource(id, pending.status, pending.scopeNote, pending.basis)
+  }
+  if (query.data.technologies.length === 0) {
+    // 서버가 판정을 줬으면 그것을 쓴다. 요청이 성공했다는 사실만으로 상태를 새로
+    // 만들면 200 안의 PREPARING 이 "데이터 없음"으로 읽힌다.
+    return unavailableSource(
+      id,
+      query.data.dataStatus,
+      '이 출처에는 아직 집계된 기간이 없습니다.',
+      query.data.period ?? '기간 미정',
+    )
+  }
+  return trendRankingSource(id, unit, rankingBasis(query.data), query.data)
+}
+
+/**
+ * 카드 기준 문구. 기간과 모집단을 함께 적는다 · 티켓 S15P21E102-346.
+ *
+ * 모집단을 숨기면 `60.2%`가 무엇에 대한 비중인지 알 수 없고, 주차마다 크기가 달라
+ * (2026-08-31 = 4,045 · 09-07 = 133) 두 기간의 값을 같은 것으로 읽게 된다.
+ */
+function rankingBasis(data: TrendRankingDto): string {
+  const period = data.period ?? '기간 미정'
+  return data.sampleRepoCount === null
+    ? period
+    : `${period} · 저장소 ${data.sampleRepoCount.toLocaleString('ko-KR')}개 기준`
+}
+
+/**
+ * 카드 하나의 기간 이동 · 티켓 S15P21E102-329.
+ *
+ * **값이 없어도 붙인다.** 아직 집계되지 않은 기간으로 옮겨 간 카드에서 화살표를
+ * 없애면 되돌아올 수 없고, 기간 이동이 한 방향 함정이 된다. 그래서 순위 행이 아니라
+ * 서버가 준 기간 목록을 기준으로 만든다.
+ */
+function sourceNavigation(
+  id: TrendSourceId,
+  data: TrendRankingDto | undefined,
+  onSelect: (update: (previous: Partial<Record<TrendSourceId, string>>) =>
+    Partial<Record<TrendSourceId, string>>) => void,
+): TrendPeriodNavigation | undefined {
+  const state = periodNavigation(data?.availablePeriods, data?.period)
+  if (state === null) {
+    return undefined
+  }
+  return {
+    periods: state.periods,
+    selected: state.selected,
+    // 선택은 출처별로 따로 둔다. 한 카드를 옮겼다고 다른 카드가 따라가지 않는다.
+    onSelect: (period) => onSelect((previous) => ({ ...previous, [id]: period })),
+  }
+}
+
 export function TrendPage() {
   const target = useTarget()
-  const demands = useJobDemands({
-    targetRole: target.data?.targetRole,
-    regions: target.data?.regions ?? [],
-    careerLevels: target.data?.careerLevels ?? [],
-  })
-  const techIds = (demands.data?.technologies ?? [])
-    .filter((technology) => technology.totalCount > 0)
-    .slice(0, COMPARE_LIMIT)
-    .map((technology) => technology.techId)
-  const techNames = new Map(techIds.map((techId) => [techId, technologyDisplayName(techId)]))
-  const periods = completedMonths(OVERVIEW_MONTHS)
 
   /*
    * 현재 채용시장 분포 · 티켓 S15P21E102-342(-339에서 상단 대형 섹션이던 것).
    *
-   * 목표 직무와 무관한 공용 집계라 `enabled` 조건 없이 바로 조회한다. 아래에서 세 카드
-   * 중 `채용공고 수요` 칸으로 들어간다.
+   * 목표 직무와 무관한 공용 집계라 `enabled` 조건 없이 바로 조회한다.
    */
   const market = useCurrentMarketDemands({ regions: [], careerLevels: [] })
   const marketDemand = marketDemandView(market.data, hasComputedValue(market.data))
@@ -101,110 +151,59 @@ export function TrendPage() {
     marketBasisText(marketDemand, market.isLoading),
     marketStatusNote(market.data, market.isLoading, market.error),
     marketTechNames,
-    COMPARE_LIMIT,
+    TOP_N,
   )
 
   /*
-   * 기술별 상세를 모아 기간별 순위를 만든다 · 티켓 S15P21E102-329.
+   * GitHub 카드는 서버가 정렬한 결과를 그대로 그린다 · 티켓 S15P21E102-346.
    *
-   * `/trends/compare`로는 최신 기간 하나밖에 그릴 수 없다 — BE가 기술당
-   * `points.getLast()`로 줄인다. 카드 안에서 기간을 이동하려면 기간별 값이 필요하고,
-   * 그것을 주는 것은 기술별 상세 상답이다.
-   */
-  const trendQueries = useTechnologyTrendsBatch(
-    techIds,
-    periods,
-    {
-      targetKey: target.data?.targetKey,
-      targetRole: target.data?.targetRole,
-      regions: target.data?.regions,
-      careerLevels: target.data?.careerLevels,
-    },
-    target.isFetched,
-  )
-  const loadedDtos = trendQueries
-    .map((query) => query.data)
-    .filter((data): data is NonNullable<typeof data> => data !== undefined)
-  /*
-   * 빠진 기술을 센다. 기준은 오류 플래그가 아니라 **순위에 값이 들어갔는지**다.
+   * 조회할 기술을 화면이 고르지 않는다. 고르면 카드가 보여 주는 것이 "이 기간에 많이
+   * 관측된 기술"이 아니라 "우리가 고른 것들 중의 순위"가 되고, 기간이 바뀌어도 기술
+   * 종류가 그대로다.
    *
-   * 조회 훅은 `retry: false`에 `staleTime`이 5분이라, 캐시를 들고 있던 기술이 재조회에서
-   * 실패하면 `isError`가 켜진 채로도 `data`는 남아 순위에 그대로 들어간다. 그때
-   * `isError`를 세면 열 개가 다 보이는 화면에 "9개만 성공했고 빠진 기술이 있다"고
-   * 적게 된다 — 없는 실패를 지어내는 것도 실패를 숨기는 것과 같은 종류의 거짓이다.
-   */
-  const missingCount = trendQueries.length - loadedDtos.length
-  const allSettled = trendQueries.length > 0 && trendQueries.every((query) => !query.isPending)
-  /*
-   * 부분 실패를 화면에 드러낸다 · 티켓 S15P21E102-329 D2.
+   * 기간도 보내지 않는다. 달력으로 최근 주차를 계산하면 아직 게시되지 않은 주를 물어
+   * 값이 있는데도 빈 카드가 뜬다 — 어느 기간이 있는지는 저장한 쪽이 안다.
    *
-   * 빠진 기술은 `loadedDtos`에서 그냥 사라지므로, 알리지 않으면 9개로 만든 순위가
-   * 10개 완전 성공과 구별되지 않는다. 부분 성공 자체는 그대로 두고 — 하나 때문에
-   * 나머지 아홉을 감추지 않는다 — 그 사실만 위에 적는다.
+   * 목표 직무는 어느 쪽에도 들어가지 않는다. GitHub 관측은 직무와 무관하고, 실어
+   * 보내면 직무를 바꿀 때마다 같은 관측을 다시 받아 온다.
    */
-  const loadSummary = allSettled ? summarizeTrendLoad(trendQueries.length, loadedDtos.length) : null
-
-  const periodViews = useMemo(
-    () => toTrendPeriodViews(loadedDtos, techNames),
-    // 기술 목록과 상답 개수가 같으면 같은 결과다. DTO 배열 자체는 매 렌더 새 배열이다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadedDtos.length, techIds.join(','), periods.join(',')],
-  )
-
   /*
-   * 선택 기간은 원천마다 독립이다. 주간을 옮겼다고 월별 카드까지 따라 움직이면 두
-   * 카드를 나란히 놓은 이유가 없어진다.
+   * 선택 기간은 원천마다 독립이다 · 티켓 S15P21E102-329. 주간을 옮겼다고 월별 카드까지
+   * 따라 움직이면 두 카드를 나란히 놓은 이유가 없어진다 — 모집단도 기간 체계도 다르다.
+   *
+   * 비어 있으면 서버가 그 출처의 최신 게시 기간을 고른다. 화면이 달력으로 계산하지
+   * 않는 것이 요점이다.
    */
   const [selected, setSelected] = useState<Partial<Record<TrendSourceId, string>>>({})
 
-  const sources: { view: TrendSourceView; periods: readonly string[]; selected: string }[] = []
-  for (const id of ['GITHUB_WEEKLY', 'GITHUB_ARCHIVE', 'JOB'] as const) {
-    if (id === 'JOB') {
-      /*
-       * 채용공고 수요 칸은 현재 시장 분포다 · 티켓 S15P21E102-342.
-       *
-       * 월별 JOB Trend가 아니라 지금 확보한 공고 전체의 분포를 넣는다. 월별 쪽은 목표
-       * 직무와 기간이 모두 있어야 조회되어 대부분 빈 카드로 남았고, 직무를 고르기 전에
-       * 볼 것이 없다는 문제가 그대로였다.
-       */
-      sources.push({ view: marketView, periods: [], selected: '' })
-      continue
-    }
-    const entry = periodViews.get(id)
-    if (entry === undefined || entry.periods.length === 0) {
-      /*
-       * 그릴 기간이 하나도 없는 원천. 조회가 끝난 뒤에만 빈 카드를 그린다 — 로딩 중에
-       * "데이터 없음"을 띄우면 아직 모르는 것을 없다고 말하는 것이 된다.
-       *
-       * 상태는 **서버가 내린 판정을 그대로 쓴다** · 티켓 S15P21E102-329 D1. 준비 중·
-       * 실패는 오류가 아니라 200 + `dataStatus`로 오므로, 요청이 성공했다는 사실만으로
-       * 상태를 다시 만들면 200 안의 `FAILED`가 "아직 집계된 기간이 없습니다"로 읽힌다.
-       * 판정이 하나도 없을 때(어느 상답에도 그 원천이 없었을 때)만 요청 실패를 본다.
-       */
-      if (allSettled) {
-        const judged = resolveEmptySourceStatus(
-          (entry?.judgements ?? []).map((item) => item.status),
-          missingCount > 0,
-        )
-        sources.push({
-          view: unavailableSource(id, judged.status, judged.scopeNote),
-          periods: [],
-          selected: '',
-        })
-      }
-      continue
-    }
-    // 기본값은 최신 기간이다.
-    const latest = entry.periods[entry.periods.length - 1] as string
-    const chosen =
-      selected[id] !== undefined && entry.viewByPeriod.has(selected[id] as string)
-        ? (selected[id] as string)
-        : latest
-    const view = entry.viewByPeriod.get(chosen)
-    if (view !== undefined) {
-      sources.push({ view, periods: entry.periods, selected: chosen })
-    }
-  }
+  const weekly = useTrendRankings({
+    source: 'GITHUB_WEEKLY',
+    granularity: 'WEEK',
+    period: selected.GITHUB_WEEKLY,
+    limit: TOP_N,
+  })
+  const monthly = useTrendRankings({
+    source: 'GITHUB_ARCHIVE',
+    granularity: 'MONTH',
+    period: selected.GITHUB_ARCHIVE,
+    limit: TOP_N,
+  })
+
+  /*
+   * 세 자리는 언제나 있다 · 티켓 S15P21E102-345. 값이 없으면 카드 안에서만 상태를
+   * 말하고, 카드 자체를 빼지 않는다.
+   */
+  const sources: { view: TrendSourceView; navigation?: TrendPeriodNavigation }[] = [
+    {
+      view: githubRankingSource('GITHUB_WEEKLY', '주간 활동 저장소 수', weekly),
+      navigation: sourceNavigation('GITHUB_WEEKLY', weekly.data, setSelected),
+    },
+    {
+      view: githubRankingSource('GITHUB_ARCHIVE', '월별 활동 저장소 수', monthly),
+      navigation: sourceNavigation('GITHUB_ARCHIVE', monthly.data, setSelected),
+    },
+    { view: marketView },
+  ]
 
   return (
     <div>
@@ -221,47 +220,24 @@ export function TrendPage() {
       </div>
 
       <div className="mt-7 grid gap-4">
-        <ComputeStatePanel
-          isLoading={target.isLoading || demands.isLoading}
-          error={target.error ?? demands.error}
-          state={demands.data}
-          loadingLabel="비교할 기술을 불러오는 중입니다."
-          onRetry={() => void demands.refetch()}
-        />
+        {/*
+          화면 전체를 덮는 상태 패널을 두지 않는다 · 티켓 S15P21E102-345.
 
+          셋 다 자기 조회를 갖고 자기 상태를 카드 안에서 말한다. 한 조회의 로딩을 화면
+          머리에 띄우면 나머지 둘이 이미 그려졌는데도 화면 전체가 준비 중으로 읽힌다.
+        */}
         {target.data === null && !target.isLoading && (
           <p className="text-[13px] text-brand-muted">
-            직무별 추세를 보려면{' '}
+            아직 목표 직무를 선택하지 않았어요.{' '}
             <Link to="/roles" className="font-semibold text-brand-600 hover:underline">
-              목표 직무를 선택해 주세요.
+              목표 직무 선택하기
             </Link>
           </p>
         )}
 
-        {loadSummary !== null && (
-          <StateCard
-            kind={loadSummary.kind === 'FAILED' ? 'ERROR' : 'PARTIAL'}
-            title={loadSummary.title}
-            description={loadSummary.description}
-          />
-        )}
-
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {sources.map(({ view, periods: sourcePeriods, selected: current }) => (
-            <TrendSourceCard
-              key={view.id}
-              source={view}
-              navigation={
-                sourcePeriods.length > 1
-                  ? {
-                      periods: sourcePeriods,
-                      selected: current,
-                      onSelect: (period) =>
-                        setSelected((previous) => ({ ...previous, [view.id]: period })),
-                    }
-                  : undefined
-              }
-            />
+          {sources.map(({ view, navigation }) => (
+            <TrendSourceCard key={view.id} source={view} navigation={navigation} />
           ))}
         </div>
       </div>

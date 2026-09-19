@@ -104,3 +104,65 @@ export function fetchTrendCompare(params: {
   appendTarget(query, params.target ?? {})
   return get<TrendCompareDto>(`/trends/compare?${query.toString()}`)
 }
+
+/**
+ * 한 기간에 실제로 많이 관측된 기술 · 티켓 S15P21E102-346.
+ *
+ * `techIds` 를 보내지 않는 것이 `/trends/compare` 와의 차이다. 비교는 "이 기술들 중
+ * 누가 위인가"를 묻고 이쪽은 "이 기간에 무엇이 많았는가"를 묻는다. 후자는 화면이
+ * 후보를 고르는 순간 다른 질문이 되므로, 모집단 전체를 서버가 본다.
+ */
+export interface TrendRankingDto {
+  dataStatus: DataStatus
+  statusReason: string
+  retryAfterSec: number | null
+  sourceId: string
+  granularity: string
+  period: string | null
+  /**
+   * 이 출처가 실제로 게시한 기간 목록, 오름순 · 티켓 S15P21E102-329.
+   *
+   * 카드 안의 기간 이동이 이것으로 움직인다. 화면이 달력으로 계산하면 아직 집계되지
+   * 않은 주를 물어 값이 있는데도 빈 카드가 뜬다.
+   */
+  availablePeriods: string[]
+  /** 순위 값의 단위. GitHub 출처는 `REPOSITORIES` — 그 기술이 관측된 저장소 수. */
+  unit: string | null
+  /**
+   * 이 기간의 모집단. `value / sampleRepoCount` 가 비중이다.
+   *
+   * 주차마다 크기가 달라(2026-08-31 = 4,045 / 09-07 = 133) 이것 없이 raw count 를
+   * 기간끼리 비교하면 틀린다.
+   */
+  sampleRepoCount: number | null
+  /** 순위를 매긴 모집단 크기. "상위 10개"가 무엇 중의 10개인지 밝힌다. */
+  technologyPopulation: number | null
+  technologies: {
+    techId: string
+    /** Registry 에 없는 기술이면 `null`. 이름을 지어내지 않는다. */
+    displayName: string | null
+    rank: number
+    value: number
+    dataStatus: DataStatus
+  }[]
+}
+
+export function fetchTrendRankings(params: {
+  source: string
+  granularity: string
+  /** 비우면 서버가 그 출처의 최신 게시 기간을 고른다. */
+  period?: string
+  limit?: number
+}): Promise<TrendRankingDto> {
+  const query = new URLSearchParams({
+    source: params.source,
+    granularity: params.granularity,
+  })
+  if (params.period !== undefined && params.period !== '') {
+    query.set('period', params.period)
+  }
+  if (params.limit !== undefined) {
+    query.set('limit', String(params.limit))
+  }
+  return get<TrendRankingDto>(`/trends/rankings?${query.toString()}`)
+}

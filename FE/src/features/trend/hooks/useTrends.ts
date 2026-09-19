@@ -2,6 +2,8 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import {
   fetchTechnologyTrends,
   fetchTrendCompare,
+  fetchTrendRankings,
+  type TrendRankingDto,
   type TrendTargetParams,
 } from '@/features/trend/api/trendApi'
 import { queryKeys } from '@/shared/api/queryKeys'
@@ -95,5 +97,47 @@ export function useTechnologyTrendsBatch(
       staleTime: TREND_STALE_TIME,
       retry: false,
     })),
+  })
+}
+
+/**
+ * 한 기간의 기술 순위 · 티켓 S15P21E102-346.
+ *
+ * 조회할 기술을 넘기지 않는다. 목표 직무도, 다른 조회의 결과도 필요 없다 — 이 값은
+ * 사용자의 선택과 무관한 공용 관측이다.
+ */
+export function useTrendRankings(params: {
+  source: string
+  granularity: string
+  /** 비우면 서버가 그 출처의 최신 게시 기간을 고른다. */
+  period?: string
+  limit: number
+  enabled?: boolean
+}) {
+  return useQuery({
+    queryKey: queryKeys.trendRankings(
+      params.source,
+      params.granularity,
+      params.period ?? 'LATEST',
+      params.limit,
+    ),
+    queryFn: () =>
+      fetchTrendRankings({
+        source: params.source,
+        granularity: params.granularity,
+        period: params.period,
+        limit: params.limit,
+      }),
+    enabled: params.enabled ?? true,
+    staleTime: TREND_STALE_TIME,
+    retry: false,
+    /*
+     * 기간을 옮기는 동안 앞 기간의 답을 들고 있는다 · 티켓 S15P21E102-329.
+     *
+     * 기간이 바뀌면 queryKey 가 바뀌어 `data` 가 잠시 `undefined` 가 되는데, 그러면
+     * 카드가 "불러오는 중"으로 접히면서 이동 버튼까지 사라진다. 화살표를 한 번 누를
+     * 때마다 버튼이 없어지면 연속으로 옮길 수가 없다.
+     */
+    placeholderData: (previous: TrendRankingDto | undefined) => previous,
   })
 }

@@ -192,6 +192,19 @@ export function TrendSourceCard({
           </div>
         </div>
       )}
+      {/*
+        품질 확인 중인 값을 순위에서 빼지 않되, 충분한 근거처럼 보이게 하지도 않는다
+        · 티켓 S15P21E102-327.
+
+        행마다 배지를 달면 표가 상태 딱지로 뒤덮여 정작 순위를 읽기 어렵다. 그리고
+        이 값들은 틀린 값이 아니라 아직 품질 확인이 끝나지 않은 실측이므로, 행을
+        일일이 깎아내릴 이유도 없다. 카드 아래에 한 줄로 한 번만 적는다.
+      */}
+      {source.rows.some((row) => row.dataStatus !== 'READY') && (
+        <p className="mt-3 text-[11.5px] leading-[1.55] text-brand-faint">
+          일부 데이터는 품질 확인이 진행 중입니다.
+        </p>
+      )}
       {source.unobservedRows.length > 0 && (
         <p className="mt-3 text-[11.5px] leading-[1.55] text-brand-faint">
           순위 미포함: {source.unobservedRows.map((row) => `${row.techName} (${stateKindDisplayName(STATE_KIND[row.dataStatus])})`).join(', ')}

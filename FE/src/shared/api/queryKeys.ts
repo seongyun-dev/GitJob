@@ -98,6 +98,12 @@ export const queryKeys = {
     periods: readonly string[],
     targetKey: string | undefined,
   ) => ['trends', 'technology', techId, periods, targetKey] as const,
+  /*
+   * 기간별 기술 순위 · 티켓 S15P21E102-346. 목표 직무가 키에 없다 — GitHub 관측은
+   * 직무와 무관해서, 직무를 바꿨다고 같은 관측을 다시 받아 올 이유가 없다.
+   */
+  trendRankings: (source: string, granularity: string, period: string, limit: number) =>
+    ['trends', 'rankings', source, granularity, period, limit] as const,
   trendCompare: (
     source: string,
     techIds: readonly string[],
