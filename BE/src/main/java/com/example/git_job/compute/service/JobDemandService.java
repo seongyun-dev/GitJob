@@ -2,6 +2,7 @@ package com.example.git_job.compute.service;
 
 import com.example.git_job.compute.client.CComputeApi;
 import com.example.git_job.compute.client.CComputeException;
+import com.example.git_job.compute.client.CComputeStatus;
 import com.example.git_job.compute.client.dto.CDemandSnapshot;
 import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.client.dto.CohortResolved;
@@ -16,7 +17,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 /**
- * 직무별 기술 수요와 현재 시장 수요 (S15P21E102-279, -338).
+ * 직무별 기술 수요와 현재 시장 수요 (S15P21E102-279, -338, -334).
  *
  * <p>개인 결과가 아니다. 사용자가 고른 조건으로 공용 COHORT·DEMAND를 고르고 그 수요
  * 집계를 그대로 옮긴다. 로그인은 확인하지만 소유권 검사는 없다.</p>
@@ -44,29 +45,46 @@ public class JobDemandService {
                                     List<String> careerLevels, int limit) {
         Target target = new Target(targetRole, regions, careerLevels, Instant.EPOCH);
         Basis basis = Basis.of(target);
+        CohortSelector selector = selector(targetRole, regions, careerLevels);
         try {
-            CohortResolved cohort = compute.resolveCohort(selector(targetRole, regions,
-                    careerLevels));
+            CSnapshot.Demand demand = compute.previewDemand(selector);
+            return response(target, basis, demand, limit);
+        } catch (CComputeException e) {
+            // 구 C에는 preview 경로가 없다. 라우트 자체가 없는 404만 기존
+            // resolve+snapshot 경로로 호환하고, 계산 대기·장애는 중복 호출하지 않는다.
+            if (e.getStatus() == CComputeStatus.NOT_PREPARED && e.getCode() == null) {
+                return legacyDemand(userId, target, basis, selector, limit);
+            }
+            return JobDemandResponse.pending(reader.translate(e, userId), basis);
+        }
+    }
+
+    private JobDemandResponse legacyDemand(long userId, Target target, Basis basis,
+                                            CohortSelector selector, int limit) {
+        try {
+            CohortResolved cohort = compute.resolveCohort(selector);
             if (cohort == null || !cohort.isComplete()) {
                 return JobDemandResponse.pending(
                         ComputeState.preparing("COHORT_NOT_PREPARED"), basis);
             }
             CDemandSnapshot snapshot = compute.demand(cohort.demandSnapshotId());
-            CSnapshot.Demand demand = snapshot == null ? null : snapshot.payload();
-            if (demand == null || demand.technologies() == null) {
-                return JobDemandResponse.pending(
-                        ComputeState.preparing("COHORT_NOT_PREPARED"), basis);
-            }
-            List<CSnapshot.TechnologyDemand> technologies = demand.technologies().stream()
-                    .sorted(Comparator.comparingInt(CSnapshot.TechnologyDemand::rank))
-                    .limit(limit)
-                    .toList();
-            return JobDemandResponse.of(ComputeState.ready(), Basis.of(target, demand),
-                    technologies);
+            return response(target, basis, snapshot == null ? null : snapshot.payload(), limit);
         } catch (CComputeException e) {
-            // 계산 대기·미준비는 상태로, 장애는 예외로 나간다. 판단은 한곳에 모은다.
             return JobDemandResponse.pending(reader.translate(e, userId), basis);
         }
+    }
+
+    private JobDemandResponse response(Target target, Basis basis, CSnapshot.Demand demand,
+                                       int limit) {
+        if (demand == null || demand.technologies() == null) {
+            return JobDemandResponse.pending(
+                    ComputeState.preparing("COHORT_NOT_PREPARED"), basis);
+        }
+        List<CSnapshot.TechnologyDemand> technologies = demand.technologies().stream()
+                .sorted(Comparator.comparingInt(CSnapshot.TechnologyDemand::rank))
+                .limit(limit)
+                .toList();
+        return JobDemandResponse.of(ComputeState.ready(), Basis.of(target, demand), technologies);
     }
 
     /**

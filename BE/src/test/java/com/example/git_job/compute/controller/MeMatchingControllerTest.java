@@ -181,7 +181,8 @@ class MeMatchingControllerTest {
     void clampsPageSize() throws Exception {
         when(compute.matching(anyString(), anyLong(), anyInt(), anyInt(), any(Boolean.class)))
                 .thenReturn(new com.example.git_job.compute.client.dto.CMatching(
-                        RECOMMENDATION, "calc-1", "cohort-1", 0, 0, 0, 0, 50, false,
+                        RECOMMENDATION, "calc-1", "cohort-1", 0, 0, 0, 12,
+                        recommendation().payload().demand(), 0, 50, false,
                         List.of(), List.of()));
 
         mvc.perform(get("/api/v1/me/job-matches").param("perPage", "500"))

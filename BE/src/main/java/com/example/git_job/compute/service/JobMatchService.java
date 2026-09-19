@@ -14,9 +14,10 @@ import org.springframework.stereotype.Service;
 /**
  * 공고 매칭 목록과 상세 (S15P21E102-279).
  *
- * <p>C를 두 번 부른다. 공고별 평가는 매칭 API에 있고, 상단 KPI의 "필수 전체 충족 수"와
- * 비교 기준(분모·as_of)은 RECOMMENDATION Snapshot에 있다. 목록에서 세어 만들 수도 있지만
- * 그건 부합 판정 재계산이고, 페이지 단위로 세면 분모까지 틀린다.</p>
+ * <p>공고별 평가와 상단 KPI·비교 기준은 매칭 페이지 응답 하나에서 읽는다. 목록에서
+ * 세어 만들면 페이지 단위 수치가 되어 전체 분모와 어긋나므로 C가 저장한 추천 요약을
+ * 그대로 사용한다. 구 C와 교차 배포되어 새 요약 필드가 없을 때만 Recommendation
+ * Snapshot을 한 번 더 읽는다.</p>
  */
 @Service
 public class JobMatchService {
@@ -31,21 +32,27 @@ public class JobMatchService {
 
     public JobMatchResponse matches(long userId, int page, int perPage,
                                     boolean includeConditional) {
-        Computed<Page> computed = reader.read(userId, snapshot -> new Page(
-                compute.recommendation(snapshot.recommendationSnapshotId(), userId),
-                compute.matching(snapshot.recommendationSnapshotId(), userId,
-                        ComputePaging.toComputePage(page), perPage, includeConditional)));
+        Computed<Page> computed = reader.read(userId, snapshot -> {
+            CMatching matching = compute.matching(snapshot.recommendationSnapshotId(), userId,
+                    ComputePaging.toComputePage(page), perPage, includeConditional);
+            CSnapshot.Recommendation legacy = null;
+            if (matching.currentCount() == null || matching.demand() == null) {
+                legacy = compute.recommendation(snapshot.recommendationSnapshotId(), userId)
+                        .payload();
+            }
+            return new Page(matching, legacy);
+        });
 
         if (!computed.hasValue()) {
             return JobMatchResponse.pending(computed.state(), Basis.of(computed.target()),
                     page, perPage);
         }
-        CSnapshot.Recommendation recommendation = computed.value().recommendation();
-        CMatching matching = computed.value().matching();
+        Page value = computed.value();
+        CMatching matching = value.matching();
         return JobMatchResponse.of(
                 matchingState(matching),
-                Basis.of(computed.target(), recommendation.demand()),
-                summary(recommendation, matching),
+                Basis.of(computed.target(), value.demand()),
+                summary(matching, value.currentCount()),
                 matching, page, perPage);
     }
 
@@ -81,22 +88,28 @@ public class JobMatchService {
      * {@code required_status}별 분포를 주지 않고, 목록을 모아 세는 것은 부합 판정을 다시
      * 구현하는 일이다. 계약 §6-1의 미결 항목이며 화면은 그 칸을 그리지 않는다.</p>
      */
-    private JobMatchResponse.Summary summary(CSnapshot.Recommendation recommendation,
-                                             CMatching matching) {
+    private JobMatchResponse.Summary summary(CMatching matching, Integer currentCount) {
         return new JobMatchResponse.Summary(
                 matching.totalCount(),
-                recommendation.currentCount(),
+                currentCount,
                 null,
                 null,
                 matching.conditionalCount(),
                 matching.excludedConditionalCount());
     }
 
-    /** 한 화면이 쓰는 두 결과. 같은 Snapshot에서 읽어야 숫자와 목록이 맞는다. */
-    private record Page(CSnapshot recommendationSnapshot, CMatching matching) {
+    /** 새 C 응답을 우선하고, additive 필드가 없는 교차 배포 구간만 구 Snapshot을 쓴다. */
+    private record Page(CMatching matching, CSnapshot.Recommendation legacy) {
 
-        CSnapshot.Recommendation recommendation() {
-            return recommendationSnapshot.payload();
+        Integer currentCount() {
+            return matching.currentCount() != null
+                    ? matching.currentCount()
+                    : legacy.currentCount();
+        }
+
+        CSnapshot.Demand demand() {
+            return matching.demand() != null ? matching.demand() : legacy.demand();
         }
     }
+
 }

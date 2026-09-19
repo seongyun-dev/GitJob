@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from job.classifier import JobClassificationRecord
 from job.cohort import (
     CohortCriteria,
     CohortPurpose,
@@ -13,8 +15,10 @@ from job.cohort import (
     InputUnionObservation,
     InputUnionProvenance,
     JobCohort,
+    PreparedCohortBatch,
     _stable_hash,
-    build_cohort,
+    build_cohort_from_prepared,
+    prepare_cohort_batch,
     requires_original_posting_date,
 )
 from job.contracts import JobAnalysisInputBatch
@@ -28,9 +32,86 @@ MAX_INPUT_RECORDS = 50_000
 MAX_INPUT_BYTES = 128 * 1024 * 1024
 
 
-def build_input_union(
+@dataclass(frozen=True)
+class PreparedInputUnion:
+    """Latest verified union plus criteria-independent parsed job facts."""
+
+    cohort: PreparedCohortBatch
+    provenance: InputUnionProvenance
+    conflicting_keys: frozenset[tuple[str, str]]
+    review_records: tuple[dict[str, object], ...]
+
+
+def _without_mapping_context(
+    record: JobClassificationRecord,
+) -> JobClassificationRecord:
+    """Drop full posting bodies after review records have captured their context."""
+
+    return record.model_copy(
+        update={
+            "technologies": tuple(
+                technology.model_copy(update={"mapping_context": ""})
+                for technology in record.technologies
+            )
+        }
+    )
+
+
+def input_union_request_identity(
+    outputs: tuple[JobOutput, ...],
+    criteria: CohortCriteria,
+    compute_versions: dict[str, str],
+) -> dict[str, object]:
+    """Return a cheap, complete identity before classification starts.
+
+    Verified batch and manifest hashes cover the immutable bytes. Active-snapshot
+    selection and the superseded count are included because they affect union
+    provenance, while unrelated sources are omitted for source-scoped requests.
+    """
+
+    criteria = CohortCriteria.model_validate_json(criteria.model_dump_json())
+    selected, superseded_input_batches = _select_active_snapshots(outputs, criteria)
+    inputs = []
+    for output in selected:
+        source = getattr(output, "source_site", None)
+        if source is None:
+            sites = {row.source_site.strip().upper() for row in output.batch.records}
+            source = next(iter(sites), None) if len(sites) == 1 else None
+        source = source.strip().upper() if source else None
+        if criteria.sources and source not in criteria.sources:
+            continue
+        inputs.append(
+            {
+                "source_site": source,
+                "dataset_snapshot_id": output.batch.dataset_snapshot_id,
+                "pipeline_run_id": output.batch.pipeline_run_id,
+                "collector_version": output.batch.collector_version,
+                "occurred_at": output.occurred_at.astimezone(UTC).isoformat(),
+                "batch_sha256": output.batch_sha256,
+                "manifest_sha256": output.manifest_sha256,
+                "record_count": len(output.batch.records),
+                "batch_size_bytes": output.batch_size_bytes,
+            }
+        )
+    return {
+        "criteria": criteria.model_dump(mode="json"),
+        "inputs": sorted(
+            inputs,
+            key=lambda item: (
+                str(item["source_site"]),
+                str(item["occurred_at"]),
+                str(item["batch_sha256"]),
+                str(item["manifest_sha256"]),
+            ),
+        ),
+        "superseded_input_batch_count": superseded_input_batches,
+        "compute_versions": compute_versions,
+    }
+
+
+def prepare_input_union(
     outputs: tuple[JobOutput, ...], criteria: CohortCriteria, mapper: RegistryMapper
-) -> JobCohort:
+) -> PreparedInputUnion:
     """Select latest source/posting observations before filtering or classification.
 
     ``outputs`` must come from the hash-verifying completion loader. Original byte
@@ -131,7 +212,7 @@ def build_input_union(
         for _, copies in sorted(variants.items()):
             number, record = copies[0]
             dispositions[number] = "CONFLICT" if conflicting else "SELECTED"
-            selected.append(record)
+            selected.append((record, observations[number]["input_id"]))
             for duplicate_number, _ in copies[1:]:
                 dispositions[duplicate_number] = "DUPLICATE"
     items = tuple(
@@ -168,25 +249,104 @@ def build_input_union(
         dataset_snapshot_id="input-union-" + identity,
         pipeline_run_id="input-union-run-" + identity,
         collector_version=INPUT_UNION_VERSION,
-        records=tuple(selected),
+        records=tuple(record for record, _ in selected),
     )
-    cohort = build_cohort(composite, criteria, mapper, qualify_job_ids=True)
+    prepared_cohort = prepare_cohort_batch(
+        composite,
+        mapper,
+        qualify_job_ids=True,
+        include_active_requirements=(
+            criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+        ),
+    )
+    classified_by_input = defaultdict(list)
+    for (_, input_id), classified_record in zip(
+        selected, prepared_cohort.classified.records, strict=True
+    ):
+        classified_by_input[input_id].append(classified_record)
+    review_classifications = tuple(
+        prepared_cohort.classified.model_copy(
+            update={
+                "dataset_snapshot_id": inputs[reference.input_id][
+                    1
+                ].dataset_snapshot_id,
+                "pipeline_run_id": inputs[reference.input_id][1].pipeline_run_id,
+                "collector_version": inputs[reference.input_id][1].collector_version,
+                "records": tuple(classified_by_input[reference.input_id]),
+            }
+        )
+        for reference in references
+        if classified_by_input[reference.input_id]
+    )
+    # Review is the sole post-classification consumer of the full mapping context.
+    # Materialize its compact records before the warm projection is retained by the
+    # intake runner; otherwise every technology mention keeps another full posting
+    # description alive for the lifetime of the process.
+    from registry.review import build_records
+
+    review_records = tuple(
+        record.model_dump(mode="json")
+        for classification in review_classifications
+        for record in build_records(classification)
+    )
+    prepared_cohort = replace(
+        prepared_cohort,
+        classified=prepared_cohort.classified.model_copy(
+            update={
+                "records": tuple(
+                    _without_mapping_context(record)
+                    for record in prepared_cohort.classified.records
+                )
+            }
+        ),
+        records=tuple(
+            replace(
+                record,
+                classification=_without_mapping_context(record.classification),
+            )
+            for record in prepared_cohort.records
+        ),
+    )
+    return PreparedInputUnion(
+        cohort=prepared_cohort,
+        provenance=provenance,
+        conflicting_keys=frozenset(conflicting_keys),
+        review_records=review_records,
+    )
+
+
+def build_prepared_input_union(
+    prepared: PreparedInputUnion, criteria: CohortCriteria
+) -> JobCohort:
+    """Filter and aggregate a parsed live union without rerunning expensive parsers."""
+
+    cohort = build_cohort_from_prepared(prepared.cohort, criteria)
     exclusions = tuple(
         item.model_copy(update={"decision": "REVIEW_REQUIRED"})
         if (item.source_site.strip().upper(), item.source_posting_id)
-        in conflicting_keys
+        in prepared.conflicting_keys
         else item
         for item in cohort.exclusions
     )
     payload = cohort.model_dump(mode="json")
     payload.update(
-        input_union=provenance.model_dump(mode="json"),
+        input_union=prepared.provenance.model_dump(mode="json"),
         exclusions=[item.model_dump(mode="json") for item in exclusions],
         review_count=sum(item.decision == "REVIEW_REQUIRED" for item in exclusions),
         excluded_count=sum(item.decision == "EXCLUDED" for item in exclusions),
     )
     payload["cohort_id"] = "cohort-" + _stable_hash(payload)
     return JobCohort.model_validate(payload)
+
+
+def build_input_union(
+    outputs: tuple[JobOutput, ...], criteria: CohortCriteria, mapper: RegistryMapper
+) -> JobCohort:
+    """Build an exact union directly; callers with many selectors should prepare once."""
+
+    return build_prepared_input_union(
+        prepare_input_union(outputs, criteria, mapper), criteria
+    )
 
 
 def selected_input_totals(

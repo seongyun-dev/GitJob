@@ -44,6 +44,7 @@ class ResolveStore:
         self.trend = trend
         self.pair_calls = []
         self.trend_calls = []
+        self.snapshots = {}
 
     def get_job_head_pair(self, stream):
         self.pair_calls.append(stream)
@@ -52,6 +53,9 @@ class ResolveStore:
     def get_head_snapshot(self, kind, owner, stream):
         self.trend_calls.append((kind, owner, stream))
         return self.trend
+
+    def get_snapshot(self, snapshot_id, *, owner):
+        return self.snapshots.get((snapshot_id, owner))
 
 
 class BatchResolveStore:
@@ -242,6 +246,45 @@ def test_intake_job_resolve_accepts_stable_role_and_user_filters_without_as_of(
     assert filtered.status_code == 200
     assert filtered.json()["data"]["criteria"]["regions"] == ["서울"]
     assert store.pair_calls == []
+
+
+def test_job_demand_preview_returns_resolved_demand_in_one_response(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(
+            batch(posting("one")), selected, RegistryMapper(REGISTRY)
+        )
+    )
+    receipt = {
+        "status": "COMPLETED",
+        "results": [
+            {"kind": "COHORT", "snapshot_id": COHORT_ID},
+            {"kind": "DEMAND", "snapshot_id": DEMAND_ID},
+        ],
+    }
+    store = ResolveStore()
+    store.snapshots[(DEMAND_ID, None)] = {
+        "snapshot_id": DEMAND_ID,
+        "kind": "DEMAND",
+        "payload": demand.model_dump(mode="json"),
+    }
+    runner = IntakeRunner(receipt, selected_criteria=selected)
+    with _client(
+        store, runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == demand.model_dump(mode="json")
 
 
 def test_http_only_job_resolve_does_not_guess_a_stable_selector_from_old_heads():

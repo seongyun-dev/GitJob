@@ -453,7 +453,9 @@ PUT 본문은 `targetRole`·`regions`·`careerLevels`. 저장 후 C 동기화를
 
 쿼리: `page`, `perPage`, `includeConditional`(기본 `false`)
 
-C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-postings`
+C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-postings`. 이 한 응답에
+목록과 같은 추천 결과의 `current_count`·`demand`가 함께 온다. 교차 배포 중 구 C가 두
+필드를 주지 않을 때만 기존 Recommendation Snapshot 조회로 보완한다.
 
 ```json
 {
@@ -489,7 +491,7 @@ C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/matching-job-postings
 }
 ```
 
-- `fullMatchCount`는 RECOMMENDATION Snapshot의 `current_count`다.
+- `fullMatchCount`는 매칭 응답에 포함된 RECOMMENDATION의 `current_count`다.
 - `nearMatchCount`·`lowMatchCount`는 **C가 주지 않는다**(§6-1). `null`로 내려보내고
   FE는 그 칸을 그리지 않는다. 비율로 직접 세지 않는다 — 그게 부합 판정 재계산이다.
 - `mark`는 clause의 `status`를 그대로 옮긴 것이다.
@@ -515,7 +517,9 @@ C 원천: `.../matching-job-posting?job_id=`. 항목 모양은 4.2의 `items[]`�
 `null`이다. 경로를 나누지 않은 이유는 FE의 조회와 상태 분기가 두 벌이 되면 언젠가
 갈라지기 때문이다.
 
-C 원천: `job-cohorts/resolve` → `GET /internal/v1/c/snapshots/{demandSnapshotId}`
+C 원천: `POST /internal/v1/c/job-demands/preview`. C 내부에서는 기존 resolve와 같은
+selector·저장 결과를 사용하되, DEMAND payload까지 한 응답으로 돌려준다. 교차 배포 중
+구 C에서 이 경로 자체가 없을 때만 BE가 `job-cohorts/resolve` → Snapshot 조회로 보완한다.
 
 | 요청 | C selector |
 |---|---|

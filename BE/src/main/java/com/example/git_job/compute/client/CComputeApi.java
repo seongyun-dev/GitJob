@@ -46,6 +46,12 @@ public class CComputeApi {
         return client.post("/internal/v1/c/job-cohorts/resolve", selector, CohortResolved.class);
     }
 
+    /** 현재 조건의 공용 수요를 resolve와 Snapshot 조회 한 번에 받는다. */
+    public CSnapshot.Demand previewDemand(CohortSelector selector) {
+        return client.post("/internal/v1/c/job-demands/preview", selector,
+                CSnapshot.Demand.class);
+    }
+
     /** 개인 추천 Snapshot. 소유자가 다르면 C가 존재 여부를 드러내지 않고 404를 준다. */
     public CSnapshot recommendation(String snapshotId, long userId) {
         return client.get(SNAPSHOTS + snapshotId, Map.of("user_id", String.valueOf(userId)),

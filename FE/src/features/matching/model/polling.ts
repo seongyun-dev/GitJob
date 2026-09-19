@@ -15,6 +15,26 @@ const SLOW_POLL_MS = 30_000
  */
 const MARKET_READY_POLL_MS = 600_000
 
+/** 앞뒤 페이지 이동에서 확정된 매칭 결과를 다시 요청하지 않는 짧은 유예 시간. */
+export const MATCHING_PAGE_STALE_MS = 30_000
+
+/** 같은 조건으로 돌아왔을 때 확정 수요를 재사용하는 시간. */
+export const JOB_DEMAND_STALE_MS = 60_000
+
+type DataStatusState = Pick<ComputeStateFields, 'dataStatus'>
+
+/** PREPARING은 즉시 stale이어야 재진입 시 폴링이 다시 시작된다. */
+export function matchingPageStaleTime(state: DataStatusState | undefined): number {
+  return state?.dataStatus === 'READY' || state?.dataStatus === 'PARTIAL'
+    ? MATCHING_PAGE_STALE_MS
+    : 0
+}
+
+/** 수요 캐시는 READY 결과만 재사용한다. 계산 중 상태를 캐시로 묶어 두지 않는다. */
+export function jobDemandStaleTime(state: DataStatusState | undefined): number {
+  return state?.dataStatus === 'READY' ? JOB_DEMAND_STALE_MS : 0
+}
+
 /**
  * 다음 조회까지의 간격.
  *

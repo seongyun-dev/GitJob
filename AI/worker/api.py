@@ -860,6 +860,48 @@ def create_compute_app(
             },
         }
 
+    @app.post(prefix + "/job-demands/preview", dependencies=auth)
+    def preview_job_demand(selector: JobCohortResolveSelector):
+        """Resolve a live selector and return its exact demand in one round trip."""
+
+        if not intake_runner or not intake_runner.job_set_sink:
+            raise HTTPException(404, "COHORT_NOT_PREPARED")
+        selected = intake_runner.resolve_job_selector(selector)
+        criteria, result = selected if selected is not None else (None, None)
+        if not result or criteria is None:
+            raise HTTPException(404, "COHORT_NOT_PREPARED")
+        if result.get("status") == "PREPARING":
+            return JSONResponse(
+                status_code=202,
+                headers={"Retry-After": "2"},
+                content={
+                    "message": "C demand preview computation in progress",
+                    "data": {
+                        "status": "PREPARING",
+                        "criteria": criteria.model_dump(mode="json"),
+                    },
+                },
+            )
+        demand_id = next(
+            (
+                row.get("snapshot_id")
+                for row in result.get("results", ())
+                if isinstance(row, dict) and row.get("kind") == "DEMAND"
+            ),
+            None,
+        )
+        if not isinstance(demand_id, str):
+            raise HTTPException(404, "COHORT_NOT_PREPARED")
+        demand = DemandSnapshot.model_validate(
+            snapshot(demand_id, None, "DEMAND")["payload"]
+        )
+        if demand.criteria != criteria:
+            raise RuntimeError("resolved demand criteria is inconsistent")
+        return {
+            "message": "C latest verified job demand preview",
+            "data": demand.model_dump(mode="json"),
+        }
+
     @app.get(prefix + "/registry", dependencies=auth)
     def get_registry():
         return {
@@ -1045,6 +1087,12 @@ def create_compute_app(
                     matching_result, cohort_snapshot_id=event.cohort_snapshot_id
                 )
                 matching = matching_storage_rows(matching_result)
+                # Page reads need the recommendation KPI and its exact demand basis.
+                # Keep them in the existing JSON metadata row so new results need no
+                # second snapshot lookup and no schema migration. Older rows fall back
+                # to the recommendation snapshot in the read route below.
+                matching["metadata"]["current_count"] = result.current_count
+                matching["metadata"]["demand"] = result.demand.model_dump(mode="json")
             else:
                 matching = None
             stream = digest(
@@ -1195,6 +1243,32 @@ def create_compute_app(
             include_conditional=include_conditional,
         )
         metadata = stored["metadata"]
+        current_count = metadata.get("current_count")
+        demand = metadata.get("demand")
+        if (
+            not isinstance(current_count, int)
+            or current_count < 0
+            or not isinstance(demand, dict)
+            or demand.get("cohort_id") != metadata["cohort_id"]
+        ):
+            # Rolling-deploy compatibility for matching rows written before the
+            # additive metadata existed. The fallback stays inside C, so B still
+            # receives one response and does not fan out per page.
+            recommendation = snapshot(snapshot_id, user_id, "RECOMMENDATION")[
+                "payload"
+            ]
+            current_count = recommendation.get("current_count")
+            demand = recommendation.get("demand")
+        if (
+            not isinstance(current_count, int)
+            or current_count < 0
+            or not isinstance(demand, dict)
+            or demand.get("cohort_id") != metadata["cohort_id"]
+        ):
+            # Embedded v1 recommendations predate both summary fields. Keep those
+            # rows readable and expose unknown instead of inventing a count/basis.
+            current_count = None
+            demand = None
         total_count = (
             stored["total_count"] if include_conditional else stored["eligible_count"]
         )
@@ -1216,6 +1290,8 @@ def create_compute_app(
                 "excluded_conditional_count": (
                     0 if include_conditional else stored["conditional_count"]
                 ),
+                "current_count": current_count,
+                "demand": demand,
                 "page": page,
                 "size": size,
                 "has_next": stored["has_next"],

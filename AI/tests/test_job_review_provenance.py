@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from test_compute_api import REGISTRY
 from test_job_cohort import batch, criteria, posting
 
+from job.input_union import prepare_input_union
 from registry.mapper import RegistryMapper
 from worker.intake import JobOutput, publish_job_input_set
 from worker.jobs import job_artifacts
@@ -87,3 +88,31 @@ def test_single_and_union_publication_keep_review_for_cohort_exclusion(
     assert [record["source_record_id"] for record in union_cohort.review_records] == [
         "outside-region"
     ]
+
+
+def test_prepared_union_keeps_review_context_without_retaining_it_in_projection():
+    source_batch = batch(posting("review-context", required=("QuantumDB",)))
+    output = JobOutput(
+        batch=source_batch,
+        occurred_at=source_batch.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(source_batch.model_dump_json().encode()),
+    )
+
+    prepared = prepare_input_union((output,), criteria(), RegistryMapper(REGISTRY))
+
+    assert prepared.review_records
+    assert "QuantumDB" in prepared.review_records[0]["context"]
+    assert all(
+        technology.mapping_context == ""
+        for record in prepared.cohort.classified.records
+        for technology in record.technologies
+    )
+    assert all(
+        technology.mapping_context == ""
+        for record in prepared.cohort.records
+        for technology in record.classification.technologies
+    )

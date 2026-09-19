@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { QueryClient, QueryObserver } from '@tanstack/react-query'
 
-import { marketPollInterval, pollInterval } from '../src/features/matching/model/polling.ts'
+import {
+  jobDemandStaleTime,
+  marketPollInterval,
+  MATCHING_PAGE_STALE_MS,
+  matchingPageStaleTime,
+  pollInterval,
+} from '../src/features/matching/model/polling.ts'
 
 const preparing = {
   dataStatus: 'PREPARING' as const,
@@ -63,4 +70,50 @@ test('market polling retries the other terminal states slowly too', () => {
   for (const dataStatus of ['FAILED', 'NO_DATA', 'PARTIAL', 'INSUFFICIENT_DATA'] as const) {
     assert.equal(marketPollInterval({ ...preparing, dataStatus }, false), 600_000)
   }
+})
+
+test('a prefetched READY matching page stays fresh when its observer mounts', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryKey = ['matching', 'postings', 'target', 2]
+  let calls = 0
+  const queryFn = async () => {
+    calls += 1
+    return { dataStatus: 'READY' as const }
+  }
+
+  await client.prefetchQuery({ queryKey, queryFn, staleTime: MATCHING_PAGE_STALE_MS })
+  const observer = new QueryObserver(client, {
+    queryKey,
+    queryFn,
+    staleTime: (query) => matchingPageStaleTime(query.state.data),
+  })
+  const unsubscribe = observer.subscribe(() => undefined)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(calls, 1)
+  unsubscribe()
+  client.clear()
+})
+
+test('a cached PREPARING demand refetches as soon as its observer remounts', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryKey = ['matching', 'demands', 'BACKEND']
+  let calls = 0
+  const queryFn = async () => {
+    calls += 1
+    return { dataStatus: 'PREPARING' as const }
+  }
+
+  await client.prefetchQuery({ queryKey, queryFn, staleTime: 60_000 })
+  const observer = new QueryObserver(client, {
+    queryKey,
+    queryFn,
+    staleTime: (query) => jobDemandStaleTime(query.state.data),
+  })
+  const unsubscribe = observer.subscribe(() => undefined)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(calls, 2)
+  unsubscribe()
+  client.clear()
 })

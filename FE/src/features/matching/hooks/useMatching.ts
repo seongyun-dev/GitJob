@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchJobDemands,
@@ -9,7 +10,13 @@ import {
   fetchWhatIf,
   saveTarget,
 } from '@/features/matching/api/matchingApi'
-import { marketPollInterval, pollInterval } from '@/features/matching/model/polling'
+import {
+  jobDemandStaleTime,
+  marketPollInterval,
+  MATCHING_PAGE_STALE_MS,
+  matchingPageStaleTime,
+  pollInterval,
+} from '@/features/matching/model/polling'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 /**
@@ -56,12 +63,30 @@ export function useJobMatches(
   targetKey: string | undefined,
   params: { page: number; perPage: number; includeConditional: boolean },
 ) {
-  return useQuery({
+  const client = useQueryClient()
+  const { page, perPage, includeConditional } = params
+  const query = useQuery({
     queryKey: queryKeys.matchingPostings(targetKey ?? '', params),
     queryFn: () => fetchJobMatches(params),
     enabled: targetKey !== undefined,
+    staleTime: (query) => matchingPageStaleTime(query.state.data),
     refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
+  const hasNext = query.data?.hasNext === true
+
+  useEffect(() => {
+    if (targetKey === undefined || !hasNext) {
+      return
+    }
+    const next = { page: page + 1, perPage, includeConditional }
+    void client.prefetchQuery({
+      queryKey: queryKeys.matchingPostings(targetKey, next),
+      queryFn: () => fetchJobMatches(next),
+      staleTime: MATCHING_PAGE_STALE_MS,
+    })
+  }, [client, hasNext, includeConditional, page, perPage, targetKey])
+
+  return query
 }
 
 /**
@@ -140,6 +165,9 @@ export function useJobDemands(params: {
         careerLevels: params.careerLevels,
       }),
     enabled: params.targetRole !== undefined && params.targetRole !== '',
+    // 같은 조건으로 돌아왔을 때 READY만 재사용한다. PREPARING은 재진입 즉시
+    // stale이 되어 조회와 폴링을 다시 시작해야 한다.
+    staleTime: (query) => jobDemandStaleTime(query.state.data),
     refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }

@@ -224,6 +224,11 @@ def test_partial_matching_roundtrip_pages_detail_and_active_whatif(client):
     assert listing["total_count"] == 2
     assert listing["conditional_count"] == 1
     assert listing["excluded_conditional_count"] == 1
+    # The page response carries the recommendation summary and demand basis so B
+    # does not need a second C round trip for every page navigation.
+    assert listing["current_count"] == 1
+    assert listing["demand"]["cohort_id"] == listing["cohort_id"]
+    assert listing["demand"]["denominator"] == 3
     assert listing["has_next"] is True
     assert listing["items"][0]["job"]["job_id"] == "exact"
     second = client.get(

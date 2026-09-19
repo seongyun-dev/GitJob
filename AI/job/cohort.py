@@ -3,6 +3,7 @@
 import json
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
@@ -23,6 +24,7 @@ from pydantic import (
     model_validator,
 )
 from job.classifier import (
+    JobClassificationBatch,
     JobClassificationRecord,
     RequirementClass,
     TechnologyClassification,
@@ -848,6 +850,46 @@ def build_cohort(
     classifications retain all mapping attempts so callers can enqueue review.
     """
     criteria = CohortCriteria.model_validate_json(criteria.model_dump_json())
+    prepared = prepare_cohort_batch(
+        batch,
+        mapper,
+        qualify_job_ids=qualify_job_ids,
+        include_active_requirements=(
+            criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+        ),
+    )
+    return build_cohort_from_prepared(prepared, criteria)
+
+
+@dataclass(frozen=True)
+class PreparedCohortRecord:
+    digest: str
+    record: JobPostingInput
+    classification: JobClassificationRecord
+    requirements: JobRequirements | None
+
+
+@dataclass(frozen=True)
+class PreparedCohortBatch:
+    """Criteria-independent parsing reused by live selector projections."""
+
+    batch: JobAnalysisInputBatch
+    classified: JobClassificationBatch
+    records: tuple[PreparedCohortRecord, ...]
+    conflicts: frozenset[str]
+    qualify_job_ids: bool
+    input_count: int
+
+
+def prepare_cohort_batch(
+    batch: JobAnalysisInputBatch,
+    mapper: RegistryMapper | None = None,
+    *,
+    qualify_job_ids: bool = False,
+    include_active_requirements: bool = False,
+) -> PreparedCohortBatch:
+    """Classify, deduplicate and optionally parse requirements exactly once."""
+
     if mapper is None:
         ai_root = Path(__file__).resolve().parents[1]
         mapper = RegistryMapper(
@@ -883,13 +925,73 @@ def build_cohort(
         if len(group) > 1
         for digest in group
     }
-    jobs, exclusions, matching_jobs = [], [], []
+    prepared_records = []
     for digest, (record, classification) in sorted(
         unique.items(), key=lambda pair: (pair[1][0].source_record_id, pair[0])
     ):
-        excluded, review = _quality_reasons(record, criteria)
         requirements = (
             extract_job_requirements(record, classification)
+            if include_active_requirements
+            else None
+        )
+        # Once active requirements and evidence locations are parsed, selector
+        # filtering never reads the raw body or source mentions again. Keep a
+        # compact immutable record so the warm projection does not duplicate
+        # thousands of full job descriptions already held by verified outputs.
+        stored_record = (
+            record.model_copy(
+                update={
+                    "description_text": (
+                        "prepared" if record.body_status is BodyStatus.TEXT_AVAILABLE else None
+                    ),
+                    "technology_mentions": (),
+                }
+            )
+            if include_active_requirements
+            else record
+        )
+        prepared_records.append(
+            PreparedCohortRecord(
+                digest=digest,
+                record=stored_record,
+                classification=classification,
+                requirements=requirements,
+            )
+        )
+    records = tuple(prepared_records)
+    prepared_batch = (
+        batch.model_copy(update={"records": tuple(item.record for item in records)})
+        if include_active_requirements
+        else batch
+    )
+    return PreparedCohortBatch(
+        batch=prepared_batch,
+        classified=classified,
+        records=records,
+        conflicts=frozenset(conflicts),
+        qualify_job_ids=qualify_job_ids,
+        input_count=len(batch.records),
+    )
+
+
+def build_cohort_from_prepared(
+    prepared: PreparedCohortBatch, criteria: CohortCriteria
+) -> JobCohort:
+    """Apply selector-specific filters without classification or requirement parsing."""
+
+    criteria = CohortCriteria.model_validate_json(criteria.model_dump_json())
+    batch = prepared.batch
+    classified = prepared.classified
+    jobs, exclusions, matching_jobs = [], [], []
+    for item in prepared.records:
+        digest = item.digest
+        record = item.record
+        classification = item.classification
+        excluded, review = _quality_reasons(record, criteria)
+        requirements = (
+            item.requirements
+            if item.requirements is not None
+            else extract_job_requirements(record, classification)
             if criteria.purpose is CohortPurpose.ACTIVE_MATCHING
             else None
         )
@@ -899,7 +1001,7 @@ def build_cohort(
             else _required_clauses(record, classification)
         )
         review.extend(logic_reasons)
-        if digest in conflicts:
+        if digest in prepared.conflicts:
             review.append("SOURCE_RECORD_CONFLICT")
         if (
             criteria.purpose is CohortPurpose.ACTIVE_MATCHING
@@ -923,7 +1025,7 @@ def build_cohort(
                 MatchingJobInput(
                     job_id=(
                         f"{record.source_site.strip().upper()}:{record.source_posting_id}"
-                        if qualify_job_ids
+                        if prepared.qualify_job_ids
                         else record.source_record_id
                     ),
                     source_record_id=record.source_record_id,
@@ -971,7 +1073,7 @@ def build_cohort(
                 **fields,
                 job_id=(
                     f"{record.source_site.strip().upper()}:{record.source_posting_id}"
-                    if qualify_job_ids
+                    if prepared.qualify_job_ids
                     else record.source_record_id
                 ),
                 required_clauses=clauses,
@@ -1010,10 +1112,10 @@ def build_cohort(
     status = CohortStatus.for_size(len(jobs), criteria.min_jobs)
     identity = {
         "criteria": criteria.model_dump(mode="json"),
-        "input_digests": sorted(unique),
+        "input_digests": sorted(item.digest for item in prepared.records),
         "collected_at": {
-            digest: record.collected_at.astimezone(UTC).isoformat()
-            for digest, (record, _) in unique.items()
+            item.digest: item.record.collected_at.astimezone(UTC).isoformat()
+            for item in prepared.records
         },
         "dataset_snapshot_id": batch.dataset_snapshot_id,
         "pipeline_run_id": batch.pipeline_run_id,
@@ -1023,7 +1125,7 @@ def build_cohort(
         "quality_version": JOB_QUALITY_VERSION,
         "requirements_version": JOB_REQUIREMENTS_SCHEMA_VERSION,
     }
-    if qualify_job_ids:
+    if prepared.qualify_job_ids:
         identity["job_id_policy"] = "source-site-posting/v1"
     return JobCohort(
         cohort_id=f"cohort-{_stable_hash(identity)}",
@@ -1034,8 +1136,8 @@ def build_cohort(
         collector_version=batch.collector_version,
         registry_version=classified.registry_version,
         parser_version=classified.parser_version,
-        input_count=len(batch.records),
-        duplicate_count=len(batch.records) - len(unique),
+        input_count=prepared.input_count,
+        duplicate_count=prepared.input_count - len(prepared.records),
         excluded_count=sum(item.decision == "EXCLUDED" for item in exclusions),
         review_count=sum(item.decision == "REVIEW_REQUIRED" for item in exclusions),
         jobs=tuple(jobs),

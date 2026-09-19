@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static com.example.git_job.compute.support.ComputeTestSupport.reader;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -89,7 +90,11 @@ class JobMatchServiceTest {
                 "2026-09-15T00:00:00Z", "ELIGIBLE", List.of());
         CMatching.Item item = new CMatching.Item(job, required,
                 new CMatching.Condition(List.of(), List.of(), 0, 0, 0, null), "PARTIAL");
-        return new CMatching(RECOMMENDATION, "calc-1", "cohort-1", 87, 5, 5, 0, 20, true,
+        CSnapshot.Demand demand = new CSnapshot.Demand("cohort-1", "READY", 87,
+                Map.of("target_role", "BACKEND_ENGINEER", "as_of", "2026-09-15T01:30:00Z"),
+                List.of());
+        return new CMatching(RECOMMENDATION, "calc-1", "cohort-1", 87, 5, 5, 12, demand,
+                0, 20, true,
                 List.of(item), dataGaps);
     }
 
@@ -102,6 +107,25 @@ class JobMatchServiceTest {
         assertThat(response.summary().totalCount()).isEqualTo(87);
         assertThat(response.summary().fullMatchCount()).isEqualTo(12);
         assertThat(response.items()).hasSize(1);
+        verify(compute, never()).recommendation(anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("구 C 응답에는 Recommendation Snapshot으로만 보완한다")
+    void fallsBackForLegacyMatchingResponse() {
+        CMatching current = matching(clause("SATISFIED", false));
+        CMatching legacy = new CMatching(current.snapshotId(), current.calculationSnapshotId(),
+                current.cohortId(), current.totalCount(), current.conditionalCount(),
+                current.excludedConditionalCount(), null, null, current.page(), current.size(),
+                current.hasNext(), current.items(), current.dataGaps());
+        when(compute.matching(anyString(), anyLong(), anyInt(), anyInt(), anyBoolean()))
+                .thenReturn(legacy);
+
+        JobMatchResponse response = service.matches(USER_ID, 1, 20, false);
+
+        assertThat(response.summary().fullMatchCount()).isEqualTo(12);
+        assertThat(response.basis().jobCount()).isEqualTo(87);
+        verify(compute).recommendation(RECOMMENDATION, USER_ID);
     }
 
     @Test

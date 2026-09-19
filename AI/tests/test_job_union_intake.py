@@ -3,6 +3,8 @@
 import json
 import os
 from datetime import UTC, datetime
+from functools import partial
+from threading import Event, Thread
 from uuid import uuid4
 
 import pytest
@@ -11,6 +13,12 @@ from test_compute_api import REGISTRY, TOKEN
 from test_job_cohort import batch, criteria, posting
 
 from job import requirements
+from job.demand import aggregate_demand
+from job.input_union import (
+    build_input_union,
+    build_prepared_input_union,
+    prepare_input_union,
+)
 from registry.mapper import RegistryMapper
 from Saramin_Collector_V1.crawler import CrawlResult, write_outputs
 from worker.api import JobCohortResolveSelector, create_compute_app
@@ -179,6 +187,54 @@ def test_poll_prewarms_latest_selector_scope_before_first_http_request():
     assert len(calls) == before_resolve
 
 
+def test_slow_job_set_sink_does_not_hold_runner_state_lock():
+    selected = criteria(as_of="2026-09-07T00:00:00Z")
+    value = batch(posting("one"))
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    entered, release, read_done = Event(), Event(), Event()
+
+    def slow_sink(*_args):
+        entered.set()
+        assert release.wait(2)
+        return {"status": "COMPLETED", "results": []}
+
+    runner = IntakeRunner(
+        IntakeConfig.model_construct(
+            schema_version="c-intake-config/v1",
+            job_roots=(),
+            job_hdfs_sources=(),
+            criteria=(selected,),
+            public_sources=(),
+        ),
+        job_sink=slow_sink,
+        job_set_sink=slow_sink,
+    )
+    publishing = Thread(
+        target=runner._publish_input_set,
+        args=((output,), {"completed": 0, "failed": 0, "pending": 0}),
+    )
+    publishing.start()
+    assert entered.wait(1)
+
+    reading = Thread(
+        target=lambda: (runner.current_job_result(selected), read_done.set())
+    )
+    reading.start()
+    try:
+        assert read_done.wait(0.5), "slow cohort calculation held the shared state lock"
+    finally:
+        release.set()
+        publishing.join(2)
+        reading.join(2)
+
 def test_monthly_demand_criteria_cover_the_last_twelve_completed_months():
     configured = criteria(
         as_of="2026-09-08T00:00:00Z",
@@ -270,7 +326,7 @@ def test_review_preparation_failure_after_claim_is_heartbeated_and_failed(
         assert events == [("heartbeat", "enter")]
         raise RuntimeError("review preparation failed")
 
-    monkeypatch.setattr("worker.jobs.job_review_records", fail_review_preparation)
+    monkeypatch.setattr("registry.review.build_records", fail_review_preparation)
 
     with pytest.raises(RuntimeError, match="review preparation failed"):
         publish_job_input_set(
@@ -337,6 +393,258 @@ def test_required_level_policy_change_rekeys_durable_union_intake(monkeypatch):
     assert claims[1]["request"]["compute_versions"]["required_level_policy"] == (
         requirements.JOB_REQUIRED_LEVEL_POLICY_VERSION
     )
+
+
+def test_completed_union_claim_reuses_result_before_rebuilding_cohort(monkeypatch):
+    value = batch(posting("already-computed"))
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+
+    class CompletedStore:
+        def claim(self, **_kwargs):
+            return Ticket(
+                event_id="job-union-v2-existing",
+                kind="JOB_BATCH",
+                owner=None,
+                occurred_at=output.occurred_at,
+                status="COMPLETED",
+                token=None,
+                attempt=1,
+                results=[
+                    {"kind": "COHORT", "snapshot_id": "cohort-existing"},
+                    {"kind": "DEMAND", "snapshot_id": "demand-existing"},
+                ],
+            )
+
+    monkeypatch.setattr(
+        "job.input_union.build_input_union",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("completed identity must not rebuild 1,600 postings")
+        ),
+    )
+
+    result = publish_job_input_set(
+        (output,),
+        criteria(),
+        store=CompletedStore(),
+        mapper=RegistryMapper(REGISTRY),
+        registry=REGISTRY,
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert result["results"][0]["snapshot_id"] == "cohort-existing"
+
+
+def test_live_projection_matches_exact_selectors_without_reparsing(monkeypatch):
+    value = batch(
+        posting("backend-seoul", region="서울", career_level="신입"),
+        posting(
+            "backend-busan",
+            region="부산",
+            career_level="경력 3년",
+            required=("Java", "Redis"),
+        ),
+        posting(
+            "frontend-busan",
+            title="프론트엔드 개발자",
+            raw_job_category="FRONTEND",
+            region="부산",
+            career_level="신입",
+            required=("React",),
+        ),
+        posting("unknown-scope", region=None, career_level=None),
+        posting("closed", posting_status="CLOSED"),
+    )
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    outputs = (output,)
+    mapper = RegistryMapper(REGISTRY)
+    selectors = (
+        criteria(),
+        criteria(regions=("서울",), career_levels=("신입",)),
+        criteria(regions=("부산",), career_levels=("경력",)),
+        criteria(target_role="FRONTEND", regions=("부산",)),
+        criteria(target_role="AI_DATA"),
+        criteria(regions=("서울", "부산"), career_levels=("신입", "경력")),
+    )
+    expected = tuple(
+        (
+            build_input_union(outputs, selected, mapper),
+            aggregate_demand(build_input_union(outputs, selected, mapper)),
+        )
+        for selected in selectors
+    )
+    prepared = prepare_input_union(outputs, criteria(), mapper)
+
+    monkeypatch.setattr(
+        "job.cohort.classify_job_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("warm selector must reuse technology classification")
+        ),
+    )
+    monkeypatch.setattr(
+        "job.cohort.extract_job_requirements",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("warm selector must reuse requirement parsing")
+        ),
+    )
+
+    for selected, (expected_cohort, expected_demand) in zip(
+        selectors, expected, strict=True
+    ):
+        actual_cohort = build_prepared_input_union(prepared, selected)
+        actual_demand = aggregate_demand(actual_cohort)
+        assert actual_cohort.model_dump(mode="json") == expected_cohort.model_dump(
+            mode="json"
+        )
+        assert actual_demand.model_dump(mode="json") == expected_demand.model_dump(
+            mode="json"
+        )
+
+
+def test_runner_uses_projection_for_an_unseen_live_selector(monkeypatch):
+    value = batch(
+        posting("backend"),
+        posting(
+            "frontend",
+            title="프론트엔드 개발자",
+            raw_job_category="FRONTEND",
+            required=("React",),
+        ),
+    )
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    mapper = RegistryMapper(REGISTRY)
+    projected = []
+
+    def sink(_outputs, selected, *, prepared_union=None):
+        if prepared_union is not None:
+            cohort = build_prepared_input_union(prepared_union, selected)
+            projected.append(cohort)
+        return {"status": "COMPLETED", "results": []}
+
+    runner = IntakeRunner(
+        IntakeConfig.model_construct(
+            schema_version="c-intake-config/v1",
+            job_roots=(),
+            job_hdfs_sources=(),
+            criteria=(criteria(),),
+            public_sources=(),
+        ),
+        job_sink=sink,
+        job_set_sink=sink,
+        job_projection_builder=partial(prepare_input_union, mapper=mapper),
+        job_projection_sink=sink,
+    )
+    runner._publish_input_set(
+        (output,), {"completed": 0, "failed": 0, "pending": 0}
+    )
+    projected.clear()
+    monkeypatch.setattr(
+        "job.cohort.classify_job_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("warm selector reclassified postings")
+        ),
+    )
+    monkeypatch.setattr(
+        "job.cohort.extract_job_requirements",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("warm selector reparsed requirements")
+        ),
+    )
+
+    selected, result = runner.resolve_job_selector(
+        JobCohortResolveSelector(
+            schema_version="job-cohort-resolve-selector/v1",
+            target_role="FRONTEND",
+        )
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert selected.target_role == "FRONTEND"
+    assert [job.source_record_id for job in projected[-1].matching_jobs] == [
+        "frontend"
+    ]
+
+
+def test_runner_reuses_projection_while_verified_inputs_are_unchanged():
+    value = batch(posting("stable-input"))
+    output = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    builds = []
+
+    def sink(*_args, **_kwargs):
+        return {"status": "COMPLETED", "results": []}
+
+    def build_projection(outputs, selected):
+        builds.append((outputs, selected))
+        return object()
+
+    runner = IntakeRunner(
+        IntakeConfig.model_construct(
+            schema_version="c-intake-config/v1",
+            job_roots=(),
+            job_hdfs_sources=(),
+            criteria=(criteria(),),
+            public_sources=(),
+        ),
+        job_sink=sink,
+        job_set_sink=sink,
+        job_projection_builder=build_projection,
+        job_projection_sink=sink,
+    )
+
+    runner._publish_input_set(
+        (output,), {"completed": 0, "failed": 0, "pending": 0}
+    )
+    runner._publish_input_set(
+        (output,), {"completed": 0, "failed": 0, "pending": 0}
+    )
+
+    assert len(builds) == 1
+
+    changed = JobOutput(
+        batch=value,
+        occurred_at=value.records[0].collected_at,
+        batch_sha256="c" * 64,
+        manifest_sha256="d" * 64,
+        collection_issues=(),
+        source_site="SARAMIN",
+        batch_size_bytes=len(value.model_dump_json().encode()),
+    )
+    runner._publish_input_set(
+        (changed,), {"completed": 0, "failed": 0, "pending": 0}
+    )
+
+    assert len(builds) == 2
 
 
 def test_configured_union_combines_sources_and_source_filter_cannot_be_masked(runtime):

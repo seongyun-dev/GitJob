@@ -19,6 +19,8 @@ public record CMatching(
         int totalCount,
         int conditionalCount,
         int excludedConditionalCount,
+        Integer currentCount,
+        CSnapshot.Demand demand,
         int page,
         int size,
         boolean hasNext,

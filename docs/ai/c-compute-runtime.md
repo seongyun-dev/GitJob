@@ -39,6 +39,7 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 |---|---|
 | `POST /internal/v1/c/job-batches/completed` | -90 `batch` + `criteria`: 공고 품질·동일 cohort의 수요 계산 |
 | `POST /internal/v1/c/job-cohorts/resolve` | `CohortCriteria` 또는 `job-cohort-resolve-selector/v1`로 검증된 입력 합집합의 cohort·demand ID와 실제 criteria/계산 버전 조회. 처음 보는 조건은 멱등 계산·저장, 동일 입력·조건은 재사용. 미준비 404 |
+| `POST /internal/v1/c/job-demands/preview` | resolve와 DEMAND Snapshot 조회를 한 응답으로 합친 화면용 경로. selector·계산·저장 의미와 미준비 상태는 `job-cohorts/resolve`와 동일 |
 | `POST /internal/v1/c/analyses/completed` | `user_id`, `analysis_id`, `cohort_snapshot_id`, `evidence`: 자동 Gap·추천·What-if·설명 |
 | `POST /internal/v1/c/public-repositories/completed` | -157 `batch`, `include_partial=false`: COMPLETE/REUSED 우선 공개 기술 관측 |
 | `POST /internal/v1/c/trends/completed` | `tech_id`, `source`, `periods`: JOB `demand_snapshot_ids` 또는 GITHUB 공식 형식 `csv_text`·`source_uri`·`source_version` |
@@ -46,7 +47,7 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | `POST /internal/v1/c/trends/resolve` | B가 목표 직무별 JOB 월간 수요, 주간 Repo Activity 또는 고정 기간 Archive v1/v2의 최신 완료 Snapshot ID를 자연 키로 조회. 서로 다른 source·직무/필터·Registry·algorithm·PARTIAL·기간·granularity는 섞지 않음 |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
-| `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록. `user_id`, page/size, `include_conditional=false` |
+| `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록과 같은 추천 결과의 `current_count`·`demand`. `user_id`, page/size, `include_conditional=false` |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-posting` | 동일 저장 평가의 상세. `user_id`, `job_id` |
 | `GET /internal/v1/c/registry` | 실행 중인 정확한 Registry Snapshot과 meta의 schema/content version·SHA-256 |
 | `GET/POST /internal/v1/c/registry/reviews/...` | -88: 미해결 원문 조회·수동 결정·재처리. [검토 큐 요청·충돌 계약](c-registry-review.md) |
