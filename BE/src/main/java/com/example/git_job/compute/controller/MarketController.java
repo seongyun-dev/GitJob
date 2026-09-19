@@ -1,6 +1,7 @@
 package com.example.git_job.compute.controller;
 
 import com.example.git_job.compute.controller.dto.JobDemandResponse;
+import com.example.git_job.compute.controller.dto.TrendRankingResponse;
 import com.example.git_job.compute.controller.dto.TrendResponse;
 import com.example.git_job.compute.service.JobDemandService;
 import com.example.git_job.compute.service.TrendService;
@@ -88,6 +89,27 @@ public class MarketController {
     }
 
     /**
+     * 한 기간에 실제로 많이 관측된 기술 (S15P21E102-346).
+     *
+     * <p>{@code techIds}를 받지 않는 것이 {@code /trends/compare}와의 차이다. 비교는
+     * "이 기술들 중 누가 위인가"를 묻고, 이쪽은 "이 기간에 무엇이 많았는가"를 묻는다.
+     * 후자는 화면이 후보를 고르면 답이 달라지므로 모집단 전체를 서버가 본다.</p>
+     *
+     * <p>주간과 월별이 같은 경로다. 둘 다 같은 출처의 같은 snapshot 이고
+     * {@code granularity}만 다르다.</p>
+     */
+    @GetMapping("/trends/rankings")
+    public ResponseEntity<ApiResponse<TrendRankingResponse>> trendRankings(
+            @RequestParam String source,
+            @RequestParam String granularity,
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) Integer limit
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                trends.rankings(source, granularity, period, rankingLimit(limit))));
+    }
+
+    /**
      * 기술 교차 비교. 한 번에 <b>한 출처만</b> 본다.
      *
      * <p>여러 출처를 한 표에 섞으면 분모가 다른 값이 한 축에 들어간다. 화면은 출처 카드마다
@@ -106,6 +128,14 @@ public class MarketController {
                 source, techIds, periods == null ? List.of() : periods, targetRole,
                 regions == null ? List.of() : regions,
                 careerLevels == null ? List.of() : careerLevels)));
+    }
+
+    /** 화면 한 장이 읽을 수 있는 순위 길이. C 는 50까지 허용한다. */
+    private static int rankingLimit(Integer limit) {
+        if (limit == null || limit < 1) {
+            return DEFAULT_DEMAND_LIMIT;
+        }
+        return Math.min(limit, MAX_DEMAND_LIMIT);
     }
 
     private static int limit(Integer limit) {

@@ -4,7 +4,9 @@ import com.example.git_job.compute.client.CComputeApi;
 import com.example.git_job.compute.client.CComputeException;
 import com.example.git_job.compute.client.CComputeStatus;
 import com.example.git_job.compute.client.dto.CTrend;
+import com.example.git_job.compute.client.dto.CTrendRanking;
 import com.example.git_job.compute.controller.dto.ComputeState;
+import com.example.git_job.compute.controller.dto.TrendRankingResponse;
 import com.example.git_job.compute.controller.dto.TrendResponse;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
@@ -44,6 +46,9 @@ public class TrendService {
     /** Registry의 tech_id 형식. 임의 문자열을 경로로 넘기지 않는다. */
     private static final Pattern TECH_ID = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
     private static final Pattern MONTH = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])");
+    /** 주간 기간은 그 주의 시작일이다. 월과 형식이 달라 따로 본다. */
+    private static final Pattern WEEK_PERIOD =
+            Pattern.compile("\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])");
     private static final int MAX_MONTHS = 24;
     private static final int MAX_COMPARE_TECHS = 10;
 
@@ -91,6 +96,93 @@ public class TrendService {
                     "월별 공고 요구 건수"));
         }
         return new TrendResponse(tech, sources);
+    }
+
+    /**
+     * 한 기간에 실제로 많이 관측된 기술 (S15P21E102-346).
+     *
+     * <h2>왜 기술 목록을 받지 않는가</h2>
+     *
+     * <p>"이 기간에 많이 관측된 기술"은 모집단 전체를 봐야 나오는 답이다. 화면이 기술
+     * 열 개를 고르면 그 답은 "고른 열 개 중의 순위"가 되고, 그것은 다른 질문이다.</p>
+     *
+     * <h2>주간과 월별이 같은 경로인 이유</h2>
+     *
+     * <p>둘 다 같은 출처의 같은 snapshot 구조이고 point 의 granularity 만 다르다. 주간
+     * 정본이 {@code GITHUB_GH_ARCHIVE} + {@code WEEK} 로 확인됐으므로 출처를 나눌 이유가
+     * 없다 — 기간만 그 주로 고르면 된다.</p>
+     */
+    public TrendRankingResponse rankings(String sourceId, String granularity, String period,
+                                         int limit) {
+        String cSource = rankingSource(sourceId);
+        String cGranularity = rankingGranularity(granularity);
+        // 기간을 주지 않으면 C 가 그 출처의 최신 게시 기간을 고른다. 화면이 달력으로
+        // 최근 주차를 계산하면 게시되지 않은 주를 물어 빈 순위를 받는다.
+        String cPeriod = period == null || period.isBlank()
+                ? null
+                : validPeriod(cGranularity, period);
+        try {
+            CTrendRanking ranking = compute.trendRankings(cSource, cGranularity, cPeriod, limit);
+            if (ranking == null) {
+                return TrendRankingResponse.pending(
+                        ComputeState.preparing("TREND_NOT_PREPARED"),
+                        sourceId, cGranularity, cPeriod);
+            }
+            if (ranking.technologies() == null || ranking.technologies().isEmpty()) {
+                // 기간 목록은 살려 보낸다. 아직 집계되지 않은 기간으로 옮겨 간 화면이
+                // 되돌아올 수 있어야 하고, 버리면 기간 이동이 한 방향 함정이 된다.
+                return TrendRankingResponse.pending(
+                        ComputeState.preparing("TREND_NOT_PREPARED"),
+                        sourceId, cGranularity, ranking);
+            }
+            return TrendRankingResponse.of(ComputeState.ready(), sourceId, ranking);
+        } catch (CComputeException e) {
+            // 미준비는 상태로, 장애는 예외로. 한 출처의 공백이 화면을 오류로 만들지 않는다.
+            if (e.getStatus() == CComputeStatus.NOT_PREPARED
+                    || e.getStatus() == CComputeStatus.NOT_FOUND) {
+                return TrendRankingResponse.pending(
+                        ComputeState.preparing("TREND_NOT_PREPARED"),
+                        sourceId, cGranularity, cPeriod);
+            }
+            if (e.getStatus() == CComputeStatus.PREPARING) {
+                return TrendRankingResponse.pending(
+                        ComputeState.computing(e.getRetryAfterSec()),
+                        sourceId, cGranularity, cPeriod);
+            }
+            log.warn("C trend ranking 조회 실패: source={}, status={}", sourceId, e.getStatus());
+            throw new CustomException(ErrorCode.COMPUTE_UNAVAILABLE);
+        }
+    }
+
+    /**
+     * 화면의 출처 이름을 C 출처로 옮긴다.
+     *
+     * <p>주간·월별이 같은 C 출처를 쓴다. 갈리는 것은 granularity 뿐이다.</p>
+     */
+    private static String rankingSource(String sourceId) {
+        if (WEEKLY.equals(sourceId) || ARCHIVE.equals(sourceId)) {
+            return "GITHUB_GH_ARCHIVE";
+        }
+        throw new CustomException(ErrorCode.TREND_CRITERIA_INVALID);
+    }
+
+    private static String rankingGranularity(String granularity) {
+        if ("WEEK".equals(granularity) || "MONTH".equals(granularity)) {
+            return granularity;
+        }
+        throw new CustomException(ErrorCode.TREND_CRITERIA_INVALID);
+    }
+
+    /** 주간은 그 주의 시작일, 월별은 그 달이다. 형식이 어긋나면 C 를 부르지 않는다. */
+    private static String validPeriod(String granularity, String period) {
+        String value = period == null ? "" : period.strip();
+        boolean valid = "WEEK".equals(granularity)
+                ? WEEK_PERIOD.matcher(value).matches()
+                : MONTH.matcher(value).matches();
+        if (!valid) {
+            throw new CustomException(ErrorCode.TREND_CRITERIA_INVALID);
+        }
+        return value;
     }
 
     /**

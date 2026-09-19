@@ -46,6 +46,7 @@ from trend.archive import PeriodGranularity
 from worker.archive_input import ArchiveInputUnavailable, ArchiveTrendFields
 from worker.lease import LeaseHeartbeat
 from worker.store import (
+    TREND_RANKING_UNITS,
     Artifact,
     ComputeStore,
     IdempotencyConflict,
@@ -868,6 +869,98 @@ def create_compute_app(
                 "schema_version": registry.schema_version,
                 "registry_version": registry.registry_version,
                 "registry_sha256": digest(registry.model_dump(mode="json")),
+            },
+        }
+
+    @app.get(prefix + "/trends/rankings", dependencies=auth)
+    def get_trend_rankings(
+        source: Literal["GITHUB_GH_ARCHIVE", "JOB"],
+        granularity: PeriodGranularity,
+        period: Annotated[str | None, Query(min_length=4, max_length=16)] = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ):
+        """Rank one period's technologies across the whole Registry.
+
+        <h2>왜 조회하는 쪽이 기술을 고르지 않는가</h2>
+
+        "이 기간에 많이 관측된 기술"은 모집단 전체를 봐야 나오는 답이다. 부르는 쪽이
+        기술 열 개를 지정하면 그 답은 "내가 고른 열 개 중의 순위"가 되고, 그건 다른
+        질문이다. 그래서 이 endpoint 는 `tech_id` 를 받지 않는다.
+
+        <h2>왜 다시 계산하지 않는가</h2>
+
+        숫자는 이미 저장돼 있다. 기술마다 출처별 TREND head 가 있고 payload 에 기간별
+        point 가 들어 있으므로, 순위는 디스크에 있는 것을 정렬한 결과다. 계산 경로를
+        다시 부르면 같은 값을 훨씬 비싸게 얻는다.
+
+        <h2>품질</h2>
+
+        `data_status` 는 저장된 판정을 그대로 옮긴다. 값이 있는데 표본이 얇은 것과 값이
+        없는 것은 다른 사실이고, 앞의 것을 순위에서 빼면 화면은 "측정하지 못했다"고
+        말하게 된다(S15P21E102-327). 상태를 READY 로 바꾸지도 않는다.
+        """
+        names = {
+            technology.tech_id: technology.display_name
+            for technology in registry.technologies
+        }
+        store = database()
+        unit = TREND_RANKING_UNITS[source]
+        # 게시된 기간 목록은 언제나 함께 돌려준다. 화면이 기간을 옮기려면 어디로 갈 수
+        # 있는지 알아야 하고(S15P21E102-329), 그것을 달력으로 계산하면 게시되지 않은
+        # 주를 물어 값이 있는데도 빈 카드가 뜬다.
+        available = store.get_trend_periods(
+            source=source, granularity=granularity.value
+        )
+        # 기간을 생략하면 이 출처가 실제로 게시한 최신 기간이다.
+        period = period or (available[-1] if available else None)
+        if period is None or period not in available:
+            # 없는 기간은 오류가 아니라 빈 순위다. 그래야 화면이 기간을 옮기다 아직
+            # 집계되지 않은 곳에 닿아도 카드가 사라지지 않는다.
+            return {
+                "message": "C trend ranking",
+                "data": {
+                    "source": source,
+                    "granularity": granularity.value,
+                    "period": period,
+                    "available_periods": available,
+                    "unit": unit,
+                    "sample_repo_count": None,
+                    "registry_version": registry.registry_version,
+                    "technology_population": len(registry.technologies),
+                    "technologies": [],
+                },
+            }
+        rows = store.get_trend_rankings(
+            source=source,
+            granularity=granularity.value,
+            period=period,
+            limit=limit,
+        )
+        return {
+            "message": "C trend ranking",
+            "data": {
+                "source": source,
+                "granularity": granularity.value,
+                "period": period,
+                "available_periods": available,
+                "unit": unit,
+                # 모집단은 한 기간 안에서 기술마다 같다. 이것을 빼면 화면이 raw count 를
+                # 절대값으로 읽고, 코호트 크기가 다른 주차끼리 비교하게 된다
+                # (2026-08-31 = 4,045 / 2026-09-07 = 133).
+                "sample_repo_count": rows[0]["denominator"] if rows else None,
+                "registry_version": registry.registry_version,
+                "technology_population": len(registry.technologies),
+                "technologies": [
+                    {
+                        "tech_id": row["tech_id"],
+                        # Registry 에 없는 tech_id 는 이름을 지어내지 않는다.
+                        "display_name": names.get(row["tech_id"]),
+                        "rank": index + 1,
+                        "value": row["value"],
+                        "data_status": row["data_status"],
+                    }
+                    for index, row in enumerate(rows)
+                ],
             },
         }
 

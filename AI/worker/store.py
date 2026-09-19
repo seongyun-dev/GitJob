@@ -13,6 +13,33 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+# 출처마다 값이 들어 있는 point 필드가 다르다. 지표 이름이 곧 단위라, 한 필드를
+# 모든 출처에 맞추면 EVENTS 와 POSTINGS 가 한 축에 섞인다.
+TREND_VALUE_KEYS: dict[str, str] = {
+    # GH Archive 의 기술별 지표는 `active_repo_count` 다 — 그 기간에 그 기술이 관측된
+    # 저장소 수. 같은 point 의 `event_count` 는 순위에 쓸 수 없다: 그것은 기술의
+    # 이벤트가 아니라 **그 기술을 쓰는 저장소들의 전체 GH Archive 활동 합**이라,
+    # 한 저장소가 여러 기술을 쓰면 그 저장소의 활동량이 기술마다 통째로 다시 더해진다.
+    # Production 실측 — 2026-08-31 주간은 기술별 합 1,191,450 vs 코호트 실제 303,939
+    # (약 3.9배), 2026-08 월별도 약 2.2배. 분모도 없어 비율로 환산할 수 없다.
+    "GITHUB_GH_ARCHIVE": "active_repo_count",
+    "JOB": "value",
+}
+
+TREND_DENOMINATOR_KEYS: dict[str, str] = {
+    # 순위 값을 비율로 읽으려면 모집단이 필요하다. 주차마다 코호트 크기가 달라
+    # (2026-08-31 = 4,045 / 2026-09-07 = 133) raw count 를 기간끼리 비교하면 틀린다.
+    "GITHUB_GH_ARCHIVE": "sample_repo_count",
+    "JOB": "denominator",
+}
+
+TREND_RANKING_UNITS: dict[str, str] = {
+    # 순위에 쓰는 **필드의** 단위다. snapshot 이 선언한 headline `unit`(EVENTS)과 다른
+    # 것이 정상이다 — 그쪽은 `event_count` 의 단위이고, 순위는 그 값을 쓰지 않는다.
+    "GITHUB_GH_ARCHIVE": "REPOSITORIES",
+    "JOB": "POSTINGS",
+}
+
 MIGRATION_VERSION = 4
 MIGRATION_FILE = (
     Path(__file__).resolve().parents[2]
@@ -893,6 +920,134 @@ class ComputeStore:
                 (kind, owner or "", list(streams)),
             ).fetchall()
         return {row["stream"]: dict(row) for row in rows}
+
+    def get_trend_periods(self, *, source: str, granularity: str) -> list[str]:
+        """List the periods this source actually published, oldest first.
+
+        조회하는 쪽이 "최근 주차"를 달력으로 계산하면 게시되지 않은 주를 묻게 되고,
+        그러면 값이 있는데도 빈 카드가 뜬다. 어느 기간이 있는지는 저장한 쪽이 안다.
+
+        화면의 기간 이동도 이 목록을 쓴다(S15P21E102-329). 목록이 없으면 이전/다음
+        버튼이 어디로 갈지 알 수 없어 기능 자체가 성립하지 않는다.
+
+        오름순인 것은 기존 navigation 계약이다 — `model/periodRows`가 "기간은 오름순이고
+        마지막이 제일 최신"이라고 고정했고, 카드는 `periods[index - 1]`을 이전으로 읽는다.
+        기간 문자열은 정렬 가능한 형식이라(`2026-08`, `2026-09-07`) 같은 granularity
+        안에서는 사전순이 곧 시간순이다.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """WITH heads AS MATERIALIZED (
+                       SELECT s.payload
+                       FROM c_compute.head h
+                       JOIN c_compute.snapshot s ON s.snapshot_id = h.snapshot_id
+                       WHERE h.kind = 'TREND'
+                         AND h.owner = ''
+                         AND s.kind = 'TREND'
+                         AND s.payload->>'source' = %(source)s
+                   )
+                   SELECT DISTINCT p->>'period' AS period
+                   FROM heads, jsonb_array_elements(heads.payload->'points') p
+                   WHERE p->>'granularity' = %(granularity)s
+                     AND p->>%(value_key)s IS NOT NULL
+                   ORDER BY period ASC""",
+                {
+                    "source": source,
+                    "granularity": granularity,
+                    "value_key": TREND_VALUE_KEYS[source],
+                },
+            ).fetchall()
+        return [row["period"] for row in rows if row["period"]]
+
+    def get_trend_rankings(
+        self, *, source: str, granularity: str, period: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """Rank one period's technologies from the stored Trend heads.
+
+        <h2>Why this reads the stored result instead of recomputing</h2>
+
+        The numbers already exist. Each technology keeps a TREND head per source
+        and the payload carries the per-period points, so a ranking is a sort of
+        what is on disk -- not a new measurement. Asking the compute path again
+        would produce the same values at a much higher cost.
+
+        <h2>Which head speaks for a technology</h2>
+
+        A technology has several heads for one source because the stream identity
+        includes the published `periods` tuple, and the same period appears in
+        more than one publication. They agree today, but "they happen to agree"
+        is not a rule. The rule is the head that observed last, and the stream
+        breaks a tie so the answer never depends on row order.
+
+        Only heads that actually carry the requested period compete. Picking the
+        newest head first and then looking for the period would drop a technology
+        whose latest publication covers a different span.
+
+        <h2>Which value ranks</h2>
+
+        `TREND_VALUE_KEYS` 가 고른 필드다 — GH Archive 는 `active_repo_count`. 같은
+        point 의 `event_count` 로 정렬하면 순위가 "많이 쓰이는 기술"이 아니라 "바쁜
+        저장소에 같이 들어 있는 기술"이 된다. 분모(`TREND_DENOMINATOR_KEYS`)를 함께
+        돌려주는 것은 주차마다 코호트 크기가 달라 raw count 를 기간끼리 비교할 수 없기
+        때문이다. 비율은 여기서 만들지 않는다 — 저장된 값이 아닌 것을 저장물인 척
+        돌려주지 않는다.
+
+        <h2>Which rows are rankable</h2>
+
+        A row needs a value. The quality verdict rides along untouched so the
+        caller can say the sample is thin -- see S15P21E102-327. What is filtered
+        here is the absence of a measurement, not a weak one.
+
+        <h2>Why the head set is materialized</h2>
+
+        Written as one flat join the planner expanded every stored payload before
+        the source filter narrowed anything, and the read took 18s against
+        production -- past the statement timeout, so the endpoint simply failed.
+        Narrowing the heads first and only then walking their points returns the
+        same rows in about 160ms.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("invalid ranking limit")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """WITH heads AS MATERIALIZED (
+                       SELECT h.stream, h.occurred_at, s.payload
+                       FROM c_compute.head h
+                       JOIN c_compute.snapshot s ON s.snapshot_id = h.snapshot_id
+                       WHERE h.kind = 'TREND'
+                         AND h.owner = ''
+                         AND s.kind = 'TREND'
+                         AND s.payload->>'source' = %(source)s
+                   ),
+                   candidate AS (
+                       SELECT heads.payload->>'tech_id' AS tech_id,
+                              (p->>%(value_key)s)::bigint AS value,
+                              (p->>%(denominator_key)s)::bigint AS denominator,
+                              p->>'status' AS data_status,
+                              row_number() OVER (
+                                  PARTITION BY heads.payload->>'tech_id'
+                                  ORDER BY heads.occurred_at DESC, heads.stream DESC
+                              ) AS pick
+                       FROM heads, jsonb_array_elements(heads.payload->'points') p
+                       WHERE p->>'granularity' = %(granularity)s
+                         AND p->>'period' = %(period)s
+                         AND p->>%(value_key)s IS NOT NULL
+                   )
+                   SELECT tech_id, value, denominator, data_status
+                   FROM candidate
+                   WHERE pick = 1
+                   ORDER BY value DESC, tech_id ASC
+                   LIMIT %(limit)s""",
+                {
+                    "source": source,
+                    "granularity": granularity,
+                    "period": period,
+                    "value_key": TREND_VALUE_KEYS[source],
+                    "denominator_key": TREND_DENOMINATOR_KEYS[source],
+                    "limit": limit,
+                },
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_head_payloads(
         self, *, kind: str, owner: str | None, streams: tuple[str, ...]

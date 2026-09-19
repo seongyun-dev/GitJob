@@ -7,6 +7,7 @@ import com.example.git_job.compute.client.dto.CMatching;
 import com.example.git_job.compute.client.dto.CRelatedJobs;
 import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.client.dto.CTrend;
+import com.example.git_job.compute.client.dto.CTrendRanking;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,26 @@ public class CComputeApi {
         query.put("size", size);
         return client.get(RECOMMENDATIONS + snapshotId + "/job-postings", query,
                 CRelatedJobs.class);
+    }
+
+    /**
+     * 한 기간의 기술 순위 (S15P21E102-346).
+     *
+     * <p>기술 목록을 보내지 않는다. "이 기간에 많이 관측된 기술"은 모집단 전체를 봐야
+     * 나오는 답이라, 부르는 쪽이 후보를 고르면 다른 질문이 된다.</p>
+     *
+     * <p>C가 저장된 head를 정렬해서 주므로 계산을 유발하지 않는다.</p>
+     */
+    public CTrendRanking trendRankings(String source, String granularity, String period,
+                                       int limit) {
+        Map<String, Object> query = new HashMap<>();
+        query.put("source", source);
+        query.put("granularity", granularity);
+        if (period != null) {
+            query.put("period", period);
+        }
+        query.put("limit", limit);
+        return client.get("/internal/v1/c/trends/rankings", query, CTrendRanking.class);
     }
 
     /** 공용 Trend의 완료 head 조회. 계산을 만들지 않는 순수 조회다. */

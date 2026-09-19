@@ -691,6 +691,58 @@ Snapshot payload를 요청 순서대로 반환하므로, BE가 기술마다 reso
 
 `share`·`direction`은 C 값에서 온다. BE가 두 기간을 빼서 만들지 않는다.
 
+### 4.10 `GET /api/v1/trends/rankings` — 기간별 기술 순위 (화면 12)
+
+쿼리: `source`(`GITHUB_WEEKLY` · `GITHUB_ARCHIVE`), `granularity`(`WEEK` · `MONTH`),
+`period`(선택), `limit`(1~50, 기본 10).
+
+**호출자가 기술을 고르지 않는다.** `techIds`를 받지 않는 것이 4.9와의 차이다. 기술
+목록을 보내면 답이 "내가 고른 것들 중의 순위"가 되고, 화면 12가 물으려던 "이 기간에
+실제로 많이 관측된 기술"과는 다른 질문이 된다. 모집단은 Registry 전체다.
+
+주간·월별은 **같은 C 출처**(`GITHUB_GH_ARCHIVE`)를 쓰고 `granularity`만 갈린다.
+`WEEKLY_REPO_ACTIVITY`는 운영에 Snapshot이 0건이라 순위의 원천이 아니다.
+
+#### 순위 기준 값
+
+`points[].active_repo_count` — **그 기간에 그 기술이 관측된 저장소 수**. 분모는 같은
+point의 `sample_repo_count`다.
+
+같은 point의 `event_count`를 쓰지 않는다. 그것은 기술의 이벤트 수가 아니라 *그 기술을
+쓰는 저장소들의 전체 GH Archive 활동 합*이라, 한 저장소가 여러 기술을 쓰면 그 저장소의
+활동량이 기술마다 통째로 다시 더해진다. 운영 실측으로 2026-08-31 주간은 기술별 합
+1,191,450 대 코호트 실제 303,939(약 3.9배), 2026-08 월별도 약 2.2배였다. 분모도 없어
+비율로 환산할 수 없다.
+
+Snapshot이 선언한 headline `unit`은 `EVENTS`지만 그것은 `event_count`의 단위이고, 순위
+응답의 `unit`은 순위에 실제로 쓴 필드의 단위인 `REPOSITORIES`다.
+
+#### 기간
+
+`period`를 비우면 그 출처가 **실제로 게시한** 최신 기간을 C가 고른다. 화면이 달력으로
+최근 주차를 계산하면 아직 집계되지 않은 주를 물어 값이 있는데도 빈 카드가 뜬다.
+`availablePeriods`는 게시된 기간을 오름순으로 준다 — 화면 12의 카드 내 기간 이동이 이
+목록으로 움직인다(S15P21E102-329). 값이 없는 기간에도 목록은 그대로 실어 보낸다.
+목록을 버리면 아직 집계되지 않은 기간으로 옮겨 간 화면이 되돌아올 길을 잃는다.
+
+```json
+{ "sourceId": "GITHUB_WEEKLY", "granularity": "WEEK", "period": "2026-08-31",
+  "availablePeriods": ["2026-03-02", "2026-08-31", "2026-09-07"],
+  "unit": "REPOSITORIES", "sampleRepoCount": 4045,
+  "dataStatus": "READY", "technologyPopulation": 44,
+  "technologies": [
+    { "techId": "python", "displayName": "Python", "rank": 1, "value": 2434,
+      "dataStatus": "INSUFFICIENT_DATA" }] }
+```
+
+주차마다 모집단이 다르다(2026-08-31 = 4,045 · 2026-09-07 = 133). 두 기간의 raw count를
+같은 모집단처럼 비교하면 안 되고, 주간 카드와 월별 카드 사이도 마찬가지다. 그래서
+`sampleRepoCount`를 함께 준다 — 화면은 `value / sampleRepoCount`로 비중을 적는다.
+비율을 C가 새 metric으로 저장하지는 않는다.
+
+`dataStatus`는 C가 내린 판정을 그대로 옮긴다. 값이 있는데 표본이 얇은 것과 값이 없는
+것은 다른 사실이라 `INSUFFICIENT_DATA`를 `READY`로 올리지 않는다(S15P21E102-327).
+
 ## 5. FE가 지킬 것
 
 - 운영 빌드에서 `withDesignFixture` 결과가 화면에 남지 않는다. `features/`에서
