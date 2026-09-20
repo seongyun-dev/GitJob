@@ -563,3 +563,133 @@ def test_the_merged_count_reports_strict_merges_not_every_market_merge():
         - demand.review_count
     )
     assert strict - demand.cross_site_merged_count == demand.denominator
+
+
+# --- expired postings --------------------------------------------------------
+#
+# "지금 확보한 유효 공고"가 계약인데 마감 여부를 보지 않으면 분모는 수집한 누적 공고
+# 수로 자라기만 한다. 끝난 채용의 요구 기술이 현재 수요로 계속 계산되고, 오래 수집할
+# 수록 과거가 현재를 덮는다. 판정은 ACTIVE_MATCHING 과 같은 두 신호만 쓴다 —
+# posting_status 와 deadline. 둘 다 입력 계약에 이미 있는 필드다.
+
+
+def closed(identifier="closed", **changes):
+    return posting(identifier, posting_status="CLOSED", **changes)
+
+
+def test_market_excludes_a_posting_the_site_reports_as_closed():
+    inputs = batch(posting("open", required=("Java",)), closed(required=("Java",)))
+    demand = aggregate_demand(build_cohort(inputs, market()))
+
+    assert demand.denominator == 1
+    assert tech(demand, "java").total_count == 1
+
+
+def test_market_keeps_an_active_posting():
+    demand = aggregate_demand(build_cohort(batch(posting()), market()))
+
+    assert demand.denominator == 1
+
+
+def test_market_excludes_a_posting_whose_deadline_has_passed():
+    """`as_of` 기준이다. 오늘 날짜가 아니라 그 snapshot 이 선 시각으로 판정한다."""
+    inputs = batch(
+        posting("open", required=("Java",)),
+        posting("over", required=("Java",), deadline="2026-09-01T00:00:00Z"),
+    )
+    demand = aggregate_demand(build_cohort(inputs, market()))
+
+    assert demand.denominator == 1
+    assert tech(demand, "java").total_count == 1
+
+
+def test_market_keeps_a_deadline_that_has_not_arrived():
+    inputs = batch(posting("later", deadline="2026-12-31T00:00:00Z"))
+
+    assert aggregate_demand(build_cohort(inputs, market())).denominator == 1
+
+
+def test_market_keeps_a_posting_without_a_deadline():
+    """마감일이 없으면 만료를 주장할 근거가 없다. 남기는 것이 기존 정책이다.
+
+    현재 입력 계약에는 "마지막으로 목록에서 보인 시각"이 없어, 목록에서 사라진 것과
+    수집이 한 번 실패한 것을 구분할 수 없다. 임의 TTL 로 지우면 collector miss 를
+    마감으로 오판한다.
+    """
+    inputs = batch(posting("no-deadline", deadline=None, posting_status="UNKNOWN"))
+    cohort = build_cohort(inputs, market())
+
+    assert aggregate_demand(cohort).denominator == 1
+    assert any("POSTING_STATUS_UNKNOWN" in row.reasons for row in cohort.exclusions)
+
+
+def test_market_requirement_counts_fall_together_with_the_denominator():
+    """분모만 줄고 분자가 남으면 비율이 1 을 넘는다."""
+    inputs = batch(
+        posting("open", required=("Java",)),
+        closed("gone", required=("Java", "Python")),
+    )
+    demand = aggregate_demand(build_cohort(inputs, market()))
+
+    assert demand.denominator == 1
+    assert tech(demand, "java").total_count == 1
+    assert tech(demand, "java").total_ratio == 1.0
+    assert all(row.tech_id != "python" for row in demand.technologies)
+
+
+def test_an_expired_posting_still_keeps_its_lineage():
+    """분모에서 빼는 것이지 기록을 지우는 것이 아니다. 원본과 판정 근거는 남는다."""
+    cohort = build_cohort(batch(posting("open"), closed("gone")), market())
+    excluded = [row for row in cohort.exclusions if row.source_posting_id == "gone"]
+
+    assert len(excluded) == 1
+    assert "POSTING_CLOSED" in excluded[0].reasons
+    assert excluded[0].source_site == "SARAMIN"
+
+
+def test_every_source_follows_the_same_expiry_rule():
+    """JobKorea 와 Saramin 에 서로 다른 유효성 정의를 두지 않는다.
+
+    제목을 사이트마다 다르게 둔 것은 의도다. 두 열린 공고가 회사·제목·지역·마감일까지
+    같으면 S15P21E102-352 의 cross-site dedup 이 한 건으로 합쳐, 이 테스트가 재려는
+    만료 규칙 대신 중복 제거를 재게 된다.
+    """
+    inputs = batch(
+        posting(
+            "jk-open",
+            source_site="JOBKOREA",
+            source_posting_id="jk-open",
+            title="백엔드 개발자",
+        ),
+        closed("jk-closed", source_site="JOBKOREA", source_posting_id="jk-closed"),
+        posting(
+            "sr-open",
+            source_site="SARAMIN",
+            source_posting_id="sr-open",
+            title="플랫폼 엔지니어",
+        ),
+        closed("sr-closed", source_site="SARAMIN", source_posting_id="sr-closed"),
+    )
+    demand = aggregate_demand(build_cohort(inputs, market()))
+
+    assert demand.denominator == 2
+
+
+def test_monthly_demand_still_counts_a_posting_that_has_since_closed():
+    """완료된 달의 수요다. 지금 닫혔다고 빼면 오래된 달일수록 수요가 줄어든다."""
+    from test_monthly_demand_policy import august_posting, monthly_criteria
+
+    cohort = build_cohort(
+        batch(august_posting(posting_status="CLOSED")), monthly_criteria()
+    )
+
+    assert not any(
+        "POSTING_CLOSED" in row.reasons or "DEADLINE_PASSED" in row.reasons
+        for row in cohort.exclusions
+    )
+
+
+def test_a_malformed_deadline_never_reaches_the_cohort():
+    """형식이 깨진 날짜는 입력 검증에서 걸린다. 조용히 '만료 아님'이 되지 않는다."""
+    with pytest.raises(ValidationError, match="deadline"):
+        posting("bad", deadline="2026-13-01T00:00:00Z")
