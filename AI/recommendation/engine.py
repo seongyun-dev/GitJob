@@ -488,6 +488,24 @@ class _RecommendationContent(EvidenceModel):
         default=(), exclude_if=lambda value: not value
     )
 
+    @property
+    def calculation_jobs(self) -> tuple["RecommendationJob", ...]:
+        """The job set every count in this snapshot was computed over.
+
+        확장 계산은 `matching_jobs` 로 CURRENT·What-if 를 세고, 그 이전 계산은
+        `jobs` 로 센다. 그러니 저장된 ID 를 공고로 되돌리는 쪽도 **같은 집합** 을
+        봐야 한다. 이것이 따로 적혀 있으면 갈라진다 -- 실제로 갈라졌다
+        (S15P21E102-361): 설명 계층만 `jobs` 를 보다가 `matching_jobs` 에만 있는
+        공고에서 KeyError 로 죽었고, 그 사용자는 추천을 통째로 못 받았다.
+        운영 실측은 `jobs` 25건 대 `matching_jobs` 556건이었다.
+        """
+        return (
+            self.matching_jobs
+            if self.algorithm_version in EXPANDED_ALGORITHM_VERSIONS
+            and self.matching_jobs is not None
+            else self.jobs
+        )
+
 
 def _snapshot_id(payload: dict) -> str:
     content = json.dumps(
@@ -552,11 +570,7 @@ class RecommendationSnapshot(_RecommendationContent):
             raise ValueError("v6 recommendation requires expanded matching inputs")
         if not expanded and self.matching_jobs is not None:
             raise ValueError("expanded matching inputs require recommendation v6")
-        calculation_jobs: tuple[RecommendationJob, ...] = (
-            self.matching_jobs
-            if expanded and self.matching_jobs is not None
-            else self.jobs
-        )
+        calculation_jobs = self.calculation_jobs
         if self.cohort_id != self.demand.cohort_id or self.demand.denominator != len(
             calculation_jobs
         ):
@@ -1058,13 +1072,7 @@ def list_related_jobs(
         )
     else:
         raise ValueError("view must be CURRENT or WHAT_IF")
-    source_jobs: tuple[RecommendationJob, ...] = (
-        snapshot.matching_jobs
-        if snapshot.algorithm_version in EXPANDED_ALGORITHM_VERSIONS
-        and snapshot.matching_jobs is not None
-        else snapshot.jobs
-    )
-    jobs = {job.job_id: job for job in source_jobs}
+    jobs = {job.job_id: job for job in snapshot.calculation_jobs}
     return RelatedJobsPage(
         snapshot_id=snapshot.snapshot_id,
         cohort_id=snapshot.cohort_id,

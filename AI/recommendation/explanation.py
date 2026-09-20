@@ -74,7 +74,9 @@ def explain_recommendations(
     snapshot: RecommendationSnapshot, *, narrative_plan: dict | None = None
 ) -> Explanation:
     facts = []
-    jobs = {job.job_id: job for job in snapshot.jobs}
+    # 계산에 쓴 집합과 같은 것을 본다. `jobs` 만 보면 확장 계산에서 `matching_jobs`
+    # 에만 있는 공고를 만나 설명 생성이 통째로 실패한다 (S15P21E102-361).
+    jobs = {job.job_id: job for job in snapshot.calculation_jobs}
     for candidate in snapshot.candidates:
         demand = candidate.demand
         values = {
