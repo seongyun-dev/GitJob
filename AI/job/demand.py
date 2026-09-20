@@ -13,6 +13,7 @@ from job.cohort import (
     CohortStatus,
     JobCohort,
 )
+from job.cross_site_identity import canonical_identities
 from registry.contracts import TechId
 
 JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v3"
@@ -50,6 +51,15 @@ class DemandSnapshot(CohortModel):
     duplicate_count: StrictInt = Field(ge=0)
     excluded_count: StrictInt = Field(ge=0)
     review_count: StrictInt = Field(ge=0)
+    # CURRENT_MARKET에서 JobKorea↔Saramin 동일 공고로 판정되어 합쳐지면서
+    # **strict 모집단**이 줄어든 수 (S15P21E102-352). 시장 전체 병합 수가 아니다 —
+    # 제외된 공고끼리의 병합까지 세면 그 공고들을 말하지 않는 불변식에 슬랙만 준다.
+    #
+    # 0이면 직렬화에서 빠진다. Recommendation snapshot 의 id 는 내용 해시이므로
+    # 필드가 하나 늘면 합쳐진 것이 없는 과거 snapshot 까지 id 가 어긋난다.
+    cross_site_merged_count: StrictInt = Field(
+        default=0, ge=0, exclude_if=lambda value: value == 0
+    )
     dataset_snapshot_id: StrictStr
     pipeline_run_id: StrictStr
     collector_version: StrictStr
@@ -89,7 +99,7 @@ class DemandSnapshot(CohortModel):
             # 중복과 선언한 범위 밖 공고를 뺀 만큼 input_count보다 작다.
             if (
                 self.matching_count is not None
-                or strict_count > self.denominator
+                or strict_count - self.cross_site_merged_count > self.denominator
                 or self.denominator > self.input_count - self.duplicate_count
             ):
                 raise ValueError("market demand must use every in-scope posting")
@@ -178,16 +188,47 @@ def _aggregate_current_market(cohort: JobCohort) -> DemandSnapshot:
     stable identity to rank, and a MENTIONED one is a sighting rather than a
     requirement. Postings whose requirements never resolved stay in the
     denominator so the ratio is not inflated by shrinking it.
+
+    S15P21E102-352: one job advertised on both JobKorea and Saramin was two
+    postings here, inflating the denominator and every per-technology count.
+    High-confidence cross-site pairs now share one identity for this count only
+    — the rows keep their own `source_site`/`source_posting_id`, and
+    ACTIVE_MATCHING is not reached by this function at all.
     """
+
+    market_rows = [
+        item
+        for item in (*cohort.jobs, *cohort.exclusions)
+        # 선언한 범위 밖이거나 기준 시각에 관측되지 않은 공고는 시장이 아니다.
+        if not MARKET_SCOPE_EXCLUSIONS.intersection(getattr(item, "reasons", ()))
+    ]
+    canonical = canonical_identities(market_rows)
+
+    def _identity(item) -> str:
+        return canonical.get(
+            (item.source_site, item.source_posting_id),
+            f"{item.source_site}:{item.source_posting_id}",
+        )
+
+    # `strict_count` in the validator counts the strictly included postings, so
+    # the number reported here is the merges *within that set* — not every merge
+    # in the market. Counting all of them would let a merge between two excluded
+    # postings buy slack in an invariant that says nothing about them.
+    strict_keys = {(job.source_site, job.source_posting_id) for job in cohort.jobs}
+    strict_rows = [
+        row
+        for row in market_rows
+        if (row.source_site, row.source_posting_id) in strict_keys
+    ]
+    merged_strict = len(
+        {(row.source_site, row.source_posting_id) for row in strict_rows}
+    ) - len({_identity(row) for row in strict_rows})
 
     counts: dict[str, dict[str, set[str]]] = {}
     postings: set[str] = set()
-    for item in (*cohort.jobs, *cohort.exclusions):
-        if MARKET_SCOPE_EXCLUSIONS.intersection(getattr(item, "reasons", ())):
-            # 선언한 범위 밖이거나 기준 시각에 관측되지 않은 공고는 시장이 아니다.
-            continue
+    for item in market_rows:
         # 같은 공고가 다른 source_record_id로 다시 들어와도 한 건이다.
-        posting_id = f"{item.source_site}:{item.source_posting_id}"
+        posting_id = _identity(item)
         postings.add(posting_id)
         categories: dict[str, set[str]] = {
             "required": set(),
@@ -224,6 +265,7 @@ def _aggregate_current_market(cohort: JobCohort) -> DemandSnapshot:
         **metadata,
         denominator=denominator,
         matching_count=None,
+        cross_site_merged_count=merged_strict,
         technologies=_demand_rows(counts, denominator),
     )
 

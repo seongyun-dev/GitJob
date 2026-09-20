@@ -156,12 +156,29 @@ def test_market_separates_required_and_preferred_counts():
 
 
 def four_sites():
+    """One distinct job per site.
+
+    The titles differ on purpose. These are five separate jobs that happen to
+    share the fixture's company and region, and since S15P21E102-352 a
+    JobKorea/Saramin pair identical in company, title, region and deadline is
+    counted once -- which would silently change what the scope-filter tests
+    below are measuring.
+    """
+
     return batch(
-        posting("jk", required=("Java",), source_site="JOBKOREA"),
-        posting("sr", required=("Java",), source_site="SARAMIN"),
-        posting("wn", required=("Java",), source_site="WORKNET"),
-        posting("gj", required=("Java",), source_site="GAMEJOB"),
-        posting("cr", required=("Java",), source_site="CAREER"),
+        posting(
+            "jk", required=("Java",), source_site="JOBKOREA", title="백엔드 개발자"
+        ),
+        posting(
+            "sr", required=("Java",), source_site="SARAMIN", title="플랫폼 엔지니어"
+        ),
+        posting("wn", required=("Java",), source_site="WORKNET", title="서버 개발자"),
+        posting(
+            "gj", required=("Java",), source_site="GAMEJOB", title="게임 서버 개발자"
+        ),
+        posting(
+            "cr", required=("Java",), source_site="CAREER", title="시스템 엔지니어"
+        ),
     )
 
 
@@ -235,7 +252,14 @@ def test_market_never_produces_a_role_exclusion():
 
 
 def test_cross_source_duplicates_stay_independent_postings():
-    """Same company and title on two sites are two postings until canonicalized."""
+    """Company and title alone are not enough to call two sites one job.
+
+    S15P21E102-352 narrowed this: a JobKorea/Saramin pair that also agrees on
+    region and deadline is now counted once (see the canonical dedup tests
+    below). Everything short of that still stays two postings, which is what
+    this pair is -- the deadlines are two weeks apart, so there is no evidence
+    they are the same posting rather than two hiring rounds.
+    """
     inputs = batch(
         posting(
             "jk-1",
@@ -243,6 +267,7 @@ def test_cross_source_duplicates_stay_independent_postings():
             source_site="JOBKOREA",
             company_name="같은회사",
             title="백엔드 개발자",
+            deadline="2026-10-01T00:00:00Z",
         ),
         posting(
             "sr-1",
@@ -250,6 +275,7 @@ def test_cross_source_duplicates_stay_independent_postings():
             source_site="SARAMIN",
             company_name="같은회사",
             title="백엔드 개발자",
+            deadline="2026-10-15T00:00:00Z",
         ),
     )
     demand = aggregate_demand(
@@ -302,3 +328,238 @@ def test_market_demand_roundtrips_through_json():
     restored = DemandSnapshot.model_validate_json(demand.model_dump_json())
     assert restored == demand
     assert restored.criteria.purpose is CohortPurpose.CURRENT_MARKET
+
+
+# --- cross-site canonical dedup, Current Market only (S15P21E102-352) --------
+
+
+def xsite(identifier, site, required=("Java",), **changes):
+    defaults = {
+        "source_site": site,
+        "company_name": "같은회사",
+        "title": "백엔드 개발자",
+        "region": "서울 강남구",
+        "deadline": "2026-09-30T00:00:00Z",
+    }
+    defaults.update(changes)
+    return posting(identifier, required=required, **defaults)
+
+
+def test_market_counts_a_high_confidence_cross_site_pair_once():
+    """The same job on both sites is one posting in the market population."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA"),
+        xsite("sr-1", "SARAMIN", deadline="2026-10-01T00:00:00Z"),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 1
+    assert tech(demand, "java").total_count == 1
+
+
+def test_market_keeps_an_ambiguous_cross_site_pair_as_two():
+    """Deadlines two weeks apart read as separate posting cycles, not one job."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", deadline="2026-09-30T00:00:00Z"),
+        xsite("sr-1", "SARAMIN", deadline="2026-10-14T00:00:00Z"),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 2
+    assert tech(demand, "java").total_count == 2
+
+
+def test_market_keeps_different_roles_at_one_company_as_two():
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", title="백엔드 개발자"),
+        xsite("sr-1", "SARAMIN", title="프론트엔드 개발자"),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 2
+
+
+def test_market_keeps_a_many_to_one_cross_site_match_as_three():
+    """Two JobKorea reposts against one Saramin posting: no evidence which."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", deadline="2026-09-30T00:00:00Z"),
+        xsite("jk-2", "JOBKOREA", deadline="2026-09-29T00:00:00Z"),
+        xsite("sr-1", "SARAMIN", deadline="2026-10-01T00:00:00Z"),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 3
+
+
+def test_market_keeps_same_title_at_different_companies_as_two():
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", company_name="회사가"),
+        xsite(
+            "sr-1", "SARAMIN", company_name="회사나", deadline="2026-10-01T00:00:00Z"
+        ),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 2
+
+
+def test_active_matching_keeps_the_same_pair_as_two_postings():
+    """S15P21E102-352 changes Current Market only; matching identity is untouched."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA"),
+        xsite("sr-1", "SARAMIN", deadline="2026-10-01T00:00:00Z"),
+    )
+
+    cohort = build_cohort(inputs, backend(sources=["JOBKOREA", "SARAMIN"]))
+
+    assert len({job.job_id for job in cohort.jobs}) == 2
+    assert aggregate_demand(cohort).denominator == 2
+
+
+def test_market_dedup_leaves_source_identity_on_the_cohort_rows():
+    """Only the market count collapses; the rows keep both source identities."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA"),
+        xsite("sr-1", "SARAMIN", deadline="2026-10-01T00:00:00Z"),
+    )
+
+    cohort = build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+
+    assert {row.source_site for row in (*cohort.jobs, *cohort.exclusions)} == {
+        "JOBKOREA",
+        "SARAMIN",
+    }
+    assert aggregate_demand(cohort).denominator == 1
+
+
+# --- the merged count must not become a loophole (S15P21E102-352 audit) ------
+
+
+def test_a_merged_pair_counts_a_shared_technology_once():
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", required=("Python",)),
+        xsite("sr-1", "SARAMIN", required=("Python",), deadline="2026-10-01T00:00:00Z"),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 1
+    assert tech(demand, "python").total_count == 1
+
+
+def test_a_merged_pair_unions_technologies_but_counts_each_once():
+    """Two sites describe one job differently; the canonical job holds both."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", required=("Python",)),
+        xsite(
+            "sr-1",
+            "SARAMIN",
+            required=("Python", "Docker"),
+            deadline="2026-10-01T00:00:00Z",
+        ),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    assert demand.denominator == 1
+    assert tech(demand, "python").total_count == 1
+    assert tech(demand, "docker").total_count == 1
+
+
+def test_no_technology_can_exceed_the_denominator_at_scale():
+    """Many unrelated jobs plus several cross-site duplicates."""
+    records = []
+    for index in range(40):
+        records.append(
+            posting(
+                f"solo-{index}",
+                required=("Java",),
+                source_site="WORKNET",
+                company_name=f"회사{index}",
+                title=f"직무{index}",
+            )
+        )
+    for index in range(8):
+        records.append(
+            xsite(
+                f"jk-{index}",
+                "JOBKOREA",
+                company_name=f"중복회사{index}",
+                required=("Java",),
+            )
+        )
+        records.append(
+            xsite(
+                f"sr-{index}",
+                "SARAMIN",
+                company_name=f"중복회사{index}",
+                required=("Java",),
+                deadline="2026-10-01T00:00:00Z",
+            )
+        )
+
+    demand = aggregate_demand(build_cohort(batch(*records), market()))
+
+    assert demand.denominator == 48
+    assert demand.cross_site_merged_count == 8
+    for row in demand.technologies:
+        assert row.total_count <= demand.denominator
+
+
+def test_the_merged_count_cannot_excuse_a_technology_over_count():
+    """The per-technology guard never consults `cross_site_merged_count`."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", required=("Python",)),
+        xsite("sr-1", "SARAMIN", required=("Python",), deadline="2026-10-01T00:00:00Z"),
+    )
+    honest = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+    payload = honest.model_dump(mode="json")
+    # A technology claiming more postings than the market holds, with a large
+    # merge count alongside it. The merge count must not buy it any room.
+    payload["cross_site_merged_count"] = 40
+    payload["technologies"][0]["total_count"] = honest.denominator + 1
+    payload["technologies"][0]["required_count"] = honest.denominator + 1
+
+    with pytest.raises(ValidationError, match="total count"):
+        DemandSnapshot.model_validate(payload)
+
+
+def test_the_merged_count_reports_strict_merges_not_every_market_merge():
+    """Excluded postings merging must not lend slack to the strict invariant."""
+    inputs = batch(
+        xsite("jk-1", "JOBKOREA", required=("Python",)),
+        xsite("sr-1", "SARAMIN", required=("Python",), deadline="2026-10-01T00:00:00Z"),
+    )
+
+    demand = aggregate_demand(
+        build_cohort(inputs, market(sources=["JOBKOREA", "SARAMIN"]))
+    )
+
+    strict = (
+        demand.input_count
+        - demand.duplicate_count
+        - demand.excluded_count
+        - demand.review_count
+    )
+    assert strict - demand.cross_site_merged_count == demand.denominator
