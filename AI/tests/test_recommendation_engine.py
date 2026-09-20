@@ -137,7 +137,7 @@ def test_active_recommendation_uses_all_matching_candidates_without_vacuous_matc
 
     assert len(cohort.jobs) == 1
     assert len(cohort.matching_jobs or ()) == 2
-    assert result.algorithm_version == "c-recommendation/lexicographic/v6"
+    assert result.algorithm_version == "c-recommendation/lexicographic/v7"
     assert result.demand.denominator == 2
     assert result.demand.matching_count == 2
     assert len(result.matching_jobs or ()) == 2
@@ -176,12 +176,17 @@ def test_v3_without_personal_levels_never_falls_back_to_held_only_matching():
 
     result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
 
-    assert result.algorithm_version == "c-recommendation/lexicographic/v6"
+    assert result.algorithm_version == "c-recommendation/lexicographic/v7"
     assert result.current_count == 0
     assert result.current_job_ids == ()
-    assert result.status == "INSUFFICIENT_EVIDENCE"
-    assert result.candidates == ()
+    # Held evidence without a personal level still never promotes a job to
+    # matching -- that is what this test guards.
     assert "PERSONAL_LEVEL_UNCONFIRMED:java" in result.data_gaps
+    # Since S15P21E102-354 the same missing personal level makes java a *next
+    # skill* instead of hiding the screen: the user has not been shown to use it.
+    assert [item.tech_id for item in result.candidates] == ["java"]
+    assert result.candidates[0].evidence_status == "PERSONAL_LEVEL_UNKNOWN"
+    assert result.status == "PARTIAL"
 
 
 def test_v3_mixed_levelled_and_legacy_jobs_keeps_level_aware_matching():

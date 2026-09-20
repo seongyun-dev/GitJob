@@ -74,7 +74,13 @@ public record RecommendationResponse(
             String techId,
             int rank,
             String personalLevel,
-            /** {@code NOT_HELD} 또는 {@code L0}. */
+            /**
+             * {@code NOT_HELD} · {@code L0} · {@code PERSONAL_LEVEL_UNKNOWN}.
+             *
+             * <p>{@code PERSONAL_LEVEL_UNKNOWN}은 S15P21E102-354에서 생긴 값이다.
+             * 저장소에서 관측됐거나 미평가라 개인 Level이 없는 기술이며, 미보유로
+             * 단정하지 않고 "아직 직접 쓴 적 없는 기술"로 추천한다.</p>
+             */
             String evidenceStatus,
             Demand demand,
             WhatIfResponse.Counts whatIf,

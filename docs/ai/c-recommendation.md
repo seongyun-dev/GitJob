@@ -97,6 +97,29 @@ eligible_repository_ids에는 accepted 참여가 확인된 repository만 들어�
 
 `build_gap(selection, demanded_tech_ids=...)`은 `technology-gap/v2`로 held/missing/unknown을 나눈다. UNKNOWN은 missing 후보가 아니다. CURRENT·What-if·선행기술 확인 모두 같은 확인 기술 집합을 사용한다. What-if는 기술 하나만 추가하며 preferred를 필수 gate로 사용하지 않는다.
 
+### 추천 후보 자격 (S15P21E102-354, v7부터)
+
+Gap 의 의미는 그대로 두고 **추천 후보 자격만** 개인 Level 로 판정한다. 이 추천은 "이미
+가진 기술의 Level 을 올리자"가 아니라 "아직 직접 써 본 적 없는 새 기술 하나"이기
+때문이다.
+
+- `personal_level` 이 L1·L2·L3 이면 후보에서 제외한다. 공고가 더 높은 Level 을 요구해도
+  제외한다 -- 보유 기술 Level-up 은 이 계산의 답이 아니다.
+- `personal_level` 이 L0 이거나, 개인 판정이 없거나, Evidence 가 UNKNOWN 이면 후보다.
+  저장소에서 관측됐지만 개인 귀속이 없는 기술도 여기에 들어간다.
+
+Evidence 층은 바뀌지 않는다. UNKNOWN 은 계속 UNKNOWN 이고 `missing_tech_ids` 로
+옮기지 않는다 -- 후보 자격에서만 UNKNOWN 을 허용한다. 후보의 `evidence_status` 가
+`PERSONAL_LEVEL_UNKNOWN` 인 경우가 그것이며, 미보유로 단정한 `NOT_HELD` 와 다르다.
+
+후보가 존재하면 coverage 가 불완전해도 후보를 숨기지 않는다. 그때 결과는
+`INSUFFICIENT_EVIDENCE` 가 아니라 `PARTIAL` 이고, 근거가 부족하다는 사실은 data gap 으로
+함께 전달한다. 후보가 하나도 없을 때에만 기존 `INSUFFICIENT_EVIDENCE`/`NO_CANDIDATES`
+판정을 유지한다.
+
+Top3 는 `increased_count` 내림차순으로 고른다. 증가 건수 정의와 What-if 가정 Level(L1)
+은 바꾸지 않고 그대로 재사용한다.
+
 `consume_personal_levels()`는 v3에서 accepted supporting proof가 있는 repository
 profile의 personal_level만 취한다. 따라서 PARTIAL analysis라도 유효 positive proof는
 보유 수준으로 남고, proof/귀속/coverage가 미확정인 범위는 level을 만들어 내지 않는다.
@@ -129,8 +152,11 @@ repository proof와 C의 held/coverage 검증을 통과한 기술만 소비한�
 
 - 현재 confirmed 정책: c-confirmed/eligible-observation/v1
 - 현재 추천 결과 schema: recommendation-snapshot/v3; 실제 비교 후보 전체를 쓰는 계산은
-  c-recommendation/lexicographic/v6이다. 이전 v3 personal 입력 계산 v4와
-  v4 aggregate ceiling 입력 계산 v5는 저장된 결과 조회용으로 유지한다.
+  c-recommendation/lexicographic/v7이다. 후보 자격이 바뀐 새 계산이므로 새 버전이며,
+  같은 입력에 다른 후보를 내는 계산을 v6이라는 한 이름으로 부르지 않는다. 이전 후보
+  자격을 쓰는 v6과 v3 personal 입력 계산 v4, v4 aggregate ceiling 입력 계산 v5는
+  저장된 결과 조회용으로 유지한다. 저장된 snapshot은 자기 버전의 자격 규칙으로
+  재검증하므로 v6 이하 결과는 그대로 읽힌다.
 - 현재 설명: c-fact-explanation/v2
 - 구 결과의 c-held/project-participation/v1 정책은 신규 계산에 사용하지 않는다.
 - LegacyHeldTechnologySelection / LegacyGapSnapshot은 기존 출력 모양 그대로 분리해 읽는다. RecommendationSnapshot은 schema discriminator로 구/신 결과를 구분한다.

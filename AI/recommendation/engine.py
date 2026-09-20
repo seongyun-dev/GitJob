@@ -28,7 +28,13 @@ from recommendation.evidence import (
 )
 from registry.contracts import TechId
 
-RECOMMENDATION_ALGORITHM_VERSION = "c-recommendation/lexicographic/v6"
+#: S15P21E102-354 changed who may be a candidate, so it is a new calculation and
+#: not a new reading of the old one. v6 stays for reading stored results.
+NEW_SKILL_ALGORITHM_VERSION = "c-recommendation/lexicographic/v7"
+RECOMMENDATION_ALGORITHM_VERSION = NEW_SKILL_ALGORITHM_VERSION
+EXPANDED_ALGORITHM_VERSIONS = frozenset(
+    {"c-recommendation/lexicographic/v6", NEW_SKILL_ALGORITHM_VERSION}
+)
 PREREQUISITE_POLICY_VERSION = "c-learning-prerequisites/v1"
 LEGACY_TIE_BREAK_RULE = "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
 TIE_BREAK_RULE = "gain-desc,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
@@ -191,6 +197,36 @@ def _unlevelled_required_job_ids(
     )
 
 
+def _is_candidate_eligible(
+    tech_id: str,
+    *,
+    new_skill_policy: bool,
+    level_aware: bool,
+    missing_tech_ids,
+    personal_levels: dict[str, str],
+) -> bool:
+    """Whether a demanded technology may be recommended (S15P21E102-354).
+
+    The builder and the snapshot validator must answer this identically -- the
+    validator re-checks every stored candidate, so two copies of the rule would
+    make freshly built snapshots fail their own round-trip.
+
+    Under the next-skill policy the question is only "has the user personally
+    used this yet". A personal level of L1 or above means yes, so it is never a
+    candidate -- not even when the posting requires a higher level, because
+    levelling up a held technology is a different product decision. L0, no
+    personal assessment, and Evidence UNKNOWN all mean "not used yet".
+
+    Older calculations keep the missing-only rule so their stored snapshots stay
+    valid; UNKNOWN was never a missing candidate there.
+    """
+    if new_skill_policy and level_aware:
+        return personal_levels.get(tech_id) in (None, "L0")
+    return tech_id in missing_tech_ids or (
+        level_aware and personal_levels.get(tech_id) == "L0"
+    )
+
+
 def _explicit_personal_assessments(
     analysis: EvidenceAnalysis, held, relevant_tech_ids: set[str]
 ):
@@ -318,7 +354,10 @@ class RecommendationCandidate(EvidenceModel):
     tech_id: TechId
     rank: StrictInt = Field(ge=1, le=3)
     demand: TechnologyDemand
-    evidence_status: Literal["NOT_HELD", "L0"] = "NOT_HELD"
+    #: ``PERSONAL_LEVEL_UNKNOWN`` is the S15P21E102-354 case: the technology is
+    #: observed or unevaluated in the repositories but carries no personal level,
+    #: so it is offered as a new skill without claiming the user does not hold it.
+    evidence_status: Literal["NOT_HELD", "L0", "PERSONAL_LEVEL_UNKNOWN"] = "NOT_HELD"
     prerequisite_tech_ids: tuple[TechId, ...]
     missing_prerequisite_tech_ids: tuple[TechId, ...]
     unknown_prerequisite_tech_ids: tuple[TechId, ...]
@@ -359,6 +398,7 @@ class _RecommendationContent(EvidenceModel):
         "c-recommendation/lexicographic/v4",
         "c-recommendation/lexicographic/v5",
         "c-recommendation/lexicographic/v6",
+        "c-recommendation/lexicographic/v7",
     ] = RECOMMENDATION_ALGORITHM_VERSION
     prerequisite_policy_version: NonBlank
     prerequisite_snapshot: PrerequisiteSnapshot
@@ -413,6 +453,7 @@ class RecommendationSnapshot(_RecommendationContent):
                 "c-recommendation/lexicographic/v4",
                 "c-recommendation/lexicographic/v5",
                 "c-recommendation/lexicographic/v6",
+                NEW_SKILL_ALGORITHM_VERSION,
             }
             else LEGACY_TIE_BREAK_RULE
         )
@@ -429,7 +470,7 @@ class RecommendationSnapshot(_RecommendationContent):
             raise ValueError("snapshot Evidence/Gap identity mismatch")
         if self.held.held_policy_version != self.gap.held_policy_version:
             raise ValueError("snapshot Evidence/Gap policy mismatch")
-        expanded = self.algorithm_version == "c-recommendation/lexicographic/v6"
+        expanded = self.algorithm_version in EXPANDED_ALGORITHM_VERSIONS
         if expanded and (
             self.schema_version != "recommendation-snapshot/v3"
             or self.evidence_input_version is None
@@ -502,9 +543,14 @@ class RecommendationSnapshot(_RecommendationContent):
             self.candidates
         ):
             raise ValueError("duplicate recommendation candidate")
+        new_skill_policy = self.algorithm_version == NEW_SKILL_ALGORITHM_VERSION
         for candidate in self.candidates:
-            if candidate.tech_id not in self.gap.missing_tech_ids and not (
-                level_aware and self.personal_levels.get(candidate.tech_id) == "L0"
+            if not _is_candidate_eligible(
+                candidate.tech_id,
+                new_skill_policy=new_skill_policy,
+                level_aware=level_aware,
+                missing_tech_ids=self.gap.missing_tech_ids,
+                personal_levels=self.personal_levels,
             ):
                 raise ValueError("candidate must be an evaluated missing technology")
             projected = (
@@ -641,11 +687,27 @@ def build_recommendations(
     if calculation_status is not CohortStatus.READY:
         data_gaps.add(f"COHORT_{calculation_status.value}")
 
+    algorithm_version = (
+        NEW_SKILL_ALGORITHM_VERSION
+        if expanded
+        else "c-recommendation/lexicographic/v5"
+        if analysis.schema_version == "evidence-consumption-input/v4" and level_aware
+        else "c-recommendation/lexicographic/v4"
+        if level_aware
+        else "c-recommendation/lexicographic/v3"
+    )
+    # Derived from the version actually emitted, so the builder and the snapshot
+    # validator cannot drift apart on who is eligible.
+    new_skill_policy = algorithm_version == NEW_SKILL_ALGORITHM_VERSION
+
     ranked: list[tuple[tuple, dict]] = []
     for row in demand.technologies:
-        if calculation_status is not CohortStatus.READY or (
-            row.tech_id not in gap.missing_tech_ids
-            and not (level_aware and personal_levels.get(row.tech_id) == "L0")
+        if calculation_status is not CohortStatus.READY or not _is_candidate_eligible(
+            row.tech_id,
+            new_skill_policy=new_skill_policy,
+            level_aware=level_aware,
+            missing_tech_ids=gap.missing_tech_ids,
+            personal_levels=personal_levels,
         ):
             continue
         rule = prerequisite_rules.get(row.tech_id)
@@ -672,10 +734,16 @@ def build_recommendations(
             if level_aware
             else simulate_what_if(cohort, held, row.tech_id, jobs=calculation_jobs)
         )
-        reasons = {
-            "DEMAND_IN_SELECTED_COHORT",
-            "NO_HELD_EVIDENCE_UNDER_SELECTED_POLICY",
-        }
+        held_l0 = level_aware and personal_levels.get(row.tech_id) == "L0"
+        reasons = {"DEMAND_IN_SELECTED_COHORT"}
+        # A technology the user demonstrably holds must not be explained as "no
+        # held evidence". S15P21E102-354 recommends it for the absence of
+        # *personal* use, which is a different claim.
+        reasons.add(
+            "NO_HELD_EVIDENCE_UNDER_SELECTED_POLICY"
+            if row.tech_id in gap.missing_tech_ids or held_l0
+            else "NO_PERSONAL_USE_EVIDENCE"
+        )
         reasons.add(
             "DIRECT_JOB_INCREASE"
             if what_if.increased_count
@@ -716,8 +784,10 @@ def build_recommendations(
                     "tech_id": row.tech_id,
                     "evidence_status": (
                         "L0"
-                        if level_aware and personal_levels.get(row.tech_id) == "L0"
+                        if held_l0
                         else "NOT_HELD"
+                        if row.tech_id in gap.missing_tech_ids
+                        else "PERSONAL_LEVEL_UNKNOWN"
                     ),
                     "demand": row,
                     "prerequisite_tech_ids": required,
@@ -771,16 +841,7 @@ def build_recommendations(
             else None
         ),
         data_gaps=tuple(sorted(data_gaps)),
-        algorithm_version=(
-            "c-recommendation/lexicographic/v6"
-            if expanded
-            else "c-recommendation/lexicographic/v5"
-            if analysis.schema_version == "evidence-consumption-input/v4"
-            and level_aware
-            else "c-recommendation/lexicographic/v4"
-            if level_aware
-            else "c-recommendation/lexicographic/v3"
-        ),
+        algorithm_version=algorithm_version,
         personal_levels=personal_levels if level_aware else {},
         assessment_ceilings=assessment_ceilings if level_aware else {},
         level_assessment_complete_tech_ids=(
@@ -847,7 +908,7 @@ def list_related_jobs(
         raise ValueError("view must be CURRENT or WHAT_IF")
     source_jobs: tuple[RecommendationJob, ...] = (
         snapshot.matching_jobs
-        if snapshot.algorithm_version == "c-recommendation/lexicographic/v6"
+        if snapshot.algorithm_version in EXPANDED_ALGORITHM_VERSIONS
         and snapshot.matching_jobs is not None
         else snapshot.jobs
     )
