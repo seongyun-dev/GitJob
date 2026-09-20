@@ -319,7 +319,9 @@ def _jobkorea_v3_manifest(run_id: str, *, scope_reason: str) -> dict[str, object
     ]
     scopes[0]["scan_stop_reason"] = scope_reason
     run_reason = (
-        "all_scopes_complete" if scope_reason in {"short_page", "empty_page"} else scope_reason
+        "all_scopes_complete"
+        if scope_reason in {"short_page", "empty_page"}
+        else scope_reason
     )
     return {
         "schema_version": "job-analysis-input/v1",
@@ -331,9 +333,7 @@ def _jobkorea_v3_manifest(run_id: str, *, scope_reason: str) -> dict[str, object
         "counts": {"records": 3, "detail_errors": 0, "invalid_records": 0},
         "stopped_reason": None,
         "outputs": {"job_analysis_input.json": "job_analysis_input.json"},
-        "output_sha256": {
-            "job_analysis_input.json": hashlib.sha256(batch).hexdigest()
-        },
+        "output_sha256": {"job_analysis_input.json": hashlib.sha256(batch).hexdigest()},
         "source": {"site": "JOBKOREA", "mode": "active_listing", "duty_scopes": scopes},
         "stats": {"scan_stop_reason": run_reason},
     }
@@ -498,3 +498,95 @@ def test_a_dry_run_applies_the_same_gate():
 
     assert summary.outcomes[0].state == "BLOCKED"
     assert not summary.by_state("WOULD_PUBLISH")
+
+
+# -- a dry run changes no durable state (S15P21E102-357) ----------------------
+#
+# `--dry-run` is the default posture and both the CLI docstring and the backfill
+# runbook promise it writes nothing. The checkpoint was the exception: the
+# ALREADY_PUBLISHED branch recorded and saved before the dry-run check, so
+# simply *looking* rewrote the resume file. That silently moved runs from
+# ALREADY_PUBLISHED to SKIPPED_CHECKPOINT on the next pass, which changes what
+# an operator sees when they re-read a plan before approving it.
+
+
+def test_a_dry_run_does_not_create_a_checkpoint(tmp_path: Path):
+    hdfs = FakeHdfs()
+    hdfs.seed_run("saramin", "dt=2026-09-09", "SARAMIN-A")
+    path = tmp_path / "cp.json"
+
+    _run(hdfs, checkpoint=BackfillCheckpoint.load(path), dry_run=True)
+
+    assert not path.exists()
+
+
+def test_a_dry_run_over_an_already_published_run_leaves_the_checkpoint_alone(
+    tmp_path: Path,
+):
+    hdfs = FakeHdfs()
+    hdfs.seed_run("saramin", "dt=2026-09-09", "SARAMIN-A")
+    _run(hdfs)  # publish it for real
+    path = tmp_path / "cp.json"
+    path.write_text(json.dumps({"published": []}) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+
+    summary = _run(hdfs, checkpoint=BackfillCheckpoint.load(path), dry_run=True)
+
+    assert [o.state for o in summary.outcomes] == ["ALREADY_PUBLISHED"]
+    assert path.read_bytes() == before
+
+
+def test_a_dry_run_over_a_blocked_run_leaves_the_checkpoint_alone(tmp_path: Path):
+    hdfs = FakeHdfs()
+    hdfs.seed_run(
+        "saramin", "dt=2026-09-09", "SARAMIN-A", stopped_reason="before_start_date"
+    )
+    path = tmp_path / "cp.json"
+    path.write_text(json.dumps({"published": []}) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+
+    summary = _run(hdfs, checkpoint=BackfillCheckpoint.load(path), dry_run=True)
+
+    assert [o.state for o in summary.outcomes] == ["BLOCKED"]
+    assert path.read_bytes() == before
+
+
+def test_repeated_dry_runs_are_byte_identical(tmp_path: Path):
+    """An operator re-reading the plan must see the same plan."""
+    hdfs = FakeHdfs()
+    hdfs.seed_run("saramin", "dt=2026-09-09", "SARAMIN-A")
+    hdfs.seed_run("saramin", "dt=2026-09-10", "SARAMIN-B")
+    _run(hdfs)  # both already published
+    hdfs.seed_run("saramin", "dt=2026-09-11", "SARAMIN-C")
+    path = tmp_path / "cp.json"
+
+    first = _run(hdfs, checkpoint=BackfillCheckpoint.load(path), dry_run=True)
+    second = _run(hdfs, checkpoint=BackfillCheckpoint.load(path), dry_run=True)
+
+    assert [o.state for o in first.outcomes] == [o.state for o in second.outcomes]
+    assert not path.exists()
+
+
+def test_a_dry_run_never_publishes(tmp_path: Path):
+    hdfs = FakeHdfs()
+    hdfs.seed_run("saramin", "dt=2026-09-09", "SARAMIN-A")
+
+    _run(hdfs, checkpoint=BackfillCheckpoint.load(tmp_path / "cp.json"), dry_run=True)
+
+    assert _published(hdfs) == []
+
+
+def test_execute_still_records_already_published_runs_in_the_checkpoint(
+    tmp_path: Path,
+):
+    """The resume shortcut is the point of the checkpoint; only dry run is quiet."""
+    hdfs = FakeHdfs()
+    hdfs.seed_run("saramin", "dt=2026-09-09", "SARAMIN-A")
+    _run(hdfs)
+    path = tmp_path / "cp.json"
+
+    summary = _run(hdfs, checkpoint=BackfillCheckpoint.load(path))
+
+    assert [o.state for o in summary.outcomes] == ["ALREADY_PUBLISHED"]
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["published"] == ["saramin:SARAMIN-A"]

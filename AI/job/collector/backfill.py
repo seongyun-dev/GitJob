@@ -290,7 +290,12 @@ def backfill_runs(
             outcomes.append(BackfillOutcome(run, "SKIPPED_CHECKPOINT"))
             continue
         if _already_published(publisher, run):
-            if checkpoint is not None:
+            # S15P21E102-357: a dry run reports, it does not remember. Recording
+            # here regardless of `dry_run` meant reading the plan rewrote the
+            # resume file, and the next dry run reported the same runs as
+            # SKIPPED_CHECKPOINT instead of ALREADY_PUBLISHED -- a different
+            # plan from the one the operator just approved.
+            if checkpoint is not None and not dry_run:
                 checkpoint.remember(run)
                 checkpoint.save()
             outcomes.append(BackfillOutcome(run, "ALREADY_PUBLISHED"))
