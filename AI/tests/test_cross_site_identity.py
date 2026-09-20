@@ -158,6 +158,51 @@ def test_deadline_more_than_three_days_apart_does_not_merge():
     assert canonical_of(rows) == {}
 
 
+def test_deadline_pairing_is_stable_after_postgres_utc_round_trip():
+    original = [
+        Row(
+            "JOBKOREA",
+            "A",
+            "씨엔씨네트웍스",
+            "2026년 하반기 개발자 채용",
+            "서울 금천구",
+            datetime.fromisoformat("2026-10-18T23:59:59+09:00"),
+        ),
+        Row(
+            "SARAMIN",
+            "B",
+            "(주)씨엔씨네트웍스",
+            "2026년 하반기 개발자 채용",
+            "서울 금천구",
+            datetime.fromisoformat("2026-10-15T00:00:00+09:00"),
+        ),
+        Row(
+            "SARAMIN",
+            "C",
+            "(주)씨엔씨네트웍스",
+            "2026년 하반기 개발자 채용",
+            "서울 금천구",
+            datetime.fromisoformat("2026-10-16T00:00:00+09:00"),
+        ),
+    ]
+    restored = [
+        Row(
+            row.source_site,
+            row.source_posting_id,
+            row.company_name,
+            row.title,
+            row.region,
+            row.deadline.astimezone(UTC),
+        )
+        for row in original
+    ]
+
+    # Both Saramin rows remain candidates, so the ambiguous one-to-many group
+    # is never merged before or after a PostgreSQL timestamptz round trip.
+    assert canonical_of(original) == {}
+    assert canonical_of(restored) == canonical_of(original)
+
+
 def test_incompatible_region_does_not_merge():
     rows = [jk("A", region="서울 강동구"), sa("B", region="부산 해운대구")]
 

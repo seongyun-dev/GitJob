@@ -59,6 +59,13 @@ def _parity_projection():
             posting_status="UNKNOWN",
             required=("Python",),
         ),
+        # An unknown filter such as "협의" must not turn an unrestricted
+        # posting into a strict match in SQL; Python keeps it for review.
+        posting(
+            "unrestricted-career",
+            career_level="경력무관",
+            required=("Java",),
+        ),
         posting("closed", posting_status="CLOSED", required=("Kotlin",)),
         posting(
             "blocked",

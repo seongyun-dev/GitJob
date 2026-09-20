@@ -1190,3 +1190,21 @@ matching compute/active feature flag,
 
 이 항목들은 운영 자격 증명, 배포 window, 검증 사용자와 승인된 staging/복제본이 필요하다.
 로컬 격리 DB 결과나 기존 기준선 수치를 운영 after 수치로 사용하지 않는다.
+
+### 18.3 2026-09-21 최초 운영 gate 결과
+
+- Jenkins #271이 `develop` `a13d7e4`를 배포했고, 양 호스트 SHA가 일치했다.
+- Projection `jp-6f4261...`은 7,786건, missing fact 0, market sidecar READY였다.
+- 배포 직후 Worker는 projection mode였지만 query engine은 `python`이었다. C 내부
+  실측은 Current Market 11,769.5ms, 백엔드+서울 1,420.1ms, 백엔드+부산
+  101.8ms, 프론트엔드+경기+신입 105.6ms였다.
+- pinned persisted 100 selector gate는 100건을 모두 완료했지만 18 selector에서 mismatch가
+  발견돼 SQL 전환을 중단했다. 원인 분포는 review count 7, technology category 16,
+  technology rank 13이었다.
+- 운영 레코드 대조로 마감일을 원본 `+09:00`과 PostgreSQL UTC에서 다르게 비교한
+  cross-site fan-out과, unknown 경력 필터에서 `UNRESTRICTED`를 SQL만 strict match로 판정한
+  경계가 원인임을 확인했다.
+- 두 계약을 수정하고 운영 재현 fixture를 추가한 후 로컬 전체 AI `3815 passed,
+  160 skipped`, 격리 PostgreSQL 집중 `19 passed`를 통과했다. 수정 SHA를 재배포한
+  뒤 동일 Projection ID로 운영 100 selector mismatch 0을 재확인하기 전에는 SQL flag를
+  켜지 않는다.

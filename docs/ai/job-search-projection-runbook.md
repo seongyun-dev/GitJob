@@ -148,6 +148,7 @@ mkdir -p .local/projection-checkpoints
 "${COMPOSE[@]}" run --rm worker \
   python -m worker.job_projection_backfill --publish --from-postgres-env
 "${COMPOSE[@]}" run --rm \
+  --user "$(id -u):$(id -g)" \
   -v "$PWD/.local/projection-checkpoints:/checkpoints" worker \
   python -m worker.job_projection_shadow --persisted --from-postgres-env \
     --projection-version-id "$EXPECTED_PROJECTION_ID" \

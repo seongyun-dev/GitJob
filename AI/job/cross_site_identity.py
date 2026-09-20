@@ -29,7 +29,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Protocol
 
@@ -47,6 +47,7 @@ __all__ = [
 # a week apart and read as separate posting cycles. Three days keeps the former
 # and drops the latter.
 MAX_DEADLINE_DELTA_DAYS = 3
+_MARKET_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
 
 # Legal-form noise only. Nothing here can change which company is meant.
 _COMPANY_NOISE = (
@@ -145,7 +146,13 @@ def region_compatible(left: str | None, right: str | None) -> bool:
 def _deadline_close(left: datetime | None, right: datetime | None) -> bool:
     if left is None or right is None:
         return False
-    return abs((left.date() - right.date()).days) <= MAX_DEADLINE_DELTA_DAYS
+    # PostgreSQL timestamptz restores the same instant in the connection's
+    # timezone (UTC in production), while collector payloads carry +09:00.
+    # The policy is expressed in Korean job-board calendar days, so compare in
+    # one explicit timezone instead of letting serialization change a pair.
+    left_date = left.astimezone(_MARKET_TIMEZONE).date()
+    right_date = right.astimezone(_MARKET_TIMEZONE).date()
+    return abs((left_date - right_date).days) <= MAX_DEADLINE_DELTA_DAYS
 
 
 def _key(row: _Row) -> tuple[str, str]:

@@ -79,10 +79,10 @@ WITH base AS (
            CASE
              WHEN NOT %(has_careers)s THEN 0
              WHEN raw_career_identity = ANY(%(raw_careers)s::text[]) THEN 0
-             WHEN career_state = 'UNRESTRICTED' THEN 0
              WHEN career_codes && %(career_codes)s::text[] THEN 0
-             WHEN career_state IN ('UNKNOWN', 'AMBIGUOUS')
-                  OR %(career_filter_unknown)s THEN 1
+             WHEN %(career_filter_unknown)s THEN 1
+             WHEN career_state = 'UNRESTRICTED' THEN 0
+             WHEN career_state IN ('UNKNOWN', 'AMBIGUOUS') THEN 1
              ELSE 2
            END AS career_decision
       FROM base
