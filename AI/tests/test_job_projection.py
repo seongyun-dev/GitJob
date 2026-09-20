@@ -7,6 +7,9 @@ import pytest
 from test_job_cohort import criteria, posting
 from test_job_input_union import output
 
+import job.projection as projection_module
+import worker.job_projection_shadow as shadow_module
+from job.cohort import CohortPurpose
 from job.demand import aggregate_demand
 from job.input_union import build_prepared_input_union, prepare_input_union
 from job.projection import (
@@ -18,7 +21,11 @@ from job.projection import (
 from registry.mapper import RegistryMapper
 from worker.api import default_registry
 from worker.job_projection_backfill import main as backfill_main
-from worker.job_projection_shadow import selector_matrix, validate_selectors
+from worker.job_projection_shadow import (
+    selector_matrix,
+    validate_persisted_selectors,
+    validate_selectors,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +64,9 @@ def test_projection_is_deterministic_and_contains_no_raw_description():
     assert first.build_stats["unknown_status_job_count"] == 0
     assert first.build_stats["source_job_counts"] == {"SARAMIN": 1}
     assert first.build_stats["source_input_states"] == {"SARAMIN": "COMPLETE"}
+    assert len(first.market_jobs) == len(first.jobs)
+    assert first.build_stats["market_job_count"] == len(first.jobs)
+    assert first.build_stats["market_policy_version"] == "job-projection-market/v2"
 
 
 def test_projection_preserves_unknown_and_conflict_quality_without_dropping_job():
@@ -89,6 +99,33 @@ def test_projection_identity_changes_with_verified_input_signature():
     )
     assert original.input_signature != changed.input_signature
     assert original.projection_version_id != changed.projection_version_id
+
+
+def test_projection_candidate_safety_gate_fails_without_truncating(monkeypatch):
+    saramin = posting(
+        "shared-s",
+        company_name="Example",
+        title="백엔드 개발자",
+    )
+    jobkorea = posting(
+        "shared-j",
+        source_site="JOBKOREA",
+        company_name="Example",
+        title="백엔드 개발자",
+    )
+    prepared = prepare_input_union(
+        (
+            output(saramin, run="candidate-s"),
+            output(jobkorea, source="JOBKOREA", run="candidate-j"),
+        ),
+        criteria(),
+        RegistryMapper(default_registry()),
+    )
+    monkeypatch.setattr(projection_module, "MAX_MARKET_CANDIDATES_BASE", 0)
+    monkeypatch.setattr(projection_module, "MAX_MARKET_CANDIDATES_PER_JOB", 0)
+
+    with pytest.raises(ValueError, match="candidate total"):
+        materialize_job_projection(prepared)
 
 
 def test_backfill_dry_run_performs_no_database_write(monkeypatch, capsys):
@@ -215,4 +252,147 @@ def test_fixed_100_selector_shadow_gate_has_no_unexpected_mismatch():
     selectors = selector_matrix(criteria().as_of, market_sources=("SARAMIN",))
 
     assert len(selectors) == 100
+    assert sum(
+        item.purpose is CohortPurpose.ACTIVE_MATCHING for item in selectors
+    ) == 80
+    assert sum(
+        item.purpose is CohortPurpose.CURRENT_MARKET for item in selectors
+    ) == 20
+    assert any(item.regions == ("전국",) for item in selectors)
+    assert any(item.regions == ("원격",) for item in selectors)
+    assert any(item.regions == ("경기", "서울") for item in selectors)
+    assert any(item.career_levels == ("경력", "신입") for item in selectors)
+    assert any(item.career_levels == ("협의",) for item in selectors)
     assert validate_selectors(prepared, projection, selectors) == []
+
+
+def test_persisted_selector_gate_resumes_completed_results():
+    projection = materialize_job_projection(_prepared(posting("resume")))
+    selectors = selector_matrix(criteria().as_of)[:2]
+
+    class Store:
+        def __init__(self):
+            self.demand_calls = []
+
+        def demand(self, selected, *, projection_version_id):
+            self.demand_calls.append(selected)
+            return aggregate_projection_demand(projection, selected)
+
+        def summary(self, selected, *, projection_version_id):
+            return aggregate_projection_demand(projection, selected).snapshot
+
+        def selected_job_keys(self, selected, *, projection_version_id):
+            return aggregate_projection_demand(projection, selected).selected_job_ids
+
+    store = Store()
+    completed = {
+        "0": {
+            "criteria": selectors[0].model_dump(mode="json"),
+            "fields": [],
+        }
+    }
+    checkpoints = []
+
+    assert validate_persisted_selectors(
+        store,
+        projection.projection_version_id,
+        selectors,
+        completed=completed,
+        on_result=lambda index, results: checkpoints.append((index, len(results))),
+    ) == []
+    assert store.demand_calls == [selectors[1]]
+    assert checkpoints == [(1, 2)]
+
+    completed["0"]["fields"] = ["denominator"]
+    resumed = validate_persisted_selectors(
+        store,
+        projection.projection_version_id,
+        selectors[:1],
+        completed=completed,
+    )
+    assert resumed[0]["fields"] == ("denominator",)
+
+
+def test_persisted_selector_gate_rejects_foreign_checkpoint(
+    monkeypatch, tmp_path
+):
+    projection_id = "jp-" + "a" * 64
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "projection_version_id": "jp-" + "b" * 64,
+                "selector_hash": "wrong",
+                "completed": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Store:
+        def head(self):
+            return {
+                "projection_version_id": projection_id,
+                "observed_at": criteria().as_of,
+            }
+
+    monkeypatch.setenv("C_COMPUTE_DATABASE_URL", "postgresql://unused")
+    monkeypatch.setattr(shadow_module, "JobProjectionStore", lambda _dsn: Store())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "job_projection_shadow",
+            "--persisted",
+            "--projection-version-id",
+            projection_id,
+            "--checkpoint",
+            str(checkpoint),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        shadow_module.main()
+
+
+def test_persisted_selector_gate_rejects_head_change_during_validation(
+    monkeypatch, tmp_path
+):
+    projection_id = "jp-" + "a" * 64
+    replacement_id = "jp-" + "b" * 64
+
+    class Store:
+        def __init__(self):
+            self.head_calls = 0
+
+        def head(self):
+            self.head_calls += 1
+            return {
+                "projection_version_id": (
+                    projection_id if self.head_calls == 1 else replacement_id
+                ),
+                "observed_at": criteria().as_of,
+            }
+
+    monkeypatch.setenv("C_COMPUTE_DATABASE_URL", "postgresql://unused")
+    monkeypatch.setattr(shadow_module, "JobProjectionStore", lambda _dsn: Store())
+    monkeypatch.setattr(
+        shadow_module,
+        "validate_persisted_selectors",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "job_projection_shadow",
+            "--persisted",
+            "--projection-version-id",
+            projection_id,
+            "--checkpoint",
+            str(tmp_path / "checkpoint.json"),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        shadow_module.main()

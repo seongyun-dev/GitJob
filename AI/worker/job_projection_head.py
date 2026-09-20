@@ -7,6 +7,7 @@ import json
 import os
 
 from worker.job_projection_store import JobProjectionStore
+from worker.postgres_env import dsn_from_postgres_env
 
 
 def main() -> None:
@@ -15,10 +16,19 @@ def main() -> None:
     parser.add_argument("--to", required=True, dest="target")
     parser.add_argument("--actor", required=True)
     parser.add_argument("--reason", required=True)
+    parser.add_argument(
+        "--from-postgres-env",
+        action="store_true",
+        help="Build the rollback DSN from explicit POSTGRES_* variables",
+    )
     args = parser.parse_args()
-    dsn = os.environ.get("C_COMPUTE_DATABASE_URL")
+    dsn = (
+        dsn_from_postgres_env()
+        if args.from_postgres_env
+        else os.environ.get("C_COMPUTE_DATABASE_URL")
+    )
     if not dsn:
-        parser.error("C_COMPUTE_DATABASE_URL is required")
+        parser.error("C_COMPUTE_DATABASE_URL or --from-postgres-env is required")
     selected = JobProjectionStore(dsn).rollback(
         expected_current=args.expected_current,
         target_projection_version_id=args.target,

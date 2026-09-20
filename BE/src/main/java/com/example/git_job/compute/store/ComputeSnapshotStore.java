@@ -302,6 +302,54 @@ public class ComputeSnapshotStore {
                 attempt.runToken());
     }
 
+    /**
+     * FAILED 행 하나를 exact identity/token CAS로 scheduler 대기 상태로 되돌린다.
+     * 감사 INSERT와 상태 변경은 같은 PostgreSQL statement에서 원자적이다.
+     */
+    public Optional<ComputeAttempt> rearmFailedAttempt(long userId, String targetKey,
+            String evidenceVersion, UUID expectedRunToken, long actorUserId,
+            String operatorReason, Instant now) {
+        UUID pendingToken = UUID.randomUUID();
+        UUID auditId = UUID.randomUUID();
+        return jdbc.query("""
+                WITH locked AS (
+                    SELECT user_id, target_key, evidence_version, reason,
+                           attempt_count, run_token
+                    FROM user_c_compute_attempt
+                    WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                      AND run_token = ? AND status = 'FAILED'
+                    FOR UPDATE
+                ), changed AS (
+                    UPDATE user_c_compute_attempt attempt
+                    SET status = 'RETRYING', reason = 'OPERATOR_REARMED',
+                        attempt_count = 0, run_token = ?, next_retry_at = ?, updated_at = ?
+                    FROM locked
+                    WHERE attempt.user_id = locked.user_id
+                      AND attempt.target_key = locked.target_key
+                      AND attempt.evidence_version = locked.evidence_version
+                    RETURNING attempt.user_id, attempt.target_key,
+                              attempt.evidence_version, attempt.status, attempt.reason,
+                              attempt.attempt_count, attempt.run_token,
+                              attempt.next_retry_at, attempt.updated_at
+                ), audited AS (
+                    INSERT INTO user_c_compute_attempt_rearm_audit
+                        (rearm_id, user_id, target_key, evidence_version,
+                         before_reason, before_attempt_count, before_run_token,
+                         after_run_token, actor_user_id, operator_reason, created_at)
+                    SELECT ?, locked.user_id, locked.target_key, locked.evidence_version,
+                           locked.reason, locked.attempt_count, locked.run_token,
+                           changed.run_token, ?, ?, ?
+                    FROM locked JOIN changed USING (user_id, target_key, evidence_version)
+                    RETURNING rearm_id
+                )
+                SELECT changed.* FROM changed CROSS JOIN audited
+                """, ATTEMPT_MAPPER,
+                userId, targetKey, evidenceVersion, expectedRunToken,
+                pendingToken, java.sql.Timestamp.from(now), java.sql.Timestamp.from(now),
+                auditId, actorUserId, operatorReason.strip(), java.sql.Timestamp.from(now)
+        ).stream().findFirst();
+    }
+
     private static Instant instantOrNull(java.sql.Timestamp value) {
         return value == null ? null : value.toInstant();
     }

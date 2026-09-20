@@ -8,7 +8,6 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
 from worker.store import MIGRATION_FILES, MIGRATION_VERSION, apply_migration
 
 
@@ -28,7 +27,7 @@ def test_forward_migration_keeps_contract_valid_dataset_ids_lossless():
 
 
 def test_job_search_projection_migration_is_forward_only_and_immutable():
-    assert MIGRATION_VERSION == 7
+    assert MIGRATION_VERSION == 8
     migration = MIGRATION_FILES[4]
     assert migration.name == "005_job_search_projection.sql"
     sql = migration.read_text(encoding="utf-8").lower()
@@ -53,7 +52,7 @@ def test_current_result_migration_is_additive_and_keeps_legacy_snapshot_refs():
 
 
 def test_projection_publication_safety_migration_is_forward_only():
-    migration = MIGRATION_FILES[-1]
+    migration = MIGRATION_FILES[6]
     assert migration.name == "007_projection_publication_safety.sql"
     sql = migration.read_text(encoding="utf-8").lower()
     assert "source_occurred_at" in sql
@@ -65,6 +64,17 @@ def test_projection_publication_safety_migration_is_forward_only():
     assert "job_projection_head_audit" in sql
     assert "c_job_projection_block_immutable" in sql
     assert "c_job_projection_head_audit_immutable" in sql
+    assert "drop table" not in sql
+
+
+def test_projection_market_sidecar_migration_is_forward_only_and_immutable():
+    migration = MIGRATION_FILES[7]
+    assert migration.name == "008_job_projection_market_sidecar.sql"
+    sql = migration.read_text(encoding="utf-8").lower()
+    assert "create table c_compute.job_projection_market_job" in sql
+    assert "create table c_compute.job_projection_market_candidate" in sql
+    assert "c_job_projection_market_job_immutable" in sql
+    assert "c_job_projection_market_candidate_immutable" in sql
     assert "drop table" not in sql
 
 

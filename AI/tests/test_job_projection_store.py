@@ -15,6 +15,10 @@ from job.input_union import prepare_input_union
 from job.projection import materialize_job_projection
 from registry.mapper import RegistryMapper
 from worker.api import default_registry
+from worker.job_projection_shadow import (
+    selector_matrix,
+    validate_persisted_selectors,
+)
 from worker.job_projection_store import JobProjectionIntegrityError, JobProjectionStore
 from worker.store import ComputeStore, apply_migration
 
@@ -45,6 +49,55 @@ def _projection(job_id="projection-store"):
     return materialize_job_projection(prepared)
 
 
+def _parity_projection():
+    records = (
+        posting("active", required=("Java",), preferred=("Redis",)),
+        posting(
+            "unknown",
+            region="원격",
+            career_level="협의",
+            posting_status="UNKNOWN",
+            required=("Python",),
+        ),
+        posting("closed", posting_status="CLOSED", required=("Kotlin",)),
+        posting(
+            "blocked",
+            body_status="BLOCKED",
+            description_text=None,
+            technology_mentions=(),
+        ),
+        posting(
+            "shared-s",
+            company_name="주식회사 Example Shared",
+            title="백엔드 개발자 채용",
+            required=("Docker",),
+        ),
+        posting(
+            "shared-s-experienced",
+            company_name="주식회사 Example Shared",
+            title="백엔드 개발자 채용",
+            career_level="경력 3년",
+            required=("Docker",),
+        ),
+    )
+    jobkorea = posting(
+        "shared-j",
+        source_site="JOBKOREA",
+        company_name="Example Shared",
+        title="백엔드 개발자",
+        required=("Docker",),
+    )
+    prepared = prepare_input_union(
+        (
+            output(*records, run="parity-s"),
+            output(jobkorea, source="JOBKOREA", run="parity-j"),
+        ),
+        criteria(),
+        RegistryMapper(default_registry()),
+    )
+    return materialize_job_projection(prepared)
+
+
 def _rekey(projection, marker: str, *, observed_at):
     projection_id = "jp-" + sha256(
         f"{marker}:{projection.projection_version_id}".encode()
@@ -56,6 +109,14 @@ def _rekey(projection, marker: str, *, observed_at):
         jobs=tuple(
             replace(job, projection_version_id=projection_id)
             for job in projection.jobs
+        ),
+        market_jobs=tuple(
+            replace(job, projection_version_id=projection_id)
+            for job in projection.market_jobs
+        ),
+        market_candidates=tuple(
+            replace(candidate, projection_version_id=projection_id)
+            for candidate in projection.market_candidates
         ),
     )
 
@@ -79,9 +140,80 @@ def test_projection_publish_is_idempotent_and_head_is_published(store):
     assert len(demand.selected_job_ids) == 1
     assert demand.selected_job_ids[0].startswith("SARAMIN:projection-store-")
     assert demand.snapshot.denominator == 1
+    summary = store.query_job_projection_demand_summary(criteria())
+    assert summary.model_dump(mode="json") == demand.snapshot.model_dump(mode="json")
     readiness = store.get_job_projection_readiness()
     assert readiness["status"] == "READY"
     assert readiness["stored_job_count"] == readiness["job_count"]
+
+
+@pytest.mark.parametrize(
+    "selected",
+    [
+        criteria(),
+        criteria(regions=("서울",)),
+        criteria(regions=("전국",)),
+        criteria(regions=("원격",), career_levels=("협의",)),
+        criteria(
+            target_role=None,
+            purpose="CURRENT_MARKET",
+            sources=("SARAMIN", "JOBKOREA"),
+        ),
+        criteria(
+            target_role=None,
+            purpose="CURRENT_MARKET",
+            sources=("SARAMIN", "JOBKOREA"),
+            career_levels=("신입",),
+        ),
+    ],
+)
+def test_sql_summary_matches_payload_python_projection(store, selected):
+    projection = _parity_projection()
+    store.publish_job_projection(projection)
+    python_result = store.query_job_projection_demand(
+        selected, projection_version_id=projection.projection_version_id
+    )
+    sql_result = store.query_job_projection_demand_summary(
+        selected, projection_version_id=projection.projection_version_id
+    )
+    assert sql_result.model_dump(mode="json") == python_result.snapshot.model_dump(
+        mode="json"
+    )
+    if selected.purpose.value == "ACTIVE_MATCHING":
+        restored = store.query_job_projection_cohort(
+            selected, projection_version_id=projection.projection_version_id
+        )
+        assert restored.selected_job_ids == python_result.selected_job_ids
+        assert restored.cohort.projection_version_id == projection.projection_version_id
+        assert restored.cohort.cohort_id == restored.snapshot.cohort_id
+
+
+def test_postgres_fixed_100_selector_sql_gate_has_no_mismatch(store):
+    projection = _parity_projection()
+    store.publish_job_projection(projection)
+    selectors = selector_matrix(
+        criteria().as_of, market_sources=("SARAMIN", "JOBKOREA")
+    )
+    assert validate_persisted_selectors(
+        JobProjectionStore(store._dsn), projection.projection_version_id, selectors
+    ) == []
+
+
+def test_selected_fact_restore_rejects_projection_version_drift(store):
+    projection = _projection("projection-fact-version")
+    store.publish_job_projection(projection)
+    with store._connect() as conn:
+        conn.execute(
+            """UPDATE c_compute.job_projection_version
+               SET parser_version = 'tampered-parser/v1'
+               WHERE projection_version_id = %s""",
+            (projection.projection_version_id,),
+        )
+
+    with pytest.raises(JobProjectionIntegrityError, match="versions disagree"):
+        store.query_job_projection_cohort(
+            criteria(), projection_version_id=projection.projection_version_id
+        )
 
 
 def test_failed_build_keeps_previous_head_and_records_failure(store):

@@ -27,10 +27,19 @@ public class UserTargetStore {
     }
 
     public Optional<Target> find(long userId) {
+        return find(userId, false);
+    }
+
+    /** 관리자 exact-CAS 복구가 끝날 때까지 현재 목표 변경을 직렬화한다. */
+    public Optional<Target> findForUpdate(long userId) {
+        return find(userId, true);
+    }
+
+    private Optional<Target> find(long userId, boolean forUpdate) {
         return jdbc.query("""
                 SELECT target_role, regions, career_levels, updated_at
                 FROM user_target WHERE user_id = ?
-                """, (rs, row) -> new Target(
+                """ + (forUpdate ? " FOR UPDATE" : ""), (rs, row) -> new Target(
                         rs.getString("target_role"),
                         split(rs.getString("regions")),
                         split(rs.getString("career_levels")),

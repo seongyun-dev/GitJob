@@ -40,7 +40,7 @@ TREND_RANKING_UNITS: dict[str, str] = {
     "JOB": "POSTINGS",
 }
 
-MIGRATION_VERSION = 7
+MIGRATION_VERSION = 8
 MIGRATION_FILE = (
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/001_c_compute.sql"
@@ -59,6 +59,8 @@ MIGRATION_FILES = (
     / "BE/src/main/resources/db/c-compute/006_current_result.sql",
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/007_projection_publication_safety.sql",
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/008_job_projection_market_sidecar.sql",
 )
 
 
@@ -233,12 +235,74 @@ class ComputeStore:
             criteria, projection_version_id=projection_version_id
         )
 
+    def query_job_projection_demand_summary(
+        self, criteria, *, projection_version_id=None
+    ):
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).summary(
+            criteria, projection_version_id=projection_version_id
+        )
+
+    def query_job_projection_cohort(self, criteria, *, projection_version_id):
+        """Restore the pinned personalized cohort; never used by Preview."""
+
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).cohort(
+            criteria, projection_version_id=projection_version_id
+        )
+
+    def query_job_projection_selected_keys(self, criteria, *, projection_version_id):
+        """Read only selector identities for bounded SQL/Python shadow parity."""
+
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).selected_job_keys(
+            criteria, projection_version_id=projection_version_id
+        )
+
+    def store_projection_compatibility_pair(self, cohort, demand):
+        """Idempotently persist one immutable projection COHORT/DEMAND pair."""
+
+        if (
+            cohort.projection_version_id is None
+            or cohort.projection_version_id != demand.projection_version_id
+        ):
+            raise ValueError("projection compatibility pair identity disagrees")
+        artifacts = (
+            Artifact("COHORT", None, cohort.model_dump(mode="json"), "compatibility"),
+            Artifact("DEMAND", None, demand.model_dump(mode="json"), "compatibility"),
+        )
+        with self._connect() as conn:
+            for artifact in artifacts:
+                conn.execute(
+                    """INSERT INTO c_compute.snapshot(snapshot_id, kind, owner, payload)
+                       VALUES (%s, %s, '', %s) ON CONFLICT(snapshot_id) DO NOTHING""",
+                    (artifact.snapshot_id, artifact.kind, Jsonb(artifact.payload)),
+                )
+        return {
+            "cohort_snapshot_id": artifacts[0].snapshot_id,
+            "demand_snapshot_id": artifacts[1].snapshot_id,
+        }
+
     def resolve_job_projection_selector(self, selector):
         head = self.get_job_projection_head()
         if head is None:
             return None
         criteria = selector.criteria_at(head["observed_at"])
-        return criteria, self.query_job_projection_demand(criteria)
+        return criteria, self.query_job_projection_demand(
+            criteria, projection_version_id=head["projection_version_id"]
+        )
+
+    def resolve_job_projection_summary(self, selector):
+        head = self.get_job_projection_head()
+        if head is None:
+            return None
+        criteria = selector.criteria_at(head["observed_at"])
+        return criteria, self.query_job_projection_demand_summary(
+            criteria, projection_version_id=head["projection_version_id"]
+        )
 
     def get_job_projection_readiness(self) -> dict[str, Any]:
         from worker.job_projection_store import JobProjectionStore

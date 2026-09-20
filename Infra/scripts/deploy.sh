@@ -461,6 +461,17 @@ start_data_app() {
      ENV_FILE=$(quote_for_remote "$data_env_file") COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2-data-cluster.yaml) PROFILES=data HEALTHCHECK_TIMEOUT_SECONDS=300 bash Infra/scripts/healthcheck.sh"
 }
 
+prepare_c_compute_schema() {
+  echo "Preparing c_compute schema before Worker recreation on ${data_user}@${data_host}..."
+  remote_exec "$data_host" "$data_user" \
+    "set -Eeuo pipefail
+     cd $(quote_for_remote "$data_path")
+     ENV_FILE=$(quote_for_remote "$data_env_file") \
+       COMPOSE_OVERRIDE_FILE=$(quote_for_remote Infra/compose/compose.ec2-data-cluster.yaml) \
+       PROFILES=data WORKER_IMAGE=$(quote_for_remote "$local_worker_image") \
+       C_COMPUTE_MIGRATION_MODE=run bash Infra/scripts/c-compute-migrate.sh"
+}
+
 # Both hosts are checked before either is modified, so one run reports every
 # missing key instead of stopping at the first host.
 preflight_failures=0
@@ -507,6 +518,7 @@ refresh_checkout "$data_host" "$data_user" "$data_path" "$deploy_ref"
 assert_data_deploy_contract
 remove_legacy_data_weekly_consumer
 build_data_images
+prepare_c_compute_schema
 start_data_app
 
 echo "Split source-pull/build deployment completed for ${deploy_ref}."

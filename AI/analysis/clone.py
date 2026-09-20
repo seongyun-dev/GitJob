@@ -29,6 +29,7 @@ import base64
 import os
 import re
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -174,7 +175,12 @@ class RepositoryCloner:
         current = root
         for part in requested.parts:
             current = current / part
-            if current.is_symlink() or current.is_junction():
+            is_junction = getattr(current, "is_junction", None)
+            junction = bool(is_junction and is_junction())
+            if not junction and os.name == "nt" and current.exists():
+                attributes = getattr(os.lstat(current), "st_file_attributes", 0)
+                junction = bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            if current.is_symlink() or junction:
                 raise UnsafeWorkPathError(
                     "work target must not traverse a symbolic link or junction"
                 )

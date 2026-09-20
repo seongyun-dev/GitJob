@@ -23,6 +23,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from registry.contracts import TechId, load_registry
+from registry.mapper import RegistryMapper
 
 from job.classifier import (
     JobClassificationBatch,
@@ -46,8 +48,6 @@ from job.requirements import (
     RequirementKind,
     extract_job_requirements,
 )
-from registry.contracts import TechId, load_registry
-from registry.mapper import RegistryMapper
 
 JOB_COHORT_SCHEMA_VERSION = "job-cohort/v1"
 # v8: cohort에 싣는 기술 분류에서 `mapping_context`를 비운다(티켓 S15P21E102-333).
@@ -482,6 +482,9 @@ class JobCohort(CohortModel):
     registry_version: StrictStr
     parser_version: StrictStr
     quality_version: StrictStr = JOB_QUALITY_VERSION
+    projection_version_id: StrictStr | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     input_count: StrictInt = Field(ge=0)
     duplicate_count: StrictInt = Field(ge=0)
     excluded_count: StrictInt = Field(ge=0)

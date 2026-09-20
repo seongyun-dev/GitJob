@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -29,7 +31,12 @@ from job.cohort import (
     matches_role,
 )
 from job.contracts import BodyStatus, JobAnalysisInputBatch, JobPostingInput
-from job.cross_site_identity import canonical_identities
+from job.cross_site_identity import (
+    canonical_identities,
+    cross_site_candidate_pairs,
+    normalize_company,
+    normalize_title,
+)
 from job.demand import (
     JOB_DEMAND_AGGREGATION_VERSION,
     DemandSnapshot,
@@ -49,6 +56,10 @@ from job.requirements import JOB_REQUIREMENTS_SCHEMA_VERSION, JobRequirements
 
 JOB_FACT_SCHEMA_VERSION = "job-fact/v1"
 JOB_PROJECTION_SCHEMA_VERSION = "job-search-projection/v1"
+JOB_PROJECTION_MARKET_POLICY_VERSION = "job-projection-market/v2"
+MAX_MARKET_CANDIDATES_BASE = 10_000
+MAX_MARKET_CANDIDATES_PER_JOB = 4
+MAX_MARKET_GROUP_CROSS_PRODUCT = 1_000
 
 
 def canonical_hash(value: Any) -> str:
@@ -105,6 +116,26 @@ class ProjectionJob:
 
 
 @dataclass(frozen=True)
+class MarketProjectionJob:
+    projection_version_id: str
+    job_key: str
+    normalized_company: str
+    normalized_title: str
+    market_region_identity: str
+    raw_region_identity: str
+    raw_career_identity: str
+    market_required_tech_ids: tuple[str, ...]
+    market_preferred_tech_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MarketCandidate:
+    projection_version_id: str
+    left_job_key: str
+    right_job_key: str
+
+
+@dataclass(frozen=True)
 class JobProjection:
     projection_version_id: str
     input_union_id: str
@@ -117,6 +148,8 @@ class JobProjection:
     observed_at: datetime
     facts: tuple[JobFact, ...]
     jobs: tuple[ProjectionJob, ...]
+    market_jobs: tuple[MarketProjectionJob, ...]
+    market_candidates: tuple[MarketCandidate, ...]
     build_stats: dict[str, Any]
 
 
@@ -132,6 +165,10 @@ def _classified_tech_ids(item, requirement_class: RequirementClass) -> tuple[str
 
 def _requirement_tech_ids(clauses) -> tuple[str, ...]:
     return _sorted(tech_id for clause in clauses for tech_id in clause.tech_ids)
+
+
+def _raw_identity(value: str | None) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value or "").casefold().split())
 
 
 def materialize_job_projection(prepared: PreparedInputUnion) -> JobProjection:
@@ -152,6 +189,7 @@ def materialize_job_projection(prepared: PreparedInputUnion) -> JobProjection:
         "quality_version": JOB_QUALITY_VERSION,
         "requirements_version": JOB_REQUIREMENTS_SCHEMA_VERSION,
         "aggregation_version": JOB_DEMAND_AGGREGATION_VERSION,
+        "market_policy_version": JOB_PROJECTION_MARKET_POLICY_VERSION,
     }
     projection_version_id = "jp-" + canonical_hash(version_identity)
 
@@ -198,12 +236,15 @@ def materialize_job_projection(prepared: PreparedInputUnion) -> JobProjection:
         candidates.setdefault(job_key, []).append((item.digest, fact, item))
 
     jobs: list[ProjectionJob] = []
+    market_jobs: list[MarketProjectionJob] = []
+    selected_items: dict[str, Any] = {}
     body_unavailable = posting_unknown = region_unknown = career_unknown = 0
     for job_key, variants in sorted(candidates.items()):
         _, fact, item = min(variants, key=lambda value: value[0])
         record = item.record
         requirements = item.requirements
         assert requirements is not None
+        selected_items[job_key] = item
         region_codes, region_state = normalize_region(record.region)
         career_codes, career_state = normalize_career_level(record.career_level)
         flags: set[str] = set()
@@ -251,6 +292,72 @@ def materialize_job_projection(prepared: PreparedInputUnion) -> JobProjection:
                 quality_flags=_sorted(flags),
             )
         )
+        market_jobs.append(
+            MarketProjectionJob(
+                projection_version_id=projection_version_id,
+                job_key=job_key,
+                normalized_company=normalize_company(record.company_name),
+                normalized_title=normalize_title(record.title),
+                market_region_identity=_raw_identity(record.region),
+                raw_region_identity=_raw_identity(record.region),
+                raw_career_identity=_raw_identity(record.career_level),
+                market_required_tech_ids=_classified_tech_ids(
+                    item, RequirementClass.REQUIRED
+                ),
+                market_preferred_tech_ids=_classified_tech_ids(
+                    item, RequirementClass.PREFERRED
+                ),
+            )
+        )
+
+    candidate_input = []
+    source_key_to_job_key: dict[tuple[str, str], str] = {}
+    for job in jobs:
+        item = selected_items[job.job_key]
+        record = item.record
+        source_key = (job.source_site, record.source_posting_id)
+        source_key_to_job_key[source_key] = job.job_key
+        candidate_input.append(
+            SimpleNamespace(
+                source_site=job.source_site,
+                source_posting_id=record.source_posting_id,
+                company_name=record.company_name,
+                title=record.title,
+                region=record.region,
+                deadline=job.deadline,
+            )
+        )
+    raw_candidate_pairs = cross_site_candidate_pairs(candidate_input)
+    market_candidates = tuple(
+        MarketCandidate(
+            projection_version_id=projection_version_id,
+            left_job_key=source_key_to_job_key[left],
+            right_job_key=source_key_to_job_key[right],
+        )
+        for left, right in raw_candidate_pairs
+    )
+    candidate_limit = max(
+        MAX_MARKET_CANDIDATES_BASE, len(jobs) * MAX_MARKET_CANDIDATES_PER_JOB
+    )
+    if len(market_candidates) > candidate_limit:
+        raise ValueError("market candidate total exceeds publication safety gate")
+    market_by_key = {row.job_key: row for row in market_jobs}
+    group_counts = Counter(
+        (
+            market_by_key[row.left_job_key].normalized_company,
+            market_by_key[row.left_job_key].normalized_title,
+        )
+        for row in market_candidates
+    )
+    if group_counts and max(group_counts.values()) > MAX_MARKET_GROUP_CROSS_PRODUCT:
+        raise ValueError("market candidate group exceeds publication safety gate")
+    left_fanout = Counter(row.left_job_key for row in market_candidates)
+    right_fanout = Counter(row.right_job_key for row in market_candidates)
+    one_to_one_count = sum(
+        left_fanout[row.left_job_key] == 1
+        and right_fanout[row.right_job_key] == 1
+        for row in market_candidates
+    )
 
     observed_at = max(
         (batch.collected_at for batch in provenance.input_batches),
@@ -290,6 +397,19 @@ def materialize_job_projection(prepared: PreparedInputUnion) -> JobProjection:
                 {batch.source_site for batch in provenance.input_batches}
             )
         },
+        "market_policy_version": JOB_PROJECTION_MARKET_POLICY_VERSION,
+        "market_job_count": len(market_jobs),
+        "market_candidate_count": len(market_candidates),
+        "market_candidate_hash": canonical_hash(
+            [
+                [row.left_job_key, row.right_job_key]
+                for row in market_candidates
+            ]
+        ),
+        "market_candidate_one_to_one_count": one_to_one_count,
+        "market_candidate_ambiguous_count": len(market_candidates)
+        - one_to_one_count,
+        "market_candidate_max_group_count": max(group_counts.values(), default=0),
     }
     return JobProjection(
         projection_version_id=projection_version_id,
@@ -303,6 +423,8 @@ def materialize_job_projection(prepared: PreparedInputUnion) -> JobProjection:
         observed_at=observed_at,
         facts=tuple(sorted(unique_facts.values(), key=lambda item: item.job_fact_id)),
         jobs=tuple(jobs),
+        market_jobs=tuple(sorted(market_jobs, key=lambda item: item.job_key)),
+        market_candidates=market_candidates,
         build_stats=stats,
     )
 
@@ -374,7 +496,7 @@ def build_projection_cohort(
         parser_version=projection.parser_version,
         records=tuple(classification_rows),
     )
-    return build_cohort_from_prepared(
+    cohort = build_cohort_from_prepared(
         PreparedCohortBatch(
             batch=batch,
             classified=classified,
@@ -384,6 +506,9 @@ def build_projection_cohort(
             input_count=len(prepared_rows),
         ),
         criteria,
+    )
+    return cohort.model_copy(
+        update={"projection_version_id": projection.projection_version_id}
     )
 
 

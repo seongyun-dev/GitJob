@@ -30,6 +30,12 @@ class ProjectionShadow:
             "projection_shadow_compared_total": 0,
             "projection_shadow_mismatch_total": 0,
             "projection_shadow_error_total": 0,
+            "projection_shadow_selected_id_mismatch_total": 0,
+            "projection_shadow_selected_count_mismatch_total": 0,
+            "projection_shadow_technology_id_mismatch_total": 0,
+            "projection_shadow_technology_category_mismatch_total": 0,
+            "projection_shadow_technology_rank_mismatch_total": 0,
+            "projection_shadow_aggregate_mismatch_total": 0,
         }
 
     def should_sample(self, selector) -> bool:
@@ -50,6 +56,37 @@ class ProjectionShadow:
                 self._increment("projection_shadow_compared_total")
                 if mismatches:
                     self._increment("projection_shadow_mismatch_total")
+                    mismatch_set = set(mismatches)
+                    if "job_ids" in mismatch_set:
+                        self._increment(
+                            "projection_shadow_selected_id_mismatch_total"
+                        )
+                    if "job_count" in mismatch_set:
+                        self._increment(
+                            "projection_shadow_selected_count_mismatch_total"
+                        )
+                    if "technology_ids" in mismatch_set:
+                        self._increment(
+                            "projection_shadow_technology_id_mismatch_total"
+                        )
+                    if "technology_categories" in mismatch_set:
+                        self._increment(
+                            "projection_shadow_technology_category_mismatch_total"
+                        )
+                    if "technology_ranks" in mismatch_set:
+                        self._increment(
+                            "projection_shadow_technology_rank_mismatch_total"
+                        )
+                    if mismatch_set - {
+                        "job_ids",
+                        "job_count",
+                        "technology_ids",
+                        "technology_categories",
+                        "technology_ranks",
+                    }:
+                        self._increment(
+                            "projection_shadow_aggregate_mismatch_total"
+                        )
                     LOGGER.warning(
                         "projection_shadow_mismatch fields=%s",
                         ",".join(mismatches),
@@ -64,6 +101,12 @@ class ProjectionShadow:
 
         self._executor.submit(run)
         return True
+
+    def skip(self, reason: str) -> None:
+        """Record a sampled comparison rejected before queue submission."""
+
+        self._increment("projection_shadow_skipped_total")
+        LOGGER.info("projection_shadow_skipped reason=%s", reason)
 
     def _increment(self, name: str) -> None:
         with self._lock:
@@ -93,6 +136,8 @@ def compare_demands(
         and legacy_job_ids != projected_job_ids
     ):
         mismatches.append("job_ids")
+        if len(legacy_job_ids) != len(projected_job_ids):
+            mismatches.append("job_count")
     for field in (
         "status",
         "denominator",
@@ -112,6 +157,36 @@ def compare_demands(
         row.tech_id: row.model_dump(exclude={"tech_id"})
         for row in projected.technologies
     }
-    if legacy_tech != projected_tech:
-        mismatches.append("technologies")
+    if set(legacy_tech) != set(projected_tech):
+        mismatches.append("technology_ids")
+    category_fields = {
+        "required_count",
+        "preferred_count",
+        "general_count",
+        "total_count",
+        "required_ratio",
+        "preferred_ratio",
+        "general_ratio",
+        "total_ratio",
+    }
+    rank_fields = {
+        "rank",
+        "required_rank",
+        "preferred_rank",
+        "general_rank",
+        "total_rank",
+    }
+    common_tech = set(legacy_tech) & set(projected_tech)
+    if any(
+        any(legacy_tech[tech][field] != projected_tech[tech][field]
+            for field in category_fields)
+        for tech in common_tech
+    ):
+        mismatches.append("technology_categories")
+    if any(
+        any(legacy_tech[tech][field] != projected_tech[tech][field]
+            for field in rank_fields)
+        for tech in common_tech
+    ):
+        mismatches.append("technology_ranks")
     return tuple(mismatches)

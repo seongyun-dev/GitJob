@@ -1,6 +1,6 @@
 # 공고 검색 Projection 및 계산 결과 경량화 작업 계획
 
-- 상태: 로컬 구현 완료, 운영 배포·성능 gate 대기
+- 상태: MR `!270`/`6b5960c` 병합·배포 완료, 운영 성능 gate 미달 보완 진행
 - 작성일: 2026-09-20
 - 기준 브랜치: `develop`
 - 기준 커밋: `82edca8` (`origin/develop`, 2026-09-20 14:23 KST)
@@ -9,6 +9,12 @@
 - 1차 목표: 직무·지역·경력 변경의 cold 수요 조회를 500ms 이내로 줄인다.
 - 2차 목표: 기존 추천·매칭·What-if 의미를 유지하면서 대형 COHORT/RECOMMENDATION
   JSON 중복을 제거한다.
+
+> MR `!270` 병합 이후 실제 운영에서 확인된 Projection request hot path, Current Market,
+> current-result backfill 보완의 단일 실행 기준은
+> [2026-09-20-job-projection-query-hot-path-plan.md](./2026-09-20-job-projection-query-hot-path-plan.md)다.
+> 이 문서는 원 설계·계약·구현 이력을 보존하고, 후속 문서가 최신 develop과 운영 실측을 기준으로
+> 실행 순서와 완료 조건을 확장한다.
 
 이 문서는 구현자가 별도의 대화 기록을 보지 않고도 작업 범위, 데이터 의미, 배포 순서,
 검증 및 롤백 방법을 결정할 수 있도록 작성한다. 추정 수치와 실제 인수 기준을 구분한다.

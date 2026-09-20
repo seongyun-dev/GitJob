@@ -1,7 +1,7 @@
 # 공고 검색 Projection 배포·롤백 runbook
 
-- Jira: `S15P21E102-360`
-- schema: `c_compute` migration 7
+- Jira: `S15P21E102-360`, `S15P21E102-363`
+- schema: `c_compute` migration 8, Backend Flyway V26
 - 기본 안전 상태: demand `legacy`, personalized matching `legacy`
 - 운영 수치의 Source of Truth: 동일 데이터·selector로 실행한 명령 출력과 관측 시스템
 
@@ -14,7 +14,7 @@ Projection ID를 배포 기록에 붙여야 다음 단계로 넘어갈 수 있�
 1. PostgreSQL backup 위치와 restore 담당자·명령을 운영 기록에 적는다.
 2. DB와 서비스 호스트 디스크 사용률을 기록한다. 예상 dual-write까지 포함해 90%를 넘으면
    중단한다.
-3. 배포할 Worker 이미지 SHA를 고정한다. 이미지에는 migration 001~007이 모두 있어야 한다.
+3. 배포할 Worker 이미지 SHA를 고정한다. 이미지에는 migration 001~008이 모두 있어야 한다.
 4. `.env.data` 또는 실제 Worker 환경은 아래 기본값으로 시작한다.
 
 ```dotenv
@@ -22,6 +22,12 @@ C_JOB_DEMAND_PROJECTION_MODE=legacy
 C_JOB_DEMAND_PROJECTION_FALLBACK=false
 C_JOB_DEMAND_PROJECTION_SHADOW_RATE=0.01
 C_JOB_DEMAND_PROJECTION_SHADOW_QUEUE=4
+C_JOB_DEMAND_QUERY_ENGINE=python
+C_JOB_DEMAND_QUERY_FALLBACK=false
+C_JOB_DEMAND_QUERY_SHADOW_RATE=0.01
+C_JOB_DEMAND_QUERY_SHADOW_QUEUE=4
+C_JOB_DEMAND_SUMMARY_CACHE_SIZE=256
+C_JOB_MATCHING_COMPUTE_MODE=legacy
 C_JOB_MATCHING_ACTIVE_MODE=legacy
 ```
 
@@ -47,20 +53,24 @@ Set-Location AI
   tests/test_compute_matching.py tests/test_job_projection_store.py -q
 ```
 
-## 2. migration 005~007
+## 2. migration 005~008과 Backend V26
 
-Worker 런타임보다 migration을 먼저 적용한다. `C_COMPUTE_DATABASE_URL`은 대상 DB를
-명시해야 하며 명령 출력에 값을 표시하지 않는다.
+Worker 런타임보다 migration을 먼저 적용한다. 정상 `deploy.sh`는 새 Worker 이미지를 만든 뒤
+`c-compute-migrate.sh`를 `run` mode로 호출하고, 성공한 경우에만 Worker를 재생성한다. 수동 재개도
+동일한 스크립트와 명시적인 env/Compose project를 사용하며 명령 출력에 DSN을 표시하지 않는다.
 
 ```bash
-"${COMPOSE[@]}" run --rm -e C_COMPUTE_DATABASE_URL worker \
-  python -m worker.migrate
-"${COMPOSE[@]}" run --rm -e C_COMPUTE_DATABASE_URL worker python -c \
-  "from worker.api import configured_database_url; from worker.store import ComputeStore; import sys; sys.exit(0 if ComputeStore(configured_database_url()).ready() else 1)"
+ENV_FILE=.env.data \
+  COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \
+  PROFILES=data C_COMPUTE_MIGRATION_MODE=run \
+  bash Infra/scripts/c-compute-migrate.sh
+"${COMPOSE[@]}" run --rm worker python -c \
+  "from worker.postgres_env import dsn_from_postgres_env; from worker.store import ComputeStore; import sys; sys.exit(0 if ComputeStore(dsn_from_postgres_env()).ready() else 1)"
 ```
 
-명령을 실행하는 셸에는 비밀 저장소에서 읽은 `C_COMPUTE_DATABASE_URL`이 설정되어 있어야 한다.
-Compose의 `POSTGRES_*` 기본값으로 migration 대상을 추정하지 않는다.
+스크립트는 선택한 Worker container의 다섯 `POSTGRES_*` 값을 `psycopg.make_conninfo`로 안전하게
+escape한다. `--from-postgres-env`라는 명시적 실행 선택 없이는 Python migration runner가 이를
+사용하지 않는다. 따라서 특수문자 비밀번호를 URI로 직접 이어 붙이거나 host 기본값을 추정하지 않는다.
 
 006~007은 한 migration transaction에서 `user_result`, `user_result_head`,
 `matching_source`, `matching_calculation`, `matching_job`, `job_projection_head`에 DDL lock을
@@ -94,7 +104,28 @@ ORDER BY relation, granted, pid;
 행 수·relation size로 maintenance window를 정하고, 장기 transaction이나 미승인 대기 lock이
 있으면 007 적용을 시작하지 않는다.
 
-DB에서 `c_compute.schema_version`이 1~7을 한 번씩 가지는지 확인한다. 기존 checksum 불일치,
+008은 새 Projection만 채우는 빈 sidecar 테이블을 추가한다. 기존 PUBLISHED head를 사후 수정하지
+않으므로 새 Worker는 `market_sql_ready=false`인 old head를 Python으로 읽는다. Backend V26은
+FAILED attempt rearm audit와 `attempt_count=0` scheduler 대기 상태를 추가하며 Flyway로 먼저
+적용한다.
+
+서비스 호스트에서는 Backend 기동 직후 `verify-deployment.sh`가 Flyway V26 성공 이력,
+`user_c_compute_attempt_rearm_audit` 테이블, `attempt_count >= 0` 제약을 함께 확인한다. 수동 확인은
+서비스 Compose의 postgres에서 다음 SQL을 실행한다.
+
+```sql
+SELECT version, description, success
+FROM flyway_schema_history WHERE version = '26';
+SELECT to_regclass('public.user_c_compute_attempt_rearm_audit');
+SELECT conname, pg_get_constraintdef(oid)
+FROM pg_constraint
+WHERE conrelid = 'public.user_c_compute_attempt'::regclass
+  AND conname = 'user_c_compute_attempt_attempt_count_check';
+```
+
+세 항목 중 하나라도 없으면 두 matching flag를 `legacy`로 유지하고 rearm/backfill을 시작하지 않는다.
+
+DB에서 `c_compute.schema_version`이 1~8을 한 번씩 가지는지 확인한다. 기존 checksum 불일치,
 15초 statement timeout, lock timeout이 발생하면 배포를 중단하고 원인을 조사한다. 적용된
 SQL을 수정하거나 version 행을 수동으로 덮어쓰지 않는다.
 
@@ -103,26 +134,43 @@ SQL을 수정하거나 version 행을 수동으로 덮어쓰지 않는다.
 자동 intake와 동일한 검증 입력·Registry를 사용한다. dry-run은 DB를 쓰지 않는다.
 
 ```bash
-"${COMPOSE[@]}" run --rm -e C_COMPUTE_DATABASE_URL worker \
+"${COMPOSE[@]}" run --rm worker \
   python -m worker.job_projection_backfill --dry-run
-"${COMPOSE[@]}" run --rm -e C_COMPUTE_DATABASE_URL worker \
-  python -m worker.job_projection_shadow
+"${COMPOSE[@]}" run --rm worker python -m worker.job_projection_shadow
 ```
 
-dry-run의 `projection_version_id`, job/fact/source count와 100 selector 결과를 보관한다.
+publish 전에는 위 prepared-Python gate를 실행한다. dry-run의 `projection_version_id`,
+job/fact/source count와 결과를 보관한다.
+
+```bash
+EXPECTED_PROJECTION_ID='<dry-run에서 기록한 projection_version_id>'
+mkdir -p .local/projection-checkpoints
+"${COMPOSE[@]}" run --rm worker \
+  python -m worker.job_projection_backfill --publish --from-postgres-env
+"${COMPOSE[@]}" run --rm \
+  -v "$PWD/.local/projection-checkpoints:/checkpoints" worker \
+  python -m worker.job_projection_shadow --persisted --from-postgres-env \
+    --projection-version-id "$EXPECTED_PROJECTION_ID" \
+    --checkpoint /checkpoints/"$EXPECTED_PROJECTION_ID".json
+```
+
+publish 후 `--persisted` 명령으로 게시된 head를
+고정해 Python hydration과 PostgreSQL SQL summary/selected keys의 80 ACTIVE + 20 CURRENT_MARKET
+결과를 비교한다. 출력의 `mode=persisted-sql`, `projection_version_id`, selector hash/JSON 목록과
+결과를 보관한다. checkpoint는 selector마다 원자 갱신되며 같은 Projection ID와 selector hash일
+때만 재개된다. 중단 후 동일 명령을 다시 실행하면 완료 selector를 건너뛴다.
 `mismatch_count`가 0이 아니면 publish하거나 flag를 바꾸지 않는다. `CURRENT_MARKET`의
 CLOSED/deadline 차이는 v4 정책 결과와 fixture로 설명되지 않으면 실패로 취급한다.
 
 ```bash
-"${COMPOSE[@]}" run --rm -e C_COMPUTE_DATABASE_URL worker \
-  python -m worker.job_projection_backfill --publish
 "${COMPOSE[@]}" exec -T worker sh -c \
   'curl -fsS -H "Authorization: Bearer $C_COMPUTE_TOKEN" http://127.0.0.1:8080/ready'
 "${COMPOSE[@]}" exec -T worker sh -c \
   'curl -fsS -H "Authorization: Bearer $C_COMPUTE_TOKEN" http://127.0.0.1:8080/internal/v1/c/intake/status'
 ```
 
-`/ready`의 `job_projection.status=READY`, stored/job count 일치, missing fact 0을 확인한다.
+`/ready`의 `job_projection.status=READY`, `market_sql_ready=true`, stored/job/market count 일치,
+missing fact 0을 확인한다. build stats의 candidate count/hash도 게시 입력 재생성 값과 같아야 한다.
 로그에서 version, build/publish duration, fact inserted/reused, source 상태, active/closed/
 unknown/deadline-expired 수를 기록한다. source 일부가 실패 또는 partial이면 publish 입력으로
 승격하지 않는다.
@@ -138,14 +186,17 @@ unknown/deadline-expired 수를 기록한다. source 일부가 실패 또는 par
 ```bash
 "${COMPOSE[@]}" up -d --no-deps --force-recreate worker
 "${COMPOSE[@]}" exec -T worker sh -c \
-  'env | grep -E "^C_JOB_(DEMAND_PROJECTION|MATCHING_ACTIVE)_"'
+  'env | grep -E "^C_JOB_(DEMAND_PROJECTION|DEMAND_QUERY|MATCHING)_"'
 ```
 
 1. `C_JOB_DEMAND_PROJECTION_MODE=shadow`: legacy 응답 유지, bounded 1% 비교.
 2. offline 100 selector와 운영 shadow에서 비의도 mismatch 0 확인.
-3. `C_JOB_DEMAND_PROJECTION_MODE=projection`: 내부 트래픽부터 활성화.
-4. cold/warm 성능·오류율을 gate와 비교한 뒤 전체 활성화.
-5. 24시간 정상 관측 뒤 `C_JOB_MATCHING_ACTIVE_MODE=projection` 활성화.
+3. `C_JOB_DEMAND_PROJECTION_MODE=projection`, query engine `python`으로 Projection 응답을 확인.
+4. offline SQL 100 selector 통과 후 `C_JOB_DEMAND_QUERY_ENGINE=shadow`로 bounded 1% 비교.
+5. mismatch 0과 성능 gate 통과 후 `C_JOB_DEMAND_QUERY_ENGINE=sql` 활성화.
+6. 24시간 정상 관측 뒤 `C_JOB_MATCHING_COMPUTE_MODE=projection`, active는 `legacy` 유지.
+7. 관리자 dry-run/rearm으로 canary 한 명의 `ur-*`와 BE pointer를 확인한다.
+8. 개인화 gate 통과 뒤에만 `C_JOB_MATCHING_ACTIVE_MODE=projection` 활성화.
 
 matching mode가 켜지면 resolve의 compute version에 Projection ID가 포함된다. 기존 결과는
 STALE이어도 활성 공고만 제공하며, BE scheduler가 새 identity 계산을 요청한다. 새 결과의
@@ -165,10 +216,17 @@ Projection SQL 실행/버퍼, RSS peak, Snapshot INSERT 수/bytes, 오류·fallb
 - Preview COHORT/DEMAND Snapshot INSERT 0
 - 비의도 ID/count mismatch 0
 - restart 후 warm cache 없이 같은 목표 충족
+- Current Market DB/C/BE p95 250/500/800ms 이하와 기존 C 대비 90% 이상 감소
+- market sidecar coverage 100%, candidate count/hash 일치
 
 SQL은 운영과 같은 분포의 staging/복제본에서 `EXPLAIN (ANALYZE, BUFFERS)`로 실행한다.
 운영 DB에 부하 테스트나 테스트 migration을 실행하지 않는다. 이 저장소에서 실제 측정하지
 않은 수치는 배포 기록에 성공으로 쓰지 않는다.
+
+Worker의 `projection_summary_completed` 로그에서 Projection ID, purpose, denominator,
+`connect_duration_ms`, `query_duration_ms`를 분리해 수집한다. 같은 측정 구간의
+`pg_stat_database.numbackends`, `temp_files`, `temp_bytes`와 statement timeout을 함께 기록한다.
+shadow의 `job_ids` mismatch는 aggregate가 같더라도 전환을 중단하는 정확성 실패다.
 
 ## 6. 롤백
 
@@ -176,17 +234,20 @@ SQL은 운영과 같은 분포의 staging/복제본에서 `EXPLAIN (ANALYZE, BUF
 즉시 다음 순서로 롤백한다.
 
 1. `C_JOB_MATCHING_ACTIVE_MODE=legacy`
-2. `C_JOB_DEMAND_PROJECTION_MODE=legacy`
-3. Worker 재생성 후 `/ready`, legacy preview, 추천·매칭·What-if 확인
-4. 실패 version은 감사·차단 행과 함께 보존하고 신규 테이블을 삭제하지 않음
+2. `C_JOB_MATCHING_COMPUTE_MODE=legacy`
+3. SQL만 문제면 `C_JOB_DEMAND_QUERY_ENGINE=python`
+4. Projection 전체가 문제면 `C_JOB_DEMAND_PROJECTION_MODE=legacy`
+5. Worker 재생성 후 `/ready`, legacy preview, 추천·매칭·What-if 확인
+6. 실패 version은 감사·차단 행과 함께 보존하고 신규 테이블을 삭제하지 않음
 
 head 자체가 잘못됐고 이전 PUBLISHED version으로 돌려야 할 때만 아래 전용 명령을 사용한다.
 현재 head를 `--expected-current`로 다시 확인하는 CAS, 대상의 state/job count/missing fact
 검증, 실패 version 차단, 감사 행 기록이 한 transaction에서 수행된다. 직접 UPDATE는 금지한다.
 
 ```bash
-"${COMPOSE[@]}" run --rm -e C_COMPUTE_DATABASE_URL worker \
+"${COMPOSE[@]}" run --rm worker \
   python -m worker.job_projection_head \
+  --from-postgres-env \
   --expected-current "$FAILED_PROJECTION_ID" \
   --to "$PREVIOUS_PROJECTION_ID" \
   --actor "$OPERATOR_ID" \
@@ -195,6 +256,13 @@ head 자체가 잘못됐고 이전 PUBLISHED version으로 돌려야 할 때만 
 
 rollback 뒤 `/ready`와 대표 selector를 확인한다. 차단된 version은 일반 publish로 다시 head가
 될 수 없으며, 원인을 수정한 새 input/version을 발행해야 한다.
+
+FAILED 개인화 attempt는 DB에서 삭제하거나 UPDATE하지 않는다. ADMIN 세션으로 먼저
+`POST /api/v1/admin/compute-attempts/rearm/dry-run`을 호출해 exact `userId`, `targetKey`,
+`evidenceVersion`, `expectedRunToken`이 현재 target/Evidence와 일치하는지 확인한다. canary만
+동일 payload로 `POST /api/v1/admin/compute-attempts/rearm`을 호출한다. `reason`에는 티켓/장애
+근거를 남긴다. 성공하면 행은 `RETRYING`, count 0이 되고 scheduler가 다음 tick에 claim한다.
+`user_c_compute_attempt_rearm_audit` 행과 최종 `ur-*` pointer를 함께 배포 기록에 남긴다.
 
 ## 7. retention·GC와 restore
 

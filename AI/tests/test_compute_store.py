@@ -3,6 +3,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg
@@ -42,6 +43,34 @@ def test_user_result_staleness_is_inferred_without_mutating_immutable_row():
     assert restored["status"] == "STALE"
     assert restored["recompute_required"] is True
     assert row["status"] == "READY"
+
+
+def test_projection_selector_pins_the_head_version(monkeypatch):
+    store = ComputeStore("postgresql://unused")
+    observed_at = datetime(2026, 9, 20, tzinfo=UTC)
+    projection_id = "jp-" + "a" * 64
+    selected = object()
+    selector = SimpleNamespace(criteria_at=lambda value: selected)
+    calls = []
+    monkeypatch.setattr(
+        store,
+        "get_job_projection_head",
+        lambda: {
+            "projection_version_id": projection_id,
+            "observed_at": observed_at,
+        },
+    )
+    monkeypatch.setattr(
+        store,
+        "query_job_projection_demand",
+        lambda criteria, *, projection_version_id: calls.append(
+            (criteria, projection_version_id)
+        )
+        or "result",
+    )
+
+    assert store.resolve_job_projection_selector(selector) == (selected, "result")
+    assert calls == [(selected, projection_id)]
 
 
 def test_legacy_user_result_is_not_stale_when_projection_comparison_is_disabled():

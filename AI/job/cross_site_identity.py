@@ -24,6 +24,7 @@ normalisation counts.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections import defaultdict
@@ -35,6 +36,7 @@ from typing import Any, Protocol
 __all__ = [
     "MAX_DEADLINE_DELTA_DAYS",
     "canonical_identities",
+    "cross_site_candidate_pairs",
     "normalize_company",
     "normalize_title",
     "region_compatible",
@@ -150,15 +152,15 @@ def _key(row: _Row) -> tuple[str, str]:
     return (row.source_site, row.source_posting_id)
 
 
-def canonical_identities(rows: Iterable[Any]) -> Mapping[tuple[str, str], str]:
-    """Map each posting in a high-confidence cross-site pair to a shared id.
+def cross_site_candidate_pairs(
+    rows: Iterable[Any],
+) -> tuple[tuple[tuple[str, str], tuple[str, str]], ...]:
+    """Return every pair that passes the stable cross-site guards.
 
-    Postings with no confident counterpart are absent from the result, and the
-    caller keeps their source identity. The returned id is derived from the
-    matched pair's own keys, so it is stable across runs and independent of the
-    order rows arrive in.
+    Fan-out is intentionally not resolved here. Persisting all guarded pairs
+    lets a later selector first remove out-of-scope postings and only then apply
+    the one-to-one rule, which is required for Current Market parity.
     """
-
     by_company: defaultdict[str, defaultdict[str, list[Any]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -168,7 +170,7 @@ def canonical_identities(rows: Iterable[Any]) -> Mapping[tuple[str, str], str]:
             continue
         by_company[company][getattr(row, "source_site", "")].append(row)
 
-    mapping: dict[tuple[str, str], str] = {}
+    pairs: set[tuple[tuple[str, str], tuple[str, str]]] = set()
     for sites in by_company.values():
         left_rows = sites.get("JOBKOREA", ())
         right_rows = sites.get("SARAMIN", ())
@@ -196,20 +198,34 @@ def canonical_identities(rows: Iterable[Any]) -> Mapping[tuple[str, str], str]:
                     continue
                 candidates.append((left, right))
 
-        left_fanout: defaultdict[tuple[str, str], int] = defaultdict(int)
-        right_fanout: defaultdict[tuple[str, str], int] = defaultdict(int)
         for left, right in candidates:
-            left_fanout[_key(left)] += 1
-            right_fanout[_key(right)] += 1
+            pair = tuple(sorted((_key(left), _key(right))))
+            pairs.add(pair)
+    return tuple(sorted(pairs))
 
-        for left, right in candidates:
-            if left_fanout[_key(left)] != 1 or right_fanout[_key(right)] != 1:
-                continue
-            pair = sorted((_key(left), _key(right)))
-            digest = sha256(
-                "|".join(f"{site}:{posting}" for site, posting in pair).encode("utf-8")
-            ).hexdigest()
-            canonical = f"xsite-{digest[:32]}"
-            mapping[_key(left)] = canonical
-            mapping[_key(right)] = canonical
+
+def canonical_identities(rows: Iterable[Any]) -> Mapping[tuple[str, str], str]:
+    """Map each posting in a high-confidence one-to-one pair to a shared id."""
+
+    candidates = cross_site_candidate_pairs(rows)
+    left_fanout: defaultdict[tuple[str, str], int] = defaultdict(int)
+    right_fanout: defaultdict[tuple[str, str], int] = defaultdict(int)
+    for left, right in candidates:
+        left_fanout[left] += 1
+        right_fanout[right] += 1
+
+    mapping: dict[tuple[str, str], str] = {}
+    for left, right in candidates:
+        if left_fanout[left] != 1 or right_fanout[right] != 1:
+            continue
+        pair = (left, right)
+        # Array framing stays unambiguous when a source posting id contains the
+        # ':' or '|' characters that made the old delimiter join collide.
+        framed = json.dumps(
+            pair, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        digest = sha256(framed).hexdigest()
+        canonical = f"xsite-{digest[:32]}"
+        mapping[left] = canonical
+        mapping[right] = canonical
     return mapping

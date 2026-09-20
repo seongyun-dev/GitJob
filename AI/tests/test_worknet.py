@@ -12,7 +12,6 @@ from unittest.mock import Mock
 from urllib.parse import urljoin
 
 import pytest
-
 from job.collector import ListingRow, PostingDetail, content_hash_for
 from job.contracts import (
     JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
@@ -592,8 +591,9 @@ def test_run_without_cursor_path_does_not_write_state(tmp_path: Path):
 
 
 def test_paging_stops_when_page_has_no_rows_in_range():
-    older_only = f"<html><body><table><tbody>{
-        _list_row(
+    older_only = (
+        "<html><body><table><tbody>"
+        + _list_row(
             'K888882607010001',
             '옛회사',
             '옛공고',
@@ -602,7 +602,8 @@ def test_paging_stops_when_page_has_no_rows_in_range():
             '2026-07-01',
             '2026-07-20',
         )
-    }</tbody></table></body></html>"
+        + "</tbody></table></body></html>"
+    )
     client = FakeClient([LIST_HTML, older_only, LIST_HTML])
     result = WorknetCrawler(_config(), client).run()
 

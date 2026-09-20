@@ -83,9 +83,8 @@ C_COMPUTE_SCHEMA_PROBE='
 import os, sys
 try:
     import psycopg
-    dsn = "postgresql://%s:%s@%s:%s/%s" % (
-        os.environ["POSTGRES_USER"], os.environ["POSTGRES_PASSWORD"],
-        os.environ["POSTGRES_HOST"], os.environ["POSTGRES_PORT"], os.environ["POSTGRES_DB"])
+    from worker.postgres_env import dsn_from_postgres_env
+    dsn = dsn_from_postgres_env()
     with psycopg.connect(dsn, connect_timeout=5) as connection:
         row = connection.execute(
             "SELECT count(*) FROM information_schema.tables WHERE table_schema = %s",
@@ -132,7 +131,23 @@ run_all_checks() {
   부분 적용된 DDL을 직접 되돌린 다음 실패 행을 지워야 다음 기동에서 재시도한다."
         else
           latest="$(psql_query "SELECT version || ' ' || description FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1")"
-          ok schema "최신 ${latest:-unknown}"
+          rearm_schema_ready="$(psql_query "SELECT CASE WHEN
+            EXISTS (SELECT 1 FROM flyway_schema_history WHERE version = '26' AND success)
+            AND to_regclass('public.user_c_compute_attempt_rearm_audit') IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conrelid = to_regclass('public.user_c_compute_attempt')
+                AND conname = 'user_c_compute_attempt_attempt_count_check'
+                AND pg_get_constraintdef(oid) LIKE '%attempt_count >= 0%'
+            ) THEN 1 ELSE 0 END")"
+          if [[ "$rearm_schema_ready" == "1" ]]; then
+            ok schema "최신 ${latest:-unknown}; V26 rearm audit 계약 확인"
+          else
+            needs_action schema "V26 rearm audit 계약이 적용되지 않았다" \
+              "backend Flyway V26 적용을 확인하고 flag를 legacy로 유지한다.
+    SELECT version, description, success FROM flyway_schema_history WHERE version = '26';
+    SELECT to_regclass('public.user_c_compute_attempt_rearm_audit');"
+          fi
         fi
       fi
     fi

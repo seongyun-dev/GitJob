@@ -9,9 +9,10 @@ advisory lock `331029`와 migration checksum을 사용해 번호 순서대로 �
   matching의 `job_fact_id` 참조
 - `007`: event 순서 기반 current head, fact 단위 matching source, Projection head
   단조 게시와 감사 가능한 rollback
+- `008`: payload-free Current Market 집계를 위한 불변 market job/candidate sidecar
 
 적용된 파일은 수정하지 않는다. 변경은 다음 번호의 forward migration으로만 추가한다.
-런타임 프로세스는 DDL을 자동 실행하지 않으며 현재 코드는 schema version 7을 요구한다.
+런타임 프로세스는 DDL을 자동 실행하지 않으며 현재 코드는 schema version 8을 요구한다.
 실행·검증·롤백 순서는
 [`docs/ai/job-search-projection-runbook.md`](../../../../../docs/ai/job-search-projection-runbook.md)를
 따른다.

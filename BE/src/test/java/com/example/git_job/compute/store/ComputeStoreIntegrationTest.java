@@ -1,6 +1,7 @@
 package com.example.git_job.compute.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeAttempt;
 import com.example.git_job.compute.store.ComputeSnapshotStore.ComputeSnapshot;
@@ -152,6 +153,36 @@ class ComputeStoreIntegrationTest {
                     .isTrue();
             // 다른 identity의 terminal 상태를 현재 요청이 임의로 삭제하지 않는다.
             assertThat(store.findAttempt(userId, target, terminalEvidence)).isPresent();
+        });
+    }
+
+    @Test
+    @DisplayName("FAILED attempt rearm은 exact token CAS와 append-only 감사를 지킨다")
+    void failedAttemptRearmIsExactAndAudited() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            String target = "BACKEND|서울|신입";
+            ComputeAttempt failed = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now, now.plusSeconds(30), 3).orElseThrow();
+            store.markFailed(failed, "COMPUTE_RETRY_EXHAUSTED", now.plusSeconds(1));
+
+            assertThat(store.rearmFailedAttempt(userId, target, EVIDENCE_VERSION,
+                    java.util.UUID.randomUUID(), userId, "stale token", now.plusSeconds(2)))
+                    .isEmpty();
+            ComputeAttempt rearmed = store.rearmFailedAttempt(userId, target, EVIDENCE_VERSION,
+                    failed.runToken(), userId, "projection canary", now.plusSeconds(3))
+                    .orElseThrow();
+            assertThat(rearmed.status()).isEqualTo("RETRYING");
+            assertThat(rearmed.attemptCount()).isZero();
+            assertThat(rearmed.runToken()).isNotEqualTo(failed.runToken());
+            assertThat(store.dueAttempts(now.plusSeconds(3), 20)).containsExactly(rearmed);
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM user_c_compute_attempt_rearm_audit", Integer.class))
+                    .isEqualTo(1);
+            assertThatThrownBy(() -> jdbc.update(
+                    "UPDATE user_c_compute_attempt_rearm_audit SET operator_reason = 'changed'"))
+                    .hasMessageContaining("immutable");
         });
     }
 

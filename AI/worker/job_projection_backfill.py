@@ -13,6 +13,7 @@ from registry.mapper import RegistryMapper
 from worker.api import configured_database_url, default_registry
 from worker.intake import IntakeConfig, IntakeRunner, _read, load_job_output
 from worker.job_hdfs_source import refresher
+from worker.postgres_env import dsn_from_postgres_env
 from worker.store import ComputeStore
 
 
@@ -73,6 +74,11 @@ def main() -> None:
         default=None,
         help="Intake config path; defaults to C_INTAKE_CONFIG",
     )
+    parser.add_argument(
+        "--from-postgres-env",
+        action="store_true",
+        help="Build the publish DSN from explicit POSTGRES_* variables",
+    )
     args = parser.parse_args()
     config_path = args.config or (
         Path(value) if (value := os.environ.get("C_INTAKE_CONFIG")) else None
@@ -92,9 +98,16 @@ def main() -> None:
         "build_stats": projection.build_stats,
     }
     if args.publish:
-        dsn = os.environ.get("C_COMPUTE_DATABASE_URL")
+        dsn = (
+            dsn_from_postgres_env()
+            if args.from_postgres_env
+            else os.environ.get("C_COMPUTE_DATABASE_URL")
+        )
         if not dsn:
-            parser.error("C_COMPUTE_DATABASE_URL is required for --publish")
+            parser.error(
+                "C_COMPUTE_DATABASE_URL or --from-postgres-env is required "
+                "for --publish"
+            )
         ComputeStore(dsn).publish_job_projection(projection)
         result["published"] = True
     else:

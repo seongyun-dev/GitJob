@@ -112,6 +112,23 @@ def test_high_confidence_pair_merges():
     assert mapping[("JOBKOREA", "A")] == mapping[("SARAMIN", "B")]
 
 
+def test_pair_identity_is_unambiguous_when_posting_ids_contain_delimiters():
+    rows = [
+        jk("a|SARAMIN:b", company="회사 가"),
+        sa("c", company="회사 가"),
+        jk("a", company="회사 나"),
+        sa("b|SARAMIN:c", company="회사 나"),
+    ]
+
+    mapping = canonical_of(rows)
+
+    assert mapping[("JOBKOREA", "a|SARAMIN:b")] == mapping[("SARAMIN", "c")]
+    assert mapping[("JOBKOREA", "a")] == mapping[
+        ("SARAMIN", "b|SARAMIN:c")
+    ]
+    assert mapping[("JOBKOREA", "a|SARAMIN:b")] != mapping[("JOBKOREA", "a")]
+
+
 def test_different_company_same_title_does_not_merge():
     rows = [jk("A", company="회사가"), sa("B", company="회사나")]
 

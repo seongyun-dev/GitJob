@@ -9,15 +9,17 @@
 검증된 input union이 바뀔 때 공고별 `job_fact`와 검색 열을 한 번 materialize하고,
 `BUILDING` version의 전체 행·fact를 검증한 transaction만 `PUBLISHED` head로 교체한다.
 `/job-demands/preview`는 `C_JOB_DEMAND_PROJECTION_MODE=projection`일 때 이 head를 읽으며
-Snapshot을 INSERT하지 않는다. `legacy`가 기본값이고 `shadow`는 legacy 응답을 유지한 채
-bounded executor로 표본을 비교한다.
+Snapshot을 INSERT하지 않는다. 그 안의 조회 구현은
+`C_JOB_DEMAND_QUERY_ENGINE=python|shadow|sql`로 별도 전환한다. 기본값 `python`과
+`C_JOB_DEMAND_QUERY_FALLBACK=false`는 SQL 오류를 조용히 숨기지 않는다.
 
 `CURRENT_MARKET`의 live 경로는 명시적 `CLOSED`와 `deadline <= as_of`를 분모에서도
 제외한다. 상태 또는 deadline이 UNKNOWN인 공고는 남긴다. 이 정책은
 `job-demand-aggregation/v4`이고, 실제 역사 기능인 `MONTHLY_DEMAND`에는 적용하지 않는다.
 
-개인 결과는 `C_JOB_MATCHING_ACTIVE_MODE=projection`일 때 계산 시작 시
-`projection_version_id`를 고정한다. 추천·Gap·매칭 입력은 해당 version의 불변 fact에서
+개인 결과 생성은 `C_JOB_MATCHING_COMPUTE_MODE=projection`일 때 계산 시작 시
+`projection_version_id`를 고정한다. 사용자 조회 전환은 별도
+`C_JOB_MATCHING_ACTIVE_MODE=projection`이다. 추천·Gap·매칭 입력은 해당 version의 불변 fact에서
 복원하고 파싱하지 않는다. list/detail/What-if는 조회 시 현재 active set과 교집합하며,
 count·ID·pagination을 같은 집합에서 계산한다. 결과 version과 current head가 다르면
 `STALE`을 반환하면서 기존 결과를 계속 제공하고 BE가 저장된 scheduler에 비동기 재계산을

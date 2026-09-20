@@ -55,6 +55,7 @@ COPY BE/src/main/resources/db/c-compute/004_registry_review_source_identity.sql 
 COPY BE/src/main/resources/db/c-compute/005_job_search_projection.sql /app/migrations/005_job_search_projection.sql
 COPY BE/src/main/resources/db/c-compute/006_current_result.sql /app/migrations/006_current_result.sql
 COPY BE/src/main/resources/db/c-compute/007_projection_publication_safety.sql /app/migrations/007_projection_publication_safety.sql
+COPY BE/src/main/resources/db/c-compute/008_job_projection_market_sidecar.sql /app/migrations/008_job_projection_market_sidecar.sql
 ENV C_REGISTRY_REPOSITORY_ROOT=/opt/gitjob-provenance
 RUN python -c "from pathlib import Path; from analysis.rulepack import load_rule_pack; from registry.contracts import load_registry; registry = load_registry(Path('registry/data/technology_registry_20260911_4.json'), repository_root=Path('/opt/gitjob-provenance')); load_rule_pack(Path('analysis/data/rule_pack_20260911_4.json'), registry=registry)"
 

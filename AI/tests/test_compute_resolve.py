@@ -23,6 +23,7 @@ from trend.archive_v2 import (
 )
 from trend.job import JOB_TREND_POLICY_VERSION, job_trend
 from worker.api import TrendCompleted, compute_versions, create_compute_app
+from worker.job_projection_store import JobProjectionSidecarNotReady
 from worker.jobs import job_stream
 from worker.store import digest
 from worker.trend_streams import (
@@ -57,6 +58,71 @@ class ResolveStore:
 
     def get_snapshot(self, snapshot_id, *, owner):
         return self.snapshots.get((snapshot_id, owner))
+
+
+class SqlProjectionStore(ResolveStore):
+    def __init__(self, demand, *, sidecar_ready=True):
+        super().__init__()
+        self.demand = demand
+        self.sidecar_ready = sidecar_ready
+        self.summary_calls = 0
+        self.selected_key_calls = 0
+        self.head_calls = 0
+        self.projection_id = "jp-" + "a" * 64
+
+    def ready(self):
+        return True
+
+    def get_job_projection_readiness(self):
+        return {
+            "status": "READY",
+            "market_sql_ready": self.sidecar_ready,
+            "projection_version_id": self.projection_id,
+        }
+
+    def get_job_projection_head(self):
+        self.head_calls += 1
+        return {
+            "projection_version_id": self.projection_id,
+            "observed_at": self.demand.criteria.as_of,
+        }
+
+    def query_job_projection_demand_summary(
+        self, selected, *, projection_version_id
+    ):
+        self.summary_calls += 1
+        if not self.sidecar_ready:
+            raise JobProjectionSidecarNotReady("old head")
+        assert projection_version_id == self.projection_id
+        assert selected == self.demand.criteria
+        return self.demand.model_copy(
+            update={"projection_version_id": self.projection_id}
+        )
+
+    def query_job_projection_cohort(self, selected, *, projection_version_id):
+        cohort = build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+        cohort = cohort.model_copy(
+            update={
+                "projection_version_id": projection_version_id,
+                "cohort_id": self.demand.cohort_id,
+            }
+        )
+        return SimpleNamespace(
+            cohort=cohort,
+            snapshot=self.demand.model_copy(
+                update={"projection_version_id": projection_version_id}
+            ),
+        )
+
+    def query_job_projection_selected_keys(self, selected, *, projection_version_id):
+        self.selected_key_calls += 1
+        assert projection_version_id == self.projection_id
+        assert selected == self.demand.criteria
+        return ("SARAMIN:one",)
+
+    def store_projection_compatibility_pair(self, cohort, demand):
+        assert cohort.projection_version_id == demand.projection_version_id
+        return {"cohort_snapshot_id": COHORT_ID, "demand_snapshot_id": DEMAND_ID}
 
 
 class BatchResolveStore:
@@ -320,6 +386,285 @@ def test_job_demand_preview_projection_mode_reads_published_projection_only(
 
     assert response.status_code == 200, response.text
     assert response.json()["data"] == demand.model_dump(mode="json")
+
+
+def test_projection_sql_query_engine_uses_bounded_summary_cache(monkeypatch, tmp_path):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    store = SqlProjectionStore(demand)
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_ENGINE", "sql")
+    payload = {
+        "schema_version": "job-cohort-resolve-selector/v1",
+        "target_role": "BACKEND",
+        "regions": ["서울"],
+    }
+
+    with _client(store, monkeypatch=monkeypatch, tmp_path=tmp_path) as client:
+        first = client.post(PREFIX + "/job-demands/preview", json=payload)
+        second = client.post(PREFIX + "/job-demands/preview", json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["data"]["projection_version_id"] == store.projection_id
+    assert store.summary_calls == 1
+
+
+def test_matching_compute_projection_is_independent_from_active_reads(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    store = SqlProjectionStore(demand)
+    monkeypatch.setenv("C_JOB_MATCHING_COMPUTE_MODE", "projection")
+    monkeypatch.setenv("C_JOB_MATCHING_ACTIVE_MODE", "legacy")
+
+    with _client(store, monkeypatch=monkeypatch, tmp_path=tmp_path) as client:
+        response = client.post(
+            PREFIX + "/job-cohorts/resolve",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["cohort_snapshot_id"] == COHORT_ID
+    assert response.json()["data"]["compute_versions"]["job_projection"] == (
+        store.projection_id
+    )
+
+
+def test_matching_compute_projection_requires_market_sidecar_readiness(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    store = SqlProjectionStore(demand, sidecar_ready=False)
+    monkeypatch.setenv("C_JOB_MATCHING_COMPUTE_MODE", "projection")
+
+    with _client(store, monkeypatch=monkeypatch, tmp_path=tmp_path) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "JOB_PROJECTION_SIDECAR_NOT_READY"
+
+
+def test_sql_query_engine_routes_old_head_to_python_without_error_fallback(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    projected = SimpleNamespace(snapshot=demand, selected_job_ids=("SARAMIN:one",))
+    runner = IntakeRunner(
+        None, selected_criteria=selected, projected=(selected, projected)
+    )
+    store = SqlProjectionStore(demand, sidecar_ready=False)
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_ENGINE", "sql")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_FALLBACK", "false")
+
+    with _client(
+        store, runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+        status = client.get(PREFIX + "/intake/status")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == projected.snapshot.model_dump(mode="json")
+    metrics = status.json()["data"]["job_projection_metrics"]
+    assert metrics["projection_query_total"] == 1
+    assert metrics["projection_query_success_total"] == 1
+    assert metrics["projection_fallback_total"] == 1
+    assert metrics["projection_old_head_fallback_total"] == 1
+    assert metrics["projection_query_error_total"] == 0
+
+
+def test_sql_error_fallback_metrics_count_one_request(monkeypatch, tmp_path):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    store = SqlProjectionStore(demand)
+    projected = SimpleNamespace(
+        snapshot=demand.model_copy(
+            update={"projection_version_id": store.projection_id}
+        ),
+        selected_job_ids=("SARAMIN:one",),
+    )
+    runner = IntakeRunner(
+        None, selected_criteria=selected, projected=(selected, projected)
+    )
+
+    def fail_summary(*_args, **_kwargs):
+        raise RuntimeError("query failed")
+
+    store.query_job_projection_demand_summary = fail_summary
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_ENGINE", "sql")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_FALLBACK", "true")
+
+    with _client(
+        store, runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+        status = client.get(PREFIX + "/intake/status")
+
+    assert response.status_code == 200
+    metrics = status.json()["data"]["job_projection_metrics"]
+    assert metrics["projection_query_total"] == 1
+    assert metrics["projection_query_success_total"] == 1
+    assert metrics["projection_query_error_total"] == 1
+    assert metrics["projection_fallback_total"] == 1
+    assert metrics["projection_error_fallback_total"] == 1
+
+
+def test_projection_legacy_fallback_metrics_count_one_request(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    result = {
+        "status": "COMPLETED",
+        "results": [{"kind": "DEMAND", "snapshot_id": DEMAND_ID}],
+    }
+    runner = IntakeRunner(result, selected_criteria=selected, projected=None)
+    store = ResolveStore()
+    store.snapshots[(DEMAND_ID, None)] = {
+        "snapshot_id": DEMAND_ID,
+        "kind": "DEMAND",
+        "payload": demand.model_dump(mode="json"),
+    }
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_FALLBACK", "true")
+
+    with _client(
+        store, runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+        status = client.get(PREFIX + "/intake/status")
+
+    assert response.status_code == 200
+    metrics = status.json()["data"]["job_projection_metrics"]
+    assert metrics["projection_query_total"] == 1
+    assert metrics["projection_query_success_total"] == 0
+    assert metrics["projection_query_error_total"] == 1
+    assert metrics["projection_fallback_total"] == 1
+    assert metrics["projection_legacy_fallback_total"] == 1
+
+
+def test_query_shadow_compares_selected_ids_without_changing_python_response(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    store = SqlProjectionStore(demand)
+    projected = SimpleNamespace(
+        snapshot=demand.model_copy(
+            update={"projection_version_id": store.projection_id}
+        ),
+        selected_job_ids=("SARAMIN:one",),
+    )
+    runner = IntakeRunner(
+        None, selected_criteria=selected, projected=(selected, projected)
+    )
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_ENGINE", "shadow")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_SHADOW_RATE", "1")
+
+    with _client(
+        store, runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == projected.snapshot.model_dump(mode="json")
+    assert store.summary_calls == 1
+    assert store.selected_key_calls == 1
+    assert store.head_calls == 0
+
+
+def test_query_shadow_skips_old_head_before_background_sql(monkeypatch, tmp_path):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    store = SqlProjectionStore(demand, sidecar_ready=False)
+    projected = SimpleNamespace(
+        snapshot=demand.model_copy(
+            update={"projection_version_id": store.projection_id}
+        ),
+        selected_job_ids=("SARAMIN:one",),
+    )
+    runner = IntakeRunner(
+        None, selected_criteria=selected, projected=(selected, projected)
+    )
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_ENGINE", "shadow")
+    monkeypatch.setenv("C_JOB_DEMAND_QUERY_SHADOW_RATE", "1")
+
+    with _client(
+        store, runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+        status = client.get(PREFIX + "/intake/status")
+
+    assert response.status_code == 200
+    assert store.summary_calls == 0
+    metrics = status.json()["data"]
+    assert metrics["job_demand_query_shadow"][
+        "projection_shadow_skipped_total"
+    ] == 1
+    assert metrics["job_projection_metrics"][
+        "projection_query_shadow_sidecar_skipped_total"
+    ] == 1
 
 
 def test_projection_mode_does_not_hide_missing_head_without_explicit_fallback(

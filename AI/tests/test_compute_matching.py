@@ -9,16 +9,15 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
-from test_job_cohort import batch, criteria, posting
-from test_job_input_union import output
-from test_recommendation_engine import make_analysis
-
 from job.cohort import JobCohort
 from job.input_union import prepare_input_union
 from job.matching import build_job_matching, restore_job_assessment
 from job.projection import materialize_job_projection
 from registry.mapper import RegistryMapper
+from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
+from test_job_cohort import batch, criteria, posting
+from test_job_input_union import output
+from test_recommendation_engine import make_analysis
 from worker.api import create_compute_app
 from worker.store import (
     Artifact,
@@ -529,34 +528,31 @@ def test_postgres_projection_a_b_a_restores_each_pinned_fact(client):
             replace(job, projection_version_id=projection_a_again_id)
             for job in projection_a.jobs
         ),
-    )
-
-    cohort_id = snapshot_ref(
-        client.post(
-            PREFIX + "/job-batches/completed",
-            json=event(
-                batch=batch(
-                    posting(
-                        "fact-history",
-                        required=("Java",),
-                        collected_at="2026-09-07T00:00:00Z",
-                    )
-                ).model_dump(mode="json"),
-                criteria=selected.model_dump(mode="json"),
-            ),
+        market_jobs=tuple(
+            replace(job, projection_version_id=projection_a_again_id)
+            for job in projection_a.market_jobs
         ),
-        "COHORT",
+        market_candidates=tuple(
+            replace(candidate, projection_version_id=projection_a_again_id)
+            for candidate in projection_a.market_candidates
+        ),
     )
 
     def complete(pinned):
         store.publish_job_projection(pinned)
+        projected = store.query_job_projection_cohort(
+            selected, projection_version_id=pinned.projection_version_id
+        )
+        pair = store.store_projection_compatibility_pair(
+            projected.cohort, projected.snapshot
+        )
         response = client.post(
             PREFIX + "/analyses/completed",
             json=event(
                 user_id="user-1",
                 analysis_id="analysis-1",
                 target_key="BACKEND|서울|신입",
-                cohort_snapshot_id=cohort_id,
+                cohort_snapshot_id=pair["cohort_snapshot_id"],
                 projection_version_id=pinned.projection_version_id,
                 evidence=levelled_evidence_payload("L3"),
             ),

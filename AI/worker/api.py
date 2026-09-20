@@ -1,6 +1,7 @@
 """Internal C compute API. Authentication/serving for end users remains in B."""
 
 import hmac
+import json
 import logging
 import os
 import time
@@ -8,6 +9,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Annotated, Any, Literal
 
 import psycopg
@@ -598,12 +600,27 @@ def create_compute_app(
     projection_fallback = os.getenv(
         "C_JOB_DEMAND_PROJECTION_FALLBACK", "false"
     ).lower() in {"1", "true", "yes"}
+    demand_query_engine = os.getenv(
+        "C_JOB_DEMAND_QUERY_ENGINE", "python"
+    ).lower()
+    if demand_query_engine not in {"python", "shadow", "sql"}:
+        raise ValueError("C_JOB_DEMAND_QUERY_ENGINE must be python, shadow, or sql")
+    demand_query_fallback = os.getenv(
+        "C_JOB_DEMAND_QUERY_FALLBACK", "false"
+    ).lower() in {"1", "true", "yes"}
     matching_active_mode = os.getenv(
         "C_JOB_MATCHING_ACTIVE_MODE", "legacy"
     ).lower()
     if matching_active_mode not in {"legacy", "projection"}:
         raise ValueError(
             "C_JOB_MATCHING_ACTIVE_MODE must be legacy or projection"
+        )
+    matching_compute_mode = os.getenv(
+        "C_JOB_MATCHING_COMPUTE_MODE", "legacy"
+    ).lower()
+    if matching_compute_mode not in {"legacy", "projection"}:
+        raise ValueError(
+            "C_JOB_MATCHING_COMPUTE_MODE must be legacy or projection"
         )
     from worker.projection_shadow import ProjectionShadow, compare_demands
 
@@ -615,12 +632,44 @@ def create_compute_app(
         if projection_mode == "shadow"
         else None
     )
+    query_shadow = (
+        ProjectionShadow(
+            sample_rate=float(os.getenv("C_JOB_DEMAND_QUERY_SHADOW_RATE", "0.01")),
+            queue_size=int(os.getenv("C_JOB_DEMAND_QUERY_SHADOW_QUEUE", "4")),
+        )
+        if projection_mode == "projection" and demand_query_engine == "shadow"
+        else None
+    )
+    from worker.summary_cache import SummaryCache
+
+    summary_cache = SummaryCache(
+        max_size=int(os.getenv("C_JOB_DEMAND_SUMMARY_CACHE_SIZE", "256"))
+    )
     projection_metrics = {
         "projection_query_total": 0,
+        "projection_query_success_total": 0,
         "projection_query_error_total": 0,
         "projection_fallback_total": 0,
+        "projection_old_head_fallback_total": 0,
+        "projection_error_fallback_total": 0,
+        "projection_legacy_fallback_total": 0,
+        "projection_query_shadow_sidecar_skipped_total": 0,
         "projection_query_last_duration_ms": None,
+        "projection_query_last_projection_version_id": None,
     }
+    projection_metrics_lock = Lock()
+
+    def increment_projection_metric(name: str) -> None:
+        with projection_metrics_lock:
+            projection_metrics[name] += 1
+
+    def update_projection_metrics(**values) -> None:
+        with projection_metrics_lock:
+            projection_metrics.update(values)
+
+    def projection_metrics_snapshot() -> dict[str, Any]:
+        with projection_metrics_lock:
+            return dict(projection_metrics)
     intake_runner = None
     if configured_intake and registry is not None:
         from worker.intake import configured_runner
@@ -642,6 +691,8 @@ def create_compute_app(
                 intake_runner.stop()
             if shadow:
                 shadow.close()
+            if query_shadow:
+                query_shadow.close()
 
     app.router.lifespan_context = lifespan
     app.state.intake_runner = intake_runner
@@ -901,10 +952,19 @@ def create_compute_app(
             else {"status": "UNKNOWN"}
         )
         if (
-            (projection_mode == "projection" or matching_active_mode == "projection")
+            (
+                projection_mode == "projection"
+                or matching_active_mode == "projection"
+                or matching_compute_mode == "projection"
+            )
             and projection_readiness.get("status") != "READY"
         ):
             raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
+        if (
+            matching_compute_mode == "projection"
+            and not projection_readiness.get("market_sql_ready", False)
+        ):
+            raise HTTPException(503, "JOB_PROJECTION_SIDECAR_NOT_READY")
         return {
             "message": "C compute ready",
             "data": {
@@ -935,8 +995,15 @@ def create_compute_app(
                 "public_sources": intake_runner.public_reports if intake_runner else [],
                 "job_projection_mode": projection_mode,
                 "job_projection_shadow": shadow.metrics() if shadow else None,
-                "job_projection_metrics": dict(projection_metrics),
+                "job_projection_metrics": projection_metrics_snapshot(),
+                "job_demand_query_engine": demand_query_engine,
+                "job_demand_query_fallback": demand_query_fallback,
+                "job_demand_query_shadow": (
+                    query_shadow.metrics() if query_shadow else None
+                ),
+                "job_demand_summary_cache": summary_cache.metrics(),
                 "job_matching_active_mode": matching_active_mode,
+                "job_matching_compute_mode": matching_compute_mode,
             },
         }
 
@@ -955,14 +1022,36 @@ def create_compute_app(
             # it out of job_stream/input-union hashes avoids rebuilding snapshots.
             "analysis_target_key": "current-user-result-target/v1",
         }
-        if matching_active_mode == "projection":
+        if matching_compute_mode == "projection":
             projection_head = database().get_job_projection_head()
             if projection_head is None:
                 raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
             response_versions["job_projection"] = projection_head[
                 "projection_version_id"
             ]
-        if intake_runner and intake_runner.job_set_sink:
+            if selector is not None:
+                criteria = selector.criteria_at(projection_head["observed_at"])
+            if criteria is None:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            projected = database().query_job_projection_cohort(
+                criteria,
+                projection_version_id=projection_head["projection_version_id"],
+            )
+            references_by_kind = database().store_projection_compatibility_pair(
+                projected.cohort, projected.snapshot
+            )
+            references = [
+                {
+                    "kind": "COHORT",
+                    "snapshot_id": references_by_kind["cohort_snapshot_id"],
+                },
+                {
+                    "kind": "DEMAND",
+                    "snapshot_id": references_by_kind["demand_snapshot_id"],
+                },
+            ]
+            message = "C pinned Projection cohort and demand reference"
+        elif intake_runner and intake_runner.job_set_sink:
             if selector is not None:
                 selected = intake_runner.resolve_job_selector(selector)
                 criteria, result = selected if selected is not None else (None, None)
@@ -1065,28 +1154,156 @@ def create_compute_app(
 
         if projection_mode == "projection":
             started = time.perf_counter()
+            increment_projection_metric("projection_query_total")
+            fallback_recorded = False
+            error_recorded = False
+
+            def record_fallback(reason_metric: str) -> None:
+                nonlocal fallback_recorded
+                increment_projection_metric(reason_metric)
+                if not fallback_recorded:
+                    increment_projection_metric("projection_fallback_total")
+                    fallback_recorded = True
+
+            def record_error() -> None:
+                nonlocal error_recorded
+                if not error_recorded:
+                    increment_projection_metric("projection_query_error_total")
+                    error_recorded = True
+
             try:
-                selected = (
-                    intake_runner.resolve_projected_job_selector(selector)
-                    if intake_runner
-                    and hasattr(intake_runner, "resolve_projected_job_selector")
-                    else database().resolve_job_projection_selector(selector)
-                )
+                def python_projection():
+                    return (
+                        intake_runner.resolve_projected_job_selector(selector)
+                        if intake_runner
+                        and hasattr(intake_runner, "resolve_projected_job_selector")
+                        else database().resolve_job_projection_selector(selector)
+                    )
+
+                def sql_projection_for(pinned_criteria, projection_version_id):
+                    key = (
+                        projection_version_id,
+                        pinned_criteria.as_of.isoformat(),
+                        json.dumps(
+                            pinned_criteria.model_dump(mode="json"),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    )
+                    return summary_cache.get_or_compute(
+                        key,
+                        lambda: database().query_job_projection_demand_summary(
+                            pinned_criteria,
+                            projection_version_id=projection_version_id,
+                        ),
+                    )
+
+                def sql_projection():
+                    head = database().get_job_projection_head()
+                    if head is None:
+                        return None
+                    criteria = selector.criteria_at(head["observed_at"])
+                    demand = sql_projection_for(
+                        criteria, head["projection_version_id"]
+                    )
+                    return criteria, demand
+
+                if demand_query_engine == "sql":
+                    try:
+                        selected = sql_projection()
+                    except Exception as exc:  # noqa: BLE001 - fallback policy is flag-driven
+                        from worker.job_projection_store import (
+                            JobProjectionSidecarNotReady,
+                        )
+
+                        if isinstance(exc, JobProjectionSidecarNotReady):
+                            record_fallback("projection_old_head_fallback_total")
+                            LOGGER.info(
+                                "projection_sql_old_head_python_fallback "
+                                "reason=SIDECAR_NOT_READY"
+                            )
+                            selected = python_projection()
+                        elif demand_query_fallback:
+                            record_error()
+                            record_fallback("projection_error_fallback_total")
+                            LOGGER.warning(
+                                "projection_sql_error_python_fallback error_type=%s",
+                                type(exc).__name__,
+                            )
+                            selected = python_projection()
+                        else:
+                            record_error()
+                            raise HTTPException(
+                                503, "JOB_PROJECTION_QUERY_FAILED"
+                            ) from None
+                else:
+                    selected = python_projection()
                 if selected is None:
                     raise LookupError("projection head unavailable")
                 criteria, projected = selected
-                demand = projected.snapshot
+                demand = (
+                    projected.snapshot
+                    if hasattr(projected, "snapshot")
+                    else projected
+                )
+                if demand_query_engine == "shadow" and query_shadow:
+                    python_demand = demand
+                    python_job_ids = tuple(projected.selected_job_ids)
+                    pinned_projection_id = python_demand.projection_version_id
+                    if pinned_projection_id is None:
+                        raise RuntimeError(
+                            "Python projection result has no pinned version"
+                        )
+
+                    def compare_query_engines():
+                        sql_criteria = criteria
+                        sql_demand = sql_projection_for(
+                            sql_criteria, pinned_projection_id
+                        )
+                        sql_job_ids = database().query_job_projection_selected_keys(
+                            sql_criteria,
+                            projection_version_id=pinned_projection_id,
+                        )
+                        return compare_demands(
+                            python_demand,
+                            sql_demand,
+                            legacy_job_ids=python_job_ids,
+                            projected_job_ids=sql_job_ids,
+                        )
+
+                    if query_shadow.should_sample(selector):
+                        readiness = database().get_job_projection_readiness()
+                        readiness_version = readiness.get("projection_version_id")
+                        sidecar_ready = readiness.get("market_sql_ready", False)
+                        same_head = readiness_version in {
+                            None,
+                            pinned_projection_id,
+                        }
+                        if sidecar_ready and same_head:
+                            query_shadow.submit(selector, compare_query_engines)
+                        else:
+                            query_shadow.skip("SIDECAR_NOT_READY_OR_HEAD_CHANGED")
+                            increment_projection_metric(
+                                "projection_query_shadow_sidecar_skipped_total"
+                            )
                 duration_ms = (time.perf_counter() - started) * 1000
-                projection_metrics["projection_query_total"] += 1
-                projection_metrics["projection_query_last_duration_ms"] = duration_ms
+                increment_projection_metric("projection_query_success_total")
+                update_projection_metrics(
+                    projection_query_last_duration_ms=duration_ms,
+                    projection_query_last_projection_version_id=(
+                        demand.projection_version_id
+                    ),
+                )
                 LOGGER.info(
-                    "projection_query_completed duration_ms=%.3f version=%s jobs=%s",
+                    "projection_query_completed duration_ms=%.3f "
+                    "projection_version_id=%s jobs=%s",
                     duration_ms,
-                    demand.aggregation_version,
+                    demand.projection_version_id,
                     demand.denominator,
                 )
             except (LookupError, RuntimeError, psycopg.Error) as exc:
-                projection_metrics["projection_query_error_total"] += 1
+                record_error()
                 LOGGER.warning(
                     "projection_query_failed fallback=%s error_type=%s",
                     projection_fallback,
@@ -1094,7 +1311,7 @@ def create_compute_app(
                 )
                 if not projection_fallback:
                     raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
-                projection_metrics["projection_fallback_total"] += 1
+                record_fallback("projection_legacy_fallback_total")
                 criteria, result, demand = legacy()
                 if demand is None:
                     return _preparing_demand_response(criteria)
@@ -1294,17 +1511,8 @@ def create_compute_app(
             cohort = JobCohort.model_validate(
                 snapshot(event.cohort_snapshot_id, None, "COHORT")["payload"]
             )
-            if event.projection_version_id is not None:
-                projected = database().query_job_projection_demand(
-                    cohort.criteria,
-                    projection_version_id=event.projection_version_id,
-                )
-                if (
-                    projected.snapshot.projection_version_id
-                    != event.projection_version_id
-                ):
-                    raise RuntimeError("pinned projection identity changed")
-                cohort = projected.cohort
+            if event.projection_version_id != cohort.projection_version_id:
+                raise RuntimeError("event and cohort Projection identities differ")
             if cohort.registry_version != registry.registry_version:
                 raise ValueError("cohort and runtime Registry versions differ")
             result = build_recommendations(
