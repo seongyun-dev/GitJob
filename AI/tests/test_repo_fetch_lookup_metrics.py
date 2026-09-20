@@ -152,8 +152,17 @@ def test_additive_metrics_preserve_summary_schema_and_consumer_compatibility(
     assert summary["github_api_total"] == (
         summary["github_api_core"] + summary["github_api_raw"]
     )
+    # Throughput is reported only when there is a duration to divide by
+    # (`repo_fetch_orchestrator`: `... if elapsed > 0 else None`). A scripted
+    # transport can finish inside the clock's resolution, so `elapsed` of 0 and
+    # a `None` rate is the contract working, not a defect. Asserting the rate is
+    # always present made this test fail on roughly 40% of runs.
     assert summary["elapsed_seconds"] >= 0.0
-    assert summary["repos_per_second"] is not None
+    if summary["elapsed_seconds"] > 0:
+        assert summary["repos_per_second"] is not None
+        assert summary["repos_per_second"] > 0
+    else:
+        assert summary["repos_per_second"] is None
 
 
 def test_historical_lookup_uses_isolated_cache_identity(tmp_path: Path) -> None:
