@@ -10,6 +10,7 @@ import type {
 import type {
   JobPostingView,
   JobRequirement,
+  NextSkillEvidenceStatus,
   NextSkillView,
   RequirementMark,
   SkillGapGroupView,
@@ -180,12 +181,32 @@ export function toSkillGapSummary(dto: SkillGapDto): SkillGapSummaryView | null 
   }
 }
 
+const EVIDENCE_STATUSES: readonly NextSkillEvidenceStatus[] = [
+  'NOT_HELD',
+  'L0',
+  'PERSONAL_LEVEL_UNKNOWN',
+]
+
+/**
+ * 모르는 값을 `NOT_HELD`로 떨어뜨리지 않는다.
+ *
+ * 기본값을 미보유로 두면 계약이 늘어났을 때 화면이 조용히 "보유하지 않았다"고 말하게
+ * 된다. `toMark`가 `UNKNOWN`으로 남기는 것과 같은 이유이고, 여기서는 주장할 상태가
+ * 없다는 뜻으로 `null`이 그 자리다.
+ */
+function toEvidenceStatus(value: string | null | undefined): NextSkillEvidenceStatus | null {
+  return EVIDENCE_STATUSES.includes(value as NextSkillEvidenceStatus)
+    ? (value as NextSkillEvidenceStatus)
+    : null
+}
+
 export function toNextSkills(dto: RecommendationDto): NextSkillView[] {
   return dto.candidates.map((candidate) => ({
     techId: candidate.techId,
     rank: candidate.rank,
     techName: technologyDisplayName(candidate.techId),
     fromLevel: toLevel(candidate.personalLevel),
+    evidenceStatus: toEvidenceStatus(candidate.evidenceStatus),
     currentFullMatch: candidate.whatIf?.currentCount ?? null,
     projectedFullMatch: candidate.whatIf?.projectedCount ?? null,
     increasedCount: candidate.whatIf?.increasedCount ?? null,

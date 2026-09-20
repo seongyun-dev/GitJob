@@ -120,6 +120,17 @@ export interface WhatIfJobView {
   sourceUrl: string | null
 }
 
+/**
+ * 개인 Evidence 판정 상태 · `RecommendationDto.candidates[].evidenceStatus`.
+ *
+ * **`NOT_HELD`와 `PERSONAL_LEVEL_UNKNOWN`은 다른 상태다.** 앞은 C가 보유 근거를 찾지
+ * 못했다고 판정한 것이고, 뒤는 저장소에서 관측됐거나 아직 평가되지 않아 개인 Level이
+ * 없는 것이다(S15P21E102-354). 둘을 합치면 화면이 판정하지 않은 기술을 미보유로
+ * 단정하게 되고, 그건 `RequirementMark`의 `UNKNOWN`을 `NONE`으로 접는 것과 같은
+ * 실수다.
+ */
+export type NextSkillEvidenceStatus = 'NOT_HELD' | 'L0' | 'PERSONAL_LEVEL_UNKNOWN'
+
 /** 다음 학습 기술 후보 · 화면 10·03 공용. */
 export interface NextSkillView {
   techId: string
@@ -127,6 +138,11 @@ export interface NextSkillView {
   techName: string
   /** 현재 Personal Level. 판정되지 않았으면 `null`. */
   fromLevel: EvidenceLevel | null
+  /**
+   * 왜 Level이 없는지. 계약에 없는 값이면 `null`이고, 그때 화면은 아무 상태도
+   * 주장하지 않는다. `fromLevel`이 `null`인 이유를 이 값 없이는 말할 수 없다.
+   */
+  evidenceStatus: NextSkillEvidenceStatus | null
   /** 현재 필수 전체 충족 공고 수. 계산되지 않았으면 `null`. */
   currentFullMatch: number | null
   projectedFullMatch: number | null

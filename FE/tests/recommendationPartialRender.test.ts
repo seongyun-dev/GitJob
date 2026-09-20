@@ -44,8 +44,8 @@ test('추천 화면은 READY 를 직접 비교하지 않고 공용 판정을 쓴
 test('추천 화면은 부분 분석 배너를 후보와 함께 띄운다', () => {
   const page = source('features/matching/pages/RecommendationPage.tsx')
 
-  // 배너는 본문을 가리지 않고 위에 한 줄로만 붙는다.
-  assert.match(page, /<PartialNotice state=\{data\} \/>/)
+  // 배너는 본문을 가리지 않고 위에 한 줄로만 붙는다. 면적은 화면이 정한다(`compact`).
+  assert.match(page, /<PartialNotice state=\{data\}/)
 })
 
 test('What-if 는 추천 상태와 무관하게 후보에서 기본 선택을 만든다', () => {

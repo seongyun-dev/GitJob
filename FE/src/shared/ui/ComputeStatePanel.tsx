@@ -208,8 +208,19 @@ export function ComputeStatePanel({
  *
  * 값을 가리지 않고 위에 한 줄만 붙인다. 부분이라고 결과를 숨기면 있는 근거로 나온
  * 판정까지 보지 못하게 되고, 아무 표시도 없으면 완전한 결과로 오해한다.
+ *
+ * `compact`는 본문이 카드 여러 장인 화면을 위한 것이다(S15P21E102-364). 폭을 가득
+ * 채운 노란 띠가 추천 Top3보다 시각적으로 앞서던 것을 줄인다. 색과 문구는 그대로
+ * 두고 면적만 줄인다 — 경고를 약하게 만드는 것이 아니라 본문보다 크지 않게 한다.
  */
-export function PartialNotice({ state }: { state: ComputeState | undefined }) {
+export function PartialNotice({
+  state,
+  compact = false,
+}: {
+  state: ComputeState | undefined
+  /** 문구를 감싸는 만큼만 차지한다. 기본값은 지금까지의 전체 폭 띠다. */
+  compact?: boolean
+}) {
   if (state === undefined || state.dataStatus !== 'PARTIAL') {
     return null
   }
@@ -222,7 +233,11 @@ export function PartialNotice({ state }: { state: ComputeState | undefined }) {
   return (
     <p
       role="status"
-      className="rounded-[14px] border border-tone-caution-bg bg-tone-caution-bg px-4 py-3 text-[12.5px] leading-[1.6] text-tone-caution"
+      className={
+        compact
+          ? 'w-fit rounded-full border border-tone-caution-bg bg-tone-caution-bg px-3.5 py-1.5 text-[12px] leading-[1.5] text-tone-caution'
+          : 'rounded-[14px] border border-tone-caution-bg bg-tone-caution-bg px-4 py-3 text-[12.5px] leading-[1.6] text-tone-caution'
+      }
     >
       {message}
     </p>

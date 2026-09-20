@@ -497,6 +497,13 @@ html {
   /*
    * 대표 + 후보 3열. Final의 nextskill `463 370 370`에 대응한다.
    * 첫 칸을 넓게 둬 1순위가 시각적으로 구분된다.
+   *
+   * `align-items: start`가 이 유틸리티의 핵심이다. 추천 화면이 이 규칙을 쓰지 않고
+   * 인라인 2열 grid를 갖고 있던 동안, 1순위 카드가 옆 열 높이까지 늘어나 카드 아래가
+   * 크게 비었다(S15P21E102-364). 높이는 내용이 정한다.
+   *
+   * 열 폭에 `minmax(0, …)`을 씌운 이유는 `.gj-cards`·`.gj-duo`와 같다. `1.25fr`만
+   * 적으면 최소 폭이 min-content라 긴 근거 문장이 열을 밀어내 가로 스크롤이 생긴다.
    */
   .gj-trio {
     display: grid;
@@ -506,7 +513,7 @@ html {
   }
   @media (width >= 1024px) {
     .gj-trio {
-      grid-template-columns: 1.25fr 1fr 1fr;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
       gap: 14px;
     }
   }
