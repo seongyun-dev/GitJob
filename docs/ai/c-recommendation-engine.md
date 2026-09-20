@@ -54,7 +54,32 @@ v1/v2로 저장한 결과는 원래 공식과 순위를 그대로 읽으며, 새
 
 기본 `c-learning-prerequisites/v1`은 C가 적용하는 학습 순서 정책이다. Java→Spring Boot, Spring Boot→Spring Data JPA·Actuator, JavaScript→Node.js·React·Vue.js, React→Next.js, Python→FastAPI를 지정한다. 실제 언어 생태계 전체 의존 그래프나 사용자 숙련도를 주장하는 자료가 아니다. 목록 밖 기술은 이 정책 버전이 선행 조건을 부과하지 않는다는 뜻이다. 각 rule의 Fact ID와 전체 규칙을 결과에 저장하므로 정책 변경을 재현할 수 있다. 호출자가 다른 명시적 `PrerequisiteSnapshot`을 주면 그 정책을 그대로 저장·사용한다.
 
-Trend는 출처별 관측으로 별도 제공하며 이 순위에 가중치로 합산하지 않는다.
+Trend는 이 순위에 가중치로 합산하지 않는다. 임의 종합 점수는 여전히 만들지 않는다.
+
+2026-09-20 / S15P21E102-355: 다만 **이미 정해진 Top3 안에서 증가 공고 수가 사실상
+같을 때**는 순서를 GitHub 주간 관측으로 가른다. 계산이 아니라 순서 규칙이므로
+`algorithm_version`이 아니라 `tie_break_rule`이 갈리고, 새 규칙은
+`gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc`
+다. 후보 자격·`increased_count`·What-if는 그대로다(S15P21E102-354의 v7 계산 유지).
+
+- **Top3 집합은 바뀌지 않는다.** 위 1~6번 비교로 Top3를 고른 **뒤에** 그 세 후보만
+  재정렬한다. 4위 후보는 Trend가 아무리 높아도 이 비교에 참여하지 않는다.
+- **near-tie 기준**은 더 큰 `increased_count` 대비 10% 이내다(경계 포함). 둘 다 0이면
+  정확히 같으므로 near-tie이고, `0`과 `1`은 100% 차이라 아니다. 비교는 정수 연산이다.
+- **무리 짓기는 leader 기준**이다. `31~29`, `29~27`이 각각 10% 안이어도 `31~27`은
+  12.9%이므로 셋이 한 무리가 되지 않는다. 인접 쌍을 이어 붙이면 1위와 10% 넘게
+  벌어진 후보가 Trend만으로 1위에 올라간다.
+- **무리 안 비교**는 `active_repo_count` 내림차순이고, 그 다음은 위 2~6번 그대로다.
+- **값이 하나라도 없는 무리는 손대지 않는다.** 측정하지 않은 것은 0이 아니다.
+- 출처는 payload source `GITHUB_GH_ARCHIVE` + `granularity=WEEK`이며 기간은 그 출처가
+  실제로 게시한 최신 주차다. 같은 point의 `event_count`는 쓰지 않는다 — 기술마다
+  중복 합산되는 값이라 순위가 "많이 쓰이는 기술"이 아니라 "바쁜 저장소에 같이 들어
+  있는 기술"이 된다.
+- 근거는 결과의 `trend_tiebreak`에 `{source, granularity, period, metric, values}`로
+  고정한다. 값이 있는 후보만 들어가며 최대 3개다. 근거가 있는데 `tie_break_rule`이
+  예전 것이면 저장을 거절한다 — 저장된 순서를 그 근거로 재현할 수 없기 때문이다.
+- Trend를 구하지 못하면 순서도 규칙도 예전 그대로이고 payload는 바이트까지 같다.
+  Trend는 순서 보정이지 추천 생성의 전제가 아니다.
 
 ## What-if와 목록
 

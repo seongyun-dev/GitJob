@@ -23,8 +23,19 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class ComputeSnapshotStore {
 
+    /**
+     * 이 값이 바뀌면 저장된 Snapshot을 가진 사용자가 다시 계산 대상이 된다.
+     * {@link #usersMissingComputeState(String, int)}가 이 문자열로 걸러내기 때문이다.
+     *
+     * <p>{@code recommendation-vN}은 C의 {@code RECOMMENDATION_ALGORITHM_VERSION}을
+     * 따라간다. S15P21E102-294에서 이 상수가 생길 때 C가 v6이었고 그때부터 같이
+     * 움직인다. S15P21E102-354가 후보 자격 판정을 바꾸면서 C는 v7이 됐는데 이 값이
+     * v6에 남아 있었다 -- 그러면 이미 v6으로 계산된 사용자는 스케줄러가 다시 집어
+     * 올리지 않아 새 판정이 영영 반영되지 않는다. eventId에 C 버전이 들어가는 것은
+     * 409 충돌을 막을 뿐, 이미 행이 있는 사용자를 다시 큐에 넣지는 않는다.</p>
+     */
     public static final String CURRENT_COMPUTE_CONTRACT_VERSION =
-            "active-matching/job-demand-v3+recommendation-v6";
+            "active-matching/job-demand-v3+recommendation-v7";
 
     private static final RowMapper<ComputeSnapshot> MAPPER = (rs, row) -> new ComputeSnapshot(
             rs.getLong("user_id"),

@@ -506,6 +506,43 @@ def startup_registry(*, dsn: str | None = None) -> TechnologyRegistry | None:
     return None  # All three attempts above either return or raise.
 
 
+def _weekly_trend_tiebreak(store: ComputeStore):
+    """Bounded Top3 Trend lookup for the recommendation build (S15P21E102-355).
+
+    조회는 추천을 저장할 때 한 번이다. 요청마다 부르지 않는 것은 결과가 snapshot
+    에 고정되기 때문이고, 후보마다 부르지 않는 것은 세 `tech_id` 를 한 질의로 물을
+    수 있기 때문이다(기간 목록 1회 + 값 1회).
+
+    Trend 를 얻지 못하면 `None` 을 돌려주어 기존 순서를 그대로 쓴다. Trend 는
+    순서 보정이지 추천 생성의 전제가 아니므로, 주간 집계가 아직 없다고 해서
+    추천 자체가 실패하면 안 된다. 조회 실패도 같게 다룬다.
+    """
+
+    from recommendation.engine import TrendTieBreakBasis
+    from recommendation.trend_tiebreak import TREND_METRIC, resolve_trend_basis
+
+    def lookup(tech_ids: tuple[str, ...]) -> TrendTieBreakBasis | None:
+        try:
+            basis = resolve_trend_basis(store, tech_ids)
+        except Exception:  # noqa: BLE001 -- 넓게 잡는 것이 의도다
+            # DB 장애든 저장된 payload 손상이든, Trend 조회 실패가 추천 생성을
+            # 막으면 안 된다. 여기서 좁은 예외만 잡으면 예상 못한 한 가지가
+            # 사용자의 추천 전체를 없앤다. 실패는 기록하고 기존 순서로 간다.
+            LOGGER.warning("trend tie-break lookup failed; keeping base order")
+            return None
+        if basis is None:
+            return None
+        return TrendTieBreakBasis(
+            source=basis.source,
+            granularity=basis.granularity,
+            period=basis.period,
+            metric=TREND_METRIC,
+            values=dict(basis.values),
+        )
+
+    return lookup
+
+
 def create_compute_app(
     *,
     store: ComputeStore | None = None,
@@ -1062,6 +1099,7 @@ def create_compute_app(
                 event.evidence,
                 user_id=event.user_id,
                 analysis_id=event.analysis_id,
+                trend_lookup=_weekly_trend_tiebreak(database()),
             )
             payload = result.model_dump(mode="json")
             payload["cohort_snapshot_id"] = event.cohort_snapshot_id

@@ -1049,6 +1049,79 @@ class ComputeStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_trend_values(
+        self,
+        *,
+        source: str,
+        granularity: str,
+        period: str,
+        tech_ids: tuple[str, ...],
+    ) -> dict[str, int]:
+        """Read one period's ranking value for a bounded set of technologies.
+
+        <h2>왜 순위 조회를 재사용하지 않는가</h2>
+
+        `get_trend_rankings` 는 모집단 전체에서 상위 N 개를 돌려준다. 추천 후보가
+        그 N 안에 없으면 "값이 없다"와 "상위 N 에 없다"가 구분되지 않고, 그러면
+        측정된 기술이 미측정으로 읽힌다. 여기서는 물어본 기술만 정확히 답한다.
+
+        <h2>왜 기술마다 부르지 않는가</h2>
+
+        후보 수만큼 질의하면 추천 한 건이 왕복을 세 번 한다. `tech_id` 를 배열로
+        넘겨 한 질의로 끝낸다 -- `get_head_snapshots` 와 같은 bounded-set 방식이다.
+
+        <h2>어떤 head 가 그 기술을 대표하는가</h2>
+
+        `get_trend_rankings` 와 같은 규칙이다. stream identity 에 게시 `periods` 가
+        들어가 한 기술이 한 출처에 여러 head 를 가지므로, 요청한 기간을 **실제로
+        담은** head 중 마지막으로 관측된 것을 쓰고 stream 으로 동률을 깬다. 값이
+        없는 point 는 제외하되 얇은 표본은 제외하지 않는다(S15P21E102-327) --
+        `INSUFFICIENT_DATA` 라도 값이 있으면 순위에 쓸 수 있다.
+
+        값 필드는 `TREND_VALUE_KEYS` 가 고른다. GH Archive 는 `active_repo_count`
+        이며 같은 point 의 `event_count` 는 여기서도 쓰지 않는다.
+        """
+        if not tech_ids:
+            return {}
+        if len(tech_ids) > 10 or len(tech_ids) != len(set(tech_ids)):
+            raise ValueError("invalid trend value selection")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """WITH heads AS MATERIALIZED (
+                       SELECT h.stream, h.occurred_at, s.payload
+                       FROM c_compute.head h
+                       JOIN c_compute.snapshot s ON s.snapshot_id = h.snapshot_id
+                       WHERE h.kind = 'TREND'
+                         AND h.owner = ''
+                         AND s.kind = 'TREND'
+                         AND s.payload->>'source' = %(source)s
+                         AND s.payload->>'tech_id' = ANY(%(tech_ids)s)
+                   ),
+                   candidate AS (
+                       SELECT heads.payload->>'tech_id' AS tech_id,
+                              (p->>%(value_key)s)::bigint AS value,
+                              row_number() OVER (
+                                  PARTITION BY heads.payload->>'tech_id'
+                                  ORDER BY heads.occurred_at DESC, heads.stream DESC
+                              ) AS pick
+                       FROM heads, jsonb_array_elements(heads.payload->'points') p
+                       WHERE p->>'granularity' = %(granularity)s
+                         AND p->>'period' = %(period)s
+                         AND p->>%(value_key)s IS NOT NULL
+                   )
+                   SELECT tech_id, value
+                   FROM candidate
+                   WHERE pick = 1""",
+                {
+                    "source": source,
+                    "granularity": granularity,
+                    "period": period,
+                    "tech_ids": list(tech_ids),
+                    "value_key": TREND_VALUE_KEYS[source],
+                },
+            ).fetchall()
+        return {row["tech_id"]: int(row["value"]) for row in rows}
+
     def get_head_payloads(
         self, *, kind: str, owner: str | None, streams: tuple[str, ...]
     ) -> dict[str, dict]:

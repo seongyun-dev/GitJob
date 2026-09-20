@@ -1,6 +1,7 @@
 """Deterministic next-technology candidates and one-technology job deltas."""
 
 import json
+from collections.abc import Callable
 from hashlib import sha256
 from typing import Annotated, Literal
 
@@ -26,6 +27,7 @@ from recommendation.evidence import (
     consume_personal_assessments,
     consume_personal_levels,
 )
+from recommendation.trend_tiebreak import TieBreakCandidate, apply_trend_tiebreak
 from registry.contracts import TechId
 
 #: S15P21E102-354 changed who may be a candidate, so it is a new calculation and
@@ -38,6 +40,14 @@ EXPANDED_ALGORITHM_VERSIONS = frozenset(
 PREREQUISITE_POLICY_VERSION = "c-learning-prerequisites/v1"
 LEGACY_TIE_BREAK_RULE = "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
 TIE_BREAK_RULE = "gain-desc,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+#: S15P21E102-355. 순서 규칙만 다르고 계산은 같으므로 `algorithm_version` 이 아니라
+#: 여기서 갈린다 -- 후보 자격도, `increased_count` 도, What-if 도 v7 그대로다.
+#: 이름에 `top3` 가 들어가는 것은 이 규칙이 **Top3 를 고른 뒤에만** 도는 것이
+#: 규칙의 일부이기 때문이다. 4위 후보는 이 비교에 참여하지 않는다.
+TREND_TIE_BREAK_RULE = (
+    "gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,"
+    "required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+)
 
 
 class PrerequisiteRule(EvidenceModel):
@@ -350,6 +360,41 @@ def simulate_what_if(
     )
 
 
+class TrendTieBreakBasis(EvidenceModel):
+    """어떤 주차의 어떤 값으로 Top3 순서를 갈랐는지 (S15P21E102-355).
+
+    <h2>왜 값을 결과에 남기는가</h2>
+
+    Trend head 는 주마다 새로 쌓인다. 근거를 남기지 않으면 저장된 순서를 나중에
+    재현할 수 없고, "왜 Redis 가 Docker 앞인가"에 답할 수 없다. 기간·출처·지표와
+    후보별 값을 함께 고정하면 저장된 결과만으로 정렬을 다시 계산해 검증할 수 있다.
+
+    <h2>왜 없는 값을 0으로 적지 않는가</h2>
+
+    `values` 에는 **실제로 관측된 기술만** 들어간다. 측정하지 않은 것을 0으로
+    적으면 그 기술이 그 주에 한 저장소도 안 쓰였다는 거짓 사실이 저장되고, 다시
+    읽는 쪽은 그것을 진짜 0으로 읽는다. 빠진 것은 빠진 채로 둔다.
+    """
+
+    source: Literal["GITHUB_GH_ARCHIVE"]
+    granularity: Literal["WEEK"]
+    period: NonBlank
+    #: 순위에 쓴 point 필드. 같은 point 의 `event_count` 는 기술마다 중복
+    #: 합산이라 순위로 쓸 수 없으므로 이 Literal 에 들어가지 않는다.
+    metric: Literal["active_repo_count"]
+    values: dict[TechId, StrictInt]
+
+    @model_validator(mode="after")
+    def verify_bounded_and_observed(self) -> "TrendTieBreakBasis":
+        if not self.values:
+            raise ValueError("trend tie-break basis must carry an observed value")
+        if len(self.values) > 3:
+            raise ValueError("trend tie-break basis is bounded to the Top3")
+        if any(value < 0 for value in self.values.values()):
+            raise ValueError("active_repo_count must not be negative")
+        return self
+
+
 class RecommendationCandidate(EvidenceModel):
     tech_id: TechId
     rank: StrictInt = Field(ge=1, le=3)
@@ -405,7 +450,17 @@ class _RecommendationContent(EvidenceModel):
     tie_break_rule: Literal[
         "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc",
         "gain-desc,prerequisites-ready,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc",
+        (
+            "gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,"
+            "required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+        ),
     ] = TIE_BREAK_RULE
+    #: 순서를 바꾼 근거. 값만 남기면 같은 입력이 다른 순서를 낸 이유를 나중에
+    #: 설명할 수 없으므로 주차·출처·지표까지 함께 고정한다. 없을 때는 아예
+    #: 직렬화하지 않아 기존 payload 바이트가 그대로 유지된다.
+    trend_tiebreak: TrendTieBreakBasis | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     demand: DemandSnapshot
     held: Annotated[
         HeldTechnologySelection | LegacyHeldTechnologySelection,
@@ -445,20 +500,37 @@ class RecommendationSnapshot(_RecommendationContent):
 
     @model_validator(mode="after")
     def verify_reproducible_result(self) -> "RecommendationSnapshot":
-        expected_rule = (
-            TIE_BREAK_RULE
-            if self.algorithm_version
-            in {
-                "c-recommendation/lexicographic/v3",
-                "c-recommendation/lexicographic/v4",
-                "c-recommendation/lexicographic/v5",
-                "c-recommendation/lexicographic/v6",
-                NEW_SKILL_ALGORITHM_VERSION,
-            }
-            else LEGACY_TIE_BREAK_RULE
+        modern = self.algorithm_version in {
+            "c-recommendation/lexicographic/v3",
+            "c-recommendation/lexicographic/v4",
+            "c-recommendation/lexicographic/v5",
+            "c-recommendation/lexicographic/v6",
+            NEW_SKILL_ALGORITHM_VERSION,
+        }
+        # 순서 규칙은 계산과 따로 움직인다. Trend tie-break 는 후보 자격도
+        # `increased_count` 도 바꾸지 않으므로 `algorithm_version` 을 올리지 않고
+        # 여기서 갈린다. 대신 어느 규칙으로 정렬했는지가 payload 에 남아야 같은
+        # v7 아래의 두 순서 의미가 섞이지 않는다.
+        allowed_rules = (
+            {TIE_BREAK_RULE, TREND_TIE_BREAK_RULE}
+            if modern
+            else {LEGACY_TIE_BREAK_RULE}
         )
-        if self.tie_break_rule != expected_rule:
+        if self.tie_break_rule not in allowed_rules:
             raise ValueError("recommendation formula and rank policy mismatch")
+        # `modern` 과 같은 범위다. Trend 순서 규칙은 계산과 직교하므로 v3 이후의
+        # 어떤 계산에도 붙을 수 있지만, legacy 순서 규칙을 쓰는 v1/v2 결과에는
+        # 붙을 수 없다 -- 그 결과들은 저장된 순서를 그대로 읽기만 한다.
+        if self.tie_break_rule == TREND_TIE_BREAK_RULE and not modern:
+            raise ValueError("trend tie-break requires a v3 or newer calculation")
+        # 근거가 있는데 규칙이 예전 것이면, 저장된 순서를 그 근거로 재현할 수 없다.
+        # 반대 방향은 막지 않는다 -- 규칙만 있고 근거가 없는 것은 "적용하려 했으나
+        # 게시된 주차가 없었다"는 실제로 일어나는 사실이다.
+        if (
+            self.trend_tiebreak is not None
+            and self.tie_break_rule != TREND_TIE_BREAK_RULE
+        ):
+            raise ValueError("trend basis requires the trend tie-break rank policy")
         if self.demand.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
             raise ValueError("ACTIVE_MATCHING_COHORT_REQUIRED")
         if (
@@ -582,6 +654,42 @@ class RecommendationSnapshot(_RecommendationContent):
         return self
 
 
+def _reordered_by_trend(
+    top3: list[tuple[tuple, dict]],
+    trend_lookup: "Callable[[tuple[str, ...]], TrendTieBreakBasis | None] | None",
+) -> tuple[list[tuple[tuple, dict]], "TrendTieBreakBasis | None"]:
+    """Reorder the settled Top3 inside near-tie clusters; never re-select.
+
+    `key[0]` 은 `-increased_count` 이고 나머지는 S15P21E102-202 가 정한 순서다.
+    무리 안에서는 앞자리만 Trend 로 갈리고 나머지는 그대로 이어진다.
+
+    조회는 **여기서 한 번** 일어난다. 후보마다 부르지 않으므로 추천 한 건이
+    네트워크를 세 번 왕복하는 일이 없다.
+    """
+    tech_ids = tuple(payload["tech_id"] for _, payload in top3)
+    if trend_lookup is None or len(top3) < 2:
+        return top3, None
+    basis = trend_lookup(tech_ids)
+    if basis is None:
+        return top3, None
+    if not set(basis.values) <= set(tech_ids):
+        # 묻지 않은 기술의 값이 섞이면 저장된 근거가 저장된 순서를 설명하지 못한다.
+        raise ValueError("trend basis must answer only the Top3 technologies")
+    by_tech = {payload["tech_id"]: (key, payload) for key, payload in top3}
+    reordered = apply_trend_tiebreak(
+        tuple(
+            TieBreakCandidate(
+                tech_id=payload["tech_id"],
+                increased_count=-key[0],
+                rest_key=tuple(key[1:]),
+            )
+            for key, payload in top3
+        ),
+        basis.values,
+    )
+    return [by_tech[item.tech_id] for item in reordered], basis
+
+
 def build_recommendations(
     cohort: JobCohort,
     analysis: EvidenceAnalysis,
@@ -589,11 +697,18 @@ def build_recommendations(
     user_id: str,
     analysis_id: str,
     prerequisites: PrerequisiteSnapshot | None = None,
+    trend_lookup: Callable[[tuple[str, ...]], "TrendTieBreakBasis | None"]
+    | None = None,
 ) -> RecommendationSnapshot:
     """Rank at most three missing technologies; all counts share one cohort.
 
-    UNKNOWN is excluded from the missing-candidate pool. Trend is served as
-    separate source-specific observations and has no hidden ranking weight.
+    UNKNOWN is excluded from the missing-candidate pool.
+
+    `trend_lookup` 은 **Top3 가 정해진 뒤에** 그 세 `tech_id` 로만 호출된다
+    (S15P21E102-355). 값이 아니라 조회 함수를 받는 것은 후보가 정해지기 전에는
+    무엇을 물어야 할지 알 수 없고, 후보 풀 전체를 묻는 것은 bounded 조회가 아니기
+    때문이다. 후보 자격·`increased_count`·What-if 는 이 값을 보지 않으므로 Trend 가
+    후보를 고르는 일은 없다. 주지 않으면 결과는 예전과 바이트까지 같다.
     """
     if cohort.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
         raise ValueError("ACTIVE_MATCHING_COHORT_REQUIRED")
@@ -799,11 +914,14 @@ def build_recommendations(
                 },
             )
         )
+    # Top3 는 기존 비교 키가 고른다. Trend 는 그 다음이다 -- 두 단계를 한 정렬로
+    # 합치면 4위 후보가 Trend 만으로 Top3 에 들어올 수 있고, 그것은 순서 보정이
+    # 아니라 후보 선정이다(S15P21E102-355).
+    top3 = sorted(ranked, key=lambda item: item[0])[:3]
+    top3, trend_tiebreak = _reordered_by_trend(top3, trend_lookup)
     candidates = tuple(
         RecommendationCandidate(rank=rank, **payload)
-        for rank, (_, payload) in enumerate(
-            sorted(ranked, key=lambda item: item[0])[:3], start=1
-        )
+        for rank, (_, payload) in enumerate(top3, start=1)
     )
     if calculation_status is not CohortStatus.READY:
         status = "INSUFFICIENT_DATA"
@@ -842,6 +960,24 @@ def build_recommendations(
         ),
         data_gaps=tuple(sorted(data_gaps)),
         algorithm_version=algorithm_version,
+        # 근거가 있을 때만 Trend 규칙을 적는다. 근거 없이 규칙만 적으면 그 순서를
+        # 재현할 방법이 없고, 근거가 없으면 정렬도 예전과 같으므로 규칙도 예전
+        # 것이 사실이다. 게시된 주차가 없으면 payload 는 바이트까지 v7 그대로다.
+        tie_break_rule=(
+            TREND_TIE_BREAK_RULE
+            if trend_tiebreak is not None
+            else TIE_BREAK_RULE
+            if algorithm_version
+            in {
+                "c-recommendation/lexicographic/v3",
+                "c-recommendation/lexicographic/v4",
+                "c-recommendation/lexicographic/v5",
+                "c-recommendation/lexicographic/v6",
+                NEW_SKILL_ALGORITHM_VERSION,
+            }
+            else LEGACY_TIE_BREAK_RULE
+        ),
+        trend_tiebreak=trend_tiebreak,
         personal_levels=personal_levels if level_aware else {},
         assessment_ceilings=assessment_ceilings if level_aware else {},
         level_assessment_complete_tech_ids=(

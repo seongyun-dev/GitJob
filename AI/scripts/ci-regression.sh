@@ -44,6 +44,7 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
   tests/test_job_review_provenance.py \
   tests/test_trend_archive.py \
   tests/test_recommendation_engine.py \
+  tests/test_recommendation_trend_tiebreak.py \
   tests/test_export_c_archive_activity.py \
   tests/test_week_public_selection.py \
   tests/test_compute_archive.py::test_archive_input_budget_supports_the_six_month_mvp_and_rejects_overage \
