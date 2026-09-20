@@ -3,7 +3,7 @@
 import json
 import os
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,10 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
 from test_job_cohort import batch, criteria, posting
+from test_job_input_union import output
 from test_recommendation_engine import make_analysis
 
 from job.cohort import JobCohort
+from job.input_union import prepare_input_union
 from job.matching import build_job_matching, restore_job_assessment
+from job.projection import materialize_job_projection
+from registry.mapper import RegistryMapper
 from worker.api import create_compute_app
 from worker.store import (
     Artifact,
@@ -60,6 +64,7 @@ class MemoryStore:
         self.snapshots = {}
         self.matching = {}
         self.get_snapshot_calls = 0
+        self.active_job_ids = None
 
     def claim(self, *, event_id, kind, owner, occurred_at, request):
         fingerprint = digest([kind, owner, occurred_at.isoformat(), request])
@@ -122,7 +127,15 @@ class MemoryStore:
         return {"status": "READY", **stored}
 
     def get_matching_page(
-        self, snapshot_id, *, owner, offset, limit, include_conditional
+        self,
+        snapshot_id,
+        *,
+        owner,
+        offset,
+        limit,
+        include_conditional,
+        active_only=False,
+        as_of=None,
     ):
         stored = self._matching(snapshot_id, owner)
         if not stored or stored["status"] != "READY":
@@ -131,11 +144,27 @@ class MemoryStore:
         rows = [
             row
             for row in stored["assessments"]
-            if include_conditional or row["eligibility"] == "ELIGIBLE"
+            if (not active_only or row["job_id"] in self.active_job_ids)
+            and (include_conditional or row["eligibility"] == "ELIGIBLE")
+        ]
+        active_rows = [
+            row
+            for row in stored["assessments"]
+            if not active_only or row["job_id"] in self.active_job_ids
         ]
         page = rows[offset : offset + limit]
         return {
             **stored,
+            "total_count": len(active_rows),
+            "eligible_count": sum(
+                row["eligibility"] == "ELIGIBLE" for row in active_rows
+            ),
+            "conditional_count": sum(
+                row["eligibility"] == "CONDITIONAL" for row in active_rows
+            ),
+            "active_current_count": (
+                stored["metadata"]["current_count"] if not active_only else 0
+            ),
             "items": [
                 restore_job_assessment(
                     sources[row["job_id"]], row["assessment"]
@@ -145,13 +174,20 @@ class MemoryStore:
             "has_next": offset + limit < len(rows),
         }
 
-    def get_matching_detail(self, snapshot_id, *, owner, job_id):
+    def get_matching_detail(
+        self, snapshot_id, *, owner, job_id, active_only=False, as_of=None
+    ):
         stored = self._matching(snapshot_id, owner)
         if not stored or stored["status"] != "READY":
             return stored
         sources = {row["job_id"]: row for row in stored["sources"]}
         row = next(
-            (row for row in stored["assessments"] if row["job_id"] == job_id),
+            (
+                row
+                for row in stored["assessments"]
+                if row["job_id"] == job_id
+                and (not active_only or job_id in self.active_job_ids)
+            ),
             None,
         )
         return {
@@ -164,6 +200,10 @@ class MemoryStore:
                 else None
             ),
         }
+
+    def get_active_job_ids(self, job_ids, *, as_of=None):
+        requested = frozenset(job_ids)
+        return requested if self.active_job_ids is None else requested & self.active_job_ids
 
     def renew(self, ticket):
         return True
@@ -335,6 +375,290 @@ def test_partial_matching_auth_scope_and_pagination(client):
         ).status_code
         == 404
     )
+
+
+def test_projection_active_mode_filters_count_page_detail_and_what_if(
+    monkeypatch,
+):
+    monkeypatch.setenv("C_JOB_MATCHING_ACTIVE_MODE", "projection")
+    store = MemoryStore()
+    app = create_compute_app(store=store, token=TOKEN, registry=REGISTRY)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as active_client:
+        result_id, _, _ = _prepare(active_client)
+        store.active_job_ids = {"partial"}
+
+        listing = active_client.get(
+            PREFIX + f"/recommendations/{result_id}/matching-job-postings",
+            params={"user_id": "user-1", "include_conditional": True},
+        )
+        assert listing.status_code == 200, listing.text
+        data = listing.json()["data"]
+        assert data["total_count"] == 1
+        assert [row["job"]["job_id"] for row in data["items"]] == [
+            "partial"
+        ]
+
+        hidden = active_client.get(
+            PREFIX + f"/recommendations/{result_id}/matching-job-posting",
+            params={"user_id": "user-1", "job_id": "exact"},
+        )
+        assert hidden.status_code == 404
+
+        what_if = active_client.get(
+            PREFIX + f"/recommendations/{result_id}/job-postings",
+            params={
+                "user_id": "user-1",
+                "mode": "WHAT_IF",
+                "recommended_tech_id": "docker",
+            },
+        )
+        assert what_if.status_code == 200, what_if.text
+        delta = what_if.json()["data"]
+        assert delta["total_count"] == delta["increased_count"]
+        assert {row["job_id"] for row in delta["items"]} <= store.active_job_ids
+
+
+def test_postgres_current_result_payload_is_slim_and_head_is_atomic(client):
+    result_id, _, _ = _prepare(client)
+    store = client.matching_test_store
+    if not isinstance(store, ComputeStore):
+        pytest.skip("Requires the isolated PostgreSQL result tables")
+    import psycopg
+
+    with psycopg.connect(
+        os.environ["C_COMPUTE_TEST_DATABASE_URL"], row_factory=psycopg.rows.dict_row
+    ) as conn:
+        result = conn.execute(
+            "SELECT * FROM c_compute.user_result WHERE recommendation_snapshot_id = %s",
+            (result_id,),
+        ).fetchone()
+        head = conn.execute(
+            """SELECT * FROM c_compute.user_result_head
+               WHERE user_id = 'user-1' AND result_id = %s""",
+            (result["result_id"],),
+        ).fetchone()
+
+    assert result is not None and head is not None
+    assert result["status"] == "READY"
+    assert result["compact_payload"]["recommendation_snapshot_id"] == result_id
+    assert not {
+        "jobs",
+        "matching_jobs",
+        "job_matching",
+        "job_matching_ref",
+    }.intersection(result["compact_payload"])
+    assert isinstance(result["compact_payload"]["explanation"], dict)
+
+
+def test_postgres_current_head_does_not_regress_on_late_older_completion(client):
+    store = client.matching_test_store
+    if not isinstance(store, ComputeStore):
+        pytest.skip("Requires the isolated PostgreSQL result tables")
+    cohort_id = snapshot_ref(
+        client.post(
+            PREFIX + "/job-batches/completed",
+            json=event(
+                batch=batch(posting("ordered-head")).model_dump(mode="json"),
+                criteria=criteria().model_dump(mode="json"),
+            ),
+        ),
+        "COHORT",
+    )
+    target_key = "BACKEND|서울|신입"
+    older_at = datetime.now(UTC) - timedelta(minutes=1)
+    newer_at = datetime.now(UTC)
+
+    def complete(*, occurred_at, level):
+        request = event(
+            user_id="user-1",
+            analysis_id="analysis-1",
+            target_key=target_key,
+            cohort_snapshot_id=cohort_id,
+            evidence=levelled_evidence_payload(level),
+        )
+        request["occurred_at"] = occurred_at.isoformat()
+        response = client.post(PREFIX + "/analyses/completed", json=request)
+        assert response.status_code == 200, response.text
+        return next(
+            reference["result_id"]
+            for reference in response.json()["data"]["results"]
+            if reference["kind"] == "RECOMMENDATION"
+        )
+
+    newer_result_id = complete(occurred_at=newer_at, level="L2")
+    older_result_id = complete(occurred_at=older_at, level="L1")
+
+    current = store.get_current_user_result(owner="user-1", target_key=target_key)
+    assert current["result_id"] == newer_result_id
+    assert current["result_id"] != older_result_id
+
+
+def test_postgres_projection_a_b_a_restores_each_pinned_fact(client):
+    store = client.matching_test_store
+    if not isinstance(store, ComputeStore):
+        pytest.skip("Requires the isolated PostgreSQL projection tables")
+    mapper = RegistryMapper(REGISTRY)
+    selected = criteria(as_of="2026-09-10T00:00:00Z")
+
+    def projection(required, collected_at):
+        prepared = prepare_input_union(
+            (
+                output(
+                    posting(
+                        "fact-history",
+                        required=required,
+                        collected_at=collected_at,
+                    )
+                ),
+            ),
+            selected,
+            mapper,
+        )
+        return materialize_job_projection(prepared)
+
+    projection_a = projection(("Java",), "2026-09-07T00:00:00Z")
+    projection_b = projection(("Docker",), "2026-09-08T00:00:00Z")
+    projection_a_again_id = "jp-" + digest(
+        {"again": projection_a.projection_version_id}
+    )
+    projection_a_again = replace(
+        projection_a,
+        projection_version_id=projection_a_again_id,
+        observed_at=datetime(2026, 9, 9, tzinfo=UTC),
+        jobs=tuple(
+            replace(job, projection_version_id=projection_a_again_id)
+            for job in projection_a.jobs
+        ),
+    )
+
+    cohort_id = snapshot_ref(
+        client.post(
+            PREFIX + "/job-batches/completed",
+            json=event(
+                batch=batch(
+                    posting(
+                        "fact-history",
+                        required=("Java",),
+                        collected_at="2026-09-07T00:00:00Z",
+                    )
+                ).model_dump(mode="json"),
+                criteria=selected.model_dump(mode="json"),
+            ),
+        ),
+        "COHORT",
+    )
+
+    def complete(pinned):
+        store.publish_job_projection(pinned)
+        response = client.post(
+            PREFIX + "/analyses/completed",
+            json=event(
+                user_id="user-1",
+                analysis_id="analysis-1",
+                target_key="BACKEND|서울|신입",
+                cohort_snapshot_id=cohort_id,
+                projection_version_id=pinned.projection_version_id,
+                evidence=levelled_evidence_payload("L3"),
+            ),
+        )
+        assert response.status_code == 200, response.text
+        return snapshot_ref(response, "RECOMMENDATION")
+
+    result_a = complete(projection_a)
+    result_b = complete(projection_b)
+    result_a_again = complete(projection_a_again)
+
+    def required_techs(result_id):
+        response = client.get(
+            PREFIX + f"/recommendations/{result_id}/matching-job-posting",
+            params={"user_id": "user-1", "job_id": "SARAMIN:fact-history"},
+        )
+        assert response.status_code == 200, response.text
+        clause = response.json()["data"]["item"]["required"]["clauses"][0]
+        return sorted(
+            clause["held_tech_ids"]
+            + clause["missing_tech_ids"]
+            + clause["unknown_tech_ids"]
+        )
+
+    assert required_techs(result_a) == ["java"]
+    assert required_techs(result_b) == ["docker"]
+    assert required_techs(result_a_again) == ["java"]
+
+
+def test_postgres_target_a_b_a_keeps_independent_logical_heads(client):
+    store = client.matching_test_store
+    if not isinstance(store, ComputeStore):
+        pytest.skip("Requires the isolated PostgreSQL result tables")
+    cohort_id = snapshot_ref(
+        client.post(
+            PREFIX + "/job-batches/completed",
+            json=event(
+                batch=batch(posting("target-history")).model_dump(mode="json"),
+                criteria=criteria().model_dump(mode="json"),
+            ),
+        ),
+        "COHORT",
+    )
+    target_a = "BACKEND|서울|신입"
+    target_b = "BACKEND|부산|경력"
+
+    def complete(target_key, level):
+        response = client.post(
+            PREFIX + "/analyses/completed",
+            json=event(
+                user_id="user-1",
+                analysis_id="analysis-1",
+                target_key=target_key,
+                cohort_snapshot_id=cohort_id,
+                evidence=levelled_evidence_payload(level),
+            ),
+        )
+        assert response.status_code == 200, response.text
+        return next(
+            reference["result_id"]
+            for reference in response.json()["data"]["results"]
+            if reference["kind"] == "RECOMMENDATION"
+        )
+
+    first_a = complete(target_a, "L1")
+    current_b = complete(target_b, "L2")
+    current_a = complete(target_a, "L3")
+
+    head_a = store.get_current_user_result(owner="user-1", target_key=target_a)
+    head_b = store.get_current_user_result(owner="user-1", target_key=target_b)
+    assert head_a["result_id"] == current_a
+    assert head_a["previous_result_id"] == first_a
+    assert head_b["result_id"] == current_b
+
+
+def test_postgres_c_and_ur_aliases_share_legacy_status_and_explanation(client):
+    store = client.matching_test_store
+    if not isinstance(store, ComputeStore):
+        pytest.skip("Requires the isolated PostgreSQL result tables")
+    snapshot_id, _, completed = _prepare(client)
+    compact_id = next(
+        reference["result_id"]
+        for reference in completed.json()["data"]["results"]
+        if reference["kind"] == "RECOMMENDATION"
+    )
+
+    legacy_alias = client.get(
+        PREFIX + f"/results/{snapshot_id}", params={"user_id": "user-1"}
+    )
+    compact_alias = client.get(
+        PREFIX + f"/results/{compact_id}", params={"user_id": "user-1"}
+    )
+
+    assert legacy_alias.status_code == compact_alias.status_code == 200
+    legacy_data = legacy_alias.json()["data"]
+    compact_data = compact_alias.json()["data"]
+    assert legacy_data["status"] == compact_data["status"] == "LEGACY"
+    assert not legacy_data["recompute_required"]
+    assert not compact_data["recompute_required"]
+    assert legacy_data["payload"]["explanation"] == compact_data["payload"][
+        "explanation"
+    ]
 
 
 def test_matching_result_budget_rejects_without_publishing_a_truncated_snapshot(

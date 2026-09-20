@@ -130,6 +130,27 @@ class JobDemandServiceTest {
         assertThat(response.technologies()).isEmpty();
     }
 
+    @Test
+    @DisplayName("Projection 버전 메타데이터가 추가돼도 수요 응답 계약은 그대로 유지한다")
+    void acceptsProjectionVersionMetadataWithoutChangingPublicResponse() {
+        CSnapshot.Demand projected = new CSnapshot.Demand(
+                "projection-cohort", "READY", 1, 1, 0, 0, 0, 1,
+                Map.of("target_role", "BACKEND", "as_of", "2026-09-20T00:00:00Z"),
+                List.of(new CSnapshot.TechnologyDemand(
+                        "java", 1, 1, 0, 0, 1, 1.0, 0.0, 0.0, 1.0)),
+                "job-demand-aggregation/v4", "jp-" + "a".repeat(64));
+        when(compute.previewDemand(any())).thenReturn(projected);
+
+        JobDemandResponse response = service.demand(
+                7L, "BACKEND", List.of(), List.of(), 20);
+
+        assertThat(response.dataStatus()).isEqualTo(ComputeState.READY);
+        assertThat(response.basis().jobCount()).isEqualTo(1);
+        assertThat(response.technologies()).extracting(JobDemandResponse.Technology::techId)
+                .containsExactly("java");
+        verify(compute, never()).resolveCohort(any());
+    }
+
     private static CSnapshot.Demand marketDemand() {
         return new CSnapshot.Demand(
                 "cohort-1", "READY", 1_621, 1_700, 12, 67, 0, 747,

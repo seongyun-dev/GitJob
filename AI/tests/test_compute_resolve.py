@@ -1,6 +1,7 @@
 """C-to-B resolution never guesses across result streams or input generations."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,9 +76,10 @@ class IntakeRunner:
     running = False
     last_report = None
 
-    def __init__(self, result, *, selected_criteria=None):
+    def __init__(self, result, *, selected_criteria=None, projected=None):
         self.result = result
         self.selected_criteria = selected_criteria or criteria()
+        self.projected = projected
         self.public_reports = []
 
     def start(self):
@@ -98,6 +100,9 @@ class IntakeRunner:
             if self.result
             else None
         )
+
+    def resolve_projected_job_selector(self, selector):
+        return self.projected
 
 
 def _client(
@@ -146,7 +151,10 @@ def test_non_intake_job_resolve_returns_one_completed_cohort_demand_pair():
         "cohort_snapshot_id": COHORT_ID,
         "demand_snapshot_id": DEMAND_ID,
         "criteria": selected.model_dump(mode="json"),
-        "compute_versions": versions,
+        "compute_versions": {
+            **versions,
+            "analysis_target_key": "current-user-result-target/v1",
+        },
     }
     assert store.pair_calls == [job_stream(selected, versions)]
 
@@ -253,9 +261,7 @@ def test_job_demand_preview_returns_resolved_demand_in_one_response(
 ):
     selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
     demand = aggregate_demand(
-        build_cohort(
-            batch(posting("one")), selected, RegistryMapper(REGISTRY)
-        )
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
     )
     receipt = {
         "status": "COMPLETED",
@@ -285,6 +291,55 @@ def test_job_demand_preview_returns_resolved_demand_in_one_response(
 
     assert response.status_code == 200, response.text
     assert response.json()["data"] == demand.model_dump(mode="json")
+
+
+def test_job_demand_preview_projection_mode_reads_published_projection_only(
+    monkeypatch, tmp_path
+):
+    selected = criteria(as_of="2026-09-13T00:00:00Z", regions=("서울",))
+    demand = aggregate_demand(
+        build_cohort(batch(posting("one")), selected, RegistryMapper(REGISTRY))
+    )
+    projected = SimpleNamespace(snapshot=demand, selected_job_ids=("SARAMIN:one",))
+    runner = IntakeRunner(
+        None, selected_criteria=selected, projected=(selected, projected)
+    )
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+
+    with _client(
+        ResolveStore(), runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+                "regions": ["서울"],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == demand.model_dump(mode="json")
+
+
+def test_projection_mode_does_not_hide_missing_head_without_explicit_fallback(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("C_JOB_DEMAND_PROJECTION_MODE", "projection")
+    runner = IntakeRunner(None, projected=None)
+    with _client(
+        ResolveStore(), runner=runner, monkeypatch=monkeypatch, tmp_path=tmp_path
+    ) as client:
+        response = client.post(
+            PREFIX + "/job-demands/preview",
+            json={
+                "schema_version": "job-cohort-resolve-selector/v1",
+                "target_role": "BACKEND",
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "JOB_PROJECTION_NOT_READY"
 
 
 def test_http_only_job_resolve_does_not_guess_a_stable_selector_from_old_heads():

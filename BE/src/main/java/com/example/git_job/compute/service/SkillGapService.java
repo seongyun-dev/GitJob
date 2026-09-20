@@ -7,6 +7,7 @@ import com.example.git_job.compute.controller.dto.ComputeState;
 import com.example.git_job.compute.controller.dto.RecommendationResponse;
 import com.example.git_job.compute.controller.dto.SkillGapResponse;
 import com.example.git_job.compute.service.ComputeResultReader.Computed;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,10 +23,18 @@ public class SkillGapService {
 
     private final CComputeApi compute;
     private final ComputeResultReader reader;
+    private final ComputeRetryScheduler scheduler;
 
     public SkillGapService(CComputeApi compute, ComputeResultReader reader) {
+        this(compute, reader, null);
+    }
+
+    @Autowired
+    public SkillGapService(CComputeApi compute, ComputeResultReader reader,
+                           ComputeRetryScheduler scheduler) {
         this.compute = compute;
         this.reader = reader;
+        this.scheduler = scheduler;
     }
 
     public SkillGapResponse skillGap(long userId) {
@@ -41,6 +50,7 @@ public class SkillGapService {
                 && hasGapRows
                 ? ComputeState.partial("PARTIAL_SKILL_GAP_EVIDENCE")
                 : ComputeState.ofRecommendation(recommendation.status());
+        state = staleState(userId, computed.value(), state);
         return SkillGapResponse.of(state,
                 Basis.of(computed.target(), recommendation.demand()), recommendation);
     }
@@ -51,12 +61,24 @@ public class SkillGapService {
             return RecommendationResponse.pending(computed.state(), Basis.of(computed.target()));
         }
         CSnapshot.Recommendation recommendation = computed.value().payload();
-        return RecommendationResponse.of(ComputeState.ofRecommendation(recommendation.status()),
+        ComputeState state = staleState(userId, computed.value(),
+                ComputeState.ofRecommendation(recommendation.status()));
+        return RecommendationResponse.of(state,
                 Basis.of(computed.target(), recommendation.demand()), recommendation);
     }
 
     private Computed<CSnapshot> read(long userId) {
         return reader.read(userId, snapshot ->
                 compute.recommendation(snapshot.recommendationSnapshotId(), userId));
+    }
+
+    private ComputeState staleState(long userId, CSnapshot snapshot, ComputeState current) {
+        if (!"STALE".equals(snapshot.resultStatus())) {
+            return current;
+        }
+        if (scheduler != null) {
+            scheduler.requestInitialSync(userId);
+        }
+        return ComputeState.partial("STALE_RESULT_RECOMPUTING");
     }
 }

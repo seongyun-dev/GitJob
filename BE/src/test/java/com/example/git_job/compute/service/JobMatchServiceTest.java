@@ -43,6 +43,7 @@ class JobMatchServiceTest {
 
     private CComputeApi compute;
     private JobMatchService service;
+    private ComputeResultReader resultReader;
 
     @BeforeEach
     void setUp() {
@@ -55,8 +56,8 @@ class JobMatchServiceTest {
         when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(
                 new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2", RECOMMENDATION,
                         "ev-1", "BACKEND|서울|신입", Instant.EPOCH)));
-        service = new JobMatchService(compute,
-                reader(targets, snapshots));
+        resultReader = reader(targets, snapshots);
+        service = new JobMatchService(compute, resultReader);
 
         when(compute.recommendation(anyString(), anyLong())).thenReturn(recommendation("READY", 12));
         when(compute.matching(anyString(), anyLong(), anyInt(), anyInt(), anyBoolean()))
@@ -108,6 +109,27 @@ class JobMatchServiceTest {
         assertThat(response.summary().fullMatchCount()).isEqualTo(12);
         assertThat(response.items()).hasSize(1);
         verify(compute, never()).recommendation(anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("stale 결과는 제공하면서 비동기 재계산을 요청한다")
+    void staleResultRequestsAsyncRecompute() {
+        CMatching current = matching(clause("SATISFIED", false), List.of());
+        CMatching stale = new CMatching(current.snapshotId(), "ur-1", "STALE",
+                current.calculationSnapshotId(), current.cohortId(), current.totalCount(),
+                current.conditionalCount(), current.excludedConditionalCount(),
+                current.currentCount(), current.demand(), current.page(), current.size(),
+                current.hasNext(), current.items(), current.dataGaps());
+        when(compute.matching(anyString(), anyLong(), anyInt(), anyInt(), anyBoolean()))
+                .thenReturn(stale);
+        ComputeRetryScheduler scheduler = mock(ComputeRetryScheduler.class);
+        JobMatchService staleService = new JobMatchService(compute, resultReader, scheduler);
+
+        JobMatchResponse response = staleService.matches(USER_ID, 1, 20, false);
+
+        assertThat(response.dataStatus()).isEqualTo(ComputeState.PARTIAL);
+        assertThat(response.statusReason()).isEqualTo("STALE_RESULT_RECOMPUTING");
+        verify(scheduler).requestInitialSync(USER_ID);
     }
 
     @Test

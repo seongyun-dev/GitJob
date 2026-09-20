@@ -549,6 +549,37 @@ def test_job_page_enforces_snapshot_owner_candidate_and_stable_pagination():
     assert empty_page.items == ()
 
 
+def test_active_filter_recomputes_current_and_what_if_counts_before_pagination():
+    result = recommend()
+    docker = next(item for item in result.candidates if item.tech_id == "docker")
+    only_delta = {docker.what_if.newly_matched_job_ids[-1]}
+
+    page = list_related_jobs(
+        result,
+        user_id="user-1",
+        view="WHAT_IF",
+        tech_id="docker",
+        offset=0,
+        limit=1,
+        active_job_ids=only_delta,
+    )
+
+    assert page.current_count == 0
+    assert page.projected_count == 1
+    assert page.increased_count == 1
+    assert page.total_count == 1
+    assert tuple(job.job_id for job in page.items) == tuple(only_delta)
+
+    current = list_related_jobs(
+        result,
+        user_id="user-1",
+        view="CURRENT",
+        active_job_ids=frozenset(),
+    )
+    assert current.current_count == current.projected_count == current.total_count == 0
+    assert current.items == ()
+
+
 def test_empty_required_and_duplicate_job_ids_fail_cohort_validation():
     with pytest.raises(ValidationError):
         make_job("empty", ())

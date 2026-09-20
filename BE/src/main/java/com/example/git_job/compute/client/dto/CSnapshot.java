@@ -13,7 +13,13 @@ import java.util.Map;
  * <p>개인 결과는 {@code user_id}를 함께 보내야 하고, 남의 것이면 C가 존재 여부를
  * 드러내지 않도록 404를 준다. 그 404를 그대로 404로 옮기는 것이 B의 일이다.</p>
  */
-public record CSnapshot(String snapshotId, String kind, Recommendation payload) {
+public record CSnapshot(String snapshotId, String kind, String resultStatus,
+        Boolean recomputeRequired, Recommendation payload) {
+
+    /** legacy Snapshot 응답과 기존 테스트 호환용 생성자. */
+    public CSnapshot(String snapshotId, String kind, Recommendation payload) {
+        this(snapshotId, kind, "LEGACY", false, payload);
+    }
 
     /**
      * {@code recommendation-snapshot/v2~v3}에서 화면이 쓰는 것만.
@@ -89,13 +95,24 @@ public record CSnapshot(String snapshotId, String kind, Recommendation payload) 
             Integer reviewCount,
             Integer matchingCount,
             Map<String, Object> criteria,
-            List<TechnologyDemand> technologies
+            List<TechnologyDemand> technologies,
+            String aggregationVersion,
+            String projectionVersionId
     ) {
+        /** Snapshot/preview 공통 생성자. Projection 메타데이터는 구 결과에서 비어 있다. */
+        public Demand(String cohortId, String status, int denominator,
+                      Integer inputCount, Integer duplicateCount, Integer excludedCount,
+                      Integer reviewCount, Integer matchingCount,
+                      Map<String, Object> criteria, List<TechnologyDemand> technologies) {
+            this(cohortId, status, denominator, inputCount, duplicateCount, excludedCount,
+                    reviewCount, matchingCount, criteria, technologies, null, null);
+        }
+
         /** 기존 테스트와 recommendation snapshot v2의 최소 payload 호환. */
         public Demand(String cohortId, String status, int denominator,
                       Map<String, Object> criteria, List<TechnologyDemand> technologies) {
             this(cohortId, status, denominator, null, null, null, null, null,
-                    criteria, technologies);
+                    criteria, technologies, null, null);
         }
     }
 

@@ -14,6 +14,8 @@ import java.util.List;
  */
 public record CMatching(
         String snapshotId,
+        String resultId,
+        String resultStatus,
         String calculationSnapshotId,
         String cohortId,
         int totalCount,
@@ -28,9 +30,24 @@ public record CMatching(
         List<String> dataGaps
 ) {
 
+    /** 구 C 응답을 만드는 테스트와 교차 배포 호환용 생성자. */
+    public CMatching(String snapshotId, String calculationSnapshotId, String cohortId,
+            int totalCount, int conditionalCount, int excludedConditionalCount,
+            Integer currentCount, CSnapshot.Demand demand, int page, int size,
+            boolean hasNext, List<Item> items, List<String> dataGaps) {
+        this(snapshotId, null, "LEGACY", calculationSnapshotId, cohortId, totalCount,
+                conditionalCount, excludedConditionalCount, currentCount, demand, page,
+                size, hasNext, items, dataGaps);
+    }
+
     /** 상세 응답. 목록과 같은 항목 하나를 준다. */
-    public record Detail(String snapshotId, String calculationSnapshotId, String cohortId,
-            String analysisId, Item item) {
+    public record Detail(String snapshotId, String resultId, String resultStatus,
+            String calculationSnapshotId, String cohortId, String analysisId, Item item) {
+
+        public Detail(String snapshotId, String calculationSnapshotId, String cohortId,
+                String analysisId, Item item) {
+            this(snapshotId, null, "LEGACY", calculationSnapshotId, cohortId, analysisId, item);
+        }
     }
 
     /**

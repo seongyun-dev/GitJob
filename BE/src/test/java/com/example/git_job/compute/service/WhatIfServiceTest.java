@@ -39,6 +39,7 @@ class WhatIfServiceTest {
 
     private CComputeApi compute;
     private WhatIfService service;
+    private ComputeResultReader resultReader;
 
     @BeforeEach
     void setUp() {
@@ -50,8 +51,8 @@ class WhatIfServiceTest {
         when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(
                 new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2", RECOMMENDATION,
                         "ev-1", "BACKEND|서울|신입", Instant.EPOCH)));
-        service = new WhatIfService(compute,
-                reader(targets, snapshots));
+        resultReader = reader(targets, snapshots);
+        service = new WhatIfService(compute, resultReader);
     }
 
     private static CRelatedJobs page(int offset, int itemCount, int totalCount) {
@@ -77,6 +78,27 @@ class WhatIfServiceTest {
         assertThat(response.totalCount()).isEqualTo(7);
         // C 를 한 번만 부른다. 숫자와 목록을 따로 부르면 어긋날 수 있다.
         verify(compute).relatedJobs(RECOMMENDATION, USER_ID, "WHAT_IF", "kafka", 0, 20);
+    }
+
+    @Test
+    @DisplayName("stale What-if는 활성 목록을 제공하면서 비동기 재계산을 요청한다")
+    void staleResultRequestsAsyncRecompute() {
+        CRelatedJobs current = page(0, 1, 1);
+        CRelatedJobs stale = new CRelatedJobs(current.snapshotId(), "ur-1", "STALE", true,
+                current.calculationSnapshotId(), current.cohortId(), current.view(),
+                current.techId(), current.totalCount(), current.offset(), current.limit(),
+                current.currentCount(), current.projectedCount(), current.increasedCount(),
+                current.items(), current.dataGaps());
+        when(compute.relatedJobs(anyString(), anyLong(), anyString(), anyString(), anyInt(),
+                anyInt())).thenReturn(stale);
+        ComputeRetryScheduler scheduler = mock(ComputeRetryScheduler.class);
+        WhatIfService staleService = new WhatIfService(compute, resultReader, scheduler);
+
+        WhatIfResponse response = staleService.whatIf(USER_ID, "kafka", 1, 20);
+
+        assertThat(response.dataStatus()).isEqualTo("PARTIAL");
+        assertThat(response.statusReason()).isEqualTo("STALE_RESULT_RECOMPUTING");
+        verify(scheduler).requestInitialSync(USER_ID);
     }
 
     @Test

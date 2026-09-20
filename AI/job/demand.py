@@ -16,7 +16,7 @@ from job.cohort import (
 from job.cross_site_identity import canonical_identities
 from registry.contracts import TechId
 
-JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v3"
+JOB_DEMAND_AGGREGATION_VERSION = "job-demand-aggregation/v4"
 
 
 class TechnologyDemand(CohortModel):
@@ -67,6 +67,11 @@ class DemandSnapshot(CohortModel):
     parser_version: StrictStr
     quality_version: StrictStr
     aggregation_version: StrictStr = JOB_DEMAND_AGGREGATION_VERSION
+    # Projection previews expose their immutable basis additively. Legacy
+    # Snapshot payloads omit it and continue to validate unchanged.
+    projection_version_id: StrictStr | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     technologies: tuple[TechnologyDemand, ...]
 
     @model_validator(mode="after")
@@ -84,7 +89,8 @@ class DemandSnapshot(CohortModel):
         if strict_count < 0:
             raise ValueError("demand counts do not reconcile")
         if (
-            self.aggregation_version == "job-demand-aggregation/v3"
+            self.aggregation_version
+            in {"job-demand-aggregation/v3", "job-demand-aggregation/v4"}
             and (self.criteria.purpose is CohortPurpose.ACTIVE_MATCHING)
             and self.matching_count is not None
         ):

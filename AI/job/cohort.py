@@ -23,6 +23,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
 from job.classifier import (
     JobClassificationBatch,
     JobClassificationRecord,
@@ -86,6 +87,8 @@ MARKET_SCOPE_EXCLUSIONS = frozenset(
         "CAREER_LEVEL_NOT_MATCHED",
         "COLLECTED_AFTER_AS_OF",
         "POSTED_AFTER_AS_OF",
+        "POSTING_CLOSED",
+        "DEADLINE_PASSED",
     }
 )
 
@@ -162,6 +165,7 @@ _ROLE_ALIASES = {
         "앱개발자",
     ),
 }
+SUPPORTED_JOB_ROLES = tuple(_ROLE_ALIASES)
 _ROLE_LOOKUP = {
     alias.casefold(): role
     for role, aliases in _ROLE_ALIASES.items()
@@ -544,7 +548,7 @@ def _record_payload(record: JobPostingInput) -> dict[str, object]:
     return record.model_dump(mode="json", exclude={"collected_at"})
 
 
-def _matches_role(record: JobPostingInput, target: str) -> bool:
+def matches_role(record: JobPostingInput, target: str) -> bool:
     categories = re.split(r"[,;|]", record.raw_job_category or "")
     if any(
         _ROLE_LOOKUP.get(category.strip().casefold()) == target
@@ -564,6 +568,11 @@ def _matches_role(record: JobPostingInput, target: str) -> bool:
     )
 
 
+# Compatibility for tests and old internal imports. New projection code uses the
+# public name so request-time and materialized role semantics cannot drift.
+_matches_role = matches_role
+
+
 def _quality_reasons(
     record: JobPostingInput, criteria: CohortCriteria
 ) -> tuple[list[str], list[str]]:
@@ -578,15 +587,16 @@ def _quality_reasons(
         excluded.append("ROLE_NOT_MATCHED")
     if record.body_status is not BodyStatus.TEXT_AVAILABLE:
         review.append("BODY_UNAVAILABLE")
-    if (
-        record.posting_status is PostingStatus.CLOSED
-        and criteria.purpose is CohortPurpose.ACTIVE_MATCHING
-    ):
+    if record.posting_status is PostingStatus.CLOSED and criteria.purpose in {
+        CohortPurpose.ACTIVE_MATCHING,
+        CohortPurpose.CURRENT_MARKET,
+    }:
         excluded.append("POSTING_CLOSED")
     elif record.posting_status is PostingStatus.UNKNOWN:
         review.append("POSTING_STATUS_UNKNOWN")
     if (
-        criteria.purpose is CohortPurpose.ACTIVE_MATCHING
+        criteria.purpose
+        in {CohortPurpose.ACTIVE_MATCHING, CohortPurpose.CURRENT_MARKET}
         and record.deadline is not None
         and record.deadline <= criteria.as_of
     ):
@@ -854,9 +864,7 @@ def build_cohort(
         batch,
         mapper,
         qualify_job_ids=qualify_job_ids,
-        include_active_requirements=(
-            criteria.purpose is CohortPurpose.ACTIVE_MATCHING
-        ),
+        include_active_requirements=(criteria.purpose is CohortPurpose.ACTIVE_MATCHING),
     )
     return build_cohort_from_prepared(prepared, criteria)
 
@@ -942,7 +950,9 @@ def prepare_cohort_batch(
             record.model_copy(
                 update={
                     "description_text": (
-                        "prepared" if record.body_status is BodyStatus.TEXT_AVAILABLE else None
+                        "prepared"
+                        if record.body_status is BodyStatus.TEXT_AVAILABLE
+                        else None
                     ),
                     "technology_mentions": (),
                 }

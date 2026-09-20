@@ -7,7 +7,15 @@ import unicodedata
 from collections.abc import Iterable
 from enum import StrEnum
 
-__all__ = ["FilterMatch", "match_career_level", "match_region"]
+__all__ = [
+    "CareerState",
+    "FilterMatch",
+    "RegionState",
+    "match_career_level",
+    "match_region",
+    "normalize_career_level",
+    "normalize_region",
+]
 
 
 class FilterMatch(StrEnum):
@@ -16,6 +24,19 @@ class FilterMatch(StrEnum):
     MATCHED = "MATCHED"
     UNKNOWN = "UNKNOWN"
     NOT_MATCHED = "NOT_MATCHED"
+
+
+class RegionState(StrEnum):
+    KNOWN = "KNOWN"
+    NATIONWIDE = "NATIONWIDE"
+    UNKNOWN = "UNKNOWN"
+
+
+class CareerState(StrEnum):
+    KNOWN = "KNOWN"
+    UNRESTRICTED = "UNRESTRICTED"
+    AMBIGUOUS = "AMBIGUOUS"
+    UNKNOWN = "UNKNOWN"
 
 
 _REGION_ALIASES = {
@@ -85,6 +106,19 @@ def _region_parts(value: str) -> tuple[set[str], bool, bool]:
     return regions, unknown, nationwide
 
 
+def normalize_region(value: str | None) -> tuple[tuple[str, ...], RegionState]:
+    """Return the same conservative region interpretation used by filtering."""
+
+    if value is None or not value.strip():
+        return (), RegionState.UNKNOWN
+    regions, unknown, nationwide = _region_parts(value)
+    if nationwide:
+        return tuple(sorted(regions)), RegionState.NATIONWIDE
+    if unknown or not regions:
+        return tuple(sorted(regions)), RegionState.UNKNOWN
+    return tuple(sorted(regions)), RegionState.KNOWN
+
+
 def match_region(value: str | None, allowed: Iterable[str]) -> FilterMatch:
     """Compare Korean posting regions at 시/도 level without substring guesses."""
 
@@ -147,6 +181,23 @@ def _career_parts(value: str) -> tuple[set[str], bool]:
     ):
         return {_EXPERIENCED}, False
     return set(), True
+
+
+def normalize_career_level(
+    value: str | None,
+) -> tuple[tuple[str, ...], CareerState]:
+    """Return normalized career codes without inventing meaning for labels."""
+
+    if value is None or not value.strip():
+        return (), CareerState.UNKNOWN
+    levels, ambiguous = _career_parts(value)
+    if ambiguous:
+        return tuple(sorted(levels)), CareerState.AMBIGUOUS
+    if levels == {_ENTRY, _EXPERIENCED}:
+        return tuple(sorted(levels)), CareerState.UNRESTRICTED
+    if levels:
+        return tuple(sorted(levels)), CareerState.KNOWN
+    return (), CareerState.UNKNOWN
 
 
 def match_career_level(value: str | None, allowed: Iterable[str]) -> FilterMatch:

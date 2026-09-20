@@ -336,6 +336,84 @@ class Sink:
         return {"status": "COMPLETED", "results": []}
 
 
+def test_verified_input_union_publishes_search_projection_once_per_signature(tmp_path):
+    output(tmp_path)
+    prepared = object()
+    builds = []
+    published = []
+
+    def legacy_sink(_outputs, _criteria):
+        return {"status": "COMPLETED", "results": []}
+
+    def build(outputs, selected):
+        builds.append((outputs, selected))
+        return prepared
+
+    runner = IntakeRunner(
+        config(tmp_path),
+        job_sink=legacy_sink,
+        job_set_sink=legacy_sink,
+        job_projection_builder=build,
+        job_projection_sink=lambda outputs, selected, prepared_union: {
+            "status": "COMPLETED",
+            "results": [],
+        },
+        job_search_projection_sink=published.append,
+    )
+
+    runner.poll_once()
+    runner.poll_once()
+
+    assert len(builds) == 1
+    assert published == [prepared]
+
+
+def test_search_projection_failure_does_not_disable_legacy_publication(tmp_path):
+    output(tmp_path)
+    legacy_calls = []
+
+    def legacy_sink(outputs, selected):
+        legacy_calls.append((outputs, selected))
+        return {"status": "COMPLETED", "results": []}
+
+    def fail(_prepared):
+        raise RuntimeError("projection unavailable")
+
+    runner = IntakeRunner(
+        config(tmp_path),
+        job_sink=legacy_sink,
+        job_set_sink=legacy_sink,
+        job_projection_builder=lambda _outputs, _criteria: object(),
+        job_projection_sink=lambda outputs, selected, prepared_union: {
+            "status": "COMPLETED",
+            "results": [],
+        },
+        job_search_projection_sink=fail,
+    )
+
+    report = runner.poll_once()
+
+    assert report["failed"] == 1
+    assert report["completed"] > 0
+    assert legacy_calls
+
+
+def test_projected_selector_delegates_to_published_database_query(tmp_path):
+    output(tmp_path)
+    calls = []
+    runner = IntakeRunner(
+        config(tmp_path),
+        job_sink=Sink(),
+        job_search_projection_query=lambda selector: calls.append(selector) or "result",
+    )
+    selector = JobCohortResolveSelector(
+        schema_version="job-cohort-resolve-selector/v1", target_role="BACKEND"
+    )
+
+    assert runner.resolve_projected_job_selector(selector) == "result"
+    assert calls == [selector]
+
+
 def test_dynamic_selector_reuses_the_verified_input_set_and_cached_result(tmp_path):
     _, value, _ = output(tmp_path, collected_at="2026-09-14T00:00:00Z")
     calls = []

@@ -35,7 +35,7 @@ public class ComputeSnapshotStore {
      * 409 충돌을 막을 뿐, 이미 행이 있는 사용자를 다시 큐에 넣지는 않는다.</p>
      */
     public static final String CURRENT_COMPUTE_CONTRACT_VERSION =
-            "active-matching/job-demand-v3+recommendation-v7";
+            "active-matching/job-demand-v4+recommendation-v7";
 
     private static final RowMapper<ComputeSnapshot> MAPPER = (rs, row) -> new ComputeSnapshot(
             rs.getLong("user_id"),
@@ -208,7 +208,14 @@ public class ComputeSnapshotStore {
                       AND attempt.target_key = ut.target_role || '|' || ut.regions || '|'
                                                || ut.career_levels
                 )
-                ORDER BY ut.updated_at, ut.user_id
+                ORDER BY CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM user_c_snapshot any_snapshot
+                    WHERE any_snapshot.user_id = ut.user_id
+                      AND any_snapshot.target_key = ut.target_role || '|' || ut.regions || '|'
+                                                    || ut.career_levels
+                ) THEN 1 ELSE 0 END,
+                ut.updated_at, ut.user_id
                 LIMIT ?
                 """, Long.class, computeContractVersion, limit);
     }

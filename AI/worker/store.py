@@ -40,7 +40,7 @@ TREND_RANKING_UNITS: dict[str, str] = {
     "JOB": "POSTINGS",
 }
 
-MIGRATION_VERSION = 4
+MIGRATION_VERSION = 7
 MIGRATION_FILE = (
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/001_c_compute.sql"
@@ -53,6 +53,12 @@ MIGRATION_FILES = (
     / "BE/src/main/resources/db/c-compute/003_registry_review.sql",
     Path(__file__).resolve().parents[2]
     / "BE/src/main/resources/db/c-compute/004_registry_review_source_identity.sql",
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/005_job_search_projection.sql",
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/006_current_result.sql",
+    Path(__file__).resolve().parents[2]
+    / "BE/src/main/resources/db/c-compute/007_projection_publication_safety.sql",
 )
 
 
@@ -66,6 +72,9 @@ class LeaseLost(RuntimeError):
 
 class StoredMatchingIntegrityError(RuntimeError):
     """Persisted matching references disagree without exposing stored content."""
+
+
+CURRENT_RESULT_CONTRACT_VERSION = "current-user-result/v1"
 
 
 def digest(value: Any) -> str:
@@ -92,6 +101,7 @@ def apply_migration(dsn: str, path: Path | tuple[Path, ...] | None = None) -> No
     )
     with psycopg.connect(dsn, connect_timeout=5) as conn:
         conn.execute("SET LOCAL statement_timeout = '15s'")
+        conn.execute("SET LOCAL lock_timeout = '5s'")
         conn.execute("SELECT pg_advisory_xact_lock(331029)")
         for index, migration_path in enumerate(paths, start=1):
             source = migration_path.read_bytes()
@@ -127,6 +137,8 @@ class Artifact:
     matching: dict[str, Any] | None = None
     review_records: tuple[dict[str, Any], ...] = ()
     head_occurred_at: datetime | None = None
+    projection_version_id: str | None = None
+    result_target_key: str | None = None
 
     def __post_init__(self):
         if self.kind not in {
@@ -147,6 +159,19 @@ class Artifact:
             raise ValueError("only cohort snapshots have Registry review records")
         if self.head_occurred_at is not None and self.head_occurred_at.tzinfo is None:
             raise ValueError("head timestamp needs a timezone")
+        if self.projection_version_id is not None and (
+            self.kind != "RECOMMENDATION"
+            or len(self.projection_version_id) > 80
+            or not self.projection_version_id.startswith("jp-")
+        ):
+            raise ValueError("only recommendation results can pin a projection")
+        if self.result_target_key is not None and (
+            self.kind != "RECOMMENDATION"
+            or not self.result_target_key
+            or len(self.result_target_key) > 200
+            or any(ord(character) < 32 for character in self.result_target_key)
+        ):
+            raise ValueError("invalid recommendation result target key")
 
     @property
     def snapshot_id(self) -> str:
@@ -190,6 +215,35 @@ class ComputeStore:
                 (list(range(1, MIGRATION_VERSION + 1)),),
             ).fetchone()
             return row["count"] == MIGRATION_VERSION
+
+    def publish_job_projection(self, projection) -> str:
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).publish(projection)
+
+    def get_job_projection_head(self) -> dict[str, Any] | None:
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).head()
+
+    def query_job_projection_demand(self, criteria, *, projection_version_id=None):
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).demand(
+            criteria, projection_version_id=projection_version_id
+        )
+
+    def resolve_job_projection_selector(self, selector):
+        head = self.get_job_projection_head()
+        if head is None:
+            return None
+        criteria = selector.criteria_at(head["observed_at"])
+        return criteria, self.query_job_projection_demand(criteria)
+
+    def get_job_projection_readiness(self) -> dict[str, Any]:
+        from worker.job_projection_store import JobProjectionStore
+
+        return JobProjectionStore(self._dsn).readiness()
 
     def bind_job_inputs(self, inputs: dict[str, tuple[str, str]]) -> None:
         """Pin verified completion paths before publishing, independently of compute versions.
@@ -421,11 +475,12 @@ class ComputeStore:
                     )
                 artifacts = merged_artifacts
             identified = [(artifact, artifact.snapshot_id) for artifact in artifacts]
-            results = [
-                {"kind": artifact.kind, "snapshot_id": snapshot_id}
-                for artifact, snapshot_id in identified
-            ]
+            results = []
             for artifact, snapshot_id in identified:
+                result_reference = {
+                    "kind": artifact.kind,
+                    "snapshot_id": snapshot_id,
+                }
                 conn.execute(
                     """INSERT INTO c_compute.snapshot(snapshot_id, kind, owner, payload)
                        VALUES (%s, %s, %s, %s) ON CONFLICT(snapshot_id) DO NOTHING""",
@@ -437,7 +492,14 @@ class ComputeStore:
                     ),
                 )
                 if artifact.matching is not None:
-                    self._store_matching(conn, artifact, snapshot_id)
+                    result_reference["result_id"] = self._store_matching(
+                        conn,
+                        artifact,
+                        snapshot_id,
+                        source_occurred_at=artifact.head_occurred_at or ticket.occurred_at,
+                        source_order_key=ticket.event_id,
+                    )
+                results.append(result_reference)
                 if artifact.review_records:
                     from worker.reviews import insert_reviews
 
@@ -477,7 +539,14 @@ class ComputeStore:
         return results
 
     @staticmethod
-    def _store_matching(conn, artifact: Artifact, snapshot_id: str) -> None:
+    def _store_matching(
+        conn,
+        artifact: Artifact,
+        snapshot_id: str,
+        *,
+        source_occurred_at: datetime,
+        source_order_key: str,
+    ) -> str:
         matching = artifact.matching
         reference = artifact.payload.get("job_matching_ref")
         if not isinstance(matching, dict) or not isinstance(reference, dict):
@@ -509,10 +578,143 @@ class ComputeStore:
         source_hashes = {
             job_id: digest(source) for job_id, source in source_by_id.items()
         }
+        projection_version_id = artifact.projection_version_id
+        if projection_version_id is not None:
+            projection = conn.execute(
+                """SELECT projection_version_id
+                   FROM c_compute.job_projection_version
+                   WHERE projection_version_id = %s AND state = 'PUBLISHED'""",
+                (projection_version_id,),
+            ).fetchone()
+            if projection is None:
+                raise ValueError("pinned projection is not published")
+        fact_by_job_id: dict[str, str] = {}
+        if projection_version_id is not None and source_by_id:
+            facts = conn.execute(
+                """SELECT job_key, job_fact_id
+                   FROM c_compute.job_projection_job
+                   WHERE projection_version_id = %s AND job_key = ANY(%s)""",
+                (projection_version_id, list(source_by_id)),
+            ).fetchall()
+            fact_by_job_id = {row["job_key"]: row["job_fact_id"] for row in facts}
+            if set(fact_by_job_id) != set(source_by_id):
+                raise StoredMatchingIntegrityError(
+                    "projection matching source is missing a pinned job fact"
+                )
+
+        evidence_version = str(
+            artifact.payload.get("evidence_input_version")
+            or metadata.get("evidence_input_version")
+            or "legacy-unknown"
+        )
+        contract_version = ":".join(
+            (
+                CURRENT_RESULT_CONTRACT_VERSION,
+                str(artifact.payload.get("schema_version", "unknown")),
+                str(artifact.payload.get("algorithm_version", "unknown")),
+            )
+        )
+        compact_payload = {
+            key: value
+            for key, value in artifact.payload.items()
+            if key
+            not in {
+                "jobs",
+                "matching_jobs",
+                "job_matching",
+                "job_matching_ref",
+            }
+        }
+        compact_payload.update(
+            {
+                "recommendation_snapshot_id": snapshot_id,
+                "calculation_snapshot_id": matching["calculation_snapshot_id"],
+                "matching_total_count": matching["total_count"],
+                "matching_eligible_count": matching["eligible_count"],
+                "matching_conditional_count": matching["conditional_count"],
+            }
+        )
+        compact_hash = digest(compact_payload)
+        target_key = artifact.result_target_key or artifact.stream
+        proposed_result_id = "ur-" + digest(
+            {
+                "user_id": artifact.owner,
+                "target_key": target_key,
+                "evidence_version": evidence_version,
+                "projection_version_id": projection_version_id,
+                "compute_contract_version": contract_version,
+                "recommendation_snapshot_id": snapshot_id,
+                "compact_payload_hash": compact_hash,
+            }
+        )
+        canonical = conn.execute(
+            """SELECT result_id, user_id, target_key, evidence_version,
+                      projection_version_id, compute_contract_version, status,
+                      recommendation_snapshot_id, compact_payload, payload_hash
+               FROM c_compute.user_result
+               WHERE recommendation_snapshot_id = %s""",
+            (snapshot_id,),
+        ).fetchone()
+        if canonical is None:
+            result_id = proposed_result_id
+            conn.execute(
+                """INSERT INTO c_compute.user_result
+                   (result_id, user_id, target_key, evidence_version,
+                    projection_version_id, compute_contract_version, status,
+                    recommendation_snapshot_id, compact_payload, payload_hash)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'READY', %s, %s, %s)
+                   ON CONFLICT DO NOTHING""",
+                (
+                    result_id,
+                    artifact.owner,
+                    target_key,
+                    evidence_version,
+                    projection_version_id,
+                    contract_version,
+                    snapshot_id,
+                    Jsonb(compact_payload),
+                    compact_hash,
+                ),
+            )
+        else:
+            if (
+                not isinstance(canonical["compact_payload"], dict)
+                or digest(canonical["compact_payload"]) != canonical["payload_hash"]
+                or canonical["user_id"] != artifact.owner
+                or canonical["evidence_version"] != evidence_version
+                or canonical["projection_version_id"] != projection_version_id
+                or canonical["compute_contract_version"] != contract_version
+                or canonical["status"] != "READY"
+            ):
+                raise StoredMatchingIntegrityError("canonical user result is inconsistent")
+            result_id = canonical["result_id"]
+        expected_payload_hash = (
+            canonical["payload_hash"] if canonical is not None else compact_hash
+        )
+        stored_result = conn.execute(
+            """SELECT user_id, target_key, evidence_version, projection_version_id,
+                      compute_contract_version, status, recommendation_snapshot_id,
+                      payload_hash
+               FROM c_compute.user_result WHERE result_id = %s""",
+            (result_id,),
+        ).fetchone()
+        expected_result = (
+            artifact.owner,
+            stored_result["target_key"] if stored_result is not None else target_key,
+            evidence_version,
+            projection_version_id,
+            contract_version,
+            "READY",
+            snapshot_id,
+            expected_payload_hash,
+        )
+        if stored_result is None or tuple(stored_result.values()) != expected_result:
+            raise StoredMatchingIntegrityError("current user result was replaced")
         source_rows = [
             (
                 cohort_snapshot_id,
                 job_id,
+                fact_by_job_id.get(job_id),
                 Jsonb(source),
                 source_hashes[job_id],
             )
@@ -522,22 +724,74 @@ class ComputeStore:
             with conn.cursor() as cursor:
                 cursor.executemany(
                     """INSERT INTO c_compute.matching_source
-                       (cohort_snapshot_id, job_id, payload, source_hash)
-                       VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                       (cohort_snapshot_id, job_id, job_fact_id, payload, source_hash)
+                       VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
                     source_rows,
                 )
             persisted = conn.execute(
-                "SELECT job_id, source_hash FROM c_compute.matching_source "
+                "SELECT job_id, job_fact_id, source_hash "
+                "FROM c_compute.matching_source "
                 "WHERE cohort_snapshot_id = %s AND job_id = ANY(%s)",
                 (cohort_snapshot_id, list(source_by_id)),
             ).fetchall()
-            if len(persisted) != len(source_hashes) or any(
-                row["source_hash"] != source_hashes.get(row["job_id"])
-                for row in persisted
+            if projection_version_id is None and (
+                len(persisted) != len(source_hashes)
+                or any(
+                    row["source_hash"] != source_hashes.get(row["job_id"])
+                    for row in persisted
+                )
             ):
                 raise StoredMatchingIntegrityError(
                     "immutable matching source changed for a cohort"
                 )
+            if projection_version_id is not None:
+                fact_rows = [
+                    (
+                        cohort_snapshot_id,
+                        job_id,
+                        fact_by_job_id[job_id],
+                        Jsonb(source_by_id[job_id]),
+                        source_hashes[job_id],
+                    )
+                    for job_id in source_by_id
+                ]
+                with conn.cursor() as cursor:
+                    cursor.executemany(
+                        """INSERT INTO c_compute.matching_source_fact
+                           (cohort_snapshot_id, job_id, job_fact_id, payload, source_hash)
+                           VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                        fact_rows,
+                    )
+                persisted_facts = conn.execute(
+                    """SELECT job_id, job_fact_id, source_hash
+                       FROM c_compute.matching_source_fact
+                       WHERE cohort_snapshot_id = %s AND job_id = ANY(%s)
+                         AND job_fact_id = ANY(%s)""",
+                    (
+                        cohort_snapshot_id,
+                        list(source_by_id),
+                        list(fact_by_job_id.values()),
+                    ),
+                ).fetchall()
+                expected_facts = {
+                    (job_id, fact_by_job_id[job_id]): source_hashes[job_id]
+                    for job_id in source_by_id
+                }
+                if len(persisted_facts) != len(expected_facts) or any(
+                    row["source_hash"]
+                    != expected_facts.get((row["job_id"], row["job_fact_id"]))
+                    for row in persisted_facts
+                ):
+                    raise StoredMatchingIntegrityError(
+                        "immutable projection matching source changed"
+                    )
+                stored_fact_by_job_id = dict(fact_by_job_id)
+            else:
+                stored_fact_by_job_id = {
+                    row["job_id"]: row["job_fact_id"] for row in persisted
+                }
+        else:
+            stored_fact_by_job_id = {}
 
         metadata_hash = digest(metadata)
         conn.execute(
@@ -545,8 +799,8 @@ class ComputeStore:
                (recommendation_snapshot_id, storage_version,
                 calculation_snapshot_id, owner,
                 cohort_snapshot_id, analysis_id, cohort_id, metadata, metadata_hash,
-                total_count, eligible_count, conditional_count, stored_bytes)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                total_count, eligible_count, conditional_count, stored_bytes, result_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT DO NOTHING""",
             (
                 snapshot_id,
@@ -562,6 +816,7 @@ class ComputeStore:
                 matching["eligible_count"],
                 matching["conditional_count"],
                 matching["stored_bytes"],
+                result_id,
             ),
         )
         calculation = conn.execute(
@@ -581,6 +836,7 @@ class ComputeStore:
             matching["eligible_count"],
             matching["conditional_count"],
             matching["stored_bytes"],
+            result_id,
         )
         actual_calculation = (
             calculation["storage_version"],
@@ -594,6 +850,7 @@ class ComputeStore:
             calculation["eligible_count"],
             calculation["conditional_count"],
             calculation["stored_bytes"],
+            calculation["result_id"],
         )
         if actual_calculation != expected_calculation:
             raise StoredMatchingIntegrityError("matching calculation was replaced")
@@ -604,9 +861,11 @@ class ComputeStore:
         assessment_rows = [
             (
                 snapshot_id,
+                result_id,
                 cohort_snapshot_id,
                 row["position"],
                 row["job_id"],
+                stored_fact_by_job_id.get(row["job_id"]),
                 row["eligibility"],
                 Jsonb(row["assessment"]),
                 assessment_hashes[row["job_id"]],
@@ -617,9 +876,10 @@ class ComputeStore:
             with conn.cursor() as cursor:
                 cursor.executemany(
                     """INSERT INTO c_compute.matching_job
-                       (recommendation_snapshot_id, cohort_snapshot_id, position,
-                        job_id, eligibility, assessment, assessment_hash)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       (recommendation_snapshot_id, result_id, cohort_snapshot_id,
+                        position, job_id, job_fact_id, eligibility, assessment,
+                        assessment_hash)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT DO NOTHING""",
                     assessment_rows,
                 )
@@ -643,6 +903,33 @@ class ComputeStore:
             for row in persisted
         ):
             raise StoredMatchingIntegrityError("matching assessment rows changed")
+        conn.execute(
+            """INSERT INTO c_compute.user_result_head
+               (user_id, target_key, result_id, previous_result_id,
+                source_occurred_at, source_order_key)
+               VALUES (%s, %s, %s, NULL, %s, %s)
+               ON CONFLICT (user_id, target_key) DO UPDATE
+               SET previous_result_id = CASE
+                       WHEN c_compute.user_result_head.result_id <> EXCLUDED.result_id
+                       THEN c_compute.user_result_head.result_id
+                       ELSE c_compute.user_result_head.previous_result_id
+                   END,
+                   result_id = EXCLUDED.result_id,
+                   source_occurred_at = EXCLUDED.source_occurred_at,
+                   source_order_key = EXCLUDED.source_order_key,
+                   updated_at = clock_timestamp()
+               WHERE (EXCLUDED.source_occurred_at, EXCLUDED.source_order_key) >
+                     (c_compute.user_result_head.source_occurred_at,
+                      c_compute.user_result_head.source_order_key)""",
+            (
+                artifact.owner,
+                target_key,
+                result_id,
+                source_occurred_at,
+                source_order_key,
+            ),
+        )
+        return result_id
 
     def fail(self, ticket: Ticket, code: str) -> None:
         with self._connect() as conn:
@@ -661,6 +948,85 @@ class ComputeStore:
                 (snapshot_id, owner or ""),
             ).fetchone()
             return dict(row) if row else None
+
+    @staticmethod
+    def _restore_user_result(
+        row: Mapping[str, Any] | None, *, compare_projection: bool = False
+    ) -> dict | None:
+        if row is None:
+            return None
+        payload = row["compact_payload"]
+        if not isinstance(payload, dict) or digest(payload) != row["payload_hash"]:
+            raise StoredMatchingIntegrityError("current user result payload changed")
+        current_projection_id = row.get("current_projection_version_id")
+        stored_projection_id = row["projection_version_id"]
+        stale = (
+            compare_projection
+            and current_projection_id is not None
+            and stored_projection_id != current_projection_id
+        )
+        status = (
+            "STALE"
+            if stale
+            else "LEGACY"
+            if stored_projection_id is None
+            else row["status"]
+        )
+        return {
+            "result_id": row["result_id"],
+            "user_id": row["user_id"],
+            "target_key": row["target_key"],
+            "evidence_version": row["evidence_version"],
+            "projection_version_id": stored_projection_id,
+            "current_projection_version_id": current_projection_id,
+            "compute_contract_version": row["compute_contract_version"],
+            "status": status,
+            "recompute_required": stale,
+            "recommendation_snapshot_id": row["recommendation_snapshot_id"],
+            "payload": payload,
+            "created_at": row["created_at"],
+        }
+
+    def get_user_result(
+        self, result_id: str, *, owner: str, compare_projection: bool = False
+    ) -> dict | None:
+        """Read a new result by its ID or its legacy recommendation snapshot ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT r.*,
+                          projection_head.projection_version_id
+                              AS current_projection_version_id
+                   FROM c_compute.user_result r
+                   LEFT JOIN c_compute.job_projection_head projection_head
+                     ON projection_head.stream = 'JOB_SEARCH'
+                   WHERE r.user_id = %s
+                     AND (r.result_id = %s OR r.recommendation_snapshot_id = %s)""",
+                (owner, result_id, result_id),
+            ).fetchone()
+        return self._restore_user_result(row, compare_projection=compare_projection)
+
+    def get_current_user_result(
+        self, *, owner: str, target_key: str, compare_projection: bool = False
+    ) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT r.*,
+                          projection_head.projection_version_id
+                              AS current_projection_version_id,
+                          h.previous_result_id,
+                          h.target_key AS head_target_key
+                   FROM c_compute.user_result_head h
+                   JOIN c_compute.user_result r ON r.result_id = h.result_id
+                   LEFT JOIN c_compute.job_projection_head projection_head
+                     ON projection_head.stream = 'JOB_SEARCH'
+                   WHERE h.user_id = %s AND h.target_key = %s""",
+                (owner, target_key),
+            ).fetchone()
+        result = self._restore_user_result(row, compare_projection=compare_projection)
+        if result is not None:
+            result["previous_result_id"] = row["previous_result_id"]
+            result["target_key"] = row["head_target_key"]
+        return result
 
     def query_reviews(self, *, status=None, after=None, limit: int = 50):
         from worker.reviews import query_reviews
@@ -723,17 +1089,27 @@ class ComputeStore:
             )
 
     @staticmethod
-    def _matching_header(conn, snapshot_id: str, owner: str) -> dict | None:
+    def _matching_header(
+        conn, snapshot_id: str, owner: str, *, compare_projection: bool = False
+    ) -> dict | None:
         row = conn.execute(
             """SELECT s.snapshot_id,
                       c.storage_version, c.calculation_snapshot_id, c.owner,
                       c.cohort_snapshot_id,
                       c.analysis_id, c.cohort_id,
                       c.metadata, c.metadata_hash, c.total_count, c.eligible_count,
-                      c.conditional_count, c.stored_bytes
+                      c.conditional_count, c.stored_bytes, c.result_id,
+                      result.projection_version_id,
+                      result.compact_payload AS result_payload,
+                      result.payload_hash AS result_payload_hash,
+                      projection_head.projection_version_id
+                          AS current_projection_version_id
                FROM c_compute.snapshot s
                LEFT JOIN c_compute.matching_calculation c
                  ON c.recommendation_snapshot_id = s.snapshot_id
+               LEFT JOIN c_compute.user_result result ON result.result_id = c.result_id
+               LEFT JOIN c_compute.job_projection_head projection_head
+                 ON projection_head.stream = 'JOB_SEARCH'
                WHERE s.snapshot_id = %s AND s.owner = %s
                  AND s.kind = 'RECOMMENDATION'""",
             (snapshot_id, owner),
@@ -766,7 +1142,25 @@ class ComputeStore:
             or row["total_count"] != row["eligible_count"] + row["conditional_count"]
         ):
             raise StoredMatchingIntegrityError("stored matching scope mismatch")
-        return {"status": "READY", **dict(row)}
+        if row["result_id"] is not None and (
+            not isinstance(row["result_payload"], dict)
+            or digest(row["result_payload"]) != row["result_payload_hash"]
+        ):
+            raise StoredMatchingIntegrityError("stored user result payload changed")
+        stale = (
+            compare_projection
+            and row["result_id"] is not None
+            and row["current_projection_version_id"] is not None
+            and row["projection_version_id"] != row["current_projection_version_id"]
+        )
+        result_status = (
+            "STALE"
+            if stale
+            else "LEGACY"
+            if row["projection_version_id"] is None
+            else "READY"
+        )
+        return {"status": "READY", "result_status": result_status, **dict(row)}
 
     @staticmethod
     def _restore_matching_rows(rows: list[dict]) -> list[dict[str, Any]]:
@@ -780,6 +1174,8 @@ class ComputeStore:
                     or digest(row["source"]) != row["source_hash"]
                     or digest(row["assessment"]) != row["assessment_hash"]
                     or row["source"].get("job_id") != row["job_id"]
+                    or row.get("assessment_job_fact_id")
+                    != row.get("source_job_fact_id")
                 ):
                     raise ValueError("matching row hash or reference mismatch")
                 item = restore_job_assessment(row["source"], row["assessment"])
@@ -800,11 +1196,74 @@ class ComputeStore:
         offset: int,
         limit: int,
         include_conditional: bool,
+        active_only: bool = False,
+        as_of: datetime | None = None,
     ) -> dict | None:
         with self._connect() as conn:
-            header = self._matching_header(conn, snapshot_id, owner)
+            header = self._matching_header(
+                conn, snapshot_id, owner, compare_projection=active_only
+            )
             if header is None or header["status"] != "READY":
                 return header
+            active_join = ""
+            active_params: tuple[Any, ...] = ()
+            if active_only:
+                projection = conn.execute(
+                    "SELECT projection_version_id FROM c_compute.job_projection_head "
+                    "WHERE stream = 'JOB_SEARCH'"
+                ).fetchone()
+                if projection is None:
+                    raise LookupError("projection head unavailable")
+                active_join = """JOIN c_compute.job_projection_job active
+                    ON active.projection_version_id = %s
+                   AND active.job_key = j.job_id
+                   AND active.posting_status <> 'CLOSED'
+                   AND (active.deadline IS NULL OR active.deadline > %s)
+                   AND active.collected_at <= %s
+                   AND (active.posted_at IS NULL OR active.posted_at <= %s)
+                   AND active.body_status = 'TEXT_AVAILABLE'
+                   AND NOT (active.quality_flags && ARRAY['SOURCE_RECORD_CONFLICT']::text[])"""
+                active_at = as_of or datetime.now(UTC)
+                active_params = (
+                    projection["projection_version_id"],
+                    active_at,
+                    active_at,
+                    active_at,
+                )
+                counts = conn.execute(
+                    f"""SELECT count(*) AS total_count,
+                               count(*) FILTER (WHERE j.eligibility = 'ELIGIBLE')
+                                   AS eligible_count,
+                               count(*) FILTER (WHERE j.eligibility = 'CONDITIONAL')
+                                   AS conditional_count
+                        FROM c_compute.matching_job j
+                        {active_join}
+                        WHERE j.recommendation_snapshot_id = %s""",
+                    (*active_params, snapshot_id),
+                ).fetchone()
+                header.update(dict(counts))
+                found_current_ids, current_ids = self._read_current_job_ids(
+                    header.get("result_payload")
+                )
+                if not found_current_ids:
+                    legacy_ids = conn.execute(
+                        "SELECT payload ? 'current_job_ids' AS has_current_job_ids, "
+                        "payload -> 'current_job_ids' AS current_job_ids "
+                        "FROM c_compute.snapshot WHERE snapshot_id = %s",
+                        (snapshot_id,),
+                    ).fetchone()
+                    _, current_ids = self._read_current_job_ids(
+                        self._legacy_current_job_ids_payload(legacy_ids)
+                    )
+                if current_ids is not None:
+                    header["active_current_count"] = len(
+                        self._active_job_ids(
+                            conn,
+                            current_ids,
+                            as_of=active_at,
+                            projection_version_id=projection["projection_version_id"],
+                        )
+                    )
             selected_count = (
                 header["total_count"]
                 if include_conditional
@@ -817,20 +1276,43 @@ class ComputeStore:
             )
             rows = conn.execute(
                 f"""SELECT j.job_id, j.eligibility, j.assessment,
-                           j.assessment_hash, source.payload AS source,
-                           source.source_hash
+                           j.assessment_hash,
+                           CASE WHEN j.job_fact_id IS NULL THEN legacy_source.payload
+                                WHEN fact_source.job_fact_id IS NOT NULL
+                                THEN fact_source.payload
+                                WHEN legacy_source.job_fact_id = j.job_fact_id
+                                THEN legacy_source.payload END AS source,
+                           CASE WHEN j.job_fact_id IS NULL
+                                THEN legacy_source.source_hash
+                                WHEN fact_source.job_fact_id IS NOT NULL
+                                THEN fact_source.source_hash
+                                WHEN legacy_source.job_fact_id = j.job_fact_id
+                                THEN legacy_source.source_hash END AS source_hash,
+                           j.job_fact_id AS assessment_job_fact_id,
+                           CASE WHEN j.job_fact_id IS NULL
+                                THEN legacy_source.job_fact_id
+                                WHEN fact_source.job_fact_id IS NOT NULL
+                                THEN fact_source.job_fact_id
+                                WHEN legacy_source.job_fact_id = j.job_fact_id
+                                THEN legacy_source.job_fact_id END AS source_job_fact_id
                     FROM (
-                        SELECT job_id, eligibility, assessment, assessment_hash,
-                               cohort_snapshot_id, position
+                        SELECT j.job_id, j.eligibility, j.assessment,
+                               j.assessment_hash, j.cohort_snapshot_id, j.position,
+                               j.job_fact_id
                         FROM c_compute.matching_job
+                        j {active_join}
                         WHERE recommendation_snapshot_id = %s {eligibility_sql}
                         ORDER BY position LIMIT %s OFFSET %s
                     ) j
-                    LEFT JOIN c_compute.matching_source source
-                      ON source.cohort_snapshot_id = j.cohort_snapshot_id
-                     AND source.job_id = j.job_id
+                    LEFT JOIN c_compute.matching_source_fact fact_source
+                      ON fact_source.cohort_snapshot_id = j.cohort_snapshot_id
+                     AND fact_source.job_id = j.job_id
+                     AND fact_source.job_fact_id = j.job_fact_id
+                    LEFT JOIN c_compute.matching_source legacy_source
+                      ON legacy_source.cohort_snapshot_id = j.cohort_snapshot_id
+                     AND legacy_source.job_id = j.job_id
                     ORDER BY j.position""",
-                (snapshot_id, limit + 1, offset),
+                (*active_params, snapshot_id, limit + 1, offset),
             ).fetchall()
             has_next = len(rows) > limit
             return {
@@ -839,28 +1321,145 @@ class ComputeStore:
                 "has_next": has_next,
             }
 
+    @staticmethod
+    def _read_current_job_ids(payload: Any) -> tuple[bool, list[str] | None]:
+        if not isinstance(payload, dict) or "current_job_ids" not in payload:
+            return False, None
+        current_ids = payload["current_job_ids"]
+        if not isinstance(current_ids, list) or not all(
+            isinstance(job_id, str) for job_id in current_ids
+        ):
+            raise StoredMatchingIntegrityError(
+                "stored current_job_ids must be an array of strings"
+            )
+        return True, current_ids
+
+    @staticmethod
+    def _legacy_current_job_ids_payload(row: Mapping[str, Any] | None) -> dict | None:
+        if row is None or not row["has_current_job_ids"]:
+            return None
+        return {"current_job_ids": row["current_job_ids"]}
+
     def get_matching_detail(
-        self, snapshot_id: str, *, owner: str, job_id: str
+        self,
+        snapshot_id: str,
+        *,
+        owner: str,
+        job_id: str,
+        active_only: bool = False,
+        as_of: datetime | None = None,
     ) -> dict | None:
         with self._connect() as conn:
-            header = self._matching_header(conn, snapshot_id, owner)
+            header = self._matching_header(
+                conn, snapshot_id, owner, compare_projection=active_only
+            )
             if header is None or header["status"] != "READY":
                 return header
+            active_join = ""
+            active_params: tuple[Any, ...] = ()
+            if active_only:
+                projection = conn.execute(
+                    "SELECT projection_version_id FROM c_compute.job_projection_head "
+                    "WHERE stream = 'JOB_SEARCH'"
+                ).fetchone()
+                if projection is None:
+                    raise LookupError("projection head unavailable")
+                active_at = as_of or datetime.now(UTC)
+                active_join = """JOIN c_compute.job_projection_job active
+                    ON active.projection_version_id = %s
+                   AND active.job_key = j.job_id
+                   AND active.posting_status <> 'CLOSED'
+                   AND (active.deadline IS NULL OR active.deadline > %s)
+                   AND active.collected_at <= %s
+                   AND (active.posted_at IS NULL OR active.posted_at <= %s)
+                   AND active.body_status = 'TEXT_AVAILABLE'
+                   AND NOT (active.quality_flags && ARRAY['SOURCE_RECORD_CONFLICT']::text[])"""
+                active_params = (
+                    projection["projection_version_id"],
+                    active_at,
+                    active_at,
+                    active_at,
+                )
             row = conn.execute(
-                """SELECT j.job_id, j.eligibility, j.assessment,
-                          j.assessment_hash, source.payload AS source,
-                          source.source_hash
+                f"""SELECT j.job_id, j.eligibility, j.assessment,
+                          j.assessment_hash,
+                          CASE WHEN j.job_fact_id IS NULL THEN legacy_source.payload
+                               WHEN fact_source.job_fact_id IS NOT NULL
+                               THEN fact_source.payload
+                               WHEN legacy_source.job_fact_id = j.job_fact_id
+                               THEN legacy_source.payload END AS source,
+                          CASE WHEN j.job_fact_id IS NULL
+                               THEN legacy_source.source_hash
+                               WHEN fact_source.job_fact_id IS NOT NULL
+                               THEN fact_source.source_hash
+                               WHEN legacy_source.job_fact_id = j.job_fact_id
+                               THEN legacy_source.source_hash END AS source_hash,
+                          j.job_fact_id AS assessment_job_fact_id,
+                          CASE WHEN j.job_fact_id IS NULL
+                               THEN legacy_source.job_fact_id
+                               WHEN fact_source.job_fact_id IS NOT NULL
+                               THEN fact_source.job_fact_id
+                               WHEN legacy_source.job_fact_id = j.job_fact_id
+                               THEN legacy_source.job_fact_id END AS source_job_fact_id
                    FROM c_compute.matching_job j
-                   LEFT JOIN c_compute.matching_source source
-                     ON source.cohort_snapshot_id = j.cohort_snapshot_id
-                    AND source.job_id = j.job_id
+                   {active_join}
+                   LEFT JOIN c_compute.matching_source_fact fact_source
+                     ON fact_source.cohort_snapshot_id = j.cohort_snapshot_id
+                    AND fact_source.job_id = j.job_id
+                    AND fact_source.job_fact_id = j.job_fact_id
+                   LEFT JOIN c_compute.matching_source legacy_source
+                     ON legacy_source.cohort_snapshot_id = j.cohort_snapshot_id
+                    AND legacy_source.job_id = j.job_id
                    WHERE j.recommendation_snapshot_id = %s AND j.job_id = %s""",
-                (snapshot_id, job_id),
+                (*active_params, snapshot_id, job_id),
             ).fetchone()
             return {
                 **header,
                 "item": self._restore_matching_rows([row])[0] if row else None,
             }
+
+    @staticmethod
+    def _active_job_ids(
+        conn,
+        job_ids,
+        *,
+        as_of: datetime,
+        projection_version_id: str,
+    ) -> frozenset[str]:
+        requested = tuple(dict.fromkeys(job_ids))
+        if not requested:
+            return frozenset()
+        rows = conn.execute(
+            """SELECT job_key
+               FROM c_compute.job_projection_job
+               WHERE projection_version_id = %s
+                 AND job_key = ANY(%s)
+                 AND posting_status <> 'CLOSED'
+                 AND (deadline IS NULL OR deadline > %s)
+                 AND collected_at <= %s
+                 AND (posted_at IS NULL OR posted_at <= %s)
+                 AND body_status = 'TEXT_AVAILABLE'
+                 AND NOT (quality_flags && ARRAY['SOURCE_RECORD_CONFLICT']::text[])""",
+            (projection_version_id, list(requested), as_of, as_of, as_of),
+        ).fetchall()
+        return frozenset(row["job_key"] for row in rows)
+
+    def get_active_job_ids(
+        self, job_ids, *, as_of: datetime | None = None
+    ) -> frozenset[str]:
+        with self._connect() as conn:
+            projection = conn.execute(
+                "SELECT projection_version_id FROM c_compute.job_projection_head "
+                "WHERE stream = 'JOB_SEARCH'"
+            ).fetchone()
+            if projection is None:
+                raise LookupError("projection head unavailable")
+            return self._active_job_ids(
+                conn,
+                job_ids,
+                as_of=as_of or datetime.now(UTC),
+                projection_version_id=projection["projection_version_id"],
+            )
 
     def get_head(self, kind: str, owner: str | None, stream: str) -> str | None:
         with self._connect() as conn:

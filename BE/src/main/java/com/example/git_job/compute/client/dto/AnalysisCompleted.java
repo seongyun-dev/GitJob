@@ -1,5 +1,6 @@
 package com.example.git_job.compute.client.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.List;
 
@@ -24,10 +25,23 @@ public record AnalysisCompleted(
         /** 사용자 단위 분석 ID. 저장소별 BE 분석 ID가 아니다. */
         String analysisId,
         String cohortSnapshotId,
+        /** 새 C capability가 확인된 경우에만 보내는 논리 직무·지역·경력 결과 키. */
+        @JsonInclude(JsonInclude.Include.NON_NULL) String targetKey,
+        /** Phase 2에서 개인 계산 입력을 고정하는 PUBLISHED Projection identity. */
+        @JsonInclude(JsonInclude.Include.NON_NULL) String projectionVersionId,
         EvidencePayload evidence
 ) {
 
     public static final String SCHEMA_VERSION = "c-compute-event/v1";
+
+    /** 구 호출부와 구 C에 대한 additive rolling-deploy 호환 생성자. */
+    public AnalysisCompleted(String schemaVersion, String eventId, String traceId,
+                             Instant occurredAt, String userId, String analysisId,
+                             String cohortSnapshotId, String projectionVersionId,
+                             EvidencePayload evidence) {
+        this(schemaVersion, eventId, traceId, occurredAt, userId, analysisId,
+                cohortSnapshotId, null, projectionVersionId, evidence);
+    }
 
     /**
      * 완료 응답.
@@ -43,13 +57,18 @@ public record AnalysisCompleted(
             }
             return results.stream()
                     .filter(reference -> "RECOMMENDATION".equals(reference.kind()))
-                    .map(Reference::snapshotId)
+                    .map(reference -> reference.resultId() == null
+                            ? reference.snapshotId() : reference.resultId())
                     .filter(id -> id != null && !id.isBlank())
                     .findFirst()
                     .orElse(null);
         }
     }
 
-    public record Reference(String kind, String snapshotId) {
+    public record Reference(String kind, String snapshotId, String resultId) {
+
+        public Reference(String kind, String snapshotId) {
+            this(kind, snapshotId, null);
+        }
     }
 }

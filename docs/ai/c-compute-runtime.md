@@ -443,11 +443,12 @@ error type 위주다. 원본과 loader의 검증 조건을 함께 대조해야 �
 
 ## 저장과 migration
 
-현재 `db/migration/V1__baseline_schema.sql`의 13개 Registry/Evidence 테이블과 적용된
-`db/c-compute/001_c_compute.sql`은 수정하지 않는다. 001은 `c_compute` schema의 event 실행,
-불변 결과, 현재 pointer 및 migration checksum을 만든다. 새
-`002_job_matching_projection.sql`은 shared `matching_source`, 계산 metadata,
-compact 사용자 평가 행만 추가하고 source/assessment UPDATE·DELETE를 trigger로 막는다.
+현재 `db/migration/V1__baseline_schema.sql`의 Registry/Evidence 테이블과 적용된
+`db/c-compute/001~006`은 수정하지 않는다. 001은 `c_compute` schema의 event 실행,
+불변 결과, 현재 pointer 및 migration checksum을 만든다. 002는 shared matching source와
+compact 사용자 평가를, 003~004는 Registry review identity를, 005는 불변 job fact와 검색
+Projection을, 006은 target별 current/previous user result를 추가한다. 불변 fact/source/
+assessment/result UPDATE·DELETE는 trigger로 막는다.
 런타임 role은 두 projection table에 SELECT/INSERT만 부여한다. 공고 cohort는 원본 수집
 본문이 아닌 분석된 기술 조건·출처·품질·버전을 한 번 저장한다. 수요/개인 추천/공개
 분석/Trend는 버전이 있는 결과 JSONB를 저장한다. 개인 원본 코드·토큰은 받거나 저장하지 않는다.
@@ -462,13 +463,16 @@ API가 시작하면서 DDL을 자동 실행하지 않는다. 적용/롤백/권�
 승인 후 별도로 실행해야 하며 이번 작업은 로컬 테스트 DB에만 적용한다.
 
 개발 PC에서는 `AI/`에서 `python -m worker.migrate`를 명시적으로 실행한다. runner는
-001부터 002까지 checksum을 확인하여 순서대로 적용하고 `/ready`는 두 버전을 모두 요구한다.
-빌드 이미지에는 `/app/migrations/001_c_compute.sql`과
-`/app/migrations/002_job_matching_projection.sql`을 포함하며 같은 명령을 쓴다.
+001부터 006까지 checksum을 확인하여 순서대로 적용하고 `/ready`는 여섯 버전을 모두 요구한다.
+빌드 이미지에는 `/app/migrations/001_c_compute.sql`부터
+`/app/migrations/006_current_result.sql`까지 포함하며 같은 명령을 쓴다.
 `C_COMPUTE_DATABASE_URL`은 migration에서 반드시 명시한다. 런타임 token과 DDL 권한은
 별개이며 실행에 필요한 테이블 권한만 별도로 부여한다. Worker image는 기존 `/app`
 모듈 위치를 유지하고 Registry provenance 파일을 `/opt/gitjob-provenance`에
 포함해 빌드 및 시작 때 검증한다. Python venv/cache는 이미지에서 제외한다.
+
+Projection 기능 플래그, backfill/shadow, personalized result 활성화, 롤백 및 보존 audit는
+[공고 검색 Projection runbook](job-search-projection-runbook.md)을 단일 절차로 사용한다.
 
 ## 인수 경계
 

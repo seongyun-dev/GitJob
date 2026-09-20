@@ -6,6 +6,7 @@ import com.example.git_job.compute.controller.dto.Basis;
 import com.example.git_job.compute.controller.dto.ComputeState;
 import com.example.git_job.compute.controller.dto.WhatIfResponse;
 import com.example.git_job.compute.service.ComputeResultReader.Computed;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -25,10 +26,18 @@ public class WhatIfService {
 
     private final CComputeApi compute;
     private final ComputeResultReader reader;
+    private final ComputeRetryScheduler scheduler;
 
     public WhatIfService(CComputeApi compute, ComputeResultReader reader) {
+        this(compute, reader, null);
+    }
+
+    @Autowired
+    public WhatIfService(CComputeApi compute, ComputeResultReader reader,
+                         ComputeRetryScheduler scheduler) {
         this.compute = compute;
         this.reader = reader;
+        this.scheduler = scheduler;
     }
 
     public WhatIfResponse whatIf(long userId, String techId, int page, int perPage) {
@@ -40,7 +49,14 @@ public class WhatIfService {
             return WhatIfResponse.pending(computed.state(), Basis.of(computed.target()), techId,
                     page, perPage);
         }
-        return WhatIfResponse.of(ComputeState.ready(), Basis.of(computed.target()),
-                computed.value(), page, perPage);
+        CRelatedJobs value = computed.value();
+        ComputeState state = ComputeState.ready();
+        if ("STALE".equals(value.resultStatus())) {
+            if (scheduler != null) {
+                scheduler.requestInitialSync(userId);
+            }
+            state = ComputeState.partial("STALE_RESULT_RECOMPUTING");
+        }
+        return WhatIfResponse.of(state, Basis.of(computed.target()), value, page, perPage);
     }
 }

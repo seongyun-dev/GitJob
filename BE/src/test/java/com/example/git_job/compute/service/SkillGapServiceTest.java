@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static com.example.git_job.compute.support.ComputeTestSupport.reader;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.git_job.compute.client.CComputeApi;
@@ -38,6 +39,7 @@ class SkillGapServiceTest {
 
     private CComputeApi compute;
     private SkillGapService service;
+    private ComputeResultReader resultReader;
 
     @BeforeEach
     void setUp() {
@@ -50,8 +52,8 @@ class SkillGapServiceTest {
         when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(
                 new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2", RECOMMENDATION,
                         "ev-1", "BACKEND|서울|신입", Instant.EPOCH)));
-        service = new SkillGapService(compute,
-                reader(targets, snapshots));
+        resultReader = reader(targets, snapshots);
+        service = new SkillGapService(compute, resultReader);
         when(compute.recommendation(anyString(), anyLong())).thenReturn(snapshot("READY"));
     }
 
@@ -97,6 +99,23 @@ class SkillGapServiceTest {
         // Evidence 없음 1 + Level 부족 1. docker 의 UNKNOWN 은 여기 들어가지 않는다.
         assertThat(summary.gapCount()).isEqualTo(2);
         assertThat(summary.undeterminedCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("stale 추천·Gap은 제공하면서 비동기 재계산을 요청한다")
+    void staleResultRequestsAsyncRecompute() {
+        CSnapshot current = snapshot("READY");
+        when(compute.recommendation(anyString(), anyLong())).thenReturn(
+                new CSnapshot(current.snapshotId(), current.kind(), "STALE", true,
+                        current.payload()));
+        ComputeRetryScheduler scheduler = mock(ComputeRetryScheduler.class);
+        SkillGapService staleService = new SkillGapService(compute, resultReader, scheduler);
+
+        RecommendationResponse response = staleService.recommendations(USER_ID);
+
+        assertThat(response.dataStatus()).isEqualTo("PARTIAL");
+        assertThat(response.statusReason()).isEqualTo("STALE_RESULT_RECOMPUTING");
+        verify(scheduler).requestInitialSync(USER_ID);
     }
 
     @Test

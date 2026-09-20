@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from hashlib import sha256
 from typing import Annotated, Literal
 
@@ -1010,6 +1011,7 @@ def list_related_jobs(
     tech_id: str | None = None,
     offset: int = 0,
     limit: int = 20,
+    active_job_ids: AbstractSet[str] | None = None,
 ) -> RelatedJobsPage:
     """Read immutable CURRENT IDs or WHAT_IF newly-added IDs, without recompute."""
     if snapshot.user_id != user_id:
@@ -1021,12 +1023,17 @@ def list_related_jobs(
         or not 1 <= limit <= 100
     ):
         raise ValueError("offset must be nonnegative and limit must be in 1..100")
+    current_ids = tuple(
+        job_id
+        for job_id in snapshot.current_job_ids
+        if active_job_ids is None or job_id in active_job_ids
+    )
     if view == "CURRENT":
         if tech_id is not None:
             raise ValueError("CURRENT list does not take a candidate technology")
         ids, projected_count, increased_count = (
-            snapshot.current_job_ids,
-            snapshot.current_count,
+            current_ids,
+            len(current_ids),
             0,
         )
     elif view == "WHAT_IF":
@@ -1035,10 +1042,19 @@ def list_related_jobs(
         )
         if candidate is None:
             raise ValueError("WHAT_IF list requires a candidate in this snapshot")
-        ids = candidate.what_if.newly_matched_job_ids
+        ids = tuple(
+            job_id
+            for job_id in candidate.what_if.newly_matched_job_ids
+            if active_job_ids is None or job_id in active_job_ids
+        )
+        projected_ids = tuple(
+            job_id
+            for job_id in candidate.what_if.projected_job_ids
+            if active_job_ids is None or job_id in active_job_ids
+        )
         projected_count, increased_count = (
-            candidate.what_if.projected_count,
-            candidate.what_if.increased_count,
+            len(projected_ids),
+            len(ids),
         )
     else:
         raise ValueError("view must be CURRENT or WHAT_IF")
@@ -1057,7 +1073,7 @@ def list_related_jobs(
         total_count=len(ids),
         offset=offset,
         limit=limit,
-        current_count=snapshot.current_count,
+        current_count=len(current_ids),
         projected_count=projected_count,
         increased_count=increased_count,
         items=tuple(jobs[job_id] for job_id in ids[offset : offset + limit]),

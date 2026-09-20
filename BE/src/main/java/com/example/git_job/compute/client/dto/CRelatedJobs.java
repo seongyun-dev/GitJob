@@ -13,6 +13,9 @@ import java.util.List;
  */
 public record CRelatedJobs(
         String snapshotId,
+        String resultId,
+        String resultStatus,
+        Boolean recomputeRequired,
         String calculationSnapshotId,
         String cohortId,
         /** {@code CURRENT} 또는 {@code WHAT_IF}. */
@@ -27,6 +30,16 @@ public record CRelatedJobs(
         List<Job> items,
         List<String> dataGaps
 ) {
+
+    /** 구 C 응답을 만드는 테스트와 교차 배포 호환용 생성자. */
+    public CRelatedJobs(String snapshotId, String calculationSnapshotId, String cohortId,
+            String view, String techId, int totalCount, int offset, int limit,
+            int currentCount, int projectedCount, int increasedCount, List<Job> items,
+            List<String> dataGaps) {
+        this(snapshotId, null, "LEGACY", false, calculationSnapshotId, cohortId, view,
+                techId, totalCount, offset, limit, currentCount, projectedCount,
+                increasedCount, items, dataGaps);
+    }
 
     /** 공고 모집단의 공고 한 건. 매칭 평가가 아니라 공고 자체다. */
     public record Job(

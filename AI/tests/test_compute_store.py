@@ -14,8 +14,110 @@ from worker.store import (
     ComputeStore,
     IdempotencyConflict,
     LeaseLost,
+    StoredMatchingIntegrityError,
     apply_migration,
+    digest,
 )
+
+
+def test_user_result_staleness_is_inferred_without_mutating_immutable_row():
+    payload = {"current_job_ids": ["SARAMIN:1"]}
+    row = {
+        "result_id": "ur-" + "1" * 64,
+        "user_id": "123",
+        "target_key": "target-a",
+        "evidence_version": "evidence/v1",
+        "projection_version_id": "jp-" + "1" * 64,
+        "current_projection_version_id": "jp-" + "2" * 64,
+        "compute_contract_version": "contract/v1",
+        "status": "READY",
+        "recommendation_snapshot_id": "c-" + "3" * 64,
+        "compact_payload": payload,
+        "payload_hash": digest(payload),
+        "created_at": datetime.now(UTC),
+    }
+
+    restored = ComputeStore._restore_user_result(row, compare_projection=True)
+
+    assert restored["status"] == "STALE"
+    assert restored["recompute_required"] is True
+    assert row["status"] == "READY"
+
+
+def test_legacy_user_result_is_not_stale_when_projection_comparison_is_disabled():
+    payload = {"current_job_ids": []}
+    row = {
+        "result_id": "ur-" + "1" * 64,
+        "user_id": "123",
+        "target_key": "target-a",
+        "evidence_version": "evidence/v1",
+        "projection_version_id": None,
+        "current_projection_version_id": "jp-" + "2" * 64,
+        "compute_contract_version": "contract/v1",
+        "status": "READY",
+        "recommendation_snapshot_id": "c-" + "3" * 64,
+        "compact_payload": payload,
+        "payload_hash": digest(payload),
+        "created_at": datetime.now(UTC),
+    }
+
+    restored = ComputeStore._restore_user_result(row, compare_projection=False)
+
+    assert restored["status"] == "LEGACY"
+    assert restored["recompute_required"] is False
+
+
+def test_user_result_rejects_compact_payload_hash_mismatch():
+    row = {
+        "result_id": "ur-" + "1" * 64,
+        "user_id": "123",
+        "target_key": "target-a",
+        "evidence_version": "evidence/v1",
+        "projection_version_id": None,
+        "current_projection_version_id": None,
+        "compute_contract_version": "contract/v1",
+        "status": "READY",
+        "recommendation_snapshot_id": "c-" + "3" * 64,
+        "compact_payload": {"changed": True},
+        "payload_hash": digest({"changed": False}),
+        "created_at": datetime.now(UTC),
+    }
+
+    with pytest.raises(StoredMatchingIntegrityError):
+        ComputeStore._restore_user_result(row)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"current_job_ids": None},
+        {"current_job_ids": "SARAMIN:1"},
+        {"current_job_ids": ["SARAMIN:1", 2]},
+        {"current_job_ids": {"job_id": "SARAMIN:1"}},
+    ],
+)
+def test_matching_page_rejects_malformed_current_job_ids(payload):
+    with pytest.raises(StoredMatchingIntegrityError, match="array of strings"):
+        ComputeStore._read_current_job_ids(payload)
+
+
+def test_matching_page_distinguishes_missing_and_valid_current_job_ids():
+    assert ComputeStore._read_current_job_ids({"other": True}) == (False, None)
+    assert ComputeStore._read_current_job_ids({"current_job_ids": []}) == (True, [])
+
+
+def test_legacy_current_job_ids_distinguishes_missing_key_from_explicit_null():
+    assert (
+        ComputeStore._legacy_current_job_ids_payload(
+            {"has_current_job_ids": False, "current_job_ids": None}
+        )
+        is None
+    )
+    explicit_null = ComputeStore._legacy_current_job_ids_payload(
+        {"has_current_job_ids": True, "current_job_ids": None}
+    )
+    with pytest.raises(StoredMatchingIntegrityError, match="array of strings"):
+        ComputeStore._read_current_job_ids(explicit_null)
 
 
 @pytest.fixture

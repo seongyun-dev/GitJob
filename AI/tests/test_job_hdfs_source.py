@@ -13,12 +13,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from test_compute_api import REGISTRY
+from test_job_cohort import batch, criteria, posting
+
 from common.webhdfs import WebHdfsError
 from job.input_union import build_input_union
 from registry.mapper import RegistryMapper
 from Saramin_Collector_V1.crawler import CrawlResult, write_outputs
-from test_compute_api import REGISTRY
-from test_job_cohort import batch, criteria, posting
 from worker.intake import IntakeConfig, IntakeRunner, load_job_output
 from worker.job_hdfs_source import (
     JobHdfsRunSource,
@@ -291,12 +292,33 @@ def test_a_listing_outage_keeps_previously_staged_runs(tmp_path, published):
         assert (config.source_root(source) / runs[source] / "manifest.json").is_file()
 
 
+def test_strict_materialize_fails_closed_on_listing_outage(tmp_path, published):
+    reader, _ = published
+    reader.fail_listing = {"career"}
+    config = source_config(tmp_path)
+
+    with pytest.raises(WebHdfsError):
+        JobHdfsRunSource(config, reader=reader).materialize(strict=True)
+
+
 def test_a_read_outage_leaves_no_partial_run(tmp_path, published):
     reader, runs = published
     reader.fail_read = {f"gamejob/{runs['gamejob']}/postings.csv"}
     config = source_config(tmp_path)
 
     JobHdfsRunSource(config, reader=reader).materialize()
+
+    assert not (config.source_root("gamejob") / runs["gamejob"]).exists()
+    assert list((config.staging_dir / ".incoming").iterdir()) == []
+
+
+def test_strict_materialize_fails_closed_on_run_read_error(tmp_path, published):
+    reader, runs = published
+    reader.fail_read = {f"gamejob/{runs['gamejob']}/postings.csv"}
+    config = source_config(tmp_path)
+
+    with pytest.raises(WebHdfsError):
+        JobHdfsRunSource(config, reader=reader).materialize(strict=True)
 
     assert not (config.source_root("gamejob") / runs["gamejob"]).exists()
     assert list((config.staging_dir / ".incoming").iterdir()) == []

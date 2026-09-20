@@ -1,8 +1,7 @@
 """Process-liveness HTTP application shared by collector and worker."""
 
-from typing import TypedDict
-
 from fastapi import FastAPI
+from typing_extensions import TypedDict
 
 
 class HealthResponse(TypedDict):

@@ -289,8 +289,32 @@ class ComputeStoreIntegrationTest {
                     ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, 20))
                     .containsExactly(userId);
 
+            // rolling deploy 중 구 C가 남긴 fallback 결과를 매 주기 다시 보더라도,
+            // 아예 결과가 없는 사용자를 LIMIT 뒤로 밀어내지 않아야 한다.
+            Long missingUser = jdbc.queryForObject("""
+                    INSERT INTO "user" (github_id, github_login, name)
+                    VALUES (20001, 'missing-first', 'Missing First') RETURNING user_id
+                    """, Long.class);
+            targets.save(missingUser, "BACKEND", List.of("서울"), List.of("신입"),
+                    now.plusSeconds(10));
+            jdbc.update("""
+                    INSERT INTO analysis_job
+                        (analysis_id, user_id, repository_id, branch_name, commit_sha,
+                         status, current_stage, requested_at, completed_at,
+                         registry_version, rule_pack_version, compute_ready_at)
+                    VALUES (?, ?, 'repository-2', 'main', ?, 'SUCCEEDED', 'DONE', ?, ?,
+                            'registry-20260911.4', 'rule-pack-20260911.4', ?)
+                    """, "analysis-no-snapshot", missingUser, "d".repeat(40),
+                    java.sql.Timestamp.from(now), java.sql.Timestamp.from(now.plusSeconds(1)),
+                    java.sql.Timestamp.from(now.plusSeconds(2)));
+            assertThat(store.usersMissingComputeState(
+                    ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, 1))
+                    .containsExactly(missingUser);
+
             store.save(snapshot(userId, EVIDENCE_VERSION, "ev-current", now.plusSeconds(1),
                     ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION));
+            store.save(snapshot(missingUser, EVIDENCE_VERSION, "ev-missing-current",
+                    now.plusSeconds(2), ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION));
             assertThat(store.usersMissingComputeState(
                     ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, 20)).isEmpty();
         });

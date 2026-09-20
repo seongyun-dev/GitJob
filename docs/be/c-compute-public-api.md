@@ -97,7 +97,13 @@ CREATE TABLE user_c_snapshot (
 `demand_snapshot_id`를 함께 보관한다. COHORT와 DEMAND는 같은 회차의 쌍이고, 공개 API가
 수요 집계를 읽을 때 그 쌍의 DEMAND를 써야 추천 수치와 분모가 맞는다.
 
-`recommendation_snapshot_id`는 C 응답 `results`에서 `kind=RECOMMENDATION`인 것을 쓴다.
+`recommendation_snapshot_id` 열은 이름을 유지하지만 C 응답
+`results[kind=RECOMMENDATION]`의 `result_id`를 우선 저장하고, 구 C 응답에서는
+`snapshot_id`로 fallback한다. 새 ID는 `ur-<sha256>`이고 C의 recommendation/snapshot
+조회 API는 `ur-*`와 legacy `c-*`를 모두 받는다. `ur-*`의 Skill Gap·추천 조회는
+`user_result.compact_payload`를 우선 읽으므로 대형 `jobs`·`matching_jobs`를 전송하지 않는다.
+결과가 현재 Projection과 다르면 additive `result_status=STALE`을 받고 기존 결과를 표시하는
+동안 scheduler에 비동기 재계산을 요청한다.
 이 ID는 **응답에 내려보내지 않는다**(결정 C).
 
 ### B. 목표 직무는 서버에 저장한다 — `GET/PUT /api/v1/me/target` 신설

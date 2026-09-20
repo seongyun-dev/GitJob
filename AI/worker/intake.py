@@ -112,7 +112,7 @@ class IntakeConfig(BaseModel):
                 not root.is_absolute()
                 or not root.is_dir()
                 or root.is_symlink()
-                or root.is_junction()
+                or (hasattr(root, "is_junction") and root.is_junction())
             ):
                 raise ValueError("input roots must be existing absolute directories")
         if len({p.resolve() for p in self.job_roots}) != len(self.job_roots):
@@ -211,7 +211,9 @@ def _contained(path: Path, root: Path) -> Path:
         if part in (".", ".."):
             raise ValueError("input path traversal")
         current /= part
-        if current.is_symlink() or current.is_junction():
+        if current.is_symlink() or (
+            hasattr(current, "is_junction") and current.is_junction()
+        ):
             raise ValueError("input links are not allowed")
     resolved = path.resolve(strict=True)
     if not resolved.is_relative_to(root) or not resolved.is_file():
@@ -487,6 +489,28 @@ def publish_job_input_set(
     return {"status": "COMPLETED", "results": results}
 
 
+def publish_job_search_projection(prepared_union, *, store):
+    """Persist the criteria-independent projection prepared during intake."""
+
+    import time
+
+    from job.projection import materialize_job_projection
+
+    started = time.perf_counter()
+    projection = materialize_job_projection(prepared_union)
+    materialized_ms = (time.perf_counter() - started) * 1000
+    published = store.publish_job_projection(projection)
+    LOGGER.info(
+        "projection_build_completed projection_version_id=%s projection_state=PUBLISHED "
+        "projection_build_duration_ms=%.3f projection_job_count=%s source_states=%s",
+        published,
+        materialized_ms,
+        len(projection.jobs),
+        projection.build_stats.get("source_input_states", {}),
+    )
+    return published
+
+
 def _publish_job_trend_range(demand_refs, periods, *, store, registry):
     """Persist every Registry technology for one exact UI period selector."""
 
@@ -608,6 +632,8 @@ class IntakeRunner:
         job_set_sink: Callable | None = None,
         job_projection_builder: Callable | None = None,
         job_projection_sink: Callable | None = None,
+        job_search_projection_sink: Callable | None = None,
+        job_search_projection_query: Callable | None = None,
         job_trend_sink: Callable | None = None,
         job_input_guard: Callable | None = None,
         job_source_refresh: Callable | None = None,
@@ -617,6 +643,8 @@ class IntakeRunner:
         self.job_set_sink = job_set_sink
         self.job_projection_builder = job_projection_builder
         self.job_projection_sink = job_projection_sink
+        self.job_search_projection_sink = job_search_projection_sink
+        self.job_search_projection_query = job_search_projection_query
         self.job_trend_sink = job_trend_sink
         self.job_input_guard = job_input_guard
         # Staged HDFS runs join the configured local roots. Held on the
@@ -630,6 +658,7 @@ class IntakeRunner:
         self._verified_job_signature = None
         self._job_projection = None
         self._job_projection_criteria = None
+        self._published_job_projection_signature = None
         self._job_trend_signature = None
         self._job_set_lock = RLock()
         self._known_manifests = {}
@@ -726,11 +755,20 @@ class IntakeRunner:
         result, _ = self._resolve_verified_job(criteria)
         return (criteria, result) if result is not None else None
 
+    def resolve_projected_job_selector(self, selector):
+        """Read the published DB projection without rebuilding the input union."""
+
+        if self.job_search_projection_query is None:
+            return None
+        return self.job_search_projection_query(selector)
+
     def _publish_input_set(self, outputs, report):
         signature = digest(
             sorted({(value.batch_sha256, value.manifest_sha256) for value in outputs})
         )
-        projection_criteria = next(iter(self._latest_projection_criteria(outputs)), None)
+        projection_criteria = next(
+            iter(self._latest_projection_criteria(outputs)), None
+        )
         with self._job_set_lock:
             projection = (
                 self._job_projection
@@ -744,6 +782,27 @@ class IntakeRunner:
             and projection_criteria is not None
         ):
             projection = self.job_projection_builder(outputs, projection_criteria)
+        if (
+            projection is not None
+            and self.job_search_projection_sink is not None
+            and self._published_job_projection_signature != signature
+        ):
+            try:
+                self.job_search_projection_sink(projection)
+                self._published_job_projection_signature = signature
+            except (
+                ValueError,
+                OSError,
+                RuntimeError,
+                KeyError,
+                TypeError,
+                psycopg.Error,
+            ) as exc:
+                report["failed"] += 1
+                LOGGER.warning(
+                    "C job search projection publish failed error_type=%s",
+                    type(exc).__name__,
+                )
         with self._job_set_lock:
             self._verified_job_outputs = tuple(outputs)
             self._verified_job_signature = signature
@@ -780,9 +839,7 @@ class IntakeRunner:
                 psycopg.Error,
             ) as exc:
                 report["failed"] += 1
-                LOGGER.warning(
-                    "C input union failed error_type=%s", type(exc).__name__
-                )
+                LOGGER.warning("C input union failed error_type=%s", type(exc).__name__)
         if self.job_trend_sink and self._job_trend_signature != signature:
             try:
                 trend = self.job_trend_sink(outputs, self.config.criteria)
@@ -1152,6 +1209,12 @@ def configured_runner(path: Path, store: ComputeStore, mapper, registry):
         )
         if has_job_inputs
         else None,
+        job_search_projection_sink=partial(publish_job_search_projection, store=store)
+        if has_job_inputs
+        else None,
+        job_search_projection_query=(
+            store.resolve_job_projection_selector if has_job_inputs else None
+        ),
         job_trend_sink=partial(
             publish_monthly_job_trends,
             store=store,

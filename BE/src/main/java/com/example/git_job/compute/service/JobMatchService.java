@@ -9,6 +9,7 @@ import com.example.git_job.compute.controller.dto.JobMatchResponse;
 import com.example.git_job.compute.service.ComputeResultReader.Computed;
 import com.example.git_job.global.exceptions.CustomException;
 import com.example.git_job.global.exceptions.ErrorCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -24,10 +25,18 @@ public class JobMatchService {
 
     private final CComputeApi compute;
     private final ComputeResultReader reader;
+    private final ComputeRetryScheduler scheduler;
 
     public JobMatchService(CComputeApi compute, ComputeResultReader reader) {
+        this(compute, reader, null);
+    }
+
+    @Autowired
+    public JobMatchService(CComputeApi compute, ComputeResultReader reader,
+                           ComputeRetryScheduler scheduler) {
         this.compute = compute;
         this.reader = reader;
+        this.scheduler = scheduler;
     }
 
     public JobMatchResponse matches(long userId, int page, int perPage,
@@ -49,8 +58,15 @@ public class JobMatchService {
         }
         Page value = computed.value();
         CMatching matching = value.matching();
+        ComputeState state = matchingState(matching);
+        if ("STALE".equals(matching.resultStatus())) {
+            if (scheduler != null) {
+                scheduler.requestInitialSync(userId);
+            }
+            state = ComputeState.partial("STALE_RESULT_RECOMPUTING");
+        }
         return JobMatchResponse.of(
-                matchingState(matching),
+                state,
                 Basis.of(computed.target(), value.demand()),
                 summary(matching, value.currentCount()),
                 matching, page, perPage);
@@ -77,7 +93,14 @@ public class JobMatchService {
             // 200으로 내리면 화면이 빈 서랍을 그린다.
             throw new CustomException(ErrorCode.MATCHING_RESULT_NOT_FOUND);
         }
-        return JobMatchResponse.Detail.of(ComputeState.ready(),
+        ComputeState state = ComputeState.ready();
+        if ("STALE".equals(detail.resultStatus())) {
+            if (scheduler != null) {
+                scheduler.requestInitialSync(userId);
+            }
+            state = ComputeState.partial("STALE_RESULT_RECOMPUTING");
+        }
+        return JobMatchResponse.Detail.of(state,
                 Basis.of(computed.target()), detail.item());
     }
 

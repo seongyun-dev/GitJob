@@ -66,6 +66,9 @@ Identifier = Annotated[
     ),
 ]
 SnapshotId = Annotated[str, StringConstraints(strict=True, pattern=r"^c-[0-9a-f]{64}$")]
+ResultReferenceId = Annotated[
+    str, StringConstraints(strict=True, pattern=r"^(?:c|ur)-[0-9a-f]{64}$")
+]
 REGISTRY_ROOT = Path(__file__).resolve().parents[1] / "registry/data"
 
 
@@ -95,6 +98,17 @@ class AnalysisCompleted(Event):
     analysis_id: Identifier
     cohort_snapshot_id: SnapshotId
     evidence: EvidenceAnalysis
+    target_key: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)] | None = None
+    projection_version_id: Annotated[
+        str, StringConstraints(strict=True, pattern=r"^jp-[0-9a-f]{64}$")
+    ] | None = None
+
+    @field_validator("target_key")
+    @classmethod
+    def valid_target_key(cls, value: str | None) -> str | None:
+        if value is not None and any(ord(character) < 32 for character in value):
+            raise ValueError("target_key contains a control character")
+        return value
 
 
 class PublicReposCompleted(Event):
@@ -576,6 +590,37 @@ def create_compute_app(
         )
 
     configured_intake = intake_config or os.getenv("C_INTAKE_CONFIG")
+    projection_mode = os.getenv("C_JOB_DEMAND_PROJECTION_MODE", "legacy").lower()
+    if projection_mode not in {"legacy", "shadow", "projection"}:
+        raise ValueError(
+            "C_JOB_DEMAND_PROJECTION_MODE must be legacy, shadow, or projection"
+        )
+    projection_fallback = os.getenv(
+        "C_JOB_DEMAND_PROJECTION_FALLBACK", "false"
+    ).lower() in {"1", "true", "yes"}
+    matching_active_mode = os.getenv(
+        "C_JOB_MATCHING_ACTIVE_MODE", "legacy"
+    ).lower()
+    if matching_active_mode not in {"legacy", "projection"}:
+        raise ValueError(
+            "C_JOB_MATCHING_ACTIVE_MODE must be legacy or projection"
+        )
+    from worker.projection_shadow import ProjectionShadow, compare_demands
+
+    shadow = (
+        ProjectionShadow(
+            sample_rate=float(os.getenv("C_JOB_DEMAND_PROJECTION_SHADOW_RATE", "0.01")),
+            queue_size=int(os.getenv("C_JOB_DEMAND_PROJECTION_SHADOW_QUEUE", "4")),
+        )
+        if projection_mode == "shadow"
+        else None
+    )
+    projection_metrics = {
+        "projection_query_total": 0,
+        "projection_query_error_total": 0,
+        "projection_fallback_total": 0,
+        "projection_query_last_duration_ms": None,
+    }
     intake_runner = None
     if configured_intake and registry is not None:
         from worker.intake import configured_runner
@@ -595,6 +640,8 @@ def create_compute_app(
         finally:
             if intake_runner:
                 intake_runner.stop()
+            if shadow:
+                shadow.close()
 
     app.router.lifespan_context = lifespan
     app.state.intake_runner = intake_runner
@@ -623,6 +670,44 @@ def create_compute_app(
             raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
         return value
 
+    def recommendation_snapshot_id(result_id: str, owner: str) -> str:
+        if result_id.startswith("c-"):
+            return result_id
+        value = database().get_user_result(result_id, owner=owner)
+        if value is None:
+            raise HTTPException(404, "RESULT_NOT_FOUND")
+        return value["recommendation_snapshot_id"]
+
+    def resolved_user_result(result_id: str, owner: str) -> dict[str, Any] | None:
+        """Resolve ur/c aliases and hydrate fields omitted by older compact rows."""
+
+        db = database()
+        if not hasattr(db, "get_user_result"):
+            return None
+        value = db.get_user_result(
+            result_id,
+            owner=owner,
+            compare_projection=matching_active_mode == "projection",
+        )
+        if value is None:
+            return None
+        payload = dict(value["payload"])
+        if result_id.startswith("c-") or "explanation" not in payload:
+            legacy = db.get_snapshot(
+                value["recommendation_snapshot_id"], owner=owner
+            )
+            legacy_payload = legacy.get("payload") if isinstance(legacy, dict) else None
+            if result_id.startswith("c-") and isinstance(legacy_payload, dict):
+                payload = dict(legacy_payload)
+            explanation = (
+                legacy_payload.get("explanation")
+                if isinstance(legacy_payload, dict)
+                else None
+            )
+            if isinstance(explanation, dict):
+                payload["explanation"] = explanation
+        return {**value, "payload": payload}
+
     def execute(
         event: Event,
         kind: str,
@@ -633,6 +718,12 @@ def create_compute_app(
         request_payload = event.model_dump(mode="json")
         # trace_id is delivery diagnostics, not computation input or idempotency identity.
         request_payload.pop("trace_id")
+        if isinstance(event, AnalysisCompleted):
+            # Preserve hashes of events accepted before these additive rolling-deploy fields.
+            if event.target_key is None:
+                request_payload.pop("target_key", None)
+            if event.projection_version_id is None:
+                request_payload.pop("projection_version_id", None)
         if isinstance(event, ArchiveTrendCompleted):
             if event.archive_version == "v1":
                 # Preserve the pre-v2 request hash for legacy retries.
@@ -804,9 +895,24 @@ def create_compute_app(
     def ready():
         if not database().ready():
             raise HTTPException(503, "C_MIGRATION_REQUIRED")
+        projection_readiness = (
+            database().get_job_projection_readiness()
+            if hasattr(database(), "get_job_projection_readiness")
+            else {"status": "UNKNOWN"}
+        )
+        if (
+            (projection_mode == "projection" or matching_active_mode == "projection")
+            and projection_readiness.get("status") != "READY"
+        ):
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
         return {
             "message": "C compute ready",
-            "data": {"status": "READY", "registry_version": registry.registry_version},
+            "data": {
+                "status": "READY",
+                "registry_version": registry.registry_version,
+                "job_projection": projection_readiness,
+                "job_matching_active_mode": matching_active_mode,
+            },
         }
 
     prefix = "/internal/v1/c"
@@ -827,6 +933,10 @@ def create_compute_app(
                 "running": bool(intake_runner and intake_runner.running),
                 "last_poll": intake_runner.last_report if intake_runner else None,
                 "public_sources": intake_runner.public_reports if intake_runner else [],
+                "job_projection_mode": projection_mode,
+                "job_projection_shadow": shadow.metrics() if shadow else None,
+                "job_projection_metrics": dict(projection_metrics),
+                "job_matching_active_mode": matching_active_mode,
             },
         }
 
@@ -839,6 +949,19 @@ def create_compute_app(
         selector = request if isinstance(request, JobCohortResolveSelector) else None
         criteria = request if isinstance(request, CohortCriteria) else None
         versions = compute_versions("JOB_BATCH", registry)
+        response_versions = {
+            **versions,
+            # This is a transport capability, not computation identity. Keeping
+            # it out of job_stream/input-union hashes avoids rebuilding snapshots.
+            "analysis_target_key": "current-user-result-target/v1",
+        }
+        if matching_active_mode == "projection":
+            projection_head = database().get_job_projection_head()
+            if projection_head is None:
+                raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
+            response_versions["job_projection"] = projection_head[
+                "projection_version_id"
+            ]
         if intake_runner and intake_runner.job_set_sink:
             if selector is not None:
                 selected = intake_runner.resolve_job_selector(selector)
@@ -893,47 +1016,126 @@ def create_compute_app(
                 "cohort_snapshot_id": by_kind["COHORT"],
                 "demand_snapshot_id": by_kind["DEMAND"],
                 "criteria": criteria.model_dump(mode="json"),
-                "compute_versions": versions,
+                "compute_versions": response_versions,
             },
         }
+
+    def _preparing_demand_response(criteria: CohortCriteria):
+        return JSONResponse(
+            status_code=202,
+            headers={"Retry-After": "2"},
+            content={
+                "message": "C demand preview computation in progress",
+                "data": {
+                    "status": "PREPARING",
+                    "criteria": criteria.model_dump(mode="json"),
+                },
+            },
+        )
 
     @app.post(prefix + "/job-demands/preview", dependencies=auth)
     def preview_job_demand(selector: JobCohortResolveSelector):
         """Resolve a live selector and return its exact demand in one round trip."""
 
-        if not intake_runner or not intake_runner.job_set_sink:
-            raise HTTPException(404, "COHORT_NOT_PREPARED")
-        selected = intake_runner.resolve_job_selector(selector)
-        criteria, result = selected if selected is not None else (None, None)
-        if not result or criteria is None:
-            raise HTTPException(404, "COHORT_NOT_PREPARED")
-        if result.get("status") == "PREPARING":
-            return JSONResponse(
-                status_code=202,
-                headers={"Retry-After": "2"},
-                content={
-                    "message": "C demand preview computation in progress",
-                    "data": {
-                        "status": "PREPARING",
-                        "criteria": criteria.model_dump(mode="json"),
-                    },
-                },
+        def legacy():
+            if not intake_runner or not intake_runner.job_set_sink:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            selected = intake_runner.resolve_job_selector(selector)
+            criteria, result = selected if selected is not None else (None, None)
+            if not result or criteria is None:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            if result.get("status") == "PREPARING":
+                return criteria, result, None
+            demand_id = next(
+                (
+                    row.get("snapshot_id")
+                    for row in result.get("results", ())
+                    if isinstance(row, dict) and row.get("kind") == "DEMAND"
+                ),
+                None,
             )
-        demand_id = next(
-            (
-                row.get("snapshot_id")
-                for row in result.get("results", ())
-                if isinstance(row, dict) and row.get("kind") == "DEMAND"
-            ),
-            None,
-        )
-        if not isinstance(demand_id, str):
-            raise HTTPException(404, "COHORT_NOT_PREPARED")
-        demand = DemandSnapshot.model_validate(
-            snapshot(demand_id, None, "DEMAND")["payload"]
-        )
-        if demand.criteria != criteria:
-            raise RuntimeError("resolved demand criteria is inconsistent")
+            if not isinstance(demand_id, str):
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            demand = DemandSnapshot.model_validate(
+                snapshot(demand_id, None, "DEMAND")["payload"]
+            )
+            if demand.criteria != criteria:
+                raise RuntimeError("resolved demand criteria is inconsistent")
+            return criteria, result, demand
+
+        if projection_mode == "projection":
+            started = time.perf_counter()
+            try:
+                selected = (
+                    intake_runner.resolve_projected_job_selector(selector)
+                    if intake_runner
+                    and hasattr(intake_runner, "resolve_projected_job_selector")
+                    else database().resolve_job_projection_selector(selector)
+                )
+                if selected is None:
+                    raise LookupError("projection head unavailable")
+                criteria, projected = selected
+                demand = projected.snapshot
+                duration_ms = (time.perf_counter() - started) * 1000
+                projection_metrics["projection_query_total"] += 1
+                projection_metrics["projection_query_last_duration_ms"] = duration_ms
+                LOGGER.info(
+                    "projection_query_completed duration_ms=%.3f version=%s jobs=%s",
+                    duration_ms,
+                    demand.aggregation_version,
+                    demand.denominator,
+                )
+            except (LookupError, RuntimeError, psycopg.Error) as exc:
+                projection_metrics["projection_query_error_total"] += 1
+                LOGGER.warning(
+                    "projection_query_failed fallback=%s error_type=%s",
+                    projection_fallback,
+                    type(exc).__name__,
+                )
+                if not projection_fallback:
+                    raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+                projection_metrics["projection_fallback_total"] += 1
+                criteria, result, demand = legacy()
+                if demand is None:
+                    return _preparing_demand_response(criteria)
+        else:
+            criteria, result, demand = legacy()
+            if demand is None:
+                return _preparing_demand_response(criteria)
+            if projection_mode == "shadow" and shadow:
+                cohort_id = next(
+                    (
+                        row.get("snapshot_id")
+                        for row in result.get("results", ())
+                        if isinstance(row, dict) and row.get("kind") == "COHORT"
+                    ),
+                    None,
+                )
+
+                def compare():
+                    selected_projection = intake_runner.resolve_projected_job_selector(
+                        selector
+                    )
+                    if selected_projection is None:
+                        raise LookupError("projection head unavailable")
+                    _, projected = selected_projection
+                    legacy_ids = None
+                    if isinstance(cohort_id, str):
+                        cohort = JobCohort.model_validate(
+                            snapshot(cohort_id, None, "COHORT")["payload"]
+                        )
+                        if cohort.matching_jobs is not None:
+                            legacy_ids = tuple(
+                                sorted(job.job_id for job in cohort.matching_jobs)
+                            )
+                    return compare_demands(
+                        demand,
+                        projected.snapshot,
+                        legacy_job_ids=legacy_ids,
+                        projected_job_ids=projected.selected_job_ids,
+                    )
+
+                shadow.submit(selector, compare)
         return {
             "message": "C latest verified job demand preview",
             "data": demand.model_dump(mode="json"),
@@ -1092,6 +1294,17 @@ def create_compute_app(
             cohort = JobCohort.model_validate(
                 snapshot(event.cohort_snapshot_id, None, "COHORT")["payload"]
             )
+            if event.projection_version_id is not None:
+                projected = database().query_job_projection_demand(
+                    cohort.criteria,
+                    projection_version_id=event.projection_version_id,
+                )
+                if (
+                    projected.snapshot.projection_version_id
+                    != event.projection_version_id
+                ):
+                    raise RuntimeError("pinned projection identity changed")
+                cohort = projected.cohort
             if cohort.registry_version != registry.registry_version:
                 raise ValueError("cohort and runtime Registry versions differ")
             result = build_recommendations(
@@ -1103,6 +1316,11 @@ def create_compute_app(
             )
             payload = result.model_dump(mode="json")
             payload["cohort_snapshot_id"] = event.cohort_snapshot_id
+            if event.projection_version_id is not None:
+                # The recommendation Snapshot is the immutable parent of the
+                # compact result. Equal recommendation content computed against a
+                # later A→B→A projection must still have a distinct parent identity.
+                payload["projection_version_id"] = event.projection_version_id
             from recommendation.explanation import explain_recommendations
 
             payload["explanation"] = explain_recommendations(result).model_dump(
@@ -1146,18 +1364,80 @@ def create_compute_app(
                     payload,
                     stream,
                     matching=matching,
+                    projection_version_id=event.projection_version_id,
+                    result_target_key=event.target_key,
                 )
             ]
 
         return execute(event, "ANALYSIS", event.user_id, compute)
 
     @app.get(prefix + "/snapshots/{snapshot_id}", dependencies=auth)
-    def get_snapshot(snapshot_id: SnapshotId, user_id: Identifier | None = None):
+    def get_snapshot(
+        snapshot_id: ResultReferenceId, user_id: Identifier | None = None
+    ):
+        value = (
+            resolved_user_result(snapshot_id, user_id)
+            if user_id is not None
+            else None
+        )
+        if value is not None:
+            return {
+                "message": "C compact user result",
+                "data": {
+                    "snapshot_id": snapshot_id,
+                    "kind": "RECOMMENDATION",
+                    "result_status": value["status"],
+                    "recompute_required": value["recompute_required"],
+                    "payload": value["payload"],
+                },
+            }
+        if snapshot_id.startswith("ur-"):
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
         return {"message": "C snapshot", "data": snapshot(snapshot_id, user_id)}
+
+    @app.get(prefix + "/results/{result_id}", dependencies=auth)
+    def get_user_result(result_id: ResultReferenceId, user_id: Identifier):
+        value = resolved_user_result(result_id, user_id)
+        if value is not None:
+            return {"message": "C user result", "data": value}
+        if result_id.startswith("c-"):
+            legacy = snapshot(result_id, user_id, "RECOMMENDATION")
+            return {
+                "message": "C legacy user result",
+                "data": {
+                    "result_id": result_id,
+                    "status": "LEGACY",
+                    "recompute_required": False,
+                    "recommendation_snapshot_id": result_id,
+                    "payload": legacy["payload"],
+                },
+            }
+        raise HTTPException(404, "RESULT_NOT_FOUND")
+
+    @app.get(prefix + "/users/{user_id}/results/current", dependencies=auth)
+    def get_current_user_result(
+        user_id: Identifier,
+        target_key: Annotated[str, Query(min_length=1, max_length=200)],
+    ):
+        if any(ord(character) < 32 for character in target_key):
+            raise HTTPException(422, "INVALID_TARGET_KEY")
+        db = database()
+        value = (
+            db.get_current_user_result(
+                owner=user_id,
+                target_key=target_key,
+                compare_projection=matching_active_mode == "projection",
+            )
+            if hasattr(db, "get_current_user_result")
+            else None
+        )
+        if value is None:
+            raise HTTPException(404, "RESULT_NOT_FOUND")
+        return {"message": "C current user result", "data": value}
 
     @app.get(prefix + "/recommendations/{snapshot_id}/job-postings", dependencies=auth)
     def get_postings(
-        snapshot_id: SnapshotId,
+        snapshot_id: ResultReferenceId,
         user_id: Identifier,
         mode: Literal["CURRENT", "WHAT_IF"] = "CURRENT",
         recommended_tech_id: str | None = None,
@@ -1166,12 +1446,26 @@ def create_compute_app(
     ):
         from recommendation.engine import RecommendationSnapshot, list_related_jobs
 
-        payload = dict(snapshot(snapshot_id, user_id, "RECOMMENDATION")["payload"])
+        legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
+        payload = dict(
+            snapshot(legacy_snapshot_id, user_id, "RECOMMENDATION")["payload"]
+        )
         payload.pop("cohort_snapshot_id", None)
         payload.pop("explanation", None)
         payload.pop("job_matching", None)
         payload.pop("job_matching_ref", None)
         result = RecommendationSnapshot.model_validate(payload)
+        active_ids = None
+        if matching_active_mode == "projection":
+            all_ids = set(result.current_job_ids)
+            for candidate in result.candidates:
+                all_ids.update(candidate.what_if.projected_job_ids)
+            try:
+                active_ids = database().get_active_job_ids(
+                    all_ids, as_of=datetime.now(UTC)
+                )
+            except LookupError:
+                raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
         listing = list_related_jobs(
             result,
             user_id=user_id,
@@ -1179,13 +1473,28 @@ def create_compute_app(
             tech_id=recommended_tech_id,
             offset=page * size,
             limit=size,
+            active_job_ids=active_ids,
         )
+        current_result = resolved_user_result(snapshot_id, user_id)
         return {
             "message": "C matching job postings",
             "data": {
                 **listing.model_dump(mode="json"),
                 "calculation_snapshot_id": listing.snapshot_id,
                 "snapshot_id": snapshot_id,
+                "result_id": (
+                    current_result["result_id"] if current_result is not None else None
+                ),
+                "result_status": (
+                    current_result["status"]
+                    if current_result is not None
+                    else "LEGACY"
+                ),
+                "recompute_required": (
+                    current_result["recompute_required"]
+                    if current_result is not None
+                    else False
+                ),
             },
         }
 
@@ -1219,22 +1528,42 @@ def create_compute_app(
         size: int,
         include_conditional: bool,
     ):
-        stored = database().get_matching_page(
-            snapshot_id,
-            owner=user_id,
-            offset=page * size,
-            limit=size,
-            include_conditional=include_conditional,
-        )
+        legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
+        try:
+            kwargs = {
+                "owner": user_id,
+                "offset": page * size,
+                "limit": size,
+                "include_conditional": include_conditional,
+            }
+            if matching_active_mode == "projection":
+                kwargs.update(active_only=True, as_of=datetime.now(UTC))
+            stored = database().get_matching_page(legacy_snapshot_id, **kwargs)
+        except LookupError:
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
         if stored is None:
             raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
         if stored["status"] == "NOT_PREPARED":
             raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
         if stored["status"] == "LEGACY_EMBEDDED":
-            result = legacy_matching_result(snapshot_id, user_id)
-            rows = tuple(
+            result = legacy_matching_result(legacy_snapshot_id, user_id)
+            active_ids = None
+            if matching_active_mode == "projection":
+                try:
+                    active_ids = database().get_active_job_ids(
+                        (row.job.job_id for row in result.jobs),
+                        as_of=datetime.now(UTC),
+                    )
+                except LookupError:
+                    raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+            active_rows = tuple(
                 row
                 for row in result.jobs
+                if (active_ids is None or row.job.job_id in active_ids)
+            )
+            rows = tuple(
+                row
+                for row in active_rows
                 if include_conditional or row.job.eligibility == "ELIGIBLE"
             )
             offset = page * size
@@ -1250,12 +1579,12 @@ def create_compute_app(
                 "metadata": result.model_dump(
                     mode="json", exclude={"jobs", "calculation_snapshot_id"}
                 ),
-                "total_count": len(result.jobs),
+                "total_count": len(active_rows),
                 "eligible_count": sum(
-                    row.job.eligibility == "ELIGIBLE" for row in result.jobs
+                    row.job.eligibility == "ELIGIBLE" for row in active_rows
                 ),
                 "conditional_count": sum(
-                    row.job.eligibility == "CONDITIONAL" for row in result.jobs
+                    row.job.eligibility == "CONDITIONAL" for row in active_rows
                 ),
                 "items": items,
                 "has_next": offset + size < len(rows),
@@ -1267,7 +1596,7 @@ def create_compute_app(
         dependencies=auth,
     )
     def get_matching_postings(
-        snapshot_id: SnapshotId,
+        snapshot_id: ResultReferenceId,
         user_id: Identifier,
         page: Annotated[int, Query(ge=0)] = 0,
         size: Annotated[int, Query(ge=1, le=50)] = 20,
@@ -1282,6 +1611,10 @@ def create_compute_app(
         )
         metadata = stored["metadata"]
         current_count = metadata.get("current_count")
+        if matching_active_mode == "projection" and isinstance(
+            stored.get("active_current_count"), int
+        ):
+            current_count = stored["active_current_count"]
         demand = metadata.get("demand")
         if (
             not isinstance(current_count, int)
@@ -1292,9 +1625,11 @@ def create_compute_app(
             # Rolling-deploy compatibility for matching rows written before the
             # additive metadata existed. The fallback stays inside C, so B still
             # receives one response and does not fan out per page.
-            recommendation = snapshot(snapshot_id, user_id, "RECOMMENDATION")[
-                "payload"
-            ]
+            recommendation = snapshot(
+                recommendation_snapshot_id(snapshot_id, user_id),
+                user_id,
+                "RECOMMENDATION",
+            )["payload"]
             current_count = recommendation.get("current_count")
             demand = recommendation.get("demand")
         if (
@@ -1314,6 +1649,8 @@ def create_compute_app(
             "message": "C partial matching job postings",
             "data": {
                 "snapshot_id": snapshot_id,
+                "result_id": stored.get("result_id"),
+                "result_status": stored.get("result_status", "LEGACY"),
                 "calculation_snapshot_id": stored["calculation_snapshot_id"],
                 "schema_version": metadata["schema_version"],
                 "cohort_id": metadata["cohort_id"],
@@ -1343,20 +1680,34 @@ def create_compute_app(
         dependencies=auth,
     )
     def get_matching_posting(
-        snapshot_id: SnapshotId,
+        snapshot_id: ResultReferenceId,
         user_id: Identifier,
         job_id: Annotated[str, Query(min_length=1, max_length=256)],
     ):
-        stored = database().get_matching_detail(
-            snapshot_id, owner=user_id, job_id=job_id
-        )
+        legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
+        try:
+            kwargs = {"owner": user_id, "job_id": job_id}
+            if matching_active_mode == "projection":
+                kwargs.update(active_only=True, as_of=datetime.now(UTC))
+            stored = database().get_matching_detail(legacy_snapshot_id, **kwargs)
+        except LookupError:
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
         if stored is None:
             raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
         if stored["status"] == "NOT_PREPARED":
             raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
         if stored["status"] == "LEGACY_EMBEDDED":
-            result = legacy_matching_result(snapshot_id, user_id)
+            result = legacy_matching_result(legacy_snapshot_id, user_id)
             row = next((row for row in result.jobs if row.job.job_id == job_id), None)
+            if row is not None and matching_active_mode == "projection":
+                try:
+                    active_ids = database().get_active_job_ids(
+                        (job_id,), as_of=datetime.now(UTC)
+                    )
+                except LookupError:
+                    raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+                if job_id not in active_ids:
+                    row = None
             stored = {
                 "calculation_snapshot_id": result.calculation_snapshot_id,
                 "metadata": result.model_dump(
@@ -1371,6 +1722,8 @@ def create_compute_app(
             "message": "C partial matching job detail",
             "data": {
                 "snapshot_id": snapshot_id,
+                "result_id": stored.get("result_id"),
+                "result_status": stored.get("result_status", "LEGACY"),
                 "calculation_snapshot_id": stored["calculation_snapshot_id"],
                 "cohort_id": metadata["cohort_id"],
                 "analysis_id": metadata["analysis_id"],

@@ -55,12 +55,15 @@ public class CComputeSyncService {
 
     private static final String COHORT_RESOLVE_PATH = "/internal/v1/c/job-cohorts/resolve";
     private static final String ANALYSES_COMPLETED_PATH = "/internal/v1/c/analyses/completed";
+    private static final String TARGET_KEY_CAPABILITY = "current-user-result-target/v1";
     /**
      * 저장된 Snapshot을 다시 계산해야 하는 BE↔C 활성 매칭 계약.
      * 공고 수요 집계나 추천 알고리즘 결과 의미가 바뀌면 반드시 올린다.
      */
     static final String COMPUTE_CONTRACT_VERSION =
             ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION;
+    static final String LEGACY_TARGET_FALLBACK_CONTRACT_VERSION =
+            COMPUTE_CONTRACT_VERSION + "+legacy-target-fallback";
     private static final int MAX_ATTEMPTS = 3;
     private static final int RUNNING_LEASE_SECONDS = 120;
 
@@ -190,8 +193,10 @@ public class CComputeSyncService {
                     "C가 cohort·demand 쌍을 반환하지 않았습니다.");
         }
 
+        String resultTargetKey = supportsTargetKey(cohort.computeVersions())
+                ? target.targetKey() : null;
         String eventId = eventId(userId, assembled.evidenceVersion(),
-                cohort.cohortSnapshotId(), cohort.computeVersions());
+                cohort.cohortSnapshotId(), resultTargetKey, cohort.computeVersions());
         Optional<ComputeSnapshot> existing = snapshots.findByEventId(eventId);
         if (existing.isPresent()) {
             log.debug("C 계산 재사용: userId={}, eventId={}", userId, eventId);
@@ -207,6 +212,9 @@ public class CComputeSyncService {
                 String.valueOf(userId),
                 assembled.payload().analysisId(),
                 cohort.cohortSnapshotId(),
+                resultTargetKey,
+                cohort.computeVersions() == null
+                        ? null : cohort.computeVersions().get("job_projection"),
                 assembled.payload());
 
         AnalysisCompleted.Result result;
@@ -232,7 +240,9 @@ public class CComputeSyncService {
 
         ComputeSnapshot snapshot = new ComputeSnapshot(userId, assembled.evidenceVersion(),
                 cohort.cohortSnapshotId(), cohort.demandSnapshotId(), recommendation,
-                eventId, target.targetKey(), COMPUTE_CONTRACT_VERSION, Instant.now());
+                eventId, target.targetKey(), resultTargetKey == null
+                        ? LEGACY_TARGET_FALLBACK_CONTRACT_VERSION : COMPUTE_CONTRACT_VERSION,
+                Instant.now());
         boolean inserted = snapshots.save(snapshot);
         log.info("C 계산 완료: userId={}, targetKey={}, recommendation={}, inserted={}",
                 userId, target.targetKey(), recommendation, inserted);
@@ -250,16 +260,29 @@ public class CComputeSyncService {
      */
     static String eventId(long userId, String evidenceVersion, String cohortSnapshotId,
                           Map<String, String> computeVersions) {
+        return eventId(userId, evidenceVersion, cohortSnapshotId, null, computeVersions);
+    }
+
+    static String eventId(long userId, String evidenceVersion, String cohortSnapshotId,
+                          String targetKey, Map<String, String> computeVersions) {
         StringBuilder canonical = new StringBuilder()
                 .append(userId).append('')
                 .append(evidenceVersion).append('')
                 .append(cohortSnapshotId).append('\u001e')
                 .append("backend_contract").append('\u001f')
                 .append(COMPUTE_CONTRACT_VERSION);
+        if (targetKey != null) {
+            canonical.append('\u001e').append("target_key").append('\u001f').append(targetKey);
+        }
         new TreeMap<>(computeVersions == null ? Map.<String, String>of() : computeVersions)
                 .forEach((key, value) -> canonical.append('')
                         .append(key).append('').append(value));
         return "ev-" + sha256(canonical.toString());
+    }
+
+    private static boolean supportsTargetKey(Map<String, String> computeVersions) {
+        return computeVersions != null
+                && TARGET_KEY_CAPABILITY.equals(computeVersions.get("analysis_target_key"));
     }
 
     private static String sha256(String value) {

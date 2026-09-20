@@ -134,6 +134,23 @@ class CComputeSyncServiceTest {
         assertThat(snapshot.recommendationSnapshotId()).isEqualTo(RECOMMENDATION);
         assertThat(snapshot.evidenceVersion()).isEqualTo(EVIDENCE_VERSION);
         assertThat(snapshot.targetKey()).isEqualTo("BACKEND|서울|신입");
+        assertThat(snapshot.computeContractVersion())
+                .isEqualTo(CComputeSyncService.LEGACY_TARGET_FALLBACK_CONTRACT_VERSION);
+    }
+
+    @Test
+    @DisplayName("새 C 응답은 compact user result ID를 저장한다")
+    void storesCurrentResultIdWhenAvailable() {
+        String resultId = "ur-" + "4".repeat(64);
+        when(client.post(eq("/internal/v1/c/analyses/completed"), any(),
+                eq(AnalysisCompleted.Result.class)))
+                .thenReturn(new AnalysisCompleted.Result("ev-1", "COMPLETED",
+                        List.of(new AnalysisCompleted.Reference("RECOMMENDATION",
+                                RECOMMENDATION, resultId))));
+
+        ComputeSnapshot snapshot = service.synchronize(USER_ID).orElseThrow();
+
+        assertThat(snapshot.recommendationSnapshotId()).isEqualTo(resultId);
     }
 
     @Test
@@ -174,11 +191,18 @@ class CComputeSyncServiceTest {
                 Map.of("registry", "registry-20260911.4", "runtime", "c/1.0"));
         String afterDeploy = CComputeSyncService.eventId(USER_ID, EVIDENCE_VERSION, COHORT,
                 Map.of("runtime", "c/1.1", "registry", "registry-20260911.4"));
+        String afterProjection = CComputeSyncService.eventId(USER_ID, EVIDENCE_VERSION, COHORT,
+                Map.of("runtime", "c/1.0", "registry", "registry-20260911.4",
+                        "job_projection", "jp-" + "a".repeat(64)));
+        String afterTarget = CComputeSyncService.eventId(USER_ID, EVIDENCE_VERSION, COHORT,
+                "FRONTEND|서울|신입", Map.of("runtime", "c/1.0"));
 
         // Map 순서가 달라도 같아야 한다. 아니면 재시작마다 중복 계산이 생긴다.
         assertThat(first).isEqualTo(again).startsWith("ev-").hasSize(67);
         // 계산 버전이 바뀌면 같은 event 로 다시 보내지 않는다. 보내면 C 가 409 로 막는다.
         assertThat(afterDeploy).isNotEqualTo(first);
+        assertThat(afterProjection).isNotEqualTo(first);
+        assertThat(afterTarget).isNotEqualTo(first);
     }
 
     @Test
@@ -289,7 +313,9 @@ class CComputeSyncServiceTest {
     @Test
     @DisplayName("완료 event는 사용자 단위 분석 ID와 resolve한 cohort를 싣는다")
     void sendsUserScopedEvent() {
-        service.synchronize(USER_ID);
+        String projection = "jp-" + "a".repeat(64);
+        stubResolve(Map.of("runtime", "c/1.0", "job_projection", projection));
+        ComputeSnapshot snapshot = service.synchronize(USER_ID).orElseThrow();
 
         ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
         verify(client).post(eq("/internal/v1/c/analyses/completed"), body.capture(),
@@ -299,10 +325,29 @@ class CComputeSyncServiceTest {
         assertThat(event.schemaVersion()).isEqualTo("c-compute-event/v1");
         assertThat(event.userId()).isEqualTo("7");
         assertThat(event.cohortSnapshotId()).isEqualTo(COHORT);
+        assertThat(event.targetKey()).isNull();
+        assertThat(event.projectionVersionId()).isEqualTo(projection);
         assertThat(event.analysisId()).isEqualTo(event.evidence().analysisId());
         assertThat(event.occurredAt()).isNotNull();
         // trace_id 만 다른 재전달은 C 가 허용한다. 멱등은 event_id 가 지킨다.
         assertThat(event.traceId()).isNotBlank().isNotEqualTo(event.eventId());
+    }
+
+    @Test
+    @DisplayName("C가 target key capability를 알리면 논리 목표 키를 완료 event에 싣는다")
+    void sendsLogicalTargetKeyWhenCapabilityIsAvailable() {
+        stubResolve(Map.of("runtime", "c/1.0", "analysis_target_key",
+                "current-user-result-target/v1"));
+
+        ComputeSnapshot snapshot = service.synchronize(USER_ID).orElseThrow();
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).post(eq("/internal/v1/c/analyses/completed"), body.capture(),
+                eq(AnalysisCompleted.Result.class));
+        AnalysisCompleted event = (AnalysisCompleted) body.getValue();
+        assertThat(event.targetKey()).isEqualTo("BACKEND|서울|신입");
+        assertThat(snapshot.computeContractVersion())
+                .isEqualTo(CComputeSyncService.COMPUTE_CONTRACT_VERSION);
     }
 
     @Test

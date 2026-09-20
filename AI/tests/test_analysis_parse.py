@@ -311,6 +311,17 @@ def test_report_summarises_what_it_read(tmp_path):
     assert report.modules == ("x", "y.Z")
 
 
+def test_file_walk_order_is_case_insensitive_across_worker_operating_systems(tmp_path):
+    root = repo(
+        tmp_path,
+        {"a.py": "import lower\n", "B.py": "import upper\n"},
+    )
+
+    report = RepositoryParser().parse_repository(root)
+
+    assert report.modules == ("lower", "upper")
+
+
 def test_an_empty_repository_is_not_an_error(tmp_path):
     report = RepositoryParser().parse_repository(tmp_path)
 

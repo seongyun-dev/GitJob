@@ -37,11 +37,10 @@ import tools.jackson.databind.json.JsonMapper;
  * 소유한다. 같은 이유로 응답을 문자열로 받아 직접 파싱한다 — 메시지 컨버터를 갈아끼우면
  * 그 설정이 애플리케이션 전체에 걸린다.</p>
  *
- * <p>{@code null} 필드를 생략하지 않는다. C의 Pydantic 모델에서 {@code X | None}은
- * "없어도 되는 필드"가 아니라 <em>null이 허용되는 필수 필드</em>다. 기본값이 없는
- * 그 필드들을 생략하면 {@code field required}로 422가 난다. 반대로 보내면 안 되는
- * 필드는 애초에 DTO에 두지 않는다 -- C의 event 모델은 {@code extra="forbid"}라
- * 모르는 필드를 실으면 역시 422다.</p>
+ * <p>기존 계약의 {@code null} 필드는 기본적으로 유지한다. C의 Pydantic 모델에서
+ * 기본값 없는 {@code X | None}은 null이 허용되는 필수 필드이기 때문이다. 다만 rolling
+ * deploy용 additive 필드는 C 모델에도 기본값이 있고 DTO에 {@code NON_NULL}을 명시해 구 C에
+ * 보내지 않는다. 그 밖에 보내면 안 되는 필드는 DTO에 두지 않는다.</p>
  *
  * <h2>왜 200이 아닌 것을 전부 예외로 올리는가</h2>
  *

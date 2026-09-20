@@ -1,6 +1,30 @@
 # 채용 코호트와 기술 수요
 
-상태: 로컬 구현 및 검증. 기준일: 2026-09-08. 관련 Jira: S15P21E102-29.
+상태: Projection 경로 로컬 구현 및 검증. 기준일: 2026-09-20.
+관련 Jira: S15P21E102-29, S15P21E102-360.
+
+## 2026-09-20 검색 Projection 경로
+
+요청마다 전체 공고를 다시 분류하고 대형 COHORT/DEMAND Snapshot을 저장하지 않는다.
+검증된 input union이 바뀔 때 공고별 `job_fact`와 검색 열을 한 번 materialize하고,
+`BUILDING` version의 전체 행·fact를 검증한 transaction만 `PUBLISHED` head로 교체한다.
+`/job-demands/preview`는 `C_JOB_DEMAND_PROJECTION_MODE=projection`일 때 이 head를 읽으며
+Snapshot을 INSERT하지 않는다. `legacy`가 기본값이고 `shadow`는 legacy 응답을 유지한 채
+bounded executor로 표본을 비교한다.
+
+`CURRENT_MARKET`의 live 경로는 명시적 `CLOSED`와 `deadline <= as_of`를 분모에서도
+제외한다. 상태 또는 deadline이 UNKNOWN인 공고는 남긴다. 이 정책은
+`job-demand-aggregation/v4`이고, 실제 역사 기능인 `MONTHLY_DEMAND`에는 적용하지 않는다.
+
+개인 결과는 `C_JOB_MATCHING_ACTIVE_MODE=projection`일 때 계산 시작 시
+`projection_version_id`를 고정한다. 추천·Gap·매칭 입력은 해당 version의 불변 fact에서
+복원하고 파싱하지 않는다. list/detail/What-if는 조회 시 현재 active set과 교집합하며,
+count·ID·pagination을 같은 집합에서 계산한다. 결과 version과 current head가 다르면
+`STALE`을 반환하면서 기존 결과를 계속 제공하고 BE가 저장된 scheduler에 비동기 재계산을
+요청한다. 계산 당시 요구사항은 matching 행의 `job_fact_id`에 고정되어 최신 요구사항과
+섞이지 않는다.
+
+배포와 롤백은 [Projection runbook](job-search-projection-runbook.md)을 따른다.
 
 `AI/job/cohort.py`의 기본 활성 `JobCohort`를 수요 집계와 추천/What-if에 전달한다.
 `AI/job/demand.py`는 이 코호트의 공고 ID를 기준으로 집계한다. A의
@@ -32,8 +56,8 @@ payload = demand.model_dump(mode="json")
 
 | 결과 | schema_version | 계산 버전 |
 |---|---|---|
-| JobCohort | `job-cohort/v1` | `job-cohort-quality/v5` |
-| DemandSnapshot | `job-demand-snapshot/v1` | `job-demand-aggregation/v3` |
+| JobCohort | `job-cohort/v1` | `job-cohort-quality/v8` |
+| DemandSnapshot | `job-demand-snapshot/v1` | `job-demand-aggregation/v4` |
 
 DTO는 Pydantic의 `extra="forbid", frozen=True`와 tuple 필드를 사용한다.
 `model_dump_json()` / `model_validate_json()`으로 저장·복원한다. 입력 snapshot/run,

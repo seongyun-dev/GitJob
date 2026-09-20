@@ -4,9 +4,11 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.git_job.compute.client.dto.AnalysisCompleted;
 import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.client.dto.CohortSelector;
 import com.example.git_job.compute.client.dto.CTrend;
+import com.example.git_job.compute.client.dto.EvidencePayload;
 import com.example.git_job.compute.config.CComputeProperties;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -399,6 +401,45 @@ class CComputeClientTest {
         client().get("/a", query, Object.class);
 
         assertThat(lastQuery.get()).isEqualTo("user_id=7");
+    }
+
+    @Test
+    @DisplayName("구 C에 보내는 완료 event에서 additive 필드만 생략한다")
+    void omitsOnlyNullRollingDeployFieldsFromAnalysisCompleted() {
+        responses.put("/internal/v1/c/analyses/completed",
+                Response.of(200, "{\"message\":\"ok\",\"data\":{}}"));
+
+        client().post("/internal/v1/c/analyses/completed",
+                analysisCompleted(null, null), Object.class);
+
+        assertThat(lastBody.get())
+                .doesNotContain("\"target_key\"")
+                .doesNotContain("\"projection_version_id\"")
+                .contains("\"trace_id\":null")
+                .contains("\"data_gaps\":[]");
+    }
+
+    @Test
+    @DisplayName("새 C capability가 있으면 논리 target과 Projection ID를 snake_case로 보낸다")
+    void serializesRollingDeployFieldsWhenPresent() {
+        responses.put("/internal/v1/c/analyses/completed",
+                Response.of(200, "{\"message\":\"ok\",\"data\":{}}"));
+
+        client().post("/internal/v1/c/analyses/completed",
+                analysisCompleted("BACKEND|서울|신입", "jp-1"), Object.class);
+
+        assertThat(lastBody.get())
+                .contains("\"target_key\":\"BACKEND|서울|신입\"")
+                .contains("\"projection_version_id\":\"jp-1\"");
+    }
+
+    private AnalysisCompleted analysisCompleted(String targetKey, String projectionVersionId) {
+        EvidencePayload evidence = new EvidencePayload(
+                EvidencePayload.SCHEMA_VERSION, "7", "analysis-1", "registry-1",
+                "level-1", "rule-1", "COMPLETE", List.of(), List.of(), List.of());
+        return new AnalysisCompleted(
+                AnalysisCompleted.SCHEMA_VERSION, "event-1", null, Instant.EPOCH,
+                "7", "analysis-1", "cohort-1", targetKey, projectionVersionId, evidence);
     }
 
     private record SampleEvent(String schemaVersion, String eventId, Instant occurredAt,

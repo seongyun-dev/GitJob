@@ -50,8 +50,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from common.webhdfs import WebHdfsError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from common.webhdfs import WebHdfsError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class JobHdfsRunSource:
         self.config = config
         self.reader = reader if reader is not None else config._reader()
 
-    def materialize(self) -> tuple[Path, ...]:
+    def materialize(self, *, strict: bool = False) -> tuple[Path, ...]:
         """Fetch every complete run not staged yet; return the intake roots.
 
         Roots are returned even when nothing could be fetched. A WebHDFS outage
@@ -153,8 +154,10 @@ class JobHdfsRunSource:
             root.mkdir(parents=True, exist_ok=True)
             roots.append(root)
             try:
-                self._materialize_source(source, root, incoming)
+                self._materialize_source(source, root, incoming, strict=strict)
             except (WebHdfsError, OSError) as error:
+                if strict:
+                    raise
                 LOGGER.warning(
                     "C job HDFS source unavailable source=%s error_type=%s",
                     source,
@@ -162,7 +165,9 @@ class JobHdfsRunSource:
                 )
         return tuple(roots)
 
-    def _materialize_source(self, source: str, root: Path, incoming: Path) -> None:
+    def _materialize_source(
+        self, source: str, root: Path, incoming: Path, *, strict: bool = False
+    ) -> None:
         listed = self.reader.list_directory(f"{self.config.root_uri}/{source}")
         run_ids = [
             entry["pathSuffix"] for entry in listed if entry.get("type") == "DIRECTORY"
@@ -175,6 +180,8 @@ class JobHdfsRunSource:
             try:
                 self._fetch_run(source, run_id, root, incoming)
             except (WebHdfsError, OSError, TypeError, ValueError) as error:
+                if strict:
+                    raise
                 LOGGER.warning(
                     "C job run not staged source=%s run=%s error_type=%s",
                     source,
@@ -231,7 +238,9 @@ def _manifest_object(raw: bytes) -> dict[str, Any]:
     return manifest
 
 
-def refresher(sources: tuple[JobHdfsSourceConfig, ...], *, reader=None):
+def refresher(
+    sources: tuple[JobHdfsSourceConfig, ...], *, reader=None, strict: bool = False
+):
     """Build the callable `IntakeRunner` invokes at the start of each poll."""
 
     materializers = tuple(JobHdfsRunSource(config, reader=reader) for config in sources)
@@ -239,7 +248,7 @@ def refresher(sources: tuple[JobHdfsSourceConfig, ...], *, reader=None):
     def refresh() -> tuple[Path, ...]:
         roots: list[Path] = []
         for materializer in materializers:
-            roots.extend(materializer.materialize())
+            roots.extend(materializer.materialize(strict=strict))
         return tuple(roots)
 
     return refresh

@@ -984,7 +984,11 @@ def walk_files(root: Path):
     while stack:
         current = stack.pop()
         try:
-            entries = sorted(current.iterdir())
+            # Windows path ordering is case-insensitive while Linux ordering is
+            # not. Evidence IDs must not change with the Worker host OS.
+            entries = sorted(
+                current.iterdir(), key=lambda entry: (entry.name.casefold(), entry.name)
+            )
         except OSError:
             continue
         for entry in entries:
