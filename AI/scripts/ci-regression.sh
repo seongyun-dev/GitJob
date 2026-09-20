@@ -35,6 +35,7 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
 "${ci_python}" -m pytest \
   tests/test_registry_review.py \
   tests/test_worker_intake.py \
+  tests/test_public_intake.py \
   tests/test_worker_registry_source.py \
   tests/test_analysis_credentials.py \
   tests/test_analysis_clone.py \
@@ -50,6 +51,9 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
   --deselect tests/test_worker_intake.py::test_actual_app_startup_consumes_to_postgres_and_restart_deduplicates \
   --deselect tests/test_worker_registry_source.py::test_real_db_default_survives_app_restart \
   --deselect tests/test_analysis_clone.py::test_junction_cannot_redirect_cleanup_to_another_work_directory \
+  --deselect tests/test_public_intake.py::test_postgres_publication_replay_after_restart_has_same_snapshot \
+  --deselect tests/test_public_intake.py::test_database_failure_or_commit_response_loss_reuses_local_results \
+  --deselect tests/test_public_intake.py::test_crashed_publication_waits_for_lease_then_reuses_local_parts \
   --junitxml "${results_xml}" \
   -q
 

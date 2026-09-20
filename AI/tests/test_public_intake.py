@@ -1,15 +1,20 @@
 import hashlib
 import os
+from inspect import signature
 from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from test_public_analysis_cache_integration import FakeRedis
 from test_public_pipeline import fixture_batch
 
+from github import redis_artifact_analysis_cache
+from github.public_pipeline import plan_public_pipeline, run_public_pipeline
 from github.snapshot_input import PublishedSnapshot, SnapshotQuality
 from registry.contracts import TechnologyRegistry
+from worker import public_intake
 from worker.api import create_compute_app
 from worker.public_intake import PublicPipelineConsumer
 from worker.store import ComputeStore, Ticket, apply_migration
@@ -225,3 +230,156 @@ def test_crashed_publication_waits_for_lease_then_reuses_local_parts(
     assert final["status"] == "COMPLETED" and final["reused_partitions"] == 2
     assert final["event_id"] == crashed.event_id
     assert len(publication[1].calls) == 2
+
+
+# --- S15P21E102-350: the cache factory is the runner's, not the planner's -----
+
+
+class StopAfterCapture(Exception):
+    """Raised by a spy once it has recorded the call it was installed for."""
+
+
+def build_consumer(publication, directory, store, **extra):
+    loaded, reader, registry, registry_hash = publication
+    return PublicPipelineConsumer(
+        loaded, reader, registry, directory, registry_hash, store, **extra
+    )
+
+
+def test_consumer_is_constructible_with_the_artifact_cache_off(publication, tmp_path):
+    """The default path broke too: the key was passed even when its value was None."""
+
+    worker = build_consumer(publication, tmp_path, RecordingStore(), max_records=1)
+
+    assert worker.pipeline_id
+
+
+def test_consumer_is_constructible_with_the_artifact_cache_on(
+    publication, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("REDIS_HOST", "redis")
+
+    worker = build_consumer(
+        publication,
+        tmp_path,
+        RecordingStore(),
+        max_records=1,
+        artifact_analysis_cache_enabled=True,
+    )
+
+    assert worker.pipeline_id
+
+
+def test_planner_is_never_given_a_cache_factory(publication, tmp_path, monkeypatch):
+    """Shared options go to both calls, so a runner-only key must stay out of them."""
+
+    monkeypatch.setenv("REDIS_HOST", "redis")
+    seen = {}
+    planner = public_intake.plan_public_pipeline
+
+    def spy(batch, mapper, **kwargs):
+        seen.update(kwargs)
+        return planner(batch, mapper, **kwargs)
+
+    monkeypatch.setattr(public_intake, "plan_public_pipeline", spy)
+
+    build_consumer(
+        publication,
+        tmp_path,
+        RecordingStore(),
+        max_records=1,
+        artifact_analysis_cache_enabled=True,
+    )
+
+    assert seen and "cache_factory" not in seen
+
+
+def test_runner_is_given_the_cache_factory(publication, tmp_path, monkeypatch):
+    monkeypatch.setenv("REDIS_HOST", "redis")
+    worker = build_consumer(
+        publication,
+        tmp_path,
+        RecordingStore(),
+        max_records=1,
+        artifact_analysis_cache_enabled=True,
+    )
+    seen = {}
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        raise StopAfterCapture
+
+    monkeypatch.setattr(public_intake, "run_public_pipeline", spy)
+
+    with pytest.raises(StopAfterCapture):
+        worker.poll_once(max_new_partitions=1)
+
+    assert callable(seen["cache_factory"])
+
+
+def test_planner_signature_does_not_absorb_the_runner_only_argument():
+    """Fixing this by giving the planner an ignored parameter hides the coupling."""
+
+    assert "cache_factory" not in signature(plan_public_pipeline).parameters
+    assert "cache_factory" in signature(run_public_pipeline).parameters
+
+
+def test_cache_enabled_publication_reaches_the_same_completion(
+    publication, tmp_path, monkeypatch
+):
+    """The cache removes work, so it must not change what gets published.
+
+    Constructing a consumer does not reach the code that regressed: the factory
+    is the runner's, and the runner only sees it once `poll_once` gets there.
+    So this drives both partitions to COMPLETED with the cache on, proves the
+    factory was really built on the way, and compares the publication with the
+    one the same input produces without a cache.
+    """
+
+    plain_root = tmp_path / "cache-off"
+    cached_root = tmp_path / "cache-on"
+    plain_root.mkdir()
+    cached_root.mkdir()
+
+    plain_store = RecordingStore()
+    plain = build_consumer(publication, plain_root, plain_store, max_records=1)
+    assert plain.poll_once(max_new_partitions=1)["status"] == "IN_PROGRESS"
+    assert plain.poll_once(max_new_partitions=1)["status"] == "COMPLETED"
+
+    built = []
+    build_context = redis_artifact_analysis_cache.ArtifactAnalysisCacheContext.build
+
+    def spy_build(*arguments, **keywords):
+        context = build_context(*arguments, **keywords)
+        built.append(context)
+        return context
+
+    # A duck-typed client keeps this off the network: the point is the wiring,
+    # not Redis. Patching the factory's own entry points is what lets the real
+    # runner build and use a cache without a broker.
+    monkeypatch.setattr(
+        redis_artifact_analysis_cache, "create_redis_client", lambda: FakeRedis()
+    )
+    monkeypatch.setattr(
+        redis_artifact_analysis_cache.ArtifactAnalysisCacheContext,
+        "build",
+        staticmethod(spy_build),
+    )
+
+    cached_store = RecordingStore()
+    cached = build_consumer(
+        publication,
+        cached_root,
+        cached_store,
+        max_records=1,
+        artifact_analysis_cache_enabled=True,
+    )
+    assert cached.poll_once(max_new_partitions=1)["status"] == "IN_PROGRESS"
+    final = cached.poll_once(max_new_partitions=1)
+
+    assert final["status"] == "COMPLETED"
+    assert built, "the runner never built the cache the consumer handed it"
+    assert len(cached_store.claims) == len(cached_store.artifacts) == 1
+    artifact = cached_store.artifacts[0]
+    assert artifact.kind == "PUBLIC_GITHUB" and artifact.owner is None
+    assert artifact.payload == plain_store.artifacts[0].payload

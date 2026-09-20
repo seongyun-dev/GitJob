@@ -49,12 +49,16 @@ class PublicPipelineConsumer:
             "source_sha256": self._published.source_sha256,
             "manifest_sha256": self._published.manifest_sha256,
             "registry_sha256": registry_sha256,
-            "cache_factory": _cache_factory(
-                enabled=artifact_analysis_cache_enabled,
-                reader=reader,
-                registry_version=self._mapper.registry_version,
-            ),
         }
+        # Runner-only. `self._options` is splatted into the planner as well, and
+        # the planner has no such parameter, so a cache entry in there makes
+        # every consumer fail to construct -- with the cache off as much as on,
+        # because the key is passed even when its value is None.
+        self._cache_factory = _cache_factory(
+            enabled=artifact_analysis_cache_enabled,
+            reader=reader,
+            registry_version=self._mapper.registry_version,
+        )
         self._plan = plan_public_pipeline(
             self._published.batch, self._mapper, **self._options
         )
@@ -91,6 +95,7 @@ class PublicPipelineConsumer:
             self._mapper,
             self._checkpoint_dir,
             max_new_partitions=max_new_partitions,
+            cache_factory=self._cache_factory,
             **self._options,
         )
         if progress.pipeline_id != self.pipeline_id:
