@@ -8,6 +8,8 @@ a gap is reported and whether a bad run alerts.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,6 +19,7 @@ from job.collector.schedule import (
     RunOutcome,
     RunRecord,
     ScheduledRun,
+    acquire_source_lock,
     append_history,
     count_blocked_runs,
     detect_gap,
@@ -117,6 +120,76 @@ def test_a_config_with_no_runs_is_rejected(tmp_path: Path):
 def test_disabled_run_is_loaded_but_marked(tmp_path: Path):
     config = load_schedule(_write_schedule(tmp_path))
     assert config.run("saramin-morning").enabled is False
+
+
+def test_run_timeout_is_loaded_and_defaults_are_backward_compatible(tmp_path: Path):
+    config = load_schedule(_write_schedule(tmp_path))
+    assert config.run("worknet-morning").timeout_seconds == 3600.0
+
+    path = _write_schedule(
+        tmp_path,
+        SCHEDULE_TOML.replace(
+            'name = "worknet-morning"',
+            'name = "worknet-morning"\ntimeout_seconds = 57600',
+        ),
+    )
+    assert load_schedule(path).run("worknet-morning").timeout_seconds == 57600.0
+
+
+def test_non_positive_or_non_finite_timeout_is_rejected(tmp_path: Path):
+    for value in ("0", "-1", "inf", "nan"):
+        path = _write_schedule(
+            tmp_path,
+            SCHEDULE_TOML.replace(
+                'name = "worknet-morning"',
+                f'name = "worknet-morning"\ntimeout_seconds = {value}',
+            ),
+        )
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            load_schedule(path)
+
+
+def test_source_lock_is_single_flight_per_site_and_independent_between_sites(
+    tmp_path: Path,
+):
+    config = load_schedule(_write_schedule(tmp_path))
+
+    with acquire_source_lock(config, "WORKNET") as acquired:
+        assert acquired is True
+        with acquire_source_lock(config, "WORKNET") as contended:
+            assert contended is False
+        with acquire_source_lock(config, "SARAMIN") as independent:
+            assert independent is True
+
+    # Kernel-backed locks are released when the owner leaves the context.
+    with acquire_source_lock(config, "WORKNET") as reacquired:
+        assert reacquired is True
+
+
+def test_source_lock_is_released_by_process_exit(tmp_path: Path):
+    """A crashed scheduler cannot leave a PID marker that blocks recovery."""
+
+    script = (
+        "import os, sys; "
+        "from pathlib import Path; "
+        "from job.collector.schedule import ScheduleConfig, acquire_source_lock; "
+        "c=ScheduleConfig(runs=(), history_path=Path(sys.argv[1])); "
+        "cm=acquire_source_lock(c, 'WORKNET'); "
+        "assert cm.__enter__() is True; "
+        "os._exit(0)"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parents[1])
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "history.jsonl")],
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 0
+
+    config = load_schedule(_write_schedule(tmp_path))
+    with acquire_source_lock(config, "WORKNET") as acquired:
+        assert acquired is True
 
 
 # --- OS scheduler rendering ------------------------------------------------
@@ -711,6 +784,87 @@ def test_success_empty_run_does_not_alert_or_report_a_gap(
     assert "ALERT" not in combined
 
 
+def test_main_skips_a_contended_source_without_history_or_collection(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from job.collector import __main__ as cli
+
+    config_path = _write_schedule(tmp_path)
+    config = load_schedule(config_path)
+    monkeypatch.setattr(
+        cli,
+        "execute_run",
+        lambda *args, **kwargs: pytest.fail("contended source must not execute"),
+    )
+
+    with acquire_source_lock(config, "WORKNET"):
+        code = cli.main(["--run", "worknet-morning", "--config", str(config_path)])
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "SKIP_ALREADY_RUNNING" in captured.out
+    assert not (tmp_path / "history.jsonl").exists()
+
+
+def test_main_passes_declared_timeout_to_collector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from job.collector import __main__ as cli
+
+    config_path = _write_schedule(
+        tmp_path,
+        SCHEDULE_TOML.replace(
+            'name = "worknet-morning"',
+            'name = "worknet-morning"\ntimeout_seconds = 57600',
+        ),
+    )
+    seen: dict[str, object] = {}
+    record = _record(finished_at=datetime.now(UTC).isoformat())
+
+    def fake_execute(*args: object, **kwargs: object) -> RunRecord:
+        seen.update(kwargs)
+        return record
+
+    monkeypatch.setattr(cli, "execute_run", fake_execute)
+    monkeypatch.setattr(cli, "_announce", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "detect_gap", lambda *args, **kwargs: None)
+
+    assert cli.main(["--run", "worknet-morning", "--config", str(config_path)]) == 0
+    assert seen["timeout_seconds"] == 57600.0
+
+
+def test_failed_run_is_recorded_but_not_announced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from job.collector import __main__ as cli
+
+    config_path = _write_schedule(tmp_path)
+    failed = _record(
+        status=RunOutcome.FAILED,
+        records=0,
+        exit_code=1,
+        error="raw verify failed",
+        finished_at=datetime.now(UTC).isoformat(),
+    )
+    announced = False
+
+    def fake_announce(*args: object, **kwargs: object) -> None:
+        nonlocal announced
+        announced = True
+
+    monkeypatch.setattr(cli, "execute_run", lambda *args, **kwargs: failed)
+    monkeypatch.setattr(cli, "_announce", fake_announce)
+    monkeypatch.setattr(cli, "_alert", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "detect_gap", lambda *args, **kwargs: None)
+
+    assert cli.main(["--run", "worknet-morning", "--config", str(config_path)]) == 1
+    assert announced is False
+
+
 def test_every_repo_run_filters_by_job_category():
     """An unfiltered run collects 요양보호사 and 카지노 공채, not developers.
 
@@ -752,6 +906,15 @@ def test_repo_schedule_keeps_the_webhook_url_out_of_the_file():
 
     assert config.webhook_env == "GITJOB_ALERT_WEBHOOK_URL"
     assert "https://" not in body
+
+
+def test_long_running_sources_have_bounded_timeout_guards():
+    config = load_schedule(REPO_SCHEDULE)
+    for run in config.runs:
+        if run.site == "JOBKOREA":
+            assert run.timeout_seconds == 16 * 60 * 60
+        elif run.site == "SARAMIN":
+            assert run.timeout_seconds == 12 * 60 * 60
 
 
 def test_repo_schedule_renders_one_cron_line_per_declared_time():

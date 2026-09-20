@@ -23,11 +23,16 @@ of what ran has to survive the process that wrote it.
 from __future__ import annotations
 
 import json
+import math
+import os
+import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -39,10 +44,12 @@ from job.collector.outcome import empty_run_blockers, is_valid_empty_run
 
 __all__ = [
     "DEFAULT_MAX_INTERVAL_HOURS",
+    "DEFAULT_RUN_TIMEOUT_SECONDS",
     "RunOutcome",
     "RunRecord",
     "ScheduleConfig",
     "ScheduledRun",
+    "acquire_source_lock",
     "append_history",
     "count_blocked_runs",
     "detect_gap",
@@ -57,6 +64,13 @@ __all__ = [
 # next one is called missing. A wider window would let a whole missed cycle
 # pass unreported, which is the one failure this ticket exists to catch.
 DEFAULT_MAX_INTERVAL_HOURS = 14
+DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
+
+# The lock is advisory and kernel-backed.  This in-process set supplements
+# flock/msvcrt for two descriptors in one interpreter (a useful property for
+# tests and embedded schedulers); it is never persisted as a PID or state file.
+_LOCAL_LOCKS: set[Path] = set()
+_LOCAL_LOCKS_GUARD = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -73,6 +87,10 @@ class ScheduledRun:
     # scheduler is what fires — and the source for `render_os_schedule`.
     at: tuple[str, ...]
     enabled: bool = True
+    # Per-run upper bound.  The historical default remains one hour for
+    # callers that construct ScheduledRun directly; long-running sources set
+    # an explicit value in schedule.toml.
+    timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -145,17 +163,27 @@ def load_schedule(path: Path) -> ScheduleConfig:
     """
 
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    runs = tuple(
-        ScheduledRun(
-            name=str(entry["name"]),
-            site=str(entry["site"]),
-            module=str(entry["module"]),
-            args=tuple(str(arg) for arg in entry.get("args", ())),
-            at=tuple(str(when) for when in entry.get("at", ())),
-            enabled=bool(entry.get("enabled", True)),
+    runs_list: list[ScheduledRun] = []
+    for entry in raw.get("run", ()):
+        timeout_seconds = float(
+            entry.get("timeout_seconds", DEFAULT_RUN_TIMEOUT_SECONDS)
         )
-        for entry in raw.get("run", ())
-    )
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError(
+                f"timeout_seconds must be finite and positive: {timeout_seconds!r}"
+            )
+        runs_list.append(
+            ScheduledRun(
+                name=str(entry["name"]),
+                site=str(entry["site"]),
+                module=str(entry["module"]),
+                args=tuple(str(arg) for arg in entry.get("args", ())),
+                at=tuple(str(when) for when in entry.get("at", ())),
+                enabled=bool(entry.get("enabled", True)),
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    runs = tuple(runs_list)
     if not runs:
         raise ValueError(f"{path} declares no runs")
 
@@ -168,6 +196,94 @@ def load_schedule(path: Path) -> ScheduleConfig:
             raw.get("max_interval_hours", DEFAULT_MAX_INTERVAL_HOURS)
         ),
     )
+
+
+def _lock_path(config: ScheduleConfig, site: str) -> Path:
+    """Return the deterministic per-site lock path for a schedule."""
+
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", site.strip().upper())
+    if not normalized:
+        raise ValueError("site must contain at least one usable character")
+    return (config.history_path.parent / ".locks" / f"collector-{normalized}.lock").resolve()
+
+
+def _lock_file(handle: Any) -> None:
+    """Acquire one descriptor without waiting.
+
+    Production runs on Linux, where ``fcntl.flock`` gives the desired
+    process-exit/reboot release semantics.  The msvcrt branch keeps local
+    Windows verification equivalent without introducing a PID file.
+    """
+
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        handle.write(b"\0")
+        handle.flush()
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as error:
+            if getattr(error, "winerror", None) in {33, 36}:
+                raise BlockingIOError(error.errno, "source lock is busy") from error
+            raise
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(handle: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def acquire_source_lock(config: ScheduleConfig, site: str):
+    """Acquire the site's advisory single-flight lock.
+
+    Yields ``True`` when the caller owns the lock and ``False`` when another
+    run already owns it.  A lock file is only a stable inode; no PID or stale
+    timestamp is trusted, so process exit and host reboot release the kernel
+    lock automatically.  Unexpected lock I/O errors are raised so the caller
+    fails closed instead of running an unguarded collector.
+    """
+
+    path = _lock_path(config, site)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        with _LOCAL_LOCKS_GUARD:
+            if path in _LOCAL_LOCKS:
+                yield False
+                return
+        try:
+            _lock_file(handle)
+        except BlockingIOError:
+            yield False
+            return
+        with _LOCAL_LOCKS_GUARD:
+            _LOCAL_LOCKS.add(path)
+        try:
+            yield True
+        finally:
+            with _LOCAL_LOCKS_GUARD:
+                _LOCAL_LOCKS.discard(path)
+            try:
+                _unlock_file(handle)
+            except OSError:
+                # Closing the descriptor still releases the OS lock; cleanup
+                # must never replace the collector result with a new error.
+                pass
 
 
 def execute_run(

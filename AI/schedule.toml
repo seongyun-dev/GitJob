@@ -67,6 +67,7 @@ args = [
 name = "saramin-morning"
 site = "SARAMIN"
 module = "Saramin_Collector_V1"
+timeout_seconds = 43200 # 12h bounded guard; runtime evidence is still incomplete
 at = ["09:30"]
 args = [
   "--category-preset", "dev",
@@ -80,6 +81,7 @@ args = [
 name = "saramin-evening"
 site = "SARAMIN"
 module = "Saramin_Collector_V1"
+timeout_seconds = 43200 # 12h bounded guard; runtime evidence is still incomplete
 at = ["21:30"]
 args = [
   "--category-preset", "dev",
@@ -279,6 +281,7 @@ name = "jobkorea-morning"
 site = "JOBKOREA"
 module = "JobKorea_Collector_V1"
 enabled = true
+timeout_seconds = 57600 # 16h guard for the measured ~11h13m v3 full scan
 at = ["10:30"]
 args = [
   "--duty-code", "1000229",
@@ -293,6 +296,7 @@ name = "jobkorea-evening"
 site = "JOBKOREA"
 module = "JobKorea_Collector_V1"
 enabled = true
+timeout_seconds = 57600 # 16h guard for the measured ~11h13m v3 full scan
 at = ["22:30"]
 args = [
   "--duty-code", "1000229",

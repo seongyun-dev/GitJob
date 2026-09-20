@@ -29,6 +29,7 @@ from job.collector.schedule import (
     RunOutcome,
     RunRecord,
     ScheduleConfig,
+    acquire_source_lock,
     append_history,
     count_blocked_runs,
     detect_gap,
@@ -276,7 +277,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{run.name} is disabled in {config_path}", file=sys.stderr)
         return 0
 
-    record = execute_run(run, now=now, cwd=config_path.parent)
+    try:
+        with acquire_source_lock(config, run.site) as acquired:
+            if not acquired:
+                # Contention is an expected scheduler outcome, not a failed
+                # collection.  Do not append history, publish, or alert: the
+                # already-running invocation owns this source's run.
+                print(
+                    f"SKIP_ALREADY_RUNNING site={run.site} run={run.name}"
+                )
+                return 0
+            record = execute_run(
+                run,
+                now=now,
+                cwd=config_path.parent,
+                timeout_seconds=run.timeout_seconds,
+            )
+    except OSError as error:
+        # Fail closed if the host cannot provide advisory locking.  Running
+        # unguarded would violate the single-flight contract.
+        print(f"source lock unavailable: {error}", file=sys.stderr)
+        return 1
     # History first. An alert that fails must not cost us the record of what
     # ran, because the gap check is built on it.
     append_history(config.history_path, record)
@@ -284,7 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{record.status} {record.records}건 exit={record.exit_code} "
         f"run={record.run_name}"
     )
-    _announce(record, cwd=config_path.parent)
+    if RunOutcome.is_success(record.status):
+        _announce(record, cwd=config_path.parent)
 
     if record.status == RunOutcome.FAILED:
         detail = f" - {record.error.splitlines()[-1][:160]}" if record.error else ""
