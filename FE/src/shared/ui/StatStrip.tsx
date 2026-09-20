@@ -33,7 +33,30 @@ const COLUMNS: Readonly<Record<number, string>> = {
   4: 'lg:grid-cols-4',
 }
 
-export function StatStrip({ items }: { items: readonly StatItem[] }) {
+/**
+ * 칸의 세로 밀도 · 티켓 S15P21E102-356.
+ *
+ * `compact`는 값과 글자 크기를 그대로 두고 여백만 줄인다. 정보를 감추거나 줄 수를
+ * 줄이지 않는다 — 같은 네 줄이 더 얕은 카드에 들어갈 뿐이다.
+ *
+ * 기본값을 바꾸지 않는 이유는 이 컴포넌트를 세 화면이 함께 쓰기 때문이다(내 기술 ·
+ * 공고 매칭 · 기술 상세). 한쪽 화면의 밀도 요구로 나머지 둘을 같이 움직이면
+ * 확정 디자인과 어긋나는 쪽이 생긴다.
+ */
+const DENSITY = {
+  default: { pad: 'px-6 py-5', note: 'mt-2', caption: 'mt-1.5' },
+  compact: { pad: 'px-5 py-3.5', note: 'mt-1', caption: 'mt-1' },
+} as const
+
+export type StatDensity = keyof typeof DENSITY
+
+export function StatStrip({
+  items,
+  density = 'default',
+}: {
+  items: readonly StatItem[]
+  density?: StatDensity
+}) {
   const columns = COLUMNS[items.length] ?? 'lg:grid-cols-4'
 
   return (
@@ -41,33 +64,42 @@ export function StatStrip({ items }: { items: readonly StatItem[] }) {
       className={`grid grid-cols-1 divide-y divide-brand-line overflow-hidden rounded-[18px] border border-brand-line bg-white shadow-[0_10px_28px_rgba(25,47,81,0.07)] sm:grid-cols-2 lg:divide-x lg:divide-y-0 ${columns}`}
     >
       {items.map((item) => (
-        <StatCell key={item.label} item={item} />
+        <StatCell key={item.label} item={item} density={density} />
       ))}
     </div>
   )
 }
 
-function StatCell({ item }: { item: StatItem }) {
+function StatCell({ item, density }: { item: StatItem; density: StatDensity }) {
+  const spacing = DENSITY[density]
   const body = (
     <>
       <p className="text-[13px] font-semibold text-brand-ink-soft">{item.label}</p>
-      <p className="mt-2 text-[15px] font-[750] text-brand-faint">{item.note}</p>
-      <p className="mt-1.5 text-[12.5px] leading-[1.5] text-brand-faint">{item.caption}</p>
+      <p className={`${spacing.note} text-[15px] font-[750] text-brand-faint`}>
+        {item.note}
+      </p>
+      <p
+        className={`${spacing.caption} text-[12.5px] leading-[1.5] text-brand-faint`}
+      >
+        {item.caption}
+      </p>
     </>
   )
 
   if (item.onOpen === undefined) {
-    return <div className="px-6 py-5">{body}</div>
+    return <div className={spacing.pad}>{body}</div>
   }
 
   return (
     <button
       type="button"
       onClick={item.onOpen}
-      className="px-6 py-5 text-left hover:bg-tone-accent-bg/40"
+      className={`${spacing.pad} text-left hover:bg-tone-accent-bg/40`}
     >
       {body}
-      <span className="mt-1.5 inline-block text-[12px] font-bold text-tone-accent underline">
+      <span
+        className={`${spacing.caption} inline-block text-[12px] font-bold text-tone-accent underline`}
+      >
         목록 보기
       </span>
     </button>

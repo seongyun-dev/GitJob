@@ -25,7 +25,7 @@ export function EvidenceTable({ children }: { children: ReactNode }) {
         데이터가 붙으면 그 구간은 카드형 배치가 따로 필요하다.
       */}
       <div
-        className="hidden gap-[18px] border-b border-brand-line px-[22px] py-3 text-[10.5px] font-extrabold tracking-[0.12em] text-brand-faint lg:grid"
+        className="hidden gap-[18px] border-b border-brand-line px-[22px] py-2.5 text-[10.5px] font-extrabold tracking-[0.12em] text-brand-faint lg:grid"
         style={{ gridTemplateColumns: EVIDENCE_TABLE_TEMPLATE }}
       >
         {COLUMNS.map((label, index) => (
@@ -34,7 +34,7 @@ export function EvidenceTable({ children }: { children: ReactNode }) {
           </span>
         ))}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-2">{children}</div>
     </div>
   )
 }

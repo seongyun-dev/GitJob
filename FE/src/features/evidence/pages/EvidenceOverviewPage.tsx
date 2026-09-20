@@ -141,8 +141,9 @@ export function EvidenceOverviewPage() {
         </div>
       </div>
 
-      <div className="mt-7">
-        <StatStrip items={stats} />
+      {/* 여백만 줄인다 · 티켓 S15P21E102-356. 지표 네 개와 문구는 그대로다. */}
+      <div className="mt-5">
+        <StatStrip items={stats} density="compact" />
       </div>
 
       <div className="gj-split mt-4">
@@ -336,7 +337,7 @@ function TechnologyRows({
   }
 
   return (
-    <ul className="px-[22px] py-2">
+    <ul className="px-[22px] py-1">
       {technologies.map((technology) => (
         <TechnologyRow
           key={technology.techId}
@@ -375,7 +376,7 @@ function TechnologyRow({
   onToggle: () => void
 }) {
   return (
-    <li className="border-b border-brand-line py-3 last:border-b-0">
+    <li className="border-b border-brand-line py-2 last:border-b-0">
       <div className="grid items-center gap-[18px] lg:grid-cols-[minmax(0,206fr)_150px_110px_minmax(0,319fr)_44px]">
         {/*
           기술명 자리를 버튼으로 쓴다. 열을 하나 더 만들면 확정 디자인의 다섯 열
