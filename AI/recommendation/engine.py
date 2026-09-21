@@ -1,7 +1,7 @@
 """Deterministic next-technology candidates and one-technology job deltas."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from hashlib import sha256
 from typing import Annotated, Literal
@@ -1037,6 +1037,33 @@ class RelatedJobsPage(EvidenceModel):
     increased_count: StrictInt = Field(ge=0)
     items: tuple[CohortJob | MatchingJobInput, ...]
     data_gaps: tuple[NonBlank, ...]
+
+
+def snapshot_from_stored_payload(
+    payload: Mapping[str, object],
+) -> RecommendationSnapshot:
+    """Read a persisted recommendation, ignoring metadata stored beside it.
+
+    S15P21E102-368. The writer keeps `cohort_snapshot_id`, `explanation`,
+    `job_matching`/`job_matching_ref` and `projection_version_id` in the same
+    JSON row as the model fields, and the model is `extra="forbid"`. Readers
+    used to drop those keys by name, so the projection rollout's new key turned
+    every What-if detail read into a `ValidationError` -- reported as
+    `INVALID_INPUT` and shown to users as an unsupported role or filter.
+
+    Selecting the model's own fields cannot go stale the way a deny list does.
+    It narrows the input only: a missing or malformed field still fails, and
+    `RecommendationSnapshot.model_validate` keeps forbidding extras for callers
+    that hold a payload which is supposed to be exactly the model.
+    """
+
+    return RecommendationSnapshot.model_validate(
+        {
+            name: value
+            for name, value in payload.items()
+            if name in RecommendationSnapshot.model_fields
+        }
+    )
 
 
 def list_related_jobs(

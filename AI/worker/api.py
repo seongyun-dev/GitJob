@@ -1670,17 +1670,18 @@ def create_compute_app(
         page: Annotated[int, Query(ge=0)] = 0,
         size: Annotated[int, Query(ge=1, le=50)] = 20,
     ):
-        from recommendation.engine import RecommendationSnapshot, list_related_jobs
+        from recommendation.engine import (
+            list_related_jobs,
+            snapshot_from_stored_payload,
+        )
 
         legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
-        payload = dict(
+        # The row also carries cohort/explanation/matching/projection metadata.
+        # Reading by the model's field list keeps the next additive key from
+        # turning this page into INVALID_INPUT (S15P21E102-368).
+        result = snapshot_from_stored_payload(
             snapshot(legacy_snapshot_id, user_id, "RECOMMENDATION")["payload"]
         )
-        payload.pop("cohort_snapshot_id", None)
-        payload.pop("explanation", None)
-        payload.pop("job_matching", None)
-        payload.pop("job_matching_ref", None)
-        result = RecommendationSnapshot.model_validate(payload)
         active_ids = None
         if matching_active_mode == "projection":
             all_ids = set(result.current_job_ids)
