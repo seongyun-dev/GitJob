@@ -161,6 +161,22 @@ class ComputeResultReaderTest {
     }
 
     @Test
+    @DisplayName("계산 중 lease 만료 시각을 화면 폴링 대기로 노출하지 않는다")
+    void runningAttemptDoesNotExposeLeaseExpiryAsPollingDelay() {
+        when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(snapshots.findAttempt(anyLong(), anyString(), anyString())).thenReturn(Optional.of(
+                new ComputeAttempt(USER_ID, "BACKEND|서울|신입", "f".repeat(64), "COMPUTING",
+                        "COMPUTING", 1, UUID.randomUUID(),
+                        Instant.now().plusSeconds(120), Instant.now())));
+
+        Computed<String> computed = reader.read(USER_ID, snapshot -> "value");
+
+        assertThat(computed.state().dataStatus()).isEqualTo(ComputeState.PREPARING);
+        assertThat(computed.state().statusReason()).isEqualTo("COMPUTING");
+        assertThat(computed.state().retryAfterSec()).isNull();
+    }
+
+    @Test
     @DisplayName("계산 중은 오류가 아니라 200 + PREPARING이고 Retry-After를 전달한다")
     void mapsPreparingToState() {
         Computed<String> computed = reader.read(USER_ID, snapshot -> {

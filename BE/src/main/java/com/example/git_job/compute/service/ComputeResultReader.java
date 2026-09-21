@@ -105,10 +105,12 @@ public class ComputeResultReader {
                     return ComputeState.failed(state.reason() == null
                             ? "COMPUTE_FAILED" : state.reason());
                 }
-                int retryAfter = retryAfterSeconds(state.nextRetryAt(), Instant.now());
-                return "RETRYING".equals(state.status())
-                        ? ComputeState.retrying(retryAfter)
-                        : ComputeState.computing(retryAfter);
+                if ("RETRYING".equals(state.status())) {
+                    return ComputeState.retrying(retryAfterSeconds(state.nextRetryAt(), Instant.now()));
+                }
+                // RUNNING/COMPUTING의 nextRetryAt은 중단된 worker를 복구할 lease 만료 시각이다.
+                // 화면의 다음 조회 시각이 아니므로 FE 기본 폴링 주기를 사용하게 한다.
+                return ComputeState.computing(null);
             }
             return ComputeState.preparing("COMPUTE_PENDING");
         }
