@@ -138,11 +138,11 @@ function SummaryBody({
     <div>
       {/* headline 은 40자 이내이고 Level 문자열을 담지 않는다 -- Level 은 위에 따로 있다. */}
       {data.headline !== null && (
-        <h3 className="max-w-[64ch] text-[16px] leading-[1.4] font-[750] tracking-[-0.02em] text-brand-ink">
+        <h3 className="w-full text-[16px] leading-[1.4] font-[750] tracking-[-0.02em] text-brand-ink">
           {evidenceSummaryText(data.headline)}
         </h3>
       )}
-      <p className="mt-2 max-w-[64ch] text-[13.5px] leading-[1.75] text-brand-ink-soft">
+      <p className="mt-2 w-full text-[13.5px] leading-[1.75] text-brand-ink-soft">
         {evidenceSummaryText(data.summary)}
       </p>
 
@@ -155,7 +155,7 @@ function SummaryBody({
           <p className="text-[11px] font-extrabold tracking-[0.12em] text-brand-600">
             아직 확인되지 않은 것
           </p>
-          <p className="mt-1.5 max-w-[64ch] text-[12.5px] leading-[1.7] text-brand-ink-soft">
+          <p className="mt-1.5 w-full text-[12.5px] leading-[1.7] text-brand-ink-soft">
             {missingEvidenceGuide(data.gap)}
           </p>
         </div>
