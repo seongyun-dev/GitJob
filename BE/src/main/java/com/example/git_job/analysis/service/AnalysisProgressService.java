@@ -57,7 +57,11 @@ public class AnalysisProgressService {
             return Applied.UNKNOWN_STAGE;
         }
 
-        AnalysisJob job = jobs.findById(payload.analysisId()).orElse(null);
+        /*
+         * 잠금을 잡고 읽는다. 결과 컨슈머와 같은 행을 동시에 고치므로, 잠그지 않으면
+         * 늦게 커밋한 쪽이 상대의 변경을 덮는다(AnalysisJobRepository 참고).
+         */
+        AnalysisJob job = jobs.findWithLockByAnalysisId(payload.analysisId()).orElse(null);
         if (job == null) {
             // 재시도해도 생기지 않는다. 결과 경로와 같은 판단으로 메시지를 소비한다.
             log.warn("Progress for unknown analysis: analysisId={}, eventId={}",

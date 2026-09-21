@@ -55,13 +55,22 @@ function formatUpdatedAt(iso: string): string | null {
 export function RepositoryListItem({
   repository,
   selected,
+  locked = false,
   onToggle,
 }: {
   repository: RepositorySummary
   selected: boolean
+  /**
+   * 진행 중인 분석이 있어 새 선택을 받지 않는 상태.
+   *
+   * 분석할 수 없는 저장소(`analyzable === false`)와 같은 자리에서 막되 사유는 다르다 --
+   * 이쪽은 저장소의 문제가 아니라 지금 때가 아니라는 뜻이라, 배지를 붙이지 않는다.
+   * 이유는 우측 패널이 한 번만 말한다.
+   */
+  locked?: boolean
   onToggle: (fullName: string) => void
 }) {
-  const disabled = !repository.analyzable
+  const disabled = !repository.analyzable || locked
   const updatedAt = formatUpdatedAt(repository.updatedAt)
   const meta = [repository.language, repository.defaultBranch].filter(
     (entry): entry is string => entry !== null,
@@ -101,7 +110,7 @@ export function RepositoryListItem({
               {repository.fullName}
             </span>
             {repository.isPrivate && <RepositoryStateBadge state="PRIVATE" />}
-            {disabled && <RepositoryStateBadge state="UNANALYZABLE" />}
+            {!repository.analyzable && <RepositoryStateBadge state="UNANALYZABLE" />}
           </span>
           <span className="mt-1.5 block text-[13px] text-brand-muted">{meta.join(' · ')}</span>
         </span>

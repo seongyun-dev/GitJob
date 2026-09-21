@@ -52,6 +52,17 @@ public class AnalysisJob implements Persistable<String> {
     public static final String STAGE_FAILED = "FAILED";
 
     /**
+     * 워커가 끝내지 못한 채 유효시간을 넘겨 서버가 종료시킨 분석
+     * ({@code StaleAnalysisReaper}).
+     *
+     * <p>{@code ErrorCode} enum의 {@code AN-404-1} 계열이 아니라 워커가 쓰는
+     * {@code REPOSITORY_TOO_LARGE}·{@code GITHUB_RECONNECT_REQUIRED}와 같은 어휘다.
+     * 이 값은 API 오류 코드가 아니라 {@code analysis_job.error_code}에 저장돼
+     * 화면의 실패 사유로 나간다.</p>
+     */
+    public static final String ERROR_ANALYSIS_TIMED_OUT = "ANALYSIS_TIMED_OUT";
+
+    /**
      * Statuses that mean a job still owns its repository, so a second request for the
      * same repository must not create another one. The two vocabularies below both
      * appear in the API spec; unifying them into one enum is a separate ticket, and
@@ -110,6 +121,16 @@ public class AnalysisJob implements Persistable<String> {
     @Column(name = "error_code", length = 64)
     private String errorCode;
 
+    /**
+     * 한 번의 배치 요청으로 함께 접수된 분석의 묶음 ID (V27).
+     *
+     * <p>이 컬럼이 생기기 전 단건 요청은 {@code null}이다. 그 행들도 진행 중이면
+     * 여전히 제출을 막지만 -- 차단 판정은 잡 단위라 {@code batchId}를 보지 않는다 --
+     * 배치 조회에서는 제외된다. 없는 묶음을 지어내지 않기 위해서다.</p>
+     */
+    @Column(name = "batch_id", length = 80)
+    private String batchId;
+
     /** GitHub 기여 판정 시도가 끝나 C 계산이 이 분석을 읽어도 되는 시각. */
     @Column(name = "compute_ready_at")
     private Instant computeReadyAt;
@@ -123,7 +144,7 @@ public class AnalysisJob implements Persistable<String> {
 
     private AnalysisJob(String analysisId, Long userId, String repositoryId,
             String repositoryFullName, String branchName, String commitSha,
-            Instant requestedAt) {
+            Instant requestedAt, String batchId) {
         this.analysisId = analysisId;
         this.userId = userId;
         this.repositoryId = repositoryId;
@@ -131,14 +152,20 @@ public class AnalysisJob implements Persistable<String> {
         this.branchName = branchName;
         this.commitSha = commitSha;
         this.requestedAt = requestedAt;
+        this.batchId = batchId;
         this.status = STATUS_QUEUED;
         this.currentStage = STAGE_WAITING_FOR_WORKER;
     }
 
-    /** Initial state of an accepted request. The worker owns every transition after this. */
+    /**
+     * Initial state of an accepted request. The worker owns every transition after this.
+     *
+     * @param batchId 함께 접수된 분석들의 묶음. 단건 경로에서 넘어오면 {@code null}이고,
+     *                그때 이 분석은 배치 조회에 잡히지 않는다
+     */
     public static AnalysisJob queue(String analysisId, long userId, String repositoryId,
             String repositoryFullName, String branchName, String commitSha,
-            Instant requestedAt) {
+            Instant requestedAt, String batchId) {
         return new AnalysisJob(
                 Objects.requireNonNull(analysisId, "analysisId must not be null"),
                 userId,
@@ -147,7 +174,8 @@ public class AnalysisJob implements Persistable<String> {
                 repositoryFullName,
                 Objects.requireNonNull(branchName, "branchName must not be null"),
                 Objects.requireNonNull(commitSha, "commitSha must not be null"),
-                Objects.requireNonNull(requestedAt, "requestedAt must not be null"));
+                Objects.requireNonNull(requestedAt, "requestedAt must not be null"),
+                batchId);
     }
 
     /**

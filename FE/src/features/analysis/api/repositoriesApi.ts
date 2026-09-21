@@ -1,7 +1,8 @@
 import type {
-  AnalysisAccepted,
+  AnalysisBatchAccepted,
   AnalysisRequestBody,
   AnalysisStatus,
+  LatestBatchView,
   BranchSummary,
   RepositorySelection,
   RepositorySelectionInput,
@@ -50,9 +51,25 @@ export function fetchBranches(
   return get<PageResponse<BranchSummary>>(`${path}${pageQuery(params)}`)
 }
 
-/** 등록만 하고 결과를 기다리지 않는다. 신규는 202, 진행 중 Job 재안내는 200이며 본문 형태는 같다. */
-export function requestAnalysis(body: AnalysisRequestBody): Promise<AnalysisAccepted> {
-  return post<AnalysisAccepted>('/analyses', body)
+/**
+ * 고른 저장소 전부를 한 묶음으로 등록한다. 결과를 기다리지 않는다.
+ *
+ * 하나라도 새로 만들면 202, 아니면 200이고 본문 형태는 같다. 저장소별 결말은
+ * `items`에 담겨 오므로 실패도 예외가 아니라 값으로 돌아온다 -- 진행 중인 분석이
+ * 있어 요청 자체가 거절된 경우(409)만 예외가 된다.
+ */
+export function requestAnalyses(body: AnalysisRequestBody): Promise<AnalysisBatchAccepted> {
+  return post<AnalysisBatchAccepted>('/analyses', body)
+}
+
+/**
+ * 지금 무엇이 돌고 있나. 저장소 선택 화면이 폴링하는 단 하나의 조회다.
+ *
+ * 분석 하나마다 따로 묻지 않는다. 저장소 넷을 고르면 폴링도 넷이 되고, 그 넷이
+ * 저마다 다른 순간의 상태를 들고 있어 화면이 몇 개가 끝났는지 말할 수 없다.
+ */
+export function fetchLatestAnalysisBatch(): Promise<LatestBatchView> {
+  return get<LatestBatchView>('/me/analyses/latest-batch')
 }
 
 /** 진행 상황. 종료 상태가 될 때까지 화면이 되풀이해 부른다. */

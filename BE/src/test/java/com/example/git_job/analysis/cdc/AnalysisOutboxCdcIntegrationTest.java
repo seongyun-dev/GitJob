@@ -8,7 +8,9 @@ import com.example.git_job.analysis.event.RepositoryAnalysisRequestedEvent;
 import com.example.git_job.analysis.messaging.RepositoryAnalysisKafkaProperties;
 import com.example.git_job.analysis.outbox.AnalysisOutboxStore;
 import com.example.git_job.analysis.repository.AnalysisJobRepository;
+import com.example.git_job.analysis.service.AnalysisRequestProperties;
 import com.example.git_job.analysis.service.AnalysisRequestService;
+import com.example.git_job.analysis.store.AnalysisBatchStore;
 import com.example.git_job.analysis.support.AnalysisJpaSupport;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -259,6 +261,10 @@ class AnalysisOutboxCdcIntegrationTest {
                         TOPIC, "gitjob.repository-analysis.results.v1", "",
                         "gitjob.repository-analysis.results.dlq.v1", ""));
         context.registerBean(JsonMapper.class, () -> mapper);
+        context.registerBean(AnalysisBatchStore.class, () -> new AnalysisBatchStore(jdbc));
+        context.registerBean(AnalysisRequestProperties.class,
+                () -> new AnalysisRequestProperties(2, Duration.ofHours(2),
+                        Duration.ofMinutes(30), 10));
         context.registerBean(AnalysisRequestService.class);
         context.refresh();
         service = context.getBean(AnalysisRequestService.class);

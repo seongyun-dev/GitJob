@@ -118,6 +118,7 @@ interface PageParams { page?: number; perPage?: number }
 | `['repositories', 'list', PageParams]` | BE 구현됨 | 기본 staleTime |
 | `['repositories', 'branches', fullName, PageParams]` | BE 구현됨 | 〃 |
 | `['repositories', 'selection']` | BE 미구현 | 명세 B-FN-003 |
+| `['analyses', 'latest-batch']` | BE 구현됨 | 136 · 저장소 선택 화면이 폴링하는 유일한 조회. `analysis` 계열과 나란히 두지 않는 것은 저쪽이 analysisId에 묶여 불변인 반면 이 값은 사용자의 현재 상태라 분석이 끝날 때마다 바뀌기 때문이다 |
 | `['me']` | BE 미구현 | `GET /me` 없음 |
 | `['analysis', analysisId, ...]` (증거 계열) | BE 미구현 | 설계 4-1 · `staleTime: Infinity` |
 | `['me', 'technologies']` | BE 구현됨 | 기술별 판정 한 장 (지표·기술·저장소) |
@@ -234,6 +235,8 @@ analysisId) · `EVD-404-1`(그 기술 근거 0건) · `EVD-404-2`(Registry에 �
 | 명세 | 경로 | FE 파일 | 화면 |
 |---|---|---|---|
 | B-FN-003 | `GET`·`PUT /me/repositories/selection` | `features/analysis/api/repositoriesApi.ts` | 06 |
+| 136 | `GET /me/analyses/latest-batch` | 〃 | 06 |
+| B-FN-002 | `POST /analyses` (배치) | 〃 | 06 |
 | B-FN-009 | `GET /me/analyses` | `features/mypage/api/mypageApi.ts` | 14 |
 | B-FN-013 | `GET`·`PUT /me/target` | `features/matching/api/matchingApi.ts` | 16 |
 | B-FN-014 | `GET /job-roles` | 〃 | 16 |
@@ -326,3 +329,33 @@ analysisId) · `EVD-404-1`(그 기술 근거 0건) · `EVD-404-2`(Registry에 �
 - [프론트엔드 설계](https://app.notion.com/p/3ceae4cfead281c5bf9bf1863c5ce610) 4-1 캐시 키 · 5장 공통 컴포넌트 · 6-3 에러 코드 처리
 - BE 문서 [저장소 선택과 분석 요청](../be/repository-analysis-request.md)
 - BE 코드 `BE/src/main/java/com/example/git_job/` — `global/exceptions/ErrorCode.java` · `global/response/ApiResponse.java` · `global/response/ErrorResponse.java` · `global/security/JwtAuthenticationEntryPoint.java` · `analysis/controller/RepositoryController.java` · `analysis/controller/AnalysisController.java` · `analysis/controller/dto/PageResponse.java` · `analysis/domain/AnalysisJob.java`
+
+## 6. 분석 요청이 묶음이 됐다 (136 · 2026-09-21)
+
+`POST /analyses`가 저장소 하나가 아니라 **목록**을 받는다. 이전에는 화면이 저장소 수만큼
+호출을 병렬로 보내고 `Promise.allSettled`로 결과를 모았는데, 그렇게는 "한 사용자에
+한 묶음"을 서버가 판정할 수 없다 — 같은 묶음의 두 번째 호출이 첫 번째에 막힌다.
+
+`analysisId`는 여전히 저장소마다 따로 생긴다(2026-09-09 팀 확정 그대로). 묶이는 것은
+요청뿐이고 서버는 `analysis_job.batch_id`로 그 묶음을 기억한다.
+
+저장소별 실패는 여전히 잃지 않는다. 실패가 예외가 아니라 응답 `items[]`의 항목으로
+오므로 `allSettled`가 하던 일을 서버가 대신한다. 화면이 던지는 경우는 요청 전체가
+거절됐을 때뿐이다(진행 중 분석 `AN-409-1`, GitHub 연결 끊김 `AUTH-401-4`·`INTERNAL-424-1`).
+
+`AnalysisRequestOutcome`의 실패 갈래가 `{ error: unknown }`에서
+`{ error: { code, message } }`로 좁아졌다. 실패가 값으로 오므로 `instanceof ApiError`로
+되짚을 필요가 없고, 되짚을 수도 없다.
+
+진행 상태 폴링도 저장소 단위에서 묶음 단위로 옮겼다
+(`['analysis', analysisId]` → `['analyses', 'latest-batch']`).
+`useAnalysisStatus`는 지우지 않는다 — `/analyses/:analysisId`가 주소로 직접 들어오는
+경로로 남아 있고 그 화면이 쓴다.
+
+`AN-409-1`(진행 중)과 `AN-400-1`(상한 초과)은 `SHOW_INLINE_ERROR`로 매핑한다. 둘 다
+사용자가 무엇을 하면 되는지가 분명해(기다리거나 몇 개를 빼거나) 일반 오류로 접지 않는다.
+선택 상한은 `latest-batch`의 `maxBatchSize`를 읽어 고르는 동안 막는다.
+
+`ANALYSIS_TIMED_OUT`이 `errorCode`에 새로 온다. 서버가 응답 없는 분석을 정리하며 붙이는
+값이라 `GENERIC`으로 접으면 사용자가 자기 저장소에 문제가 있는 줄 읽는다.
+`failureKind`에 `TIMED_OUT`을 더했다.

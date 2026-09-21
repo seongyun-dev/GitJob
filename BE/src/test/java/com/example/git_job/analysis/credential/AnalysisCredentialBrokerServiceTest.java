@@ -58,7 +58,7 @@ class AnalysisCredentialBrokerServiceTest {
                 SHA
         );
         job = AnalysisJob.queue(
-                "an_1", 42L, "123456789", "octocat/private", "main", SHA, Instant.now()
+                "an_1", 42L, "123456789", "octocat/private", "main", SHA, Instant.now(), null
         );
         when(jobs.findById("an_1")).thenReturn(Optional.of(job));
         when(outbox.containsAnalysisRepository("an_1", "ar_1")).thenReturn(true);

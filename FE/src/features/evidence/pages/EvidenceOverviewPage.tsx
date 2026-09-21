@@ -185,6 +185,10 @@ export function EvidenceOverviewPage() {
  * 지표는 숫자 하나라 "무엇이 그렇게 세어졌는지"를 말하지 못한다. 10개가 어떤 10개인지
  * 모르면 그 숫자를 근거로 쓸 수 없다. 여는 목록은 지표 caption과 **같은 기준**이라야
  * 한다 -- 다른 기준의 목록을 보여주면 숫자와 목록이 어긋난다.
+ *
+ * 목록 `ul`의 `grid-cols-[minmax(0,1fr)]`은 우측 패널과 같은 이유다. 모달 폭도
+ * 고정이라, 열 최소값을 0으로 못 박지 않으면 긴 저장소 이름 하나가 `truncate` 때문에
+ * 열을 벌려 모달 밖으로 새어 나간다(`EvidenceSidePanels.tsx` 머리말).
  */
 function StatDetailModal({
   detail,
@@ -206,7 +210,7 @@ function StatDetailModal({
         description="저장소별 최신 분석 결과입니다."
         onClose={onClose}
       >
-        <ul className="grid gap-2">
+        <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
           {repositories.map((repository) => (
             <li
               key={repository.repositoryId}
@@ -250,7 +254,7 @@ function StatDetailModal({
       }
       onClose={onClose}
     >
-      <ul className="grid gap-2">
+      <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
         {items.map((technology) => (
           <li
             key={technology.techId}

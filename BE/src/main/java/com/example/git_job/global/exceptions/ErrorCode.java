@@ -18,6 +18,28 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
 
     ANALYSIS_NOT_FOUND(HttpStatus.NOT_FOUND, "AN-404-1", "분석을 찾을 수 없습니다."),
+    /**
+     * 진행 중인 분석이 있어 새 요청을 받지 않는다.
+     *
+     * <p>"진행 중"은 {@code AnalysisRequestProperties.activeWindow} 안의 것만 말한다.
+     * 그 창을 넘긴 분석은 {@code StaleAnalysisReaper}가 종료시키므로, 이 코드가 영구히
+     * 붙어 있는 상태는 만들어지지 않는다.</p>
+     *
+     * <p>본문에 진행 중 배치를 실어 보내지 않는다. {@code ErrorResponse}는 code와 message
+     * 한 쌍뿐이고, 클라이언트는 이 코드를 보면 {@code GET /me/analyses/latest-batch}를
+     * 다시 읽어 무엇이 돌고 있는지 그린다.</p>
+     */
+    ANALYSIS_BATCH_IN_PROGRESS(HttpStatus.CONFLICT, "AN-409-1",
+            "진행 중인 분석이 끝난 뒤에 다시 요청할 수 있습니다."),
+    /**
+     * 한 번에 요청할 수 있는 저장소 수를 넘겼다.
+     *
+     * <p>{@code G-400-1}(본문 형식 오류)과 가르는 이유는 화면이 다르게 대응하기
+     * 때문이다. 형식 오류는 사용자가 할 수 있는 일이 없지만, 이쪽은 몇 개를 빼면 된다.
+     * 상한값은 {@code GET /me/analyses/latest-batch}의 {@code maxBatchSize}로 내려간다.</p>
+     */
+    ANALYSIS_BATCH_TOO_LARGE(HttpStatus.BAD_REQUEST, "AN-400-1",
+            "한 번에 요청할 수 있는 저장소 수를 넘었습니다."),
     ANALYSIS_ACCESS_DENIED(HttpStatus.FORBIDDEN, "AUTH-403-1", "본인 소유의 분석만 조회할 수 있습니다."),
     // Security 필터 단계의 인가 실패. 지금 hasRole 제한은 /api/v1/admin/** → ADMIN 하나뿐이라
     // 이 코드가 뜨는 상황은 곧 "로그인은 됐지만 관리자가 아니다"이다. 재로그인으로는 해소되지

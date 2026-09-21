@@ -5,6 +5,7 @@ import {
   analysisPhase,
   analysisSteps,
   currentStepLabel,
+  failureCopy,
   failureKind,
   hasResult,
   isPending,
@@ -147,4 +148,16 @@ test('좁은 패널의 한 줄은 진행 중일 때만 나온다', () => {
   assert.equal(currentStepLabel('QUEUED', 'WAITING_FOR_WORKER'), null)
   assert.equal(currentStepLabel('SUCCEEDED', 'COMPLETED'), null)
   assert.equal(currentStepLabel('FAILED', 'FAILED'), null)
+})
+
+/*
+ * 서버가 응답 없는 분석을 정리하며 붙이는 코드다. GENERIC 으로 접히면 "분석에
+ * 실패했어요"만 나와 사용자가 자기 저장소에 문제가 있는 줄 읽는다.
+ */
+test('응답이 없어 정리된 분석은 전용 문구로 말한다', () => {
+  assert.equal(failureKind('ANALYSIS_TIMED_OUT'), 'TIMED_OUT')
+
+  const copy = failureCopy('TIMED_OUT')
+  assert.equal(copy.title, '응답이 없어 중단했어요')
+  assert.match(copy.description, /다시 요청/)
 })

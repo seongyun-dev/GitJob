@@ -15,6 +15,19 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 두 블록 모두 값은 조회 API가 준다. 값이 없을 때의 상태 카드를 지우지 않고 남긴
  * 이유는 그게 현재 develop의 실제 모습이기 때문이다 — 디자인 fixture를 끄면
  * 그대로 돌아온다(`src/mocks/README.md`).
+ *
+ * ## 목록 `ul`에 `grid-cols-[minmax(0,1fr)]`을 못 박는 이유
+ *
+ * `.gj-split`의 우측 열은 372px **고정**이라 늘어나지 않는다. `grid` 한 줄만 쓰면
+ * 암시적 열이 `auto`가 되고, 그 최소 크기는 항목의 min-content다. 항목 안에는
+ * `truncate`(`white-space: nowrap`)가 걸린 줄이 있어 min-content가 기술 이름·사유
+ * 전체 길이가 되고, 그러면 열이 500px까지 벌어져 패널이 372px 밖으로 삐져나간다.
+ * 페이지에 가로 스크롤이 생기고 화면 오른쪽이 잘린다(2026-09-18 확인: 372px 안에서
+ * 패널 scrollWidth 500px).
+ *
+ * `truncate`한 자식에 `min-w-0`을 주는 것으로는 부족하다 — 잘리는 것은 flex 항목이고
+ * 벌어지는 것은 그 바깥 grid 열이다. 열의 최소값을 0으로 못 박아야 끊긴다.
+ * `index.css`의 `.gj-cards`가 같은 이유로 같은 값을 쓴다.
  */
 
 /**
@@ -57,7 +70,7 @@ export function ReinforcementPanel({ items }: { items?: readonly ReinforcementIt
             description="저장소 수준보다 내 수준이 낮은 기술이 없습니다."
           />
         ) : (
-          <ul className="grid gap-2">
+          <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
             {items.map((item) => (
               <li
                 key={item.techId}
@@ -131,7 +144,7 @@ export function AnalysisContextPanel({
             description="저장소 분석이 완료되면 기준 커밋과 근거 수가 표시됩니다."
           />
         ) : (
-          <ul className="grid gap-2">
+          <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
             {repositories.map((repo) => (
               <li
                 key={repo.repositoryId}

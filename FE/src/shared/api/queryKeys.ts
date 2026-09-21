@@ -27,6 +27,14 @@ export const queryKeys = {
     ['repositories', 'branches', fullName, params] as const,
   repositorySelection: () => ['repositories', 'selection'] as const,
 
+  /**
+   * 지금 돌고 있는 분석 묶음 하나 · `GET /me/analyses/latest-batch`.
+   *
+   * `analysis` 계열과 나란히 두지 않는다. 저쪽은 analysisId에 묶여 불변이지만
+   * 이 값은 사용자의 현재 상태라 분석이 끝날 때마다 바뀐다.
+   */
+  latestAnalysisBatch: () => ['analyses', 'latest-batch'] as const,
+
   // 증거 계열 — analysisId에 묶이면 불변
   analysis: (analysisId: string) => ['analysis', analysisId] as const,
   analysisProfile: (analysisId: string) => ['analysis', analysisId, 'profile'] as const,

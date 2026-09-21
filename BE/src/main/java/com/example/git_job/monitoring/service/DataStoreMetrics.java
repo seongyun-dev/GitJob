@@ -1,6 +1,10 @@
 package com.example.git_job.monitoring.service;
 
+import com.example.git_job.analysis.domain.AnalysisJob;
+import com.example.git_job.analysis.service.AnalysisRequestProperties;
+import com.example.git_job.analysis.store.AnalysisBatchStore;
 import com.example.git_job.monitoring.controller.dto.MonitoringOverviewResponse.DataStoreStatus;
+import java.time.Instant;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,16 +27,38 @@ import org.springframework.stereotype.Component;
 public class DataStoreMetrics {
 
     private final JdbcTemplate jdbc;
+    private final AnalysisBatchStore batches;
+    private final AnalysisRequestProperties analysisRequest;
 
-    public DataStoreMetrics(JdbcTemplate jdbc) {
+    public DataStoreMetrics(JdbcTemplate jdbc, AnalysisBatchStore batches,
+            AnalysisRequestProperties analysisRequest) {
         this.jdbc = jdbc;
+        this.batches = batches;
+        this.analysisRequest = analysisRequest;
     }
 
     public DataStoreStatus current() {
         return new DataStoreStatus(
                 count("technology"),
                 count("technology_candidate"),
-                count("analysis_job"));
+                count("analysis_job"),
+                staleAnalysisJobs());
+    }
+
+    /**
+     * 유효시간을 넘긴 채 아직 진행 중인 분석 수.
+     *
+     * <p>세는 창은 {@code StaleAnalysisReaper}가 정리 기준으로 쓰는 것과 같은 값이다.
+     * 다르면 화면의 숫자와 실제로 정리되는 대상이 어긋난다.</p>
+     */
+    private Long staleAnalysisJobs() {
+        try {
+            return batches.countStaleSince(AnalysisJob.IN_PROGRESS_STATUSES,
+                    Instant.now().minus(analysisRequest.activeWindow()));
+        } catch (DataAccessException e) {
+            log.warn("멈춘 분석 count 실패: {}", e.getMessage());
+            return null;
+        }
     }
 
     private Long count(String table) {

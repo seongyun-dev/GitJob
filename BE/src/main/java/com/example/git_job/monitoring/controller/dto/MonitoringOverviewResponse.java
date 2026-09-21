@@ -206,10 +206,21 @@ public record MonitoringOverviewResponse(
     public record DataStoreStatus(
             Long technologyCount,
             Long technologyCandidateCount,
-            Long analysisJobCount
+            Long analysisJobCount,
+            /*
+             * 유효시간을 넘긴 진행 중 분석 수 (S15P21E102-136).
+             *
+             * 0이 아니면 워커가 죽었거나 요청이 Kafka에 닿지 못하고 있다는 뜻이다.
+             * StaleAnalysisReaper가 이들을 종료시키므로 정상 배포에서는 곧 0으로
+             * 돌아온다 -- 계속 0이 아니면 reaper 자신이 돌지 않는 것이다.
+             *
+             * 이 숫자를 넣는 이유는 2026-09 장애에서 분석이 49시간 멈춰 있는 것을
+             * 아무도 몰랐기 때문이다. 세는 창은 reaper와 같은 activeWindow다.
+             */
+            Long staleAnalysisJobCount
     ) {
         public static DataStoreStatus unknown() {
-            return new DataStoreStatus(null, null, null);
+            return new DataStoreStatus(null, null, null, null);
         }
     }
 

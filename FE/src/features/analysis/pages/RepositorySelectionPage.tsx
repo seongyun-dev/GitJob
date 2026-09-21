@@ -10,16 +10,28 @@ import {
 import { RepositoryListItem } from '@/features/analysis/components/RepositoryListItem'
 import {
   useAnalysisRequests,
+  useLatestAnalysisBatch,
   useRepositoryList,
 } from '@/features/analysis/hooks/useRepositoryAnalysis'
+import {
+  canSelectMore,
+  itemByRepository,
+  outcomesFromBatchResponse,
+  selectionLimitNotice,
+  submitBlockedReason,
+  submitFailureMessage,
+} from '@/features/analysis/model/analysisBatch'
 import {
   ANALYSIS_SELECTION_HISTORY_KEY,
   branchesFromDraft,
   createAnalysisSelectionDraft,
+  dismissedBatchFromDraft,
   outcomesFromDraft,
   readAnalysisSelectionDraft,
   selectedFromDraft,
 } from '@/features/analysis/model/selectionHistory'
+import { queryKeys } from '@/shared/api/queryKeys'
+import { useQueryClient } from '@tanstack/react-query'
 import { DesignMockBadge } from '@/mocks/DesignMockBadge'
 import { DESIGN_FIXTURES_ENABLED } from '@/mocks/designFixtures'
 import { REPOSITORY_LIST } from '@/mocks/fixtures/repositoryList'
@@ -111,9 +123,35 @@ export function RepositorySelectionPage() {
     outcomesFromDraft(initialDraft),
   )
   const [scopeShortcutDismissed, setScopeShortcutDismissed] = useState(false)
+  /**
+   * 완료 안내를 닫은 묶음. boolean이 아니라 ID인 이유는 `model/analysisBatch`의
+   * `showResetPrompt` 주석에 있다 -- 새 묶음이 오면 안내가 저절로 다시 열려야 한다.
+   */
+  const [dismissedBatchId, setDismissedBatchId] = useState<string | null>(() =>
+    dismissedBatchFromDraft(initialDraft),
+  )
 
   const repositories = useRepositoryList(page)
   const submission = useAnalysisRequests()
+  const latestBatch = useLatestAnalysisBatch()
+  const queryClient = useQueryClient()
+  const batch = latestBatch.data?.batch ?? null
+  const blockedReason = submitBlockedReason(latestBatch.data)
+  const liveByRepository = itemByRepository(batch)
+  const submitFailure = submitFailureMessage(submission.error)
+
+  /*
+   * 묶음이 끝나면 내 기술 목록을 다시 읽게 한다. 전에는 저장소 카드마다 이 일을 했는데,
+   * 폴링이 묶음 하나로 합쳐지면서 여기로 올라왔다. 카드에 남겨 두면 저장소 수만큼
+   * 무효화가 일어난다.
+   */
+  const batchComplete =
+    batch !== null && batch.totalCount > 0 && batch.completedCount >= batch.totalCount
+  useEffect(() => {
+    if (batchComplete) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
+    }
+  }, [batchComplete, queryClient])
 
   /*
    * 디자인 fixture가 켜져 있으면 목록을 서버에서 보지 않는다. 이 화면의 목록은 BE와
@@ -134,7 +172,12 @@ export function RepositorySelectionPage() {
    * 같은 URL을 replace하므로 뒤로 가기 깊이와 스크롤 위치는 바뀌지 않는다.
    */
   useEffect(() => {
-    const draft = createAnalysisSelectionDraft(selected.values(), branchByRepo, outcomes)
+    const draft = createAnalysisSelectionDraft(
+      selected.values(),
+      branchByRepo,
+      outcomes,
+      dismissedBatchId,
+    )
     void navigate(historyTarget.current, {
       replace: true,
       preventScrollReset: true,
@@ -143,7 +186,7 @@ export function RepositorySelectionPage() {
         [ANALYSIS_SELECTION_HISTORY_KEY]: draft,
       },
     })
-  }, [selected, branchByRepo, outcomes, navigate])
+  }, [selected, branchByRepo, outcomes, dismissedBatchId, navigate])
 
   function showAnalysisScope() {
     setScopeShortcutDismissed(true)
@@ -177,6 +220,13 @@ export function RepositorySelectionPage() {
     setScopeShortcutDismissed(false)
     if (selected.has(fullName)) {
       removeRepository(fullName)
+      return
+    }
+    /*
+     * 상한을 넘겨 고르지 못하게 한다. 넘겨서 보내면 서버가 AN-400-1 로 거절하는데,
+     * 그때는 이미 브랜치까지 고른 뒤라 무엇을 되돌려야 하는지 알기 어렵다.
+     */
+    if (!canSelectMore(selected.size, latestBatch.data)) {
       return
     }
     const found = items?.find((repository) => repository.fullName === fullName)
@@ -214,16 +264,39 @@ export function RepositorySelectionPage() {
     }
 
     submission.mutate(targets, {
-      onSuccess: (results) => {
+      onSuccess: (response) => {
         setOutcomes((prev) => {
           const next = new Map(prev)
-          for (const result of results) {
-            next.set(result.target.repositoryFullName, result)
+          for (const [fullName, outcome] of outcomesFromBatchResponse(response, branchByRepo)) {
+            next.set(fullName, outcome)
           }
           return next
         })
+        // 방금 만든 묶음을 곧바로 읽는다. 폴링 간격을 기다리면 화면이 잠깐 빈다.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.latestAnalysisBatch() })
+      },
+      onError: () => {
+        /*
+         * 409면 다른 묶음이 이미 돌고 있다는 뜻이다. 오류 봉투에는 그게 무엇인지 없으므로
+         * 다시 읽어 화면이 진행 중인 묶음을 그리게 한다.
+         */
+        void queryClient.invalidateQueries({ queryKey: queryKeys.latestAnalysisBatch() })
       },
     })
+  }
+
+  /**
+   * 고른 저장소를 한 번에 비운다.
+   *
+   * 서버의 묶음을 지우지 않는다 -- 지울 것이 없다. 다음 제출이 새 묶음을 만들고
+   * 그때부터 조회가 그것을 가리킨다. 여기서 기억하는 것은 "이 묶음의 완료 안내는
+   * 이미 봤다" 하나뿐이다.
+   */
+  function resetSelection() {
+    setSelected(new Map())
+    setBranchByRepo(new Map())
+    setOutcomes(new Map())
+    setDismissedBatchId(batch?.batchId ?? null)
   }
 
   return (
@@ -267,6 +340,7 @@ export function RepositorySelectionPage() {
                     key={repository.githubRepositoryId}
                     repository={repository}
                     selected={selected.has(repository.fullName)}
+                    locked={blockedReason !== null || !canSelectMore(selected.size, latestBatch.data)}
                     onToggle={toggleRepository}
                   />
                 ))}
@@ -289,9 +363,16 @@ export function RepositorySelectionPage() {
           branchByRepo={branchByRepo}
           outcomes={outcomes}
           isSubmitting={submission.isPending}
+          batch={batch}
+          itemByRepository={liveByRepository}
+          blockedReason={blockedReason}
+          selectionNotice={selectionLimitNotice(selectedList.length, latestBatch.data)}
+          submitFailure={submitFailure}
+          dismissedBatchId={dismissedBatchId}
           onBranchChange={handleBranchChange}
           onRemove={removeRepository}
           onSubmit={startAnalysis}
+          onReset={resetSelection}
         />
       </div>
 

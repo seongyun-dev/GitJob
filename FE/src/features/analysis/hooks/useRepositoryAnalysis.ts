@@ -1,11 +1,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   fetchBranches,
+  fetchLatestAnalysisBatch,
   fetchRepositories,
   fetchAnalysisStatus,
-  requestAnalysis,
+  requestAnalyses,
 } from '@/features/analysis/api/repositoriesApi'
-import type { AnalysisRequestOutcome, AnalysisTarget } from '@/features/analysis/api/types'
+import type { AnalysisBatchAccepted, AnalysisTarget } from '@/features/analysis/api/types'
+import { batchPollInterval } from '@/features/analysis/model/analysisBatch'
 import { queryKeys } from '@/shared/api/queryKeys'
 import type { PageParams } from '@/shared/types/api'
 
@@ -58,36 +60,39 @@ export function useBranchList(fullName: string | null) {
  * 선택한 저장소들의 분석 등록.
  *
  * 저장소마다 독립 분석이고 `analysisId`도 저장소마다 따로 생긴다(2026-09-09 팀 확정).
- * 그래서 요청을 한 번에 묶지 않고 대상 수만큼 `POST /analyses`를 병렬로 보낸다.
+ * 그 사실은 그대로다 -- 묶이는 것은 요청뿐이고, 서버는 여전히 저장소마다 Job을 만든다.
  *
- * `Promise.all`을 쓰지 않는 이유: 하나가 reject되면 이미 접수된 나머지 저장소의
- * `analysisId`까지 잃는다. 서버에서는 분석이 시작됐는데 화면은 결과를 모르는
- * 상태가 되므로, `allSettled`로 저장소별 결과를 전부 보존한다.
+ * 예전에는 저장소 수만큼 `POST /analyses`를 병렬로 보내고 `Promise.allSettled`로
+ * 결과를 모았다. 그렇게는 "한 사용자에 한 묶음"을 서버가 판정할 수 없다 -- 같은 묶음의
+ * 두 번째 호출이 첫 번째 호출에 막히기 때문이다. 호출을 하나로 합치면 그 판정이
+ * 가능해지고, 덤으로 저장소 넷을 고른 요청이 왕복 하나가 된다.
  *
- * 이 mutationFn은 reject하지 않는다. 전부 실패해도 실패 목록을 담아 resolve하며,
- * 성공·실패 판정은 호출부가 `outcome.ok`로 한다.
- *
- * 동시 요청 수는 제한하지 않는다. 최대 선택 개수 정책이 아직 없어서
- * 임의의 상한을 두면 근거 없는 magic number가 된다. rate limit 노출은 알려진 gap이다.
+ * 저장소별 실패는 여전히 잃지 않는다. 실패가 예외가 아니라 응답 안의 항목으로 오므로
+ * `allSettled`가 하던 일을 서버가 대신한다. 던지는 경우는 요청 전체가 거절됐을 때뿐이다
+ * (진행 중 분석 409, GitHub 연결 끊김).
  */
 export function useAnalysisRequests() {
   return useMutation({
-    mutationFn: async (targets: AnalysisTarget[]): Promise<AnalysisRequestOutcome[]> => {
-      const settled = await Promise.allSettled(
-        targets.map((target) => requestAnalysis(target)),
-      )
+    mutationFn: (targets: AnalysisTarget[]): Promise<AnalysisBatchAccepted> =>
+      requestAnalyses({ repositories: targets }),
+  })
+}
 
-      return settled.map((result, index) => {
-        // targets와 settled는 같은 순서·같은 길이다. 인덱스로 대상을 되찾는다.
-        const target = targets[index]
-        if (target === undefined) {
-          throw new Error('요청 대상과 결과 수가 어긋났습니다.')
-        }
-        return result.status === 'fulfilled'
-          ? { target, ok: true, accepted: result.value }
-          : { target, ok: false, error: result.reason }
-      })
-    },
+/**
+ * 지금 돌고 있는 묶음 하나.
+ *
+ * 저장소마다 폴링하지 않는 이유가 둘이다. 넷을 고르면 폴링도 넷이 되어 서버를 그만큼
+ * 두드리고, 그 넷이 저마다 다른 순간의 상태를 들고 있어 화면이 "몇 개가 끝났는지"를
+ * 말할 수 없다. 묶음을 한 번에 읽으면 그 수가 서버가 센 값 그대로다.
+ *
+ * `enabled`를 걸지 않는다. 분석을 한 번도 하지 않은 사용자에게도 `batch: null`이 200으로
+ * 오고, 그 값이 곧 "제출해도 된다"는 답이다.
+ */
+export function useLatestAnalysisBatch() {
+  return useQuery({
+    queryKey: queryKeys.latestAnalysisBatch(),
+    queryFn: fetchLatestAnalysisBatch,
+    refetchInterval: (query) => batchPollInterval(query.state.data),
   })
 }
 

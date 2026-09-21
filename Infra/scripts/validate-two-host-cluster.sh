@@ -162,6 +162,9 @@ grep -Fq 'PROFILES=core bash Infra/scripts/kafka-topics.sh' Infra/scripts/deploy
 grep -Fq 'spark-worker worker analysis-worker collector' Infra/scripts/healthcheck.sh
 grep -Fq 'analysis-worker-ready' Infra/scripts/verify-deployment.sh
 grep -Fq 'analysis-result' Infra/scripts/verify-deployment.sh
+# Registry 발행(alias)은 마이그레이션에 포함되지 않는 별도 단계라, 검사가 빠지면
+# 배포가 초록으로 끝나고 제출만 ANALYSIS-503-1 로 전부 실패한다.
+grep -Fq 'registry-alias' Infra/scripts/verify-deployment.sh
 grep -Fq 'backend-compute' Infra/scripts/verify-deployment.sh
 grep -Fq 'analysis-personal' Infra/scripts/verify-deployment.sh
 grep -Fq 'profiles: !override [weekly]' Infra/compose/compose.ec2-data-cluster.yaml

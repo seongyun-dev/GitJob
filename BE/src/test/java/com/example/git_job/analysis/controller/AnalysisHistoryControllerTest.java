@@ -44,7 +44,8 @@ class AnalysisHistoryControllerTest {
         store = mock(AnalysisHistoryStore.class);
         principal = new AuthenticatedUser("42", "tester", "jti", NOW.plusSeconds(3600));
         mvc = MockMvcBuilders
-                .standaloneSetup(new AnalysisHistoryController(new AnalysisHistoryService(store)))
+                .standaloneSetup(new AnalysisHistoryController(new AnalysisHistoryService(store),
+                        mock(com.example.git_job.analysis.service.AnalysisLatestBatchService.class)))
                 .setCustomArgumentResolvers(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(org.springframework.core.MethodParameter p) {

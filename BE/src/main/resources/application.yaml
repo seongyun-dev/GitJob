@@ -73,6 +73,29 @@ gitjob:
       # 읽는다(CurrentRegistryVersion). 설정으로 두면 실재하지 않는 버전이 기본값으로
       # 앉을 수 있고, 그 값으로 규칙을 조회하면 조용히 0행이 나온다.
       poll-after-seconds: ${ANALYSIS_POLL_AFTER_SECONDS:2}
+      # 진행 중 분석이 새 요청을 막는 기간이자, 그것을 넘긴 분석을 StaleAnalysisReaper가
+      # FAILED(ANALYSIS_TIMED_OUT)로 종료시키는 기준이다. 두 곳이 같은 값을 써야 한다 --
+      # 차단만 풀고 잡을 살려 두면 그 저장소가 uq_analysis_job_active에 묶여 영구히
+      # 분석 불가가 된다.
+      #
+      # 기본 2시간은 워커가 한 잡을 붙들 수 있는 최대 시간에서 나왔다
+      # (Infra/compose/compose.yaml의 analysis-worker):
+      #   ANALYSIS_CLONE_TIMEOUT_SECONDS=600   클론 10분
+      #   ANALYSIS_CLAIM_LEASE_SECONDS=900     lease 15분
+      #   ANALYSIS_MAX_POLL_INTERVAL_MS=900000 15분
+      #   ANALYSIS_MAX_ATTEMPTS=5
+      # 최악 5 x 15분 = 75분. 2시간은 그 위의 여유다.
+      # 워커 쪽 값을 올리면 이 값도 함께 올려야 한다.
+      active-window: ${ANALYSIS_ACTIVE_WINDOW:2h}
+      # 끝난 배치를 화면에 계속 보여 주는 기간. 새로고침해도 "4/4 완료"와 새 요청
+      # 버튼이 남아 있되, 며칠 뒤 들어왔을 때 옛 배치가 되살아나지 않게 한다.
+      completed-batch-visible-for: ${ANALYSIS_COMPLETED_BATCH_VISIBLE_FOR:30m}
+      # 한 요청에 담을 수 있는 저장소 수. 항목마다 GitHub 왕복이 2번이고 한 요청 안에서
+      # 동기로 일어나므로, 상한이 없으면 한 번의 제출이 rate limit을 통째로 쓴다.
+      max-batch-size: ${ANALYSIS_MAX_BATCH_SIZE:10}
+    reaper:
+      poll-interval: ${ANALYSIS_REAPER_POLL_INTERVAL:1m}
+      initial-delay: ${ANALYSIS_REAPER_INITIAL_DELAY:30s}
     credential-broker:
       enabled: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:false}
       service-token: ${ANALYSIS_WORKER_SERVICE_TOKEN:}

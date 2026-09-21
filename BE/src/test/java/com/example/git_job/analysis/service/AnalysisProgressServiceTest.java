@@ -46,14 +46,14 @@ class AnalysisProgressServiceTest {
 
     private AnalysisJob queuedJob() {
         return AnalysisJob.queue("an_1", USER_ID, "repo_1", "octocat/repo", "main", SHA,
-                Instant.now());
+                Instant.now(), null);
     }
 
     @Test
     @DisplayName("대기 중인 분석을 저장소 분석 단계로 옮긴다")
     void movesQueuedJobToFirstStage() {
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         assertEquals(Applied.MOVED, service.apply(event("ANALYZING_REPOSITORY")));
 
@@ -68,7 +68,7 @@ class AnalysisProgressServiceTest {
     @DisplayName("첫 단계 전환에서 시작 시각을 남기고, 다음 전환이 덮지 않는다")
     void stampsStartedAtOnceAndKeepsIt() {
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         service.apply(event("ANALYZING_REPOSITORY"));
         Instant first = job.getStartedAt();
@@ -87,7 +87,7 @@ class AnalysisProgressServiceTest {
         // 드문 일이 아니라 정상 동작에 속한다.
         AnalysisJob job = queuedJob();
         job.succeed(Instant.now());
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         assertEquals(Applied.IGNORED, service.apply(event("ATTRIBUTING_CONTRIBUTION")));
 
@@ -103,7 +103,7 @@ class AnalysisProgressServiceTest {
         // 것은 맞지만, 화면이 거꾸로 가면 사용자는 진행이 취소됐다고 읽는다.
         AnalysisJob job = queuedJob();
         job.progress(AnalysisStage.ATTRIBUTING_CONTRIBUTION, Instant.now());
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         assertEquals(Applied.IGNORED, service.apply(event("ANALYZING_REPOSITORY")));
 
@@ -114,7 +114,7 @@ class AnalysisProgressServiceTest {
     @DisplayName("같은 단계가 다시 와도 한 번만 옮긴다")
     void isIdempotentForARedeliveredStage() {
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         assertEquals(Applied.MOVED, service.apply(event("ANALYZING_REPOSITORY")));
         assertEquals(Applied.IGNORED, service.apply(event("ANALYZING_REPOSITORY")));
@@ -144,7 +144,7 @@ class AnalysisProgressServiceTest {
     @DisplayName("모르는 분석은 경고만 남기고 소비한다")
     void consumesProgressForAnUnknownJob() {
         // 재시도해도 생기지 않는다. 결과 경로와 같은 판단이다.
-        when(jobs.findById("an_1")).thenReturn(Optional.empty());
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.empty());
 
         assertEquals(Applied.UNKNOWN_JOB, service.apply(event("ANALYZING_REPOSITORY")));
 

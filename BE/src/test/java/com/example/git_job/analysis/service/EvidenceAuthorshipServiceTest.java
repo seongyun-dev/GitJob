@@ -327,11 +327,11 @@ class EvidenceAuthorshipServiceTest {
 
     private static AnalysisJob job() {
         return AnalysisJob.queue(ANALYSIS, USER_ID, REPO_ID, FULL_NAME, "main",
-                "818c4136ea971c21674525f9053de0d9c7ad8cfe", Instant.parse("2026-09-16T00:00:00Z"));
+                "818c4136ea971c21674525f9053de0d9c7ad8cfe", Instant.parse("2026-09-16T00:00:00Z"), null);
     }
 
     private static AnalysisJob jobWithoutFullName() {
         return AnalysisJob.queue(ANALYSIS, USER_ID, REPO_ID, null, "main",
-                "818c4136ea971c21674525f9053de0d9c7ad8cfe", Instant.parse("2026-09-16T00:00:00Z"));
+                "818c4136ea971c21674525f9053de0d9c7ad8cfe", Instant.parse("2026-09-16T00:00:00Z"), null);
     }
 }

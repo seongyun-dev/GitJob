@@ -10,7 +10,9 @@ import com.example.git_job.analysis.event.RepositoryAnalysisRequestedEvent;
 import com.example.git_job.analysis.messaging.RepositoryAnalysisEventProducer;
 import com.example.git_job.analysis.messaging.RepositoryAnalysisKafkaProperties;
 import com.example.git_job.analysis.repository.AnalysisJobRepository;
+import com.example.git_job.analysis.service.AnalysisRequestProperties;
 import com.example.git_job.analysis.service.AnalysisRequestService;
+import com.example.git_job.analysis.store.AnalysisBatchStore;
 import com.example.git_job.analysis.support.AnalysisJpaSupport;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -91,7 +93,8 @@ class AnalysisOutboxIntegrationTest {
                 // baseline 이후 analysis_job 에 붙은 컬럼은 여기에 따라 붙여야 한다.
                 // 이 테스트는 V1 만 잘라 쓰고 나머지 마이그레이션을 돌리지 않는다.
                 + " ALTER TABLE analysis_job ADD COLUMN repository_full_name VARCHAR(255);"
-                + " ALTER TABLE analysis_job ADD COLUMN compute_ready_at TIMESTAMPTZ;";
+                + " ALTER TABLE analysis_job ADD COLUMN compute_ready_at TIMESTAMPTZ;"
+                + " ALTER TABLE analysis_job ADD COLUMN batch_id VARCHAR(80);";
         // Stops at the outbox index: the baseline goes on to create a partial index on
         // analysis_job, and H2 rejects the WHERE clause on CREATE INDEX.
         int outboxStart = baseline.indexOf("CREATE TABLE analysis_outbox");
@@ -141,6 +144,10 @@ class AnalysisOutboxIntegrationTest {
                         TOPIC, "gitjob.repository-analysis.results.v1", "",
                         "gitjob.repository-analysis.results.dlq.v1", ""));
         context.registerBean(JsonMapper.class, () -> mapper);
+        context.registerBean(AnalysisBatchStore.class, () -> new AnalysisBatchStore(jdbc));
+        context.registerBean(AnalysisRequestProperties.class,
+                () -> new AnalysisRequestProperties(2, java.time.Duration.ofHours(2),
+                        java.time.Duration.ofMinutes(30), 10));
         context.registerBean(AnalysisRequestService.class);
         context.refresh();
         service = context.getBean(AnalysisRequestService.class);

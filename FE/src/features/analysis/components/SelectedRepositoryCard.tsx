@@ -1,10 +1,13 @@
 import { useEffect, useMemo } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
-import type { AnalysisRequestOutcome, RepositorySummary } from '@/features/analysis/api/types'
+import type {
+  AnalysisRequestOutcome,
+  LatestBatchItem,
+  RepositorySummary,
+} from '@/features/analysis/api/types'
 import { BranchPicker } from '@/features/analysis/components/BranchPicker'
 import { RepositoryStateBadge } from '@/features/analysis/components/RepositoryStateBadge'
-import { useAnalysisStatus, useBranchList } from '@/features/analysis/hooks/useRepositoryAnalysis'
+import { useBranchList } from '@/features/analysis/hooks/useRepositoryAnalysis'
 import {
   analysisPhase,
   currentStepLabel,
@@ -15,8 +18,6 @@ import {
   phaseCopy,
   waitedMinutes,
 } from '@/features/analysis/model/analysisProgress'
-import { ApiError } from '@/shared/api/client'
-import { queryKeys } from '@/shared/api/queryKeys'
 import type { JobStatus as JobStatusValue } from '@/shared/types/domain'
 import { JobStatus } from '@/shared/ui/JobStatus'
 
@@ -37,8 +38,11 @@ import { JobStatus } from '@/shared/ui/JobStatus'
  * 진행을 발행하지 않아 단계별 진척이 없다. 한 줄을 읽으려고 화면을 옮기게 할 이유가
  * 없어서, 고른 자리에서 끝까지 본다.
  *
- * 폴링 단위도 저장소다. 저장소마다 `analysisId`가 다르고 하나가 끝나도 다른 하나는
- * 돌고 있을 수 있어, 카드가 자기 분석만 본다.
+ * ## 폴링은 이제 카드가 하지 않는다 (S15P21E102-136)
+ *
+ * 전에는 카드마다 `useAnalysisStatus`를 걸었다. 저장소 넷을 고르면 폴링도 넷이 되고,
+ * 그 넷이 저마다 다른 순간의 상태를 들고 있어 패널이 "몇 개가 끝났는지"를 말할 수
+ * 없었다. 이제 묶음을 한 번에 읽고 카드는 자기 몫(`live`)을 받아 그린다.
  *
  * `/analyses/:id`는 주소로 직접 들어오는 경로로 남아 있고, 문구와 판정은
  * `model/analysisProgress`를 함께 써서 두 화면이 같은 말을 한다.
@@ -47,12 +51,15 @@ export function SelectedRepositoryCard({
   repository,
   branchName,
   outcome,
+  live,
   onBranchChange,
   onRemove,
 }: {
   repository: RepositorySummary
   branchName: string
   outcome: AnalysisRequestOutcome | undefined
+  /** 묶음 조회가 말하는 이 저장소의 현재 상태. 아직 접수되지 않았으면 undefined */
+  live: LatestBatchItem | undefined
   onBranchChange: (fullName: string, branch: string) => void
   onRemove: (fullName: string) => void
 }) {
@@ -86,30 +93,20 @@ export function SelectedRepositoryCard({
     }
   }, [effectiveBranch, branchName, onBranchChange, repository.fullName])
 
-  const accepted = outcome?.ok === true ? outcome.accepted : null
-
   /*
-   * 접수된 분석만 폴링한다. `useAnalysisStatus`는 id가 없으면 스스로 쉬고, 종료
-   * 상태가 되면 서버가 `pollAfterSeconds`를 null로 줘서 폴링이 멈춘다.
+   * 이번 제출의 결과와 서버가 아는 현재 상태 둘 다로 접수 여부를 본다. 새로고침한
+   * 뒤에는 이번 제출의 결과가 없고 묶음 조회만 남는데, 그때도 카드는 진행을 그려야 한다.
    */
-  const status = useAnalysisStatus(accepted?.analysisId)
+  const accepted = outcome?.ok === true ? outcome.accepted : null
+  const branchLabel = accepted?.branchName ?? live?.branchName ?? null
+  const shaLabel = accepted?.commitSha ?? live?.commitSha ?? null
+  const started = accepted !== null || live !== undefined
 
   /*
-   * 접수 응답의 `status`는 접수 시점 값이라 곧 낡는다. 폴링 값이 있으면 그것을
+   * 접수 응답의 `status`는 접수 시점 값이라 곧 낡는다. 묶음 조회 값이 있으면 그것을
    * 쓰고, 첫 응답이 오기 전에는 접수 값으로 버틴다.
    */
-  const phase = analysisPhase(status.data?.analysisStatus ?? accepted?.status ?? 'QUEUED')
-
-  /*
-   * 분석이 끝나면 내 기술 목록을 다시 읽게 한다. 결과를 보러 갔을 때 이전 분석의
-   * 목록이 남아 있으면 방금 끝난 분석이 아무것도 못 찾은 것처럼 보인다.
-   */
-  const queryClient = useQueryClient()
-  useEffect(() => {
-    if (hasResult(phase)) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
-    }
-  }, [phase, queryClient])
+  const phase = analysisPhase(live?.analysisStatus ?? accepted?.status ?? 'QUEUED')
 
   /*
    * 카드 색은 **분석이 어떻게 됐는지**를 따른다. 전에는 "등록에 성공했는지"를 따라
@@ -117,7 +114,7 @@ export function SelectedRepositoryCard({
    * 보인다. 초록은 결과가 나왔을 때만 쓴다.
    */
   const cardTone =
-    accepted === null
+    !started
       ? 'border-brand-line bg-white'
       : phase === 'FAILED'
         ? 'border-tone-danger-bg bg-tone-danger-bg/20'
@@ -134,11 +131,11 @@ export function SelectedRepositoryCard({
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {repository.isPrivate && <RepositoryStateBadge state="PRIVATE" />}
-            {accepted !== null && (
+            {started && (
               // BE는 와이어프레임 6종 밖의 상태도 쓴다(계약 3장, 미결 2).
               // 정의되지 않은 값이면 배지가 렌더되지 않고 아래 진행 블록으로 확인한다.
               <JobStatus
-                status={(status.data?.analysisStatus ?? accepted.status) as JobStatusValue}
+                status={(live?.analysisStatus ?? accepted?.status ?? 'QUEUED') as JobStatusValue}
               />
             )}
             {outcome?.ok === false && <RepositoryStateBadge state="REQUEST_FAILED" />}
@@ -158,18 +155,19 @@ export function SelectedRepositoryCard({
         </button>
       </div>
 
-      {accepted !== null ? (
+      {started ? (
         <div className="mt-2 grid gap-2">
-          <p className="font-evidence text-[11.5px] break-all text-brand-muted">
-            {accepted.branchName} @ {accepted.commitSha.slice(0, 7)}
-          </p>
+          {branchLabel !== null && shaLabel !== null && (
+            <p className="font-evidence text-[11.5px] break-all text-brand-muted">
+              {branchLabel} @ {shaLabel.slice(0, 7)}
+            </p>
+          )}
 
           <AnalysisPhaseBlock
             phase={phase}
-            currentStage={status.data?.currentStage}
-            requestedAt={status.data?.requestedAt ?? null}
-            errorCode={status.data?.errorCode ?? null}
-            unreachable={status.isError}
+            currentStage={live?.currentStage}
+            requestedAt={live?.requestedAt ?? null}
+            errorCode={live?.errorCode ?? null}
           />
         </div>
       ) : (
@@ -185,9 +183,9 @@ export function SelectedRepositoryCard({
           />
           {outcome?.ok === false && (
             <p className="mt-2 text-[11.5px] leading-[1.5] text-tone-danger">
-              {outcome.error instanceof ApiError
-                ? `${outcome.error.message} (코드 ${outcome.error.code})`
-                : '요청을 처리할 수 없습니다.'}
+              {outcome.error.code === null
+                ? outcome.error.message
+                : `${outcome.error.message} (코드 ${outcome.error.code})`}
             </p>
           )}
         </div>
@@ -208,26 +206,16 @@ function AnalysisPhaseBlock({
   currentStage,
   requestedAt,
   errorCode,
-  unreachable,
 }: {
   phase: ReturnType<typeof analysisPhase>
   currentStage: string | undefined
   requestedAt: string | null
   errorCode: string | null
-  unreachable: boolean
 }) {
   /*
-   * 상태를 못 읽는 것과 분석이 실패한 것은 다르다. 폴링이 막혀 있을 뿐 서버에서는
-   * 분석이 계속 돌고 있을 수 있어, 실패라고 말하지 않는다.
+   * 상태를 못 읽는 경우는 여기서 다루지 않는다. 폴링이 카드마다가 아니라 묶음 하나로
+   * 바뀌면서 "읽지 못했다"도 카드가 아니라 패널 전체의 사실이 됐다(S15P21E102-136).
    */
-  if (unreachable) {
-    return (
-      <p className="rounded-lg bg-tone-neutral-bg px-2.5 py-2 text-[11.5px] leading-[1.5] text-brand-muted">
-        진행 상태를 읽지 못했습니다. 분석은 서버에서 계속 진행됩니다.
-      </p>
-    )
-  }
-
   const copy = phaseCopy(phase)
 
   if (phase === 'FAILED') {

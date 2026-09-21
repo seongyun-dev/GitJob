@@ -8,10 +8,15 @@ import type {
 export const ANALYSIS_SELECTION_HISTORY_KEY = 'analysisSelectionDraft'
 
 export interface AnalysisSelectionDraft {
-  version: 1
+  version: 2
   repositories: RepositorySummary[]
   branches: Array<[fullName: string, branchName: string]>
   accepted: AnalysisAccepted[]
+  /**
+   * 완료 안내를 닫은 묶음. boolean이 아닌 이유는 새 묶음이 시작되면 낡기 때문이다 --
+   * ID로 두면 다른 묶음이 오는 순간 안내가 저절로 다시 열린다.
+   */
+  dismissedBatchId: string | null
 }
 
 /**
@@ -22,9 +27,11 @@ export function createAnalysisSelectionDraft(
   repositories: Iterable<RepositorySummary>,
   branches: ReadonlyMap<string, string>,
   outcomes: ReadonlyMap<string, AnalysisRequestOutcome>,
+  dismissedBatchId: string | null = null,
 ): AnalysisSelectionDraft {
   return {
-    version: 1,
+    version: 2,
+    dismissedBatchId,
     repositories: [...repositories],
     branches: [...branches.entries()],
     accepted: [...outcomes.values()].flatMap((outcome) =>
@@ -39,7 +46,12 @@ export function readAnalysisSelectionDraft(state: unknown): AnalysisSelectionDra
     return null
   }
   const candidate = state[ANALYSIS_SELECTION_HISTORY_KEY]
-  if (!isRecord(candidate) || candidate.version !== 1) {
+  /*
+   * v1도 받는다. v2만 받으면 배포 직후 브라우저가 들고 있던 draft가 전부 조용히
+   * 버려져, 뒤로 가기로 돌아온 사용자의 선택이 사라진다. 늘어난 필드 하나는
+   * 기본값으로 채우면 그만이다.
+   */
+  if (!isRecord(candidate) || (candidate.version !== 1 && candidate.version !== 2)) {
     return null
   }
   if (
@@ -53,11 +65,17 @@ export function readAnalysisSelectionDraft(state: unknown): AnalysisSelectionDra
     return null
   }
   return {
-    version: 1,
+    version: 2,
     repositories: candidate.repositories,
     branches: candidate.branches,
     accepted: candidate.accepted,
+    dismissedBatchId: isString(candidate.dismissedBatchId) ? candidate.dismissedBatchId : null,
   }
+}
+
+/** v1 draft에는 없는 값이라 기본은 null이다. */
+export function dismissedBatchFromDraft(draft: AnalysisSelectionDraft | null): string | null {
+  return draft?.dismissedBatchId ?? null
 }
 
 export function selectedFromDraft(
@@ -82,6 +100,8 @@ export function outcomesFromDraft(
           branchName: accepted.branchName,
         },
         ok: true as const,
+        // draft에는 성공한 결과만 담기고, 재사용 여부는 서버 조회가 다시 알려 준다.
+        reused: false,
         accepted,
       },
     ]),
@@ -128,7 +148,6 @@ function isAnalysisAccepted(value: unknown): value is AnalysisAccepted {
     isString(value.repositoryFullName) &&
     isString(value.branchName) &&
     isString(value.commitSha) &&
-    typeof value.pollAfterSec === 'number' &&
     isString(value.statusUrl)
   )
 }

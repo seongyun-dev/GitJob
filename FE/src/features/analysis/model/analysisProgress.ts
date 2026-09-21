@@ -253,11 +253,24 @@ export function phaseHeadline(phase: AnalysisPhase): string {
  * `errorCode`는 BE가 주는 값이고 화면은 이 중 몇 가지에만 다른 복구 경로를 준다.
  * 안내 문구는 여기 두고, 이동 링크(JSX)는 화면마다 자리가 달라 호출부가 만든다.
  */
-export type FailureKind = 'GITHUB_RECONNECT' | 'REPOSITORY' | 'CREDENTIAL_BROKER' | 'GENERIC'
+export type FailureKind =
+  | 'GITHUB_RECONNECT'
+  | 'REPOSITORY'
+  | 'CREDENTIAL_BROKER'
+  | 'TIMED_OUT'
+  | 'GENERIC'
 
 export function failureKind(errorCode: string | null): FailureKind {
   if (errorCode === 'GITHUB_RECONNECT_REQUIRED') {
     return 'GITHUB_RECONNECT'
+  }
+  /*
+   * 서버가 응답 없는 분석을 정리하며 붙인 코드다. 사용자가 뭘 잘못한 것이 아니라
+   * 워커가 집어 가지 못했다는 뜻이라, GENERIC 의 "분석에 실패했어요"로 접으면
+   * 자기 저장소에 문제가 있는 줄 읽는다.
+   */
+  if (errorCode === 'ANALYSIS_TIMED_OUT') {
+    return 'TIMED_OUT'
   }
   if (errorCode === 'REPOSITORY_NOT_ACCESSIBLE' || errorCode === 'REPOSITORY_CREDENTIAL_NOT_FOUND') {
     return 'REPOSITORY'
@@ -288,6 +301,11 @@ export function failureCopy(kind: FailureKind): { title: string; description: st
       return {
         title: '비공개 저장소 연결이 지연되고 있어요',
         description: '서비스 연결을 복구한 뒤 다시 분석해 주세요.',
+      }
+    case 'TIMED_OUT':
+      return {
+        title: '응답이 없어 중단했어요',
+        description: '서버가 분석을 시작하지 못했습니다. 다시 요청해 주세요.',
       }
     case 'GENERIC':
       return {

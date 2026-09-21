@@ -373,7 +373,7 @@ class MonitoringServiceTest {
         when(prometheus.instant(anyString())).thenReturn(List.of());
         when(prometheus.instant(queries.nodeUp()))
                 .thenReturn(List.of(node(SERVICE, "service", 1)));
-        when(dataStoreMetrics.current()).thenReturn(new DataStoreStatus(61L, 5L, 4L));
+        when(dataStoreMetrics.current()).thenReturn(new DataStoreStatus(61L, 5L, 4L, 0L));
 
         MonitoringOverviewResponse overview = service(configured()).overview();
 
@@ -386,7 +386,7 @@ class MonitoringServiceTest {
     @Test
     @DisplayName("Prometheus가 끊겨도 DB 적재 현황은 collector 슬롯에 그대로 실린다")
     void dataStoreSurvivesPrometheusDisconnect() {
-        when(dataStoreMetrics.current()).thenReturn(new DataStoreStatus(61L, 5L, 4L));
+        when(dataStoreMetrics.current()).thenReturn(new DataStoreStatus(61L, 5L, 4L, 0L));
 
         MonitoringOverviewResponse overview = service(notConfigured()).overview();
 

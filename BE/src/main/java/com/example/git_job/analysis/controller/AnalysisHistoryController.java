@@ -1,7 +1,9 @@
 package com.example.git_job.analysis.controller;
 
 import com.example.git_job.analysis.controller.dto.AnalysisHistoryResponse;
+import com.example.git_job.analysis.controller.dto.AnalysisLatestBatchResponse;
 import com.example.git_job.analysis.service.AnalysisHistoryService;
+import com.example.git_job.analysis.service.AnalysisLatestBatchService;
 import com.example.git_job.global.response.ApiResponse;
 import com.example.git_job.global.security.AuthenticatedUser;
 import com.example.git_job.global.security.CurrentUser;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AnalysisHistoryController {
 
     private final AnalysisHistoryService analyses;
+    private final AnalysisLatestBatchService latestBatch;
 
     @GetMapping
     public ApiResponse<AnalysisHistoryResponse> analyses(
@@ -32,5 +35,20 @@ public class AnalysisHistoryController {
             @RequestParam(defaultValue = "20") int size
     ) {
         return ApiResponse.success(analyses.list(CurrentUser.idOf(user), page, size));
+    }
+
+    /**
+     * 저장소 선택 화면이 읽는 "지금 무엇이 돌고 있나" (S15P21E102-136).
+     *
+     * <p>{@code /active}라고 부르지 않는다. 끝난 배치도 잠시 돌려주므로 이름이 사실과
+     * 어긋나고, 화면이 영원히 폴링해야 할 대상처럼 읽힌다.</p>
+     *
+     * <p>배치가 없어도 200이다. 상세는 {@code AnalysisLatestBatchResponse} 참고.</p>
+     */
+    @GetMapping("/latest-batch")
+    public ApiResponse<AnalysisLatestBatchResponse> latestBatch(
+            @AuthenticationPrincipal AuthenticatedUser user
+    ) {
+        return ApiResponse.success(latestBatch.get(CurrentUser.idOf(user)));
     }
 }

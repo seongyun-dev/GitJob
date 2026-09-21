@@ -78,7 +78,7 @@ class AdminMonitoringControllerTest {
                         3_243_303_444_480L, 2L),
                 new SparkStatus(true, 1, 2, 0, 2048L, 0L),
                 new ServicesStatus(true, false),
-                new DataStoreStatus(61L, 5L, 4L),
+                new DataStoreStatus(61L, 5L, 4L, 0L),
                 new Coverage(CoverageState.COLLECTED, CoverageState.COLLECTED,
                         CoverageState.COLLECTED, CoverageState.COLLECTED),
                 new Links("https://grafana.example.internal", null)));

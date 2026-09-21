@@ -41,14 +41,14 @@ export interface BranchSummary {
 }
 
 /**
- * `POST /analyses` 요청 본문. BE `AnalysisCreateRequest`와 1:1이다.
+ * `POST /analyses` 요청 본문. BE `AnalysisBatchCreateRequest`와 1:1이다.
  *
- * 저장소 하나 + 브랜치 하나만 받는다. analysisId·commitSha·Registry 버전은
- * 클라이언트가 보내면 권한 밖 저장소를 분석시킬 수 있어 서버가 채운다.
+ * 고른 저장소 전부를 한 번에 보낸다. 항목 하나의 모양은 예전 단건 본문과 같아서,
+ * 바뀐 것은 감싸는 배열뿐이다. analysisId·commitSha·Registry 버전은 클라이언트가
+ * 보내면 권한 밖 저장소를 분석시킬 수 있어 서버가 채운다.
  */
 export interface AnalysisRequestBody {
-  repositoryFullName: string
-  branchName: string
+  repositories: AnalysisTarget[]
 }
 
 /**
@@ -68,8 +68,93 @@ export interface AnalysisAccepted {
   repositoryFullName: string
   branchName: string
   commitSha: string
-  pollAfterSec: number
   statusUrl: string
+}
+
+/** 저장소 하나의 결말. 재사용은 실패가 아니라 세 번째 값이다. */
+export type AnalysisBatchOutcome = 'ACCEPTED' | 'REUSED' | 'FAILED'
+
+/**
+ * `POST /analyses` 응답 항목. BE `AnalysisBatchAcceptedResponse.ItemResponse`와 1:1이다.
+ *
+ * `requestedRepositoryFullName`이 따로 있는 이유는, 서버가 저장소 이름을 GitHub의
+ * 정규 표기로 바꾸기 때문이다. 화면은 목록에서 받은 이름으로 선택을 키잉하므로
+ * 보낸 이름이 함께 돌아와야 결과를 어느 카드에 붙일지 알 수 있다.
+ */
+export interface AnalysisBatchItem {
+  requestedRepositoryFullName: string
+  outcome: AnalysisBatchOutcome
+  analysisId: string | null
+  status: string | null
+  repositoryFullName: string | null
+  branchName: string | null
+  commitSha: string | null
+  statusUrl: string | null
+  errorCode: string | null
+  message: string | null
+}
+
+/**
+ * `POST /analyses` 응답. 하나라도 새로 만들었으면 202, 아니면 200이다.
+ *
+ * 전부 실패해도 오류가 아니라 이 본문이 온다. 사유가 저장소마다 다를 수 있는데
+ * 오류 봉투는 코드와 메시지를 한 쌍만 실을 수 있어, 가장 필요한 순간에 나머지를 잃는다.
+ */
+export interface AnalysisBatchAccepted {
+  batchId: string | null
+  totalCount: number
+  acceptedCount: number
+  reusedCount: number
+  failedCount: number
+  pollAfterSeconds: number | null
+  statusUrl: string
+  items: AnalysisBatchItem[]
+}
+
+/** `GET /me/analyses/latest-batch`의 구성원 하나. */
+export interface LatestBatchItem {
+  analysisId: string
+  repositoryId: string
+  repositoryFullName: string | null
+  branchName: string
+  commitSha: string
+  /** QUEUED · RUNNING · SUCCEEDED · PARTIAL_SUCCEEDED · FAILED */
+  analysisStatus: string
+  currentStage: string
+  requestedAt: string
+  errorCode: string | null
+}
+
+export interface LatestBatch {
+  batchId: string
+  requestedAt: string
+  totalCount: number
+  completedCount: number
+  failedCount: number
+  /** 진행 중인 구성원이 없으면 null. 폴링을 멈추는 유일한 신호다 */
+  pollAfterSeconds: number | null
+  items: LatestBatchItem[]
+}
+
+/**
+ * `GET /me/analyses/latest-batch` 응답.
+ *
+ * `canSubmit`이 `batch` 안이 아니라 밖에 있는 것은 판정 단위가 다르기 때문이다.
+ * 제출 차단은 **사용자 단위**이고, 배치가 생기기 전에 만들어진 분석도 진행 중이면
+ * 막는다. 배치 안에 두면 그런 사용자가 "제출 가능"을 보고 눌렀다가 409를 맞는다.
+ *
+ * 한 번도 분석한 적이 없으면 `batch`가 null이다. 404가 아니라 200이다.
+ */
+export interface LatestBatchView {
+  canSubmit: boolean
+  /**
+   * 한 번에 고를 수 있는 저장소 수. 서버가 정한다.
+   *
+   * 화면이 상수를 들고 있으면 서버가 상한을 바꾼 날 조용히 어긋나고, 사용자는 버튼을
+   * 눌러야만 거절을 알게 된다. 이 값이 있으면 고르는 동안 막을 수 있다.
+   */
+  maxBatchSize: number
+  batch: LatestBatch | null
 }
 
 /**
@@ -92,8 +177,20 @@ export interface AnalysisTarget {
  * 호출부는 `Promise.allSettled`로 모으고 이 형태로 정규화한다.
  */
 export type AnalysisRequestOutcome =
-  | { target: AnalysisTarget; ok: true; accepted: AnalysisAccepted }
-  | { target: AnalysisTarget; ok: false; error: unknown }
+  | { target: AnalysisTarget; ok: true; accepted: AnalysisAccepted; reused: boolean }
+  | { target: AnalysisTarget; ok: false; error: AnalysisRequestError }
+
+/**
+ * 저장소 하나가 왜 실패했는지.
+ *
+ * `unknown`이던 자리를 좁혔다. 배치 응답은 항목마다 코드와 문장을 함께 주므로
+ * 호출부가 `instanceof`로 되짚을 필요가 없고, 되짚을 수도 없다 — 이제 실패는
+ * 예외가 아니라 성공 응답 안의 값이다.
+ */
+export interface AnalysisRequestError {
+  code: string | null
+  message: string
+}
 
 /**
  * 분석 진행 상황 · `GET /analyses/{analysisId}` 응답.

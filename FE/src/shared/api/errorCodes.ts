@@ -81,6 +81,13 @@ const ERROR_ACTIONS: Readonly<Record<string, ErrorAction>> = {
   'REPO-404-1': 'SHOW_INLINE_ERROR',
   'REPO-404-2': 'SHOW_INLINE_ERROR',
   'REPO-409-1': 'SHOW_UNANALYZABLE',
+  /*
+   * 분석 묶음 관련 두 코드는 사용자가 무엇을 하면 되는지가 분명하다 -- 기다리거나,
+   * 저장소를 몇 개 빼면 된다. 그래서 일반 오류로 접지 않고 화면이 그 자리에서 문장을
+   * 그리도록 SHOW_INLINE_ERROR 로 둔다(S15P21E102-136).
+   */
+  'AN-409-1': 'SHOW_INLINE_ERROR',
+  'AN-400-1': 'SHOW_INLINE_ERROR',
   'REPO-429-1': 'SHOW_RATE_LIMIT',
   'REPO-503-1': 'SHOW_RETRY',
 

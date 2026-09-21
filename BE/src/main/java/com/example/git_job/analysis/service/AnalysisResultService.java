@@ -52,7 +52,8 @@ public class AnalysisResultService {
     @Transactional
     public Applied apply(RepositoryAnalysisResultEvent event) {
         RepositoryAnalysisResultPayload payload = event.payload();
-        AnalysisJob job = jobs.findById(payload.analysisId()).orElse(null);
+        // 진행 컨슈머와 같은 잠금을 잡는다. 한쪽만 잠그면 다른 쪽이 낡은 값으로 덮는다.
+        AnalysisJob job = jobs.findWithLockByAnalysisId(payload.analysisId()).orElse(null);
         if (job == null) {
             // The worker analyzed something this service has no record of. Retrying
             // will not create it, so the message is consumed rather than replayed.
@@ -66,8 +67,22 @@ public class AnalysisResultService {
                 ? job.fail(payload.errorCode(), now)
                 : job.succeed(now);
         if (!moved) {
-            log.info("Result ignored, job already {}: analysisId={}, eventId={}",
-                    job.getStatus(), payload.analysisId(), event.eventId());
+            /*
+             * 대부분은 at-least-once 재배달이라 INFO면 충분하다. 단 하나, 우리가 죽인
+             * 분석이 뒤늦게 결과를 들고 온 경우는 다르다 -- 살아 있던 워커를
+             * StaleAnalysisReaper 가 잘랐다는 뜻이고, 그 근거는 아래로 내려가지 못한 채
+             * 여기서 버려진다. activeWindow 가 짧다는 유일한 신호라 따로 올린다.
+             */
+            if (AnalysisJob.ERROR_ANALYSIS_TIMED_OUT.equals(job.getErrorCode())) {
+                log.warn("Result arrived after the analysis was reaped;"
+                                + " evidence discarded. Consider raising"
+                                + " gitjob.analysis.request.active-window."
+                                + " analysisId={}, eventId={}",
+                        payload.analysisId(), event.eventId());
+            } else {
+                log.info("Result ignored, job already {}: analysisId={}, eventId={}",
+                        job.getStatus(), payload.analysisId(), event.eventId());
+            }
             return Applied.ALREADY_TERMINAL;
         }
 
@@ -123,10 +138,15 @@ public class AnalysisResultService {
         return job;
     }
 
-    /** 기여 판정 시도가 끝나 C 계산이 읽어도 되는 분석으로 전환한다. */
+    /**
+     * 기여 판정 시도가 끝나 C 계산이 읽어도 되는 분석으로 전환한다.
+     *
+     * <p>여기도 잠그고 읽는다. 이것 역시 같은 행의 읽기-고치기-쓰기라, 진행 이벤트와
+     * 겹치면 방금 기록한 {@code compute_ready_at} 이 덮여 사라진다.</p>
+     */
     @Transactional
     public void markComputeReady(String analysisId) {
-        AnalysisJob job = jobs.findById(analysisId).orElse(null);
+        AnalysisJob job = jobs.findWithLockByAnalysisId(analysisId).orElse(null);
         if (job != null && job.markComputeReady(Instant.now())) {
             jobs.save(job);
         }

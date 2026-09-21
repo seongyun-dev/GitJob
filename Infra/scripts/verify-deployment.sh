@@ -445,6 +445,45 @@ repo_analysis.event_claim 누락이면 service 호스트에서 실행한다.
     fi
   fi
 
+  # --- Registry 발행(alias) -----------------------------------------------------
+  # 분석 요청이 만들어지려면 Registry 가 **발행**돼 있어야 한다. 발행의 경계는
+  # technology_registry.status='CURRENT' 가 아니라 technology_registry_alias 행이고,
+  # 그 스냅샷에 content_sha256 이 있어야 한다(TechnologyRegistryVersionResolver).
+  #
+  # 마이그레이션은 Registry 행만 넣는다. alias 는 c-registry-import.sh 가 스냅샷과
+  # Rule Pack 을 들여오면서 붙이는 별도 단계라, 새로 세운 환경에서는 비어 있다.
+  # 그 상태에서는 제출이 전부 ANALYSIS-503-1 로 실패하는데 컨테이너는 모두 건강해
+  # 보인다 -- 2026-09-21 로컬 e2e 에서 실제로 그렇게 막혔다.
+  if ! profile_enabled core; then
+    skip registry-alias "core 프로필이 이 호스트에 없다"
+  elif ! running postgres; then
+    undetermined registry-alias "postgres 컨테이너가 이 호스트에 없다"
+  else
+    alias_state="$(psql_query "SELECT coalesce(
+            (SELECT alias.registry_version || ':' ||
+                    CASE WHEN snapshot.content_sha256 IS NULL THEN 'n' ELSE 'y' END
+               FROM technology_registry_alias alias
+               JOIN technology_registry snapshot
+                 ON snapshot.schema_version = alias.schema_version
+                AND snapshot.registry_version = alias.registry_version
+              WHERE alias.schema_version = 'technology-registry/v1'), 'none')")"
+    alias_remedy="data 호스트에서 Registry 와 Rule Pack 을 들여오고 활성화한다.
+    ENV_FILE=.env.data COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2-data-cluster.yaml \\
+      PROFILES=data ./Infra/scripts/c-registry-import.sh"
+    case "$alias_state" in
+      none)
+        needs_action registry-alias \
+          "technology_registry_alias 에 technology-registry/v1 활성 행이 없다 -- 분석 요청이 ANALYSIS-503-1 로 전부 실패한다" \
+          "$alias_remedy" ;;
+      *:n)
+        needs_action registry-alias \
+          "활성 Registry ${alias_state%%:*} 에 content_sha256 이 없다 -- 발행이 끝나지 않았다" \
+          "$alias_remedy" ;;
+      *)
+        ok registry-alias "활성 Registry ${alias_state%%:*} (content_sha256 있음)" ;;
+    esac
+  fi
+
   # --- 분석 결과 계약 배선 ------------------------------------------------------
   # CURRENT Registry 가 요구하는 결과 계약과 실제 배선이 어긋나면 분석이 조용히 멈춘다.
   # 워커는 판정에 쓴 Rule Pack 으로 발행 계약을 정하고 v1 을 함께 보내지 않는다.

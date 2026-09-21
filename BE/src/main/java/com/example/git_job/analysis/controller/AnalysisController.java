@@ -1,7 +1,7 @@
 package com.example.git_job.analysis.controller;
 
-import com.example.git_job.analysis.controller.dto.AnalysisAcceptedResponse;
-import com.example.git_job.analysis.controller.dto.AnalysisCreateRequest;
+import com.example.git_job.analysis.controller.dto.AnalysisBatchAcceptedResponse;
+import com.example.git_job.analysis.controller.dto.AnalysisBatchCreateRequest;
 import com.example.git_job.analysis.controller.dto.AnalysisStatusResponse;
 import com.example.git_job.analysis.service.AnalysisStatusService;
 import com.example.git_job.analysis.service.AnalysisSubmissionService;
@@ -47,23 +47,29 @@ public class AnalysisController {
     }
 
     /**
-     * 새로 등록하면 202, 같은 저장소 분석이 이미 진행 중이어서 그 Job을 그대로
-     * 안내하면 200이다. 본문 형태는 같으므로 화면은 statusUrl만 쓰면 된다.
+     * 고른 저장소 전부를 한 묶음으로 등록한다.
+     *
+     * <p>하나라도 새로 만들었으면 202, 하나도 만들지 않았으면 200이다. 어느 쪽이든 본문
+     * 형태는 같고 저장소별 결말이 {@code items}에 담긴다 -- 전부 실패했을 때 오류 봉투
+     * 하나로 접으면 사유가 세 개인 경우 그중 둘을 잃는다.</p>
+     *
+     * <p>진행 중인 분석이 있으면 409({@code AN-409-1})다. 본문에 무엇이 돌고 있는지
+     * 싣지 않는다 -- 화면은 이 코드를 보면
+     * {@code GET /api/v1/me/analyses/latest-batch}를 다시 읽는다.</p>
      */
     @PostMapping
-    public ResponseEntity<ApiResponse<AnalysisAcceptedResponse>> requestAnalysis(
+    public ResponseEntity<ApiResponse<AnalysisBatchAcceptedResponse>> requestAnalysis(
             @AuthenticationPrincipal AuthenticatedUser user,
-            @RequestBody AnalysisCreateRequest request
+            @RequestBody AnalysisBatchCreateRequest request
     ) {
-        var submission = analysisSubmissionService.submit(
+        var submission = analysisSubmissionService.submitBatch(
                 CurrentUser.idOf(user),
-                request.repositoryFullName(),
-                request.branchName(),
+                request.targets(),
                 MDC.get(TraceIdFilter.TRACE_ID));
 
         var body = ApiResponse.success(
-                submission.created() ? "분석을 등록했습니다." : "이미 진행 중인 분석이 있습니다.",
-                AnalysisAcceptedResponse.from(submission));
+                submission.created() ? "분석을 등록했습니다." : "새로 등록한 분석이 없습니다.",
+                AnalysisBatchAcceptedResponse.from(submission));
         return ResponseEntity
                 .status(submission.created() ? HttpStatus.ACCEPTED : HttpStatus.OK)
                 .body(body);

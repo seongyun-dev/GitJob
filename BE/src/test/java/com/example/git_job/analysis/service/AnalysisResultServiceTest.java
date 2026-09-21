@@ -63,13 +63,13 @@ class AnalysisResultServiceTest {
 
     private AnalysisJob queuedJob() {
         return AnalysisJob.queue("an_1", USER_ID, "repo_1", "octocat/repo", "main", SHA,
-                Instant.now());
+                Instant.now(), null);
     }
 
     @Test
     @DisplayName("v3 결과의 Rule Pack 계보와 지원 범위를 저장한다")
     void storesRulePackLineage() {
-        when(jobs.findById("an_1")).thenReturn(Optional.of(queuedJob()));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(queuedJob()));
 
         service.apply(event(completed().payload(),
                 RepositoryAnalysisResultEvent.SCHEMA_VERSION_V3));
@@ -126,7 +126,7 @@ class AnalysisResultServiceTest {
     @DisplayName("성공 결과가 job을 SUCCEEDED로 닫고 Evidence를 쓴다")
     void aCompletedResultClosesTheJobAndWritesEvidence() {
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         Applied applied = service.apply(completed());
 
@@ -145,7 +145,7 @@ class AnalysisResultServiceTest {
         // Without this the user watches "대기 중" forever for a repository that
         // was deleted before the worker reached it.
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         Applied applied = service.apply(failed("REPOSITORY_NOT_FOUND"));
 
@@ -160,7 +160,7 @@ class AnalysisResultServiceTest {
         // at-least-once 전달이라 반드시 일어난다. Evidence를 두 번 쓰면 화면에
         // 같은 근거가 두 줄로 뜬다.
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
         service.apply(completed());
 
         Applied second = service.apply(completed());
@@ -175,6 +175,8 @@ class AnalysisResultServiceTest {
     void duplicateResultResumesPendingPostProcessing() {
         AnalysisJob job = queuedJob();
         job.succeed(Instant.now());
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
+        // attributionTarget 은 쓰지 않는 조회라 잠그지 않는다.
         when(jobs.findById("an_1")).thenReturn(Optional.of(job));
 
         assertEquals(job, service.attributionTarget(completed(), Applied.ALREADY_TERMINAL));
@@ -193,7 +195,7 @@ class AnalysisResultServiceTest {
         // for free: CANCELED is terminal, so the guard already covers it.
         AnalysisJob job = queuedJob();
         job.fail("CANCELED_BY_USER", Instant.now());
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         Applied applied = service.apply(completed());
 
@@ -208,7 +210,7 @@ class AnalysisResultServiceTest {
     void aResultForAnUnknownJobIsConsumed() {
         // Replaying it will not make the job exist, and leaving it uncommitted
         // would stop the partition.
-        when(jobs.findById("an_1")).thenReturn(Optional.empty());
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.empty());
 
         assertEquals(Applied.UNKNOWN_JOB, service.apply(completed()));
         verify(evidence, never()).insertAll(anyString(), anyLong(), anyString(), any(), any());
@@ -221,7 +223,7 @@ class AnalysisResultServiceTest {
         // Neither is on the event: the worker never learns who owns an analysis,
         // and "how many users" is an aggregate it cannot see.
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         service.apply(completed());
 
@@ -237,7 +239,7 @@ class AnalysisResultServiceTest {
     @DisplayName("중복 결과는 후보도 두 번 세지 않는다")
     void aDuplicateResultDoesNotObserveCandidatesTwice() {
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
         service.apply(completed());
 
         service.apply(completed());
@@ -252,7 +254,7 @@ class AnalysisResultServiceTest {
         // analysis. registry_version has to be the one that judged, so evidence
         // stays traceable to the rules that produced it.
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         service.apply(completed());
 
@@ -267,7 +269,7 @@ class AnalysisResultServiceTest {
     @DisplayName("실패 결과는 Evidence를 쓰지 않는다")
     void aFailedResultWritesNoEvidence() {
         AnalysisJob job = queuedJob();
-        when(jobs.findById("an_1")).thenReturn(Optional.of(job));
+        when(jobs.findWithLockByAnalysisId("an_1")).thenReturn(Optional.of(job));
 
         service.apply(failed("CLONE_TIMEOUT"));
 
