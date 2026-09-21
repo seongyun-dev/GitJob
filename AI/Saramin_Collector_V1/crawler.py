@@ -46,14 +46,15 @@ from job.collector import (
     pipeline_run_id_for,
 )
 from job.collector.analysis_input import publish_from_env
-from job.collector.outcome import collector_exit_code
 from job.collector.http import BlockedError, HttpError, PoliteHttpClient
 from job.collector.identity import (
     Decision,
     PostingIdentityStore,
     identity_path_for,
 )
+from job.collector.outcome import collector_exit_code
 from job.collector.raw_sink import sink_from_env, write_upload_record
+from job.collector.raw_verify import verify_run
 from job.contracts import (
     JOB_ANALYSIS_INPUT_SCHEMA_VERSION,
     JobAnalysisInputBatch,
@@ -670,6 +671,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--no-publish-analysis-input",
+        action="store_true",
+        help=(
+            "upload and verify Raw as usual but stop before analysis_input; "
+            "publish the run later with "
+            "`python -m job.collector.backfill_cli --source saramin --execute`"
+        ),
+    )
+    parser.add_argument(
         "--cursor",
         default=None,
         help="resume-state file; omit to collect without resume support",
@@ -757,34 +767,60 @@ def main(argv: list[str] | None = None) -> int:
                 # to the scheduler without discarding what was collected.
                 return 1
 
-            # S15P21E102-220. Raw keeps every run; `analysis_input` keeps only
-            # the ones C may compute on, so the publisher re-checks the
-            # manifest and refuses an early stop, detail failures, invalid
-            # records or an empty run. A refusal is a normal outcome and does
-            # not fail the collection.
-            published = publish_from_env(
-                paths["manifest"].parent,
-                source=SOURCE_SITE,
-                pipeline_run_id=result.batch.pipeline_run_id,
-            )
-            if published is None:
-                print("analysis_input=skipped (WEBHDFS_URL 미설정)", file=sys.stderr)
-            elif published.skipped:
+            # S15P21E102-344. Raw is only durable if it reads back, so the
+            # round trip is checked before anything downstream sees the run.
+            verification = verify_run(sink.client, paths["manifest"].parent)
+            if not verification.ok:
+                print(f"raw verify failed: {verification.state}", file=sys.stderr)
+                return 1
+
+            if args.no_publish_analysis_input:
+                # Raw holds the verified run, so it can be reviewed before it
+                # becomes a C input. Publishing later needs no second crawl:
+                # `backfill_cli` reads it back out of Raw and applies the same
+                # `analysis_input.release_blockers` gate.
+                #
+                # Unlike JobKorea this does not return early. Saramin shares
+                # `collector_exit_code` with Career, GameJob and Worknet, and
+                # withholding publication must not change how the run's own
+                # quality is reported.
                 print(
-                    f"analysis_input=skipped ({', '.join(published.blockers)})",
+                    "analysis_input=deferred (--no-publish-analysis-input); "
+                    "publish with: python -m job.collector.backfill_cli "
+                    "--source saramin --execute",
                     file=sys.stderr,
                 )
             else:
-                print(f"analysis_input={published.run_path}")
-                for entry in published.failed:
+                # S15P21E102-220. Raw keeps every run; `analysis_input` keeps
+                # only the ones C may compute on, so the publisher re-checks
+                # the manifest and refuses an early stop, detail failures,
+                # invalid records or an empty run. A refusal is a normal
+                # outcome and does not fail the collection.
+                published = publish_from_env(
+                    paths["manifest"].parent,
+                    source=SOURCE_SITE,
+                    pipeline_run_id=result.batch.pipeline_run_id,
+                )
+                if published is None:
                     print(
-                        f"analysis_input failed: {entry['file']} - {entry['error']}",
+                        "analysis_input=skipped (WEBHDFS_URL 미설정)", file=sys.stderr
+                    )
+                elif published.skipped:
+                    print(
+                        f"analysis_input=skipped ({', '.join(published.blockers)})",
                         file=sys.stderr,
                     )
-                if not published.ok:
-                    # Raw already holds the run, so this is reported rather
-                    # than retried here.
-                    return 1
+                else:
+                    print(f"analysis_input={published.run_path}")
+                    for entry in published.failed:
+                        print(
+                            f"analysis_input failed: {entry['file']} - {entry['error']}",
+                            file=sys.stderr,
+                        )
+                    if not published.ok:
+                        # Raw already holds the run, so this is reported rather
+                        # than retried here.
+                        return 1
 
     if result.manifest["stopped_reason"]:
         print(f"stopped: {result.manifest['stopped_reason']}", file=sys.stderr)

@@ -36,6 +36,7 @@ echo 'Running non-DB C regressions; PostgreSQL integration tests are intentional
   tests/test_registry_review.py \
   tests/test_worker_intake.py \
   tests/test_public_intake.py \
+  tests/test_saramin_publication_gate.py \
   tests/test_worker_registry_source.py \
   tests/test_analysis_credentials.py \
   tests/test_analysis_clone.py \
