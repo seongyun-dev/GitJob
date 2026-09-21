@@ -148,7 +148,7 @@ export function JobMatchPage() {
               </>
             )}
 
-            <div className="gj-split">
+            <div>
               <DataRegion title="공고 목록">
                 {postings.length === 0 ? (
                   <StateCard
@@ -200,25 +200,6 @@ export function JobMatchPage() {
                 )}
               </DataRegion>
 
-              <div className="grid gap-4">
-                <DataRegion title="다음 단계">
-                  <p className="text-[12.5px] leading-[1.65] text-brand-muted">
-                    공고에서 자주 요구하는 기술과 다음에 준비할 기술을 확인하세요.
-                  </p>
-                  <Link
-                    to="/skill-gap"
-                    className="gj-clickable mt-4 block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink"
-                  >
-                    부족한 기술 자세히 보기
-                  </Link>
-                  <Link
-                    to="/recommendations"
-                    className="gj-clickable-primary mt-2.5 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-5 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
-                  >
-                    다음 기술 추천 보기
-                  </Link>
-                </DataRegion>
-              </div>
             </div>
           </>
         )}

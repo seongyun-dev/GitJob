@@ -51,24 +51,15 @@ export function RecommendationPage() {
         title="다음에 배울 기술"
         description="배우면 필수 기술을 모두 충족하는 공고가 많이 늘어나는 순서예요."
         aside={
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {basis !== undefined && jobCount !== null && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-line bg-white px-3.5 py-2 text-[12.5px] font-[750] text-brand-ink-soft">
-                {targetRoleDisplayName(basis.targetRole)}
-                <span aria-hidden className="text-brand-faint">
-                  ·
-                </span>
-                공고 {jobCount.toLocaleString('ko-KR')}건
+          basis !== undefined && jobCount !== null ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-line bg-white px-3.5 py-2 text-[12.5px] font-[750] text-brand-ink-soft">
+              {targetRoleDisplayName(basis.targetRole)}
+              <span aria-hidden className="text-brand-faint">
+                ·
               </span>
-            )}
-            {/* 되돌아가기는 보조 행동이다. 본문 카드와 같은 무게로 세우지 않는다. */}
-            <Link
-              to="/skill-gap"
-              className="gj-clickable rounded-full border border-brand-line bg-white px-3.5 py-2 text-[12.5px] font-semibold text-brand-muted"
-            >
-              ← 부족한 기술
-            </Link>
-          </div>
+              공고 {jobCount.toLocaleString('ko-KR')}건
+            </span>
+          ) : undefined
         }
       />
 
@@ -89,13 +80,13 @@ export function RecommendationPage() {
               <StateCard
                 kind="EMPTY"
                 title="추천할 기술이 없어요"
-                description="현재 조건에서 새로 추천할 기술이 없습니다. 부족한 기술과 비교 기준을 다시 확인해 보세요."
+                description="현재 조건에서 새로 추천할 기술이 없습니다. 목표 직무의 비교 기준을 다시 확인해 보세요."
                 action={
                   <Link
-                    to="/skill-gap"
+                    to="/roles"
                     className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
                   >
-                    부족한 기술 확인
+                    목표 직무 확인
                   </Link>
                 }
               />

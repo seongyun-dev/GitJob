@@ -86,7 +86,6 @@ export const PRIMARY_NAV: readonly PrimaryNavItem[] = [
     children: [
       { label: '공고 대시보드', to: '/jobs', match: ['/jobs/'] },
       { label: '목표 직무', to: '/roles' },
-      { label: '부족한 기술', to: '/skill-gap' },
     ],
   },
 

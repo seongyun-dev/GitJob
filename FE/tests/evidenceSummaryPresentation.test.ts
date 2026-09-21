@@ -13,6 +13,13 @@ test('요약의 한글 날짜 띄어쓰기를 자연스럽게 정리한다', () 
   )
 })
 
+test('AI 요약의 줄바꿈과 연속 공백을 한 문단으로 정리한다', () => {
+  assert.equal(
+    evidenceSummaryText('Spring Boot를 사용해\nAPI를 구현했고,\r\n  테스트도 작성했습니다.'),
+    'Spring Boot를 사용해 API를 구현했고, 테스트도 작성했습니다.',
+  )
+})
+
 test('내부 규칙 코드가 섞인 요약은 그대로 노출하지 않는다', () => {
   assert.equal(
     evidenceSummaryText('ASYNC_FUNCTION_DECLARATION 규칙을 충족했습니다.'),

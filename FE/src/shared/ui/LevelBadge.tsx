@@ -81,9 +81,7 @@ export function LevelLadder({
  * 보여줘야 표의 배지를 읽을 수 있다. 확정 디자인 `Final v2`도 Evidence 화면 아래에
  * 같은 줄을 둔다.
  *
- * 다만 각 단계의 **의미**는 등급 정책(S15P21E102-127)이 정한다. 확정 전이라
- * `LEVEL_MEANING`이 전부 `null`이고, 그동안은 값만 나열한다. 정책이 확정되면
- * constants만 채우면 이 줄에 설명이 따라 붙는다.
+ * 각 단계의 의미는 공통 상수에서 읽어, 범례와 도움말이 같은 설명을 사용한다.
  */
 export function LevelLegend() {
   return (
@@ -92,9 +90,7 @@ export function LevelLegend() {
         <span key={level} className="inline-flex items-center gap-2">
           <LevelLadder level={level} />
           <span className="text-[12.5px] font-bold text-brand-muted">{LEVEL_TEXT[level]}</span>
-          {LEVEL_MEANING[level] !== null && (
-            <span className="text-[12.5px] text-brand-faint">{LEVEL_MEANING[level]}</span>
-          )}
+          <span className="text-[12.5px] text-brand-faint">{LEVEL_MEANING[level]}</span>
         </span>
       ))}
     </div>

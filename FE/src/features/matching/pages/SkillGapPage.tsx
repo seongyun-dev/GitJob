@@ -69,7 +69,7 @@ export function SkillGapPage() {
 
         {ready && (
           <>
-            <div className="gj-split">
+            <div>
               {groups.length === 0 ? (
                 <StateCard
                   kind="EMPTY"
@@ -97,26 +97,6 @@ export function SkillGapPage() {
                 </div>
               )}
 
-              <div className="grid gap-4">
-                <section className="rounded-[18px] border border-brand-line bg-white p-[22px] shadow-[0_10px_28px_rgba(25,47,81,0.07)]">
-                  <p className="text-[11px] font-extrabold tracking-[0.16em] text-brand-600">
-                    다음 단계
-                  </p>
-                  <h2 className="mt-1.5 text-[17px] leading-[1.3] font-[750] tracking-[-0.03em] text-brand-ink">
-                    다음 기술 추천
-                  </h2>
-                  <p className="mt-2 text-[12.5px] leading-[1.65] text-brand-muted">
-                    공고 선택지가 많이 늘어나는 기술부터 확인할 수 있습니다.
-                  </p>
-
-                  <Link
-                    to="/recommendations"
-                    className="gj-clickable-primary mt-4 block rounded-xl bg-[linear-gradient(135deg,#2F5EEB,#5B8DFF)] px-4 py-3 text-center text-[13.5px] font-[750] text-white shadow-[0_12px_26px_rgba(47,94,235,0.24)]"
-                  >
-                    다음 학습 기술 보기
-                  </Link>
-                </section>
-              </div>
             </div>
           </>
         )}

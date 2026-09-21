@@ -6,9 +6,8 @@ import type { EvidenceLevel } from '@/shared/types/domain'
  * **여기만 고치면 되도록 한 곳에 모은다.** Level의 의미를 정하는 것은 FE가 아니라
  * Evidence 등급 정책(S15P21E102-127, 진행 중)이고, 그 정책이 아직 확정되지 않았다.
  *
- * 확정 전까지 화면에는 `L0`~`L3` **값만** 쓴다. "없음 / 노출 / 구현 / 운영"이나
- * "선언 / 설정·사용 / 구현 / 반복 구현" 같은 의미 설명을 production copy로 굳히지
- * 않는다. 확정되면 아래 `LEVEL_MEANING`만 채우고 표시 지점은 그대로 두면 된다.
+ * Level은 개발자 숙련도나 점수가 아니라 저장소에서 확인한 코드 근거의 단계다.
+ * 사용자가 숫자만 보고 의미를 추측하지 않도록 공통 설명을 이 파일에서 관리한다.
  */
 
 /** 배지에 찍히는 값. 정책과 무관하게 Level 식별자 자체다. */
@@ -20,16 +19,14 @@ export const LEVEL_TEXT: Readonly<Record<EvidenceLevel, string>> = {
 }
 
 /**
- * Level의 의미 설명. 정책 확정 전이라 비워 둔다.
- *
- * `null`인 동안 화면은 설명을 렌더하지 않는다. 빈 문자열이 아니라 `null`인 이유는
- * "설명이 없다"와 "설명이 빈 값이다"를 구분하기 위해서다.
+ * 사용자에게 보여 주는 Level 설명. 실행 성공이나 실제 운영 경험을 주장하지 않고,
+ * 정적 분석으로 확인한 코드 범위만 설명한다.
  */
-export const LEVEL_MEANING: Readonly<Record<EvidenceLevel, string | null>> = {
-  L0: null,
-  L1: null,
-  L2: null,
-  L3: null,
+export const LEVEL_MEANING: Readonly<Record<EvidenceLevel, string>> = {
+  L0: '의존성이나 라이브러리 선언이 확인된 단계',
+  L1: '설정 또는 초기화 코드가 확인된 단계',
+  L2: '실제 기능에 사용한 구현 코드가 확인된 단계',
+  L3: '설정·튜닝·고급 기능 등 심화 구현이 확인된 단계',
 }
 
 /**

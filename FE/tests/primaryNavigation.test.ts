@@ -11,7 +11,7 @@ test('사용자 내비게이션은 내부 영문 용어 대신 행동을 설명�
 
   assert.equal(labels.includes('Skill Gap'), false)
   assert.equal(labels.includes('What-if'), false)
-  assert.ok(labels.includes('부족한 기술'))
+  assert.equal(labels.includes('부족한 기술'), false)
   assert.ok(labels.includes('배웠을 때 변화'))
 })
 
@@ -25,7 +25,6 @@ test('모든 핵심 사용자 화면은 내비게이션 목적지로 남는다',
     '/evidence',
     '/jobs',
     '/roles',
-    '/skill-gap',
     '/recommendations',
     '/what-if',
     '/trends',

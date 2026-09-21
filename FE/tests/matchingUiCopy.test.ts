@@ -23,6 +23,17 @@ test('부족한 기술 화면은 행동할 수 없는 미판정 분류표를 숨
   assert.equal(page.includes('LEGEND'), false)
 })
 
+test('공고 화면과 부족한 기술 화면은 다음 단계 유도 카드를 중복 노출하지 않는다', () => {
+  const jobMatch = source('pages/JobMatchPage.tsx')
+  const jobDetail = source('pages/JobPostingDetailPage.tsx')
+  const skillGap = source('pages/SkillGapPage.tsx')
+
+  assert.equal(jobMatch.includes('to="/recommendations"'), false)
+  assert.equal(jobMatch.includes('to="/skill-gap"'), false)
+  assert.equal(jobDetail.includes('to="/skill-gap"'), false)
+  assert.equal(skillGap.includes('to="/recommendations"'), false)
+})
+
 test('추천과 배웠을 때 변화의 빈 상태는 다음 행동을 제공한다', () => {
   const recommendation = source('pages/RecommendationPage.tsx')
   const whatIf = source('pages/WhatIfPage.tsx')

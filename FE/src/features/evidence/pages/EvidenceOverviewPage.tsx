@@ -18,6 +18,7 @@ import { buildEvidenceOverviewPanels } from '@/features/evidence/model/overview'
 import { LEVEL_STEPS } from '@/shared/constants/evidenceLevel'
 import { technologyDisplayName } from '@/shared/presentation/userFacingLabels'
 import { EvidenceLevel } from '@/shared/ui/EvidenceLevel'
+import { EvidenceLevelGuide } from '@/shared/ui/EvidenceLevelGuide'
 import { Modal } from '@/shared/ui/Modal'
 import { StatStrip } from '@/shared/ui/StatStrip'
 import { PageHero } from '@/shared/ui/PageHero'
@@ -146,7 +147,11 @@ export function EvidenceOverviewPage() {
         <StatStrip items={stats} density="compact" />
       </div>
 
-      <div className="gj-split mt-4">
+      <div className="mt-3 flex justify-end">
+        <EvidenceLevelGuide />
+      </div>
+
+      <div className="gj-split mt-3">
         <EvidenceTable>
           <TechnologyRows
             loading={profile.isPending}

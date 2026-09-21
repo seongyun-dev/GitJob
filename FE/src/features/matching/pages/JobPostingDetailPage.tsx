@@ -191,14 +191,6 @@ export function JobPostingDetailPage() {
               )}
             </DataRegion>
 
-            <DataRegion title="부족한 기술">
-              <Link
-                to="/skill-gap"
-                className="gj-clickable block rounded-xl border border-brand-line bg-white px-4 py-3 text-center text-[13.5px] font-[750] text-brand-ink"
-              >
-                부족한 기술 보기 →
-              </Link>
-            </DataRegion>
           </div>
         </div>
       )}
