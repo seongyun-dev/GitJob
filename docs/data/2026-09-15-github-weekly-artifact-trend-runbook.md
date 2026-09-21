@@ -231,6 +231,81 @@ source 등록(최대 8개)과 worker 재시작, bounded export 생성, Kafka 완
 확인해 기존 head가 대상 주차와 겹치지 않는지 판정하기 전에는 canary를 실행하지
 않는다.
 
+### 4단계 — weekly PUBLIC 게시와 intake 운영 (S15P21E102-367)
+
+3단계는 bundle 바이트까지만 만든다. 그것을 HDFS에 올리고 C가 읽게 만들고 export 입력을
+꺼내는 연결층이 `AI/github/weekly_public_publish_cli.py`다.
+
+2026-09-20에 2026-03-09~03-30 네 주를 게시한 도구는 저장소 밖에 있었고 지금은 없다. 이 CLI는
+그 도구를 복원한 것이 아니라, **남아 있는 산출물과 바이트 동일성이 검증된 primitive**로 다시 만든
+것이다. 03-09 발행본의 `failures.json` 141바이트가 `_canonical()` 출력과 정확히 일치하는 것을
+테스트로 고정해 두었다.
+
+#### export의 `--repo-ids`는 bundle이 아니라 PUBLIC 결과다
+
+이걸 틀리면 주차가 조용히 사라진다. `export_c_archive_activity`는
+`c-public-published-result/v1` 과 `c-public-repo-analysis/v1|v2` 일 때만
+`included_in_denominator`가 false인 행을 버린다. `github-repo-snapshot/v1`(= bundle의
+`snapshot.json`)을 주면 **후보 전체의 repo_id**를 쓴다. bundle은 그 주 cohort 후보 전부라
+C가 denominator에서 제외한 repo가 수천 개 섞여 있고, 그 id가 export에 들어가면
+`WeeklyActivityConsumer`가 `weekly export rows are outside selected PUBLIC_GITHUB`로 거절한다.
+**거절은 오프셋을 커밋하므로 그 주차 이벤트는 재시도되지 않고 소실된다.**
+
+그래서 CLI는 `ComputeStore.select_public_snapshot(registry_version, include_partial, week_start)`이
+돌려준 payload를 그대로 파일로 쓴다. 소비자가 head를 고를 때 쓰는 바로 그 호출이므로,
+export가 쓰는 denominator와 소비자가 검증할 denominator가 같은 것임이 보장된다.
+
+#### 게시 순서와 멱등성
+
+`snapshot.json` → `run-summary.json` → `failures.json` → **`_SUCCESS.json` 마지막**이다.
+`load_published_snapshot`이 marker를 먼저 읽고 거기 적힌 sha256으로 나머지를 검증하므로,
+marker의 존재가 "이 marker가 가리키는 바이트는 이미 전부 있다"는 뜻이 되어야 한다.
+중간에 죽으면 marker가 없어 발행본으로 인정되지 않는다.
+`store_immutable`이 바이트를 비교하므로 같은 입력 재실행은 아무것도 쓰지 않고,
+입력이 달라졌으면 **marker 이전에** `FileExistsError`로 멈춘다. 그때는 덮어쓰지 말고
+새 `--dataset-snapshot-id`로 간다.
+
+#### 주차 하나를 처리하는 11단계
+
+1. **aggregate 확인** — `.../repo_activity_weekly/week=<월요일>/`에 `_SUCCESS`와
+   `_SUCCESS.json`이 있고 `row_count`가 기록돼 있는지 본다. `_SUCCESS.json`이 없으면
+   완료 이벤트도 나가지 않은 주차다.
+2. **bundle dry-run** — `--dry-run`으로 record_count와 객체 크기만 확인한다. 아무것도 쓰지 않는다.
+3. **immutable publish** — `--webhdfs-url`을 주고 실행한다. 출력 JSON의 `republished`가
+   true면 이미 같은 바이트가 있었다는 뜻이다.
+4. **`C_INTAKE_CONFIG`에 source 등록** — 주차마다 항목 하나다. `root_uri`는 방금 게시한 루트,
+   `artifact_root_uris`에는 `hdfs:///gitjob/analysis_input/github/repo_snapshot` 하나면
+   29개 artifact root를 전부 덮는다. **`checkpoint_dir`는 주차마다 반드시 달라야 한다.**
+5. **worker restart** — config는 프로세스 기동 시 읽는다. CLI는 이 단계를 절대 대신하지 않는다.
+6. **PUBLIC head COMPLETED 확인** — `GET /internal/v1/c/intake/status`의 `public_sources`에서
+   해당 index가 `COMPLETED`가 될 때까지 기다린다. 2026-09-20 실측으로 주차당 약 30분이었다.
+7. **export repo-id source 생성** — CLI를 `--repo-ids-out`과 `--registry-version`으로 다시
+   실행한다. head가 아직 없으면 파일을 만들지 않고 종료코드 3으로 끝난다.
+8. **Spark archive export** — `Infra/spark/jobs/export_c_archive_activity.py`를
+   `--granularity WEEK`, `--period <월요일>`, `--repo-ids <7단계 파일>`로 실행한다.
+   Spark 이미지에는 `AI/`가 없으므로 이 단계만 별도다.
+9. **Kafka offset 전진 확인** — 소비자는 재시작하지 않는다. 최대
+   `WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS`(기본 900초) 안에 backoff에서 깨어나
+   막혀 있던 오프셋을 다시 받는다. `CURRENT_OFFSET`이 1 늘고 `LAG`이 1 줄면 성공이다.
+10. **Trend 확인** — 그 주 WEEK point가 생겼는지, value가 `active_repo_count`이고
+    denominator가 `sample_repo_count`인지 본다.
+11. **다음 batch** — 위를 반복한다.
+
+#### batch 크기는 8이 아니라 4로 간다
+
+`public_sources` 상한은 8이지만 8을 채우지 않는다. **항목 하나가 검증에 실패하면 워커 전체가
+죽고 Historical 폴링까지 같이 멈춘 전례가 있다**(S15P21E102-286의 주석). 한 번에 넣는 수를
+줄이면 그 폭발 반경이 줄고, aggregate 배치도 4주 단위였으므로 대조하기도 쉽다.
+그래서 04-06부터 08-17까지 20주는 **4주씩 5회**로 나눈다. 각 회차마다 9단계에서 오프셋이
+4만큼 전진한 것을 확인한 뒤 다음으로 넘어간다.
+
+첫 회차는 4주가 아니라 **2026-04-06 한 주만** 돌리는 canary다.
+
+#### 이 CLI가 하지 않는 것
+
+`C_INTAKE_CONFIG`를 고치지 않고, 워커를 재시작하지 않고, Spark를 실행하지 않는다.
+config 변경과 재시작은 공용 워커의 상태를 바꾸는 일이라 명령 한 줄 뒤에 숨기지 않는다.
+
 ## 오프라인 검증 계약
 
 `AI/tests/test_weekly_artifact_resolver.py`는 다음을 검증한다.
@@ -256,6 +331,20 @@ source 등록(최대 8개)과 worker 재시작, bounded export 생성, Kafka 완
 - 실제 `load_published_snapshot()`이 생성물을 그대로 받아들인다
 - `--artifact-uri-prefix` 밖의 artifact URI를 거부한다
 - CLI가 기존 출력 디렉터리를 덮어쓰지 않고, 다른 주차 activity 행을 거부한다
+
+`AI/tests/test_weekly_public_publish_cli.py`는 4단계를 검증한다.
+
+- `_SUCCESS.json`이 항상 마지막에 저장된다
+- 같은 바이트 재실행은 아무것도 새로 쓰지 않는다
+- 같은 경로에 다른 바이트면 marker 이전에 거절되고 기존 marker가 그대로 남는다
+- marker 이전 실패는 유효한 발행본을 남기지 않는다
+- `--dry-run`은 한 바이트도 쓰지 않는다
+- 그 주 PUBLIC head가 없으면 repo-id source 파일을 만들지 않는다
+- head가 있으면 선택된 payload를 통째로 저장하고, `included_in_denominator`가 false인
+  행도 보존해 exporter가 직접 거를 수 있게 한다
+- 인식할 수 없는 schema의 payload는 거절한다
+- 월 단위 PUBLIC은 주차를 cover하지 못한다(S15P21E102-337 selector 직접 검증)
+- 2026-03-09 운영 발행본의 `failures.json` 141바이트와 직렬화가 일치한다
 
 Production에서 최종 Trend PASS를 기록하려면 별도로 Weekly `_SUCCESS.json`,
 `PUBLIC_GITHUB` compatible head, C export manifest/metadata/data checksum 및

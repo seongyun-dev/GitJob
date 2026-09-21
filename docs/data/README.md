@@ -1304,6 +1304,19 @@ C조 범위다.
 - 범위: bundle 생성까지. HDFS publish / intake 등록 / export / Kafka 처리는 별도 승인 절차
 - 상세: [GitHub Weekly → Artifact → Trend 연결 Runbook](2026-09-15-github-weekly-artifact-trend-runbook.md) 3단계
 
+## Weekly PUBLIC 공식 게시 CLI 및 intake 운영 경로
+
+- Jira: `S15P21E102-367`
+- 목적: 2026-09-20에 B1 4주를 게시한 저장소 밖 wrapper가 유실돼, 남은 주차를 같은 방식으로 게시할 수 없었다. 검증된 primitive만 조합해 repo 안에 재현 가능한 경로를 만든다
+- 도구: `AI/github/weekly_public_publish_cli.py` — bundle 생성 → WebHDFS immutable 게시(`_SUCCESS.json` 마지막) → 그 주 PUBLIC head 조회 → export용 repo-id source 저장
+- **export `--repo-ids`는 반드시 PUBLIC 결과**다. bundle의 `snapshot.json`(`github-repo-snapshot/v1`)을 주면 exporter가 denominator로 거르지 않아 후보 전체가 export에 들어가고, 소비자가 REJECTED 후 **오프셋을 커밋해 주차 이벤트가 소실된다**
+- head 조회는 `ComputeStore.select_public_snapshot`으로 한다. 소비자가 쓰는 바로 그 호출이라 export와 검증이 같은 head를 본다
+- intake는 스캔하지 않는다. `C_INTAKE_CONFIG`(`c-intake-config/v1`)의 `public_sources`에 **발행본 하나당 항목 하나**, 상한 8, `checkpoint_dir`는 항목마다 고유해야 한다. config 변경과 worker restart는 CLI가 하지 않고 runbook 단계로 남긴다
+- batch는 상한 8이 아니라 **4주**로 간다. 잘못된 항목 하나가 워커 전체 폴링을 막은 전례가 있다(`-286`)
+- 검증: 2026-03-09 운영 발행본 `failures.json` 141바이트와 직렬화 일치, 신규 테스트 11건
+- 범위: 코드·테스트·runbook까지. Production 게시/실행은 별도 승인
+- 상세: [GitHub Weekly → Artifact → Trend 연결 Runbook](2026-09-15-github-weekly-artifact-trend-runbook.md) 4단계
+
 ## 15. 원문 출처
 
 - [요구사항 명세서](https://app.notion.com/p/db40dff912cf829e888b0141c8b5fd8d)
