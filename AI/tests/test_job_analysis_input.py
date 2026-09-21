@@ -402,6 +402,125 @@ def test_jobkorea_v3_full_snapshot_must_finish_every_scope(tmp_path):
     )
 
 
+# --- S15P21E102-370: reconciled detail errors are publishable for any source ---
+#
+# 상세 조회 직전에 공고가 내려가면 목록에는 있고 상세는 404 다. 수집기는 그 공고를
+# 버리지 않고 BLOCKED 레코드로 보존하므로 데이터 누락이 없다. 그런데 게이트가 이
+# reconciliation 을 JobKorea v3 active_listing 에서만 인정해, 같은 방식으로 보존한
+# Saramin run 이 DETAIL_COLLECTION_FAILED 로 막혔다.
+#
+# 통과 조건은 출처가 아니라 **보존 여부**다. 신고한 실패 수가 bound batch 에 남은
+# BLOCKED 레코드 수와 같고, manifest 가 세는 레코드 수가 batch 실물과 같아야 한다.
+
+
+def _as_reconciled_detail_errors(
+    run_dir: Path, *, records: int, blocked: int, declared_errors: int | None = None
+) -> None:
+    """Rewrite the run so `records` rows exist and `blocked` of them are BLOCKED."""
+
+    rows = [
+        {"body_status": "BLOCKED" if index < blocked else "TEXT_AVAILABLE"}
+        for index in range(records)
+    ]
+    batch = json.dumps({"records": rows}, ensure_ascii=False).encode()
+    (run_dir / "job_analysis_input.json").write_bytes(batch)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    counts = dict(manifest["counts"])
+    counts["records"] = records
+    counts["detail_errors"] = blocked if declared_errors is None else declared_errors
+    manifest["counts"] = counts
+    manifest["output_sha256"] = {
+        "job_analysis_input.json": hashlib.sha256(batch).hexdigest()
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+
+def test_saramin_reconciled_detail_errors_can_be_published(tmp_path):
+    """The production shape of SARAMIN-20260921T055545Z: 1 error, 1 BLOCKED row."""
+
+    run_dir = _run_dir(tmp_path, records=3, detail_errors=1)
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=1)
+
+    assert release_blockers(run_dir, source=SOURCE, pipeline_run_id=RUN_ID) == ()
+
+
+def test_saramin_detail_errors_without_a_blocked_record_are_refused(tmp_path):
+    """A producer must not report failures while dropping the postings."""
+
+    run_dir = _run_dir(tmp_path, records=3, detail_errors=1)
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=0, declared_errors=1)
+
+    assert "DETAIL_COLLECTION_FAILED" in release_blockers(
+        run_dir, source=SOURCE, pipeline_run_id=RUN_ID
+    )
+
+
+def test_saramin_detail_errors_must_equal_the_blocked_count(tmp_path):
+    """Partially preserved failures are still unexplained losses."""
+
+    run_dir = _run_dir(tmp_path, records=3, detail_errors=2)
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=1, declared_errors=2)
+
+    assert "DETAIL_COLLECTION_FAILED" in release_blockers(
+        run_dir, source=SOURCE, pipeline_run_id=RUN_ID
+    )
+
+
+def test_saramin_reconciliation_requires_the_manifest_record_count_to_match(tmp_path):
+    """Counting rows the batch does not carry hides a drop behind a matching pair."""
+
+    run_dir = _run_dir(tmp_path, records=3, detail_errors=1)
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=1)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["counts"]["records"] = 4
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert "DETAIL_COLLECTION_FAILED" in release_blockers(
+        run_dir, source=SOURCE, pipeline_run_id=RUN_ID
+    )
+
+
+def test_reconciled_detail_errors_do_not_excuse_invalid_records(tmp_path):
+    run_dir = _run_dir(tmp_path, records=3, detail_errors=1, invalid_records=1)
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=1)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["counts"]["invalid_records"] = 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert "INVALID_SOURCE_RECORDS" in release_blockers(
+        run_dir, source=SOURCE, pipeline_run_id=RUN_ID
+    )
+
+
+def test_reconciled_detail_errors_do_not_excuse_an_early_stop(tmp_path):
+    run_dir = _run_dir(
+        tmp_path, records=3, detail_errors=1, stopped_reason="RATE_LIMITED"
+    )
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=1)
+
+    assert "COLLECTOR_STOPPED_EARLY" in release_blockers(
+        run_dir, source=SOURCE, pipeline_run_id=RUN_ID
+    )
+
+
+def test_reconciled_detail_errors_do_not_excuse_an_unverified_batch(tmp_path):
+    """Reconciliation reads the batch, so an unbound batch must still be refused."""
+
+    run_dir = _run_dir(tmp_path, records=3, detail_errors=1)
+    _as_reconciled_detail_errors(run_dir, records=3, blocked=1)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["output_sha256"] = {"job_analysis_input.json": "0" * 64}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert "BATCH_CHECKSUM_MISMATCH" in release_blockers(
+        run_dir, source=SOURCE, pipeline_run_id=RUN_ID
+    )
+
+
 def test_publisher_from_env_requires_webhdfs():
     assert publisher_from_env({}) is None
     assert publisher_from_env({"WEBHDFS_URL": "   "}) is None

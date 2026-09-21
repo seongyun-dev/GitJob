@@ -170,21 +170,24 @@ def _count(manifest: Mapping[str, object], field_name: str) -> int:
 
 
 def _record_local_detail_errors(manifest: Mapping[str, object], batch: bytes) -> bool:
-    """Recognize the bounded JobKorea v3 partial-detail contract.
+    """Recognize a detail failure that was preserved rather than dropped.
 
     A detail error is publishable only when every reported failure remains as a
     BLOCKED record in the bound batch.  This prevents a producer from declaring
     errors while silently dropping the affected postings.
+
+    <h2>왜 출처를 보지 않는가 · 티켓 S15P21E102-370</h2>
+
+    이 판정은 JobKorea v3 active_listing 에서만 인정됐다. 그런데 보존됐는지 아닌지는
+    누가 수집했느냐와 무관하다 — 목록에 있던 공고가 상세 조회 직전에 내려가 404 가
+    나는 것은 어느 사이트에서나 일어나고, 수집기가 그것을 BLOCKED 로 남겼다면 데이터는
+    빠지지 않았다. 실제로 Saramin run 이 1건을 그렇게 보존하고도 막혔다.
+
+    그래서 출처 조건을 뺀다. 느슨해지는 것은 없다. 통과 여부는 여전히 아래 세 가지가
+    전부 맞을 때만이고, 그 셋은 "신고한 실패가 전부 배치에 남아 있다"는 같은 말이다.
+    배치 바이트는 이 함수에 닿기 전에 manifest 의 sha256 과 대조된다.
     """
 
-    source = manifest.get("source")
-    if (
-        manifest.get("source_site") != "JOBKOREA"
-        or manifest.get("collector_version") != "jobkorea-crawler/v3"
-        or not isinstance(source, Mapping)
-        or source.get("mode") != "active_listing"
-    ):
-        return False
     try:
         payload = json.loads(batch)
     except (TypeError, ValueError, UnicodeDecodeError):
