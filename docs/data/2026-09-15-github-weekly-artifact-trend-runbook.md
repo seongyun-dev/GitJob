@@ -265,6 +265,25 @@ marker의 존재가 "이 marker가 가리키는 바이트는 이미 전부 있�
 입력이 달라졌으면 **marker 이전에** `FileExistsError`로 멈춘다. 그때는 덮어쓰지 말고
 새 `--dataset-snapshot-id`로 간다.
 
+#### 0단계 — week_activity 입력 만들기 (S15P21E102-369)
+
+`weekly_public_publish_cli --week-activity`가 읽을 파일은
+`Infra/spark/jobs/export_weekly_cohort_activity.py`가 만든다. 고정 cohort와 그 주
+aggregate를 **left semi join**해서 `repo_id`/`event_count`/`week_start` NDJSON을 쓴다.
+
+left join이면 안 된다. aggregate는 event groupBy라 그 주 활동이 없는 repo는 행이 없고
+(2026-03-09 aggregate 3,854,460행의 `event_count` 최솟값 1, 0건 없음), left join은
+활동 0인 repo에 0을 만들어 넣어 그 주 후보를 부풀린다.
+
+**cohort는 2026-03-09 발행본을 바이트까지 재현한 조합으로 고정한다.**
+
+- 소스는 월별 Top10k 스냅샷 **202604·202605·202606·202607·202608** 다섯 개다. 202603은 한 건도 기여하지 않았으므로 넘기지 않는다
+- **최신 월부터** 넘긴다. `select_cohort_records`가 먼저 본 레코드를 남기기 때문이다. 발행본 5,089건 **전부**가 그 repo를 담은 가장 최신 스냅샷에서 왔다(5,089/5,089, 예외 0). 오래된 순으로 넘기면 다른 발행본이 나온다
+- 멤버십은 그 다섯 스냅샷 아래 **artifact 디렉터리가 있는 repo**(10,211)다. 레코드 전체(18,575)를 넘기면 후보가 5,741로 부풀고, 여섯 번째 스냅샷(202603)까지 포함하면 5,090이 되어 1건 어긋난다
+
+이 조합으로 2026-03-09를 재생성하면 semijoin 5,112행 → 발행본 5,089건이고,
+`snapshot.json`·`run-summary.json`·`failures.json`·`_SUCCESS.json` **네 개가 모두 운영본과 바이트 동일**하다.
+
 #### 주차 하나를 처리하는 11단계
 
 1. **aggregate 확인** — `.../repo_activity_weekly/week=<월요일>/`에 `_SUCCESS`와
