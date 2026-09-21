@@ -711,6 +711,7 @@ def build_recommendations(
     *,
     user_id: str,
     analysis_id: str,
+    demand_snapshot: DemandSnapshot | None = None,
     prerequisites: PrerequisiteSnapshot | None = None,
     trend_lookup: Callable[[tuple[str, ...]], "TrendTieBreakBasis | None"]
     | None = None,
@@ -737,7 +738,28 @@ def build_recommendations(
     calculation_status = CohortStatus.for_size(
         len(calculation_jobs), cohort.criteria.min_jobs
     )
-    demand = aggregate_demand(cohort)
+    calculated_demand = aggregate_demand(cohort)
+    if demand_snapshot is not None:
+        # Projection restores only the selected matching rows. Its paired Demand
+        # snapshot still carries the full input/excluded/review accounting that
+        # the legacy cohort computed before narrowing the rows. The recommendation
+        # may reuse those scope counts only when every calculation-bearing field
+        # agrees with the restored cohort.
+        ignored_scope_counts = {
+            "input_count",
+            "excluded_count",
+            "review_count",
+        }
+        calculated_basis = calculated_demand.model_dump(mode="json")
+        resolved_basis = demand_snapshot.model_dump(mode="json")
+        for field in ignored_scope_counts:
+            calculated_basis.pop(field, None)
+            resolved_basis.pop(field, None)
+        if calculated_basis != resolved_basis:
+            raise ValueError("resolved Demand does not match the recommendation cohort")
+        demand = demand_snapshot
+    else:
+        demand = calculated_demand
     demand_ids = {row.tech_id for row in demand.technologies}
     prerequisite_rules = {rule.tech_id: rule for rule in prerequisites.rules}
     relevant_prerequisites = {
@@ -812,8 +834,8 @@ def build_recommendations(
                         )
                     elif tech not in complete_level_ids:
                         data_gaps.add(f"PERSONAL_LEVEL_SCOPE_INCOMPLETE:{tech}")
-    if cohort.review_count:
-        data_gaps.add(f"COHORT_RECORDS_REQUIRE_REVIEW:{cohort.review_count}")
+    if demand.review_count:
+        data_gaps.add(f"COHORT_RECORDS_REQUIRE_REVIEW:{demand.review_count}")
     if calculation_status is not CohortStatus.READY:
         data_gaps.add(f"COHORT_{calculation_status.value}")
 

@@ -220,6 +220,7 @@ def test_non_intake_job_resolve_returns_one_completed_cohort_demand_pair():
         "compute_versions": {
             **versions,
             "analysis_target_key": "current-user-result-target/v1",
+            "analysis_demand_snapshot": "analysis-demand-snapshot/v1",
         },
     }
     assert store.pair_calls == [job_stream(selected, versions)]

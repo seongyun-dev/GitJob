@@ -23,6 +23,10 @@ Worker의 [완료 manifest 자동 감시](c-compute-runtime.md)를 사용하는 
 공통 envelope는 `schema_version="c-compute-event/v1"`, `event_id`, `trace_id`,
 timezone을 포함한 `occurred_at`이다. JOB_BATCH는 `batch`, `criteria`를 추가하고,
 ANALYSIS는 `user_id`, `analysis_id`, `cohort_snapshot_id`, `evidence`를 추가한다.
+resolve의 `compute_versions.analysis_demand_snapshot`이
+`analysis-demand-snapshot/v1`이면 같은 응답의 `demand_snapshot_id`도 전달한다. C는
+선택된 공고만 복원한 Projection cohort로 추천을 계산하되, 입력·제외·검토 건수는 이
+원자적 Demand 쌍에서 가져온다. capability가 없는 구 C에는 필드를 보내지 않는다.
 나머지 필드는 해당 모델과 [실행 API 계약](c-compute-runtime.md)을 따른다.
 
 완료 처리자는 event_id와 occurred_at을 최초 완료 이벤트에 저장해 재전달에 재사용한다.

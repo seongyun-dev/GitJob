@@ -410,11 +410,12 @@ class CComputeClientTest {
                 Response.of(200, "{\"message\":\"ok\",\"data\":{}}"));
 
         client().post("/internal/v1/c/analyses/completed",
-                analysisCompleted(null, null), Object.class);
+                analysisCompleted(null, null, null), Object.class);
 
         assertThat(lastBody.get())
                 .doesNotContain("\"target_key\"")
                 .doesNotContain("\"projection_version_id\"")
+                .doesNotContain("\"demand_snapshot_id\"")
                 .contains("\"trace_id\":null")
                 .contains("\"data_gaps\":[]");
     }
@@ -426,20 +427,23 @@ class CComputeClientTest {
                 Response.of(200, "{\"message\":\"ok\",\"data\":{}}"));
 
         client().post("/internal/v1/c/analyses/completed",
-                analysisCompleted("BACKEND|서울|신입", "jp-1"), Object.class);
+                analysisCompleted("BACKEND|서울|신입", "jp-1", "c-demand"), Object.class);
 
         assertThat(lastBody.get())
                 .contains("\"target_key\":\"BACKEND|서울|신입\"")
-                .contains("\"projection_version_id\":\"jp-1\"");
+                .contains("\"projection_version_id\":\"jp-1\"")
+                .contains("\"demand_snapshot_id\":\"c-demand\"");
     }
 
-    private AnalysisCompleted analysisCompleted(String targetKey, String projectionVersionId) {
+    private AnalysisCompleted analysisCompleted(String targetKey, String projectionVersionId,
+                                                 String demandSnapshotId) {
         EvidencePayload evidence = new EvidencePayload(
                 EvidencePayload.SCHEMA_VERSION, "7", "analysis-1", "registry-1",
                 "level-1", "rule-1", "COMPLETE", List.of(), List.of(), List.of());
         return new AnalysisCompleted(
                 AnalysisCompleted.SCHEMA_VERSION, "event-1", null, Instant.EPOCH,
-                "7", "analysis-1", "cohort-1", targetKey, projectionVersionId, evidence);
+                "7", "analysis-1", "cohort-1", targetKey, projectionVersionId,
+                demandSnapshotId, evidence);
     }
 
     private record SampleEvent(String schemaVersion, String eventId, Instant occurredAt,

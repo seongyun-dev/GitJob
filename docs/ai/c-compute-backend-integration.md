@@ -99,9 +99,14 @@ GitHub 사용자 분석이 최종 성공 또는 계약상 허용된 부분 성�
 `POST /internal/v1/c/analyses/completed`를 호출한다.
 
 - `event_id`는 `userId + analysisId + cohortSnapshotId + Evidence version`에서 B가 한 번
-  만들고 재시도에도 같은 값을 쓴다.
+  만들고 재시도에도 같은 값을 쓴다. Demand capability를 사용하면
+  `demand_snapshot_id`도 멱등 키에 포함해 구 BE가 먼저 만든 event와 충돌하지 않는다.
 - `user_id`는 브라우저 입력이 아니라 로그인 사용자에서 정한다.
 - `cohort_snapshot_id`는 바로 앞 resolve 응답을 쓴다.
+- resolve가 `analysis_demand_snapshot=analysis-demand-snapshot/v1` capability를 알리면
+  같은 응답의 `demand_snapshot_id`를 함께 보낸다. Projection의 선택 공고와 전체
+  입력·제외·검토 수를 서로 다른 회차에서 섞지 않는다. `projection_version_id`가 있는
+  완료 event에 이 Demand 참조가 없으면 C는 422로 거절한다.
 - Evidence v4의 개인 종합은 top-level `personal_assessments`에 둔다.
 - repository 기술마다 `personal_level`을 중복해서 넣지 않는다.
 - `assessment_ceiling`, `attribution_status`, `missing_scope`를 보존한다.

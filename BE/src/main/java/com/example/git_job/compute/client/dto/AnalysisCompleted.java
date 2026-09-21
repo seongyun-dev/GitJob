@@ -29,6 +29,8 @@ public record AnalysisCompleted(
         @JsonInclude(JsonInclude.Include.NON_NULL) String targetKey,
         /** Phase 2에서 개인 계산 입력을 고정하는 PUBLISHED Projection identity. */
         @JsonInclude(JsonInclude.Include.NON_NULL) String projectionVersionId,
+        /** resolve에서 cohort와 원자적으로 선택한 수요 기준. capability가 있을 때만 전송한다. */
+        @JsonInclude(JsonInclude.Include.NON_NULL) String demandSnapshotId,
         EvidencePayload evidence
 ) {
 
@@ -40,7 +42,16 @@ public record AnalysisCompleted(
                              String cohortSnapshotId, String projectionVersionId,
                              EvidencePayload evidence) {
         this(schemaVersion, eventId, traceId, occurredAt, userId, analysisId,
-                cohortSnapshotId, null, projectionVersionId, evidence);
+                cohortSnapshotId, null, projectionVersionId, null, evidence);
+    }
+
+    /** demand Snapshot capability 이전 호출부에 대한 additive rolling-deploy 호환 생성자. */
+    public AnalysisCompleted(String schemaVersion, String eventId, String traceId,
+                             Instant occurredAt, String userId, String analysisId,
+                             String cohortSnapshotId, String targetKey,
+                             String projectionVersionId, EvidencePayload evidence) {
+        this(schemaVersion, eventId, traceId, occurredAt, userId, analysisId,
+                cohortSnapshotId, targetKey, projectionVersionId, null, evidence);
     }
 
     /**

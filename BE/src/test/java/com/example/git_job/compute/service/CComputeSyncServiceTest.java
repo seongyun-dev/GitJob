@@ -196,6 +196,10 @@ class CComputeSyncServiceTest {
                         "job_projection", "jp-" + "a".repeat(64)));
         String afterTarget = CComputeSyncService.eventId(USER_ID, EVIDENCE_VERSION, COHORT,
                 "FRONTEND|서울|신입", Map.of("runtime", "c/1.0"));
+        String beforeDemandPair = CComputeSyncService.eventId(USER_ID, EVIDENCE_VERSION, COHORT,
+                "BACKEND|서울|신입", Map.of("runtime", "c/1.0"));
+        String afterDemandPair = CComputeSyncService.eventId(USER_ID, EVIDENCE_VERSION, COHORT,
+                "BACKEND|서울|신입", DEMAND, Map.of("runtime", "c/1.0"));
 
         // Map 순서가 달라도 같아야 한다. 아니면 재시작마다 중복 계산이 생긴다.
         assertThat(first).isEqualTo(again).startsWith("ev-").hasSize(67);
@@ -203,6 +207,8 @@ class CComputeSyncServiceTest {
         assertThat(afterDeploy).isNotEqualTo(first);
         assertThat(afterProjection).isNotEqualTo(first);
         assertThat(afterTarget).isNotEqualTo(first);
+        // C 선배포 중 구 BE가 만든 event와 demand 쌍을 보내는 신 BE event가 충돌하지 않는다.
+        assertThat(afterDemandPair).isNotEqualTo(beforeDemandPair);
     }
 
     @Test
@@ -325,6 +331,7 @@ class CComputeSyncServiceTest {
         assertThat(event.schemaVersion()).isEqualTo("c-compute-event/v1");
         assertThat(event.userId()).isEqualTo("7");
         assertThat(event.cohortSnapshotId()).isEqualTo(COHORT);
+        assertThat(event.demandSnapshotId()).isNull();
         assertThat(event.targetKey()).isNull();
         assertThat(event.projectionVersionId()).isEqualTo(projection);
         assertThat(event.analysisId()).isEqualTo(event.evidence().analysisId());
@@ -348,6 +355,21 @@ class CComputeSyncServiceTest {
         assertThat(event.targetKey()).isEqualTo("BACKEND|서울|신입");
         assertThat(snapshot.computeContractVersion())
                 .isEqualTo(CComputeSyncService.COMPUTE_CONTRACT_VERSION);
+    }
+
+    @Test
+    @DisplayName("C가 demand Snapshot capability를 알리면 resolve한 정확한 쌍을 완료 event에 싣는다")
+    void sendsResolvedDemandSnapshotWhenCapabilityIsAvailable() {
+        stubResolve(Map.of("runtime", "c/1.0", "analysis_demand_snapshot",
+                "analysis-demand-snapshot/v1"));
+
+        service.synchronize(USER_ID).orElseThrow();
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).post(eq("/internal/v1/c/analyses/completed"), body.capture(),
+                eq(AnalysisCompleted.Result.class));
+        AnalysisCompleted event = (AnalysisCompleted) body.getValue();
+        assertThat(event.demandSnapshotId()).isEqualTo(DEMAND);
     }
 
     @Test

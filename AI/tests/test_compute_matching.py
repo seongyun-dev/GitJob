@@ -9,15 +9,16 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
+from test_job_cohort import batch, criteria, posting
+from test_job_input_union import output
+from test_recommendation_engine import make_analysis
+
 from job.cohort import JobCohort
 from job.input_union import prepare_input_union
 from job.matching import build_job_matching, restore_job_assessment
 from job.projection import materialize_job_projection
 from registry.mapper import RegistryMapper
-from test_compute_api import PREFIX, REGISTRY, TOKEN, event, snapshot_ref
-from test_job_cohort import batch, criteria, posting
-from test_job_input_union import output
-from test_recommendation_engine import make_analysis
 from worker.api import create_compute_app
 from worker.store import (
     Artifact,
@@ -303,6 +304,125 @@ def test_partial_matching_roundtrip_pages_detail_and_active_whatif(client):
         PREFIX + "/analyses/completed", json={**request, "trace_id": str(uuid4())}
     )
     assert repeated.json() == original.json()
+
+
+def test_analysis_uses_resolved_demand_basis_for_scope_counts(client):
+    store = client.matching_test_store
+    if not isinstance(store, MemoryStore):
+        pytest.skip("HTTP contract regression uses the in-memory snapshot double")
+
+    job_response = client.post(
+        PREFIX + "/job-batches/completed",
+        json=event(
+            batch=batch(posting("scope-counts", required=("Java",))).model_dump(
+                mode="json"
+            ),
+            criteria=criteria().model_dump(mode="json"),
+        ),
+    )
+    cohort_id = snapshot_ref(job_response, "COHORT")
+    original_demand_id = snapshot_ref(job_response, "DEMAND")
+    demand = dict(store.snapshots[original_demand_id]["payload"])
+    demand.update(input_count=6, excluded_count=4, review_count=1)
+    demand_id = "c-" + "d" * 64
+    store.snapshots[demand_id] = {
+        "snapshot_id": demand_id,
+        "kind": "DEMAND",
+        "owner": None,
+        "payload": demand,
+    }
+
+    response = client.post(
+        PREFIX + "/analyses/completed",
+        json=event(
+            user_id="user-1",
+            analysis_id="analysis-1",
+            cohort_snapshot_id=cohort_id,
+            demand_snapshot_id=demand_id,
+            evidence=levelled_evidence_payload(),
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+    result_id = snapshot_ref(response, "RECOMMENDATION")
+    result = store.snapshots[result_id]["payload"]
+    assert result["demand"]["input_count"] == 6
+    assert result["demand"]["excluded_count"] == 4
+    assert result["demand"]["review_count"] == 1
+    assert "COHORT_RECORDS_REQUIRE_REVIEW:1" in result["data_gaps"]
+
+
+def test_analysis_rejects_demand_from_another_cohort(client):
+    store = client.matching_test_store
+    if not isinstance(store, MemoryStore):
+        pytest.skip("HTTP contract regression uses the in-memory snapshot double")
+
+    job_response = client.post(
+        PREFIX + "/job-batches/completed",
+        json=event(
+            batch=batch(posting("wrong-demand", required=("Java",))).model_dump(
+                mode="json"
+            ),
+            criteria=criteria().model_dump(mode="json"),
+        ),
+    )
+    cohort_id = snapshot_ref(job_response, "COHORT")
+    original_demand_id = snapshot_ref(job_response, "DEMAND")
+    demand = dict(store.snapshots[original_demand_id]["payload"])
+    demand["cohort_id"] = "foreign-cohort"
+    demand_id = "c-" + "e" * 64
+    store.snapshots[demand_id] = {
+        "snapshot_id": demand_id,
+        "kind": "DEMAND",
+        "owner": None,
+        "payload": demand,
+    }
+
+    response = client.post(
+        PREFIX + "/analyses/completed",
+        json=event(
+            user_id="user-1",
+            analysis_id="analysis-1",
+            cohort_snapshot_id=cohort_id,
+            demand_snapshot_id=demand_id,
+            evidence=levelled_evidence_payload(),
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_INPUT"
+
+
+def test_projection_analysis_requires_its_resolved_demand_pair(client):
+    store = client.matching_test_store
+    if not isinstance(store, MemoryStore):
+        pytest.skip("HTTP contract regression uses the in-memory snapshot double")
+
+    cohort_id = snapshot_ref(
+        client.post(
+            PREFIX + "/job-batches/completed",
+            json=event(
+                batch=batch(posting("projection-without-demand")).model_dump(
+                    mode="json"
+                ),
+                criteria=criteria().model_dump(mode="json"),
+            ),
+        ),
+        "COHORT",
+    )
+    response = client.post(
+        PREFIX + "/analyses/completed",
+        json=event(
+            user_id="user-1",
+            analysis_id="analysis-1",
+            cohort_snapshot_id=cohort_id,
+            projection_version_id="jp-" + "a" * 64,
+            evidence=levelled_evidence_payload(),
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_INPUT"
 
 
 def test_v4_ceiling_roundtrips_through_saved_matching_projection(client):

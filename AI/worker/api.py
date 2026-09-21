@@ -99,6 +99,7 @@ class AnalysisCompleted(Event):
     user_id: Identifier
     analysis_id: Identifier
     cohort_snapshot_id: SnapshotId
+    demand_snapshot_id: SnapshotId | None = None
     evidence: EvidenceAnalysis
     target_key: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)] | None = None
     projection_version_id: Annotated[
@@ -111,6 +112,12 @@ class AnalysisCompleted(Event):
         if value is not None and any(ord(character) < 32 for character in value):
             raise ValueError("target_key contains a control character")
         return value
+
+    @model_validator(mode="after")
+    def projection_requires_resolved_demand(self) -> "AnalysisCompleted":
+        if self.projection_version_id is not None and self.demand_snapshot_id is None:
+            raise ValueError("Projection analysis requires its resolved Demand snapshot")
+        return self
 
 
 class PublicReposCompleted(Event):
@@ -1021,6 +1028,9 @@ def create_compute_app(
             # This is a transport capability, not computation identity. Keeping
             # it out of job_stream/input-union hashes avoids rebuilding snapshots.
             "analysis_target_key": "current-user-result-target/v1",
+            # B sends the exact resolved Demand pair back on analysis completion
+            # only when this capability is present, keeping rolling deploys safe.
+            "analysis_demand_snapshot": "analysis-demand-snapshot/v1",
         }
         if matching_compute_mode == "projection":
             projection_head = database().get_job_projection_head()
@@ -1511,6 +1521,13 @@ def create_compute_app(
             cohort = JobCohort.model_validate(
                 snapshot(event.cohort_snapshot_id, None, "COHORT")["payload"]
             )
+            demand = (
+                DemandSnapshot.model_validate(
+                    snapshot(event.demand_snapshot_id, None, "DEMAND")["payload"]
+                )
+                if event.demand_snapshot_id is not None
+                else None
+            )
             if event.projection_version_id != cohort.projection_version_id:
                 raise RuntimeError("event and cohort Projection identities differ")
             if cohort.registry_version != registry.registry_version:
@@ -1520,6 +1537,7 @@ def create_compute_app(
                 event.evidence,
                 user_id=event.user_id,
                 analysis_id=event.analysis_id,
+                demand_snapshot=demand,
                 trend_lookup=_weekly_trend_tiebreak(database()),
             )
             payload = result.model_dump(mode="json")
