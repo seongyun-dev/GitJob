@@ -450,6 +450,16 @@ services:
     image: ${WORKER_IMAGE:-gitjob/worker:local}
     profiles: [data]
     restart: unless-stopped
+    # C answers recommendation/matching reads and, at boot, ingests every
+    # PUBLIC source declared in `C_INTAKE_CONFIG`. Both are CPU-bound, and this
+    # container shares 4 vCPU with HDFS, Spark, and the archiver. On 2026-09-21
+    # an unbounded C worker took CPU from `spark-c1-archiver` until it had
+    # restarted four times. The ceiling is about twice the highest usage
+    # measured on this host (0.78 vCPU), so it bounds that tail without
+    # throttling ordinary work; the share decides nothing until the host is
+    # actually saturated, and then it decides in HDFS's favour.
+    cpus: "${WORKER_CPUS:-1.5}"
+    cpu_shares: ${WORKER_CPU_SHARES:-512}
     command: ["python", "-m", "worker"]
     environment:
       APP_ENV: ${APP_ENV:-docker}
@@ -709,6 +719,12 @@ services:
     hostname: hdfs-namenode
     profiles: [data]
     restart: unless-stopped
+    # Deliberately a share and not a `cpus` ceiling. HDFS must be able to use
+    # the whole host when it needs to -- a block report or a re-replication
+    # that is throttled turns a slow host into a cluster with dead DataNodes.
+    # A share costs nothing while the host is idle and only decides who yields
+    # when every container wants CPU at once, which is what a reboot is.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
     environment:
       HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
       HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
@@ -739,6 +755,8 @@ services:
     hostname: hdfs-datanode
     profiles: [data]
     restart: unless-stopped
+    # Same priority as the NameNode, and for the same reason; see above.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
     environment:
       HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
       HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
@@ -792,6 +810,8 @@ services:
     hostname: hdfs-datanode2
     profiles: [data]
     restart: unless-stopped
+    # Same priority as the NameNode, and for the same reason; see above.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
     environment:
       HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
       HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
@@ -821,6 +841,8 @@ services:
     hostname: hdfs-datanode3
     profiles: [data]
     restart: unless-stopped
+    # Same priority as the NameNode, and for the same reason; see above.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
     environment:
       HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
       HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
