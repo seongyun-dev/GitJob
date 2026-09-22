@@ -16,7 +16,7 @@
 const STAGES = [
   { label: '현재 EVIDENCE', hint: '지금 확인된 Level과 그 근거 파일' },
   { label: '목표 EVIDENCE', hint: '어떤 근거가 더 있으면 다음 Level인지' },
-  { label: '매칭 변화', hint: '필수 기술을 모두 충족하는 공고가 몇 건 늘어나는지' },
+  { label: '관련 공고', hint: '필수·우대에서 언급된 공고 수' },
   { label: '왜 추천하나', hint: '요구 빈도 · 선행 기술 충족 여부 등 판단 근거' },
   { label: '무엇을 하면 되나', hint: '근거를 만들 수 있는 구현 방향' },
 ] as const

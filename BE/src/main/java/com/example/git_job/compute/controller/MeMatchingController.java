@@ -128,11 +128,14 @@ public class MeMatchingController {
     public ResponseEntity<ApiResponse<WhatIfResponse>> whatIf(
             @AuthenticationPrincipal AuthenticatedUser user,
             @PathVariable String techId,
+            @RequestParam(defaultValue = "ALL") ImpactKind kind,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer perPage
     ) {
         return ResponseEntity.ok(ApiResponse.success(whatIfs.whatIf(
-                CurrentUser.idOf(user), techId, ComputePaging.page(page),
+                CurrentUser.idOf(user), techId, kind.name(), ComputePaging.page(page),
                 ComputePaging.perPage(perPage))));
     }
+
+    private enum ImpactKind { ALL, REQUIRED, PREFERRED }
 }

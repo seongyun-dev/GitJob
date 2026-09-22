@@ -3,8 +3,10 @@ package com.example.git_job.compute.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static com.example.git_job.compute.support.ComputeTestSupport.reader;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -49,7 +51,8 @@ class SkillGapServiceTest {
         UserEvidenceStore evidence = mock(UserEvidenceStore.class);
         when(targets.find(USER_ID)).thenReturn(Optional.of(
                 new Target("BACKEND", List.of("서울"), List.of("신입"), Instant.EPOCH)));
-        when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(
+        when(snapshots.findLatest(anyLong(), anyString(),
+                eq(ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION))).thenReturn(Optional.of(
                 new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2", RECOMMENDATION,
                         "ev-1", "BACKEND|서울|신입", Instant.EPOCH)));
         resultReader = reader(targets, snapshots);
@@ -70,10 +73,13 @@ class SkillGapServiceTest {
         CSnapshot.Demand demand = new CSnapshot.Demand("cohort-1", "READY", 87,
                 Map.of("target_role", "BACKEND_ENGINEER"), List.of(
                         technologyDemand("kafka", 21), technologyDemand("redis", 8)));
-        CSnapshot.WhatIf whatIf = new CSnapshot.WhatIf("kafka", 87, 12, 19, 7,
-                List.of("job-1"), List.of());
+        CSnapshot.Impact impact = new CSnapshot.Impact("kafka", "cohort-1", 87,
+                List.of("job-1", "job-2", "job-3", "job-4", "job-5"),
+                List.of("job-5", "job-6", "job-7"),
+                List.of("job-1", "job-2", "job-3", "job-4", "job-5", "job-6", "job-7"),
+                5, 3, 7);
         CSnapshot.Candidate candidate = new CSnapshot.Candidate("kafka", 1, "NOT_HELD",
-                technologyDemand("kafka", 21), whatIf, List.of("java"), List.of(),
+                technologyDemand("kafka", 21), null, impact, List.of("java"), List.of(),
                 List.of("docker"), List.of("DEMAND_TOP_QUARTILE"), List.of());
         CSnapshot.Explanation explanation = new CSnapshot.Explanation("RULE", List.of(
                 new CSnapshot.Fact("f1", "DEMAND", "kafka", "공고 87건 중 21건이 Kafka를 요구합니다."),
@@ -142,10 +148,10 @@ class SkillGapServiceTest {
     }
 
     @Test
-    @DisplayName("fillDelta는 What-if를 계산한 후보에만 있다")
+    @DisplayName("조건 영향 건수는 계산한 후보에만 있다")
     void fillDeltaOnlyForCandidates() {
         assertThat(row("kafka").fillDelta()).isEqualTo(7);
-        // C 는 상위 3개 후보에만 What-if 를 계산한다. 나머지에 숫자를 만들어 넣지 않는다.
+        // C 는 상위 3개 후보에만 조건 영향을 계산한다. 나머지에 숫자를 만들지 않는다.
         assertThat(row("redis").fillDelta()).isNull();
     }
 
@@ -158,7 +164,8 @@ class SkillGapServiceTest {
         assertThat(candidate.techId()).isEqualTo("kafka");
         assertThat(candidate.rank()).isEqualTo(1);
         assertThat(candidate.reasons()).containsExactly("공고 87건 중 21건이 Kafka를 요구합니다.");
-        assertThat(candidate.whatIf().increasedCount()).isEqualTo(7);
+        assertThat(candidate.impact().affectedCount()).isEqualTo(7);
+        assertThat(candidate.impact().requiredCount()).isEqualTo(5);
         // 판정하지 못한 선행 기술과 빠진 선행 기술을 섞지 않는다.
         assertThat(candidate.missingPrerequisiteTechIds()).isEmpty();
         assertThat(candidate.unknownPrerequisiteTechIds()).containsExactly("docker");
@@ -169,10 +176,30 @@ class SkillGapServiceTest {
     void bothReadTheSameSnapshot() {
         int whatIfFromGap = row("kafka").fillDelta();
         int whatIfFromRecommendation = service.recommendations(USER_ID)
-                .candidates().getFirst().whatIf().increasedCount();
+                .candidates().getFirst().impact().affectedCount();
 
         // 두 화면의 숫자가 어긋나면 서로 다른 계산을 읽은 것이다.
         assertThat(whatIfFromGap).isEqualTo(whatIfFromRecommendation);
+    }
+
+    @Test
+    @DisplayName("구 계약 결과는 추천·Gap 모두 새 계산을 기다린다")
+    void oldContractWaitsForV8() {
+        UserTargetStore targets = mock(UserTargetStore.class);
+        ComputeSnapshotStore snapshots = mock(ComputeSnapshotStore.class);
+        when(targets.find(USER_ID)).thenReturn(Optional.of(
+                new Target("BACKEND", List.of("서울"), List.of("신입"), Instant.EPOCH)));
+        when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(
+                new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2",
+                        RECOMMENDATION, "ev-1", "BACKEND|서울|신입",
+                        "active-matching/job-demand-v4+recommendation-v7", Instant.EPOCH)));
+        when(snapshots.findAttempt(anyLong(), anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        SkillGapService rolling = new SkillGapService(compute, reader(targets, snapshots));
+
+        assertThat(rolling.recommendations(USER_ID).dataStatus()).isEqualTo("PREPARING");
+        assertThat(rolling.skillGap(USER_ID).dataStatus()).isEqualTo("PREPARING");
+        verify(compute, never()).recommendation(anyString(), anyLong());
     }
 
     @Test

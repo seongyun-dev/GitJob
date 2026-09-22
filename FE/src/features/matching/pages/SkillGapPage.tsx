@@ -16,10 +16,10 @@ import { StateCard } from '@/shared/ui/StateCard'
  * **총점 · 취업 확률 · 역량 점수 · 부족도 %를 쓰지 않는다.** 사용자가 다음 행동으로
  * 옮길 수 있는 보완 기술만 남기고 내부 판정 상태표는 보여주지 않는다.
  *
- * `채우면 +N`은 공고 수 증가분이고 C가 계산한다. 상위 후보에만 있는 값이라 대부분의
- * 행은 `—`다 — 0으로 채우면 "채워도 안 늘어난다"는 다른 사실이 된다.
+ * 마지막 열은 추천 기술이 언급된 공고 수다. 상위 후보에만 있는 값이라 대부분의
+ * 행은 `—`다.
  */
-const GAP_COLUMNS = ['기술', '필수 요구', '우대 요구', '내 수준', '판정', '늘어나는 공고'] as const
+const GAP_COLUMNS = ['기술', '필수 요구', '우대 요구', '내 수준', '판정', '관련 공고'] as const
 
 export function SkillGapPage() {
   const target = useTarget()
@@ -92,7 +92,7 @@ export function SkillGapPage() {
                     <SkillGapRows groups={groups} />
                   </div>
                   <p className="border-t border-brand-line px-[22px] py-3 text-[11.5px] leading-[1.65] text-brand-faint">
-                    늘어나는 공고 수는 해당 기술을 요구 수준까지 익혔을 때의 변화입니다.
+                    상위 추천 기술의 관련 공고 수입니다.
                   </p>
                 </div>
               )}

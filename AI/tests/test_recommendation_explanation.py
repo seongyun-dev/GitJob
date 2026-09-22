@@ -192,15 +192,17 @@ def test_what_if_sources_use_the_job_set_the_counts_were_computed_over():
     assert len(result.jobs) == 1
     assert len(result.matching_jobs or ()) == 2
     docker = next(item for item in result.candidates if item.tech_id == "docker")
-    assert docker.what_if.newly_matched_job_ids == ("matching-only-docker",)
+    assert docker.impact.affected_job_ids == ("matching-only-docker",)
     assert "matching-only-docker" not in {job.job_id for job in result.jobs}
 
     fact = next(
         fact
         for fact in explain_recommendations(result).facts
-        if fact.kind == "WHAT_IF" and fact.tech_id == "docker"
+        if fact.kind == "IMPACT" and fact.tech_id == "docker"
     )
-    assert fact.values["newly_matched_job_ids"] == ["matching-only-docker"]
+    assert fact.values["required_job_ids"] == ["matching-only-docker"]
+    assert fact.text == "docker 관련 공고 1건(필수 1건 · 우대 0건)."
+    assert "충족" not in fact.text
     # 근거 URL 은 그 공고의 것이어야 한다. 숫자만 맞고 출처가 비면 설명이 아니다.
     matching = {job.job_id: job for job in result.matching_jobs or ()}
     assert fact.source_refs == (str(matching["matching-only-docker"].source_url),)
@@ -208,14 +210,14 @@ def test_what_if_sources_use_the_job_set_the_counts_were_computed_over():
 
 def test_related_jobs_page_and_explanation_read_the_same_job_set():
     result = recommend_for(matching_only_cohort())
-    page = list_related_jobs(result, user_id="user-1", view="WHAT_IF", tech_id="docker")
+    page = list_related_jobs(result, user_id="user-1", view="IMPACT", tech_id="docker")
     fact = next(
         fact
         for fact in explain_recommendations(result).facts
-        if fact.kind == "WHAT_IF" and fact.tech_id == "docker"
+        if fact.kind == "IMPACT" and fact.tech_id == "docker"
     )
     assert tuple(item.job_id for item in page.items) == tuple(
-        fact.values["newly_matched_job_ids"]
+        fact.values["required_job_ids"]
     )
     assert fact.source_refs == tuple(str(item.source_url) for item in page.items)
 

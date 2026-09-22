@@ -118,6 +118,9 @@ export interface WhatIfJobView {
   /** `서울 · 신입` 형태. 값이 없는 축은 빠진다. */
   meta: string
   sourceUrl: string | null
+  requiredImpact: boolean
+  preferredImpact: boolean
+  conditional: boolean
 }
 
 /**
@@ -143,10 +146,10 @@ export interface NextSkillView {
    * 주장하지 않는다. `fromLevel`이 `null`인 이유를 이 값 없이는 말할 수 없다.
    */
   evidenceStatus: NextSkillEvidenceStatus | null
-  /** 현재 필수 전체 충족 공고 수. 계산되지 않았으면 `null`. */
-  currentFullMatch: number | null
-  projectedFullMatch: number | null
-  increasedCount: number | null
+  /** 추천 기술이 필수 또는 우대로 언급된 서로 다른 활성 공고 수. */
+  requiredImpactCount: number | null
+  preferredImpactCount: number | null
+  affectedJobCount: number | null
   /** 이 기술을 필수로 요구한 공고 수. */
   requiredCount: number | null
   /** 추천 근거. 점수가 아니라 C가 만든 문장이다. */

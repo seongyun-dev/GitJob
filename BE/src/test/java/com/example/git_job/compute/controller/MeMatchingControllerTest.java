@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.git_job.compute.client.CComputeApi;
+import com.example.git_job.compute.client.dto.CRelatedJobs;
 import com.example.git_job.compute.client.dto.CSnapshot;
 import com.example.git_job.compute.query.UserEvidenceStore;
 import com.example.git_job.compute.service.CComputeSyncService;
@@ -190,6 +191,32 @@ class MeMatchingControllerTest {
 
         // C 의 size 상한은 50 이다. 넘겨 보내면 422 가 나는데 사용자 잘못이 아니다.
         verify(compute).matching(RECOMMENDATION, USER_ID, 0, 50, false);
+    }
+
+    @Test
+    @DisplayName("조건 영향 종류와 페이지를 공개 What-if 경로에서 전달한다")
+    void exposesRequiredImpactTab() throws Exception {
+        when(compute.relatedJobs(anyString(), anyLong(), anyString(), anyString(),
+                anyString(), anyInt(), anyInt())).thenReturn(new CRelatedJobs(
+                        RECOMMENDATION, null, "READY", false, "calc-1", "cohort-1",
+                        "IMPACT", "kafka", 1, 20, 20, null, null, null,
+                        List.of(new CRelatedJobs.Job("job-1", "SARAMIN",
+                                "https://example.test/1", "회사", "개발자", "서울", "신입",
+                                null, null, "CONDITIONAL")), List.of(), "REQUIRED",
+                        new CRelatedJobs.ImpactCounts(21, 10, 25),
+                        Map.of("job-1", List.of("REQUIRED"))));
+
+        mvc.perform(get("/api/v1/me/recommendations/kafka/what-if")
+                        .param("kind", "REQUIRED")
+                        .param("page", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.impactKind").value("REQUIRED"))
+                .andExpect(jsonPath("$.data.totalCount").value(1))
+                .andExpect(jsonPath("$.data.items[0].requiredImpact").value(true))
+                .andExpect(jsonPath("$.data.items[0].eligibility").value("CONDITIONAL"));
+
+        verify(compute).relatedJobs(RECOMMENDATION, USER_ID, "IMPACT", "kafka",
+                "REQUIRED", 1, 20);
     }
 
     /** 세션 사용자 주입. 실제 배포에서는 JWT 필터가 같은 자리를 채운다. */

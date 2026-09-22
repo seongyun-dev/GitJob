@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.git_job.compute.client.dto.AnalysisCompleted;
 import com.example.git_job.compute.client.dto.CSnapshot;
+import com.example.git_job.compute.client.dto.CRelatedJobs;
 import com.example.git_job.compute.client.dto.CohortSelector;
 import com.example.git_job.compute.client.dto.CTrend;
 import com.example.git_job.compute.client.dto.EvidencePayload;
@@ -401,6 +402,46 @@ class CComputeClientTest {
         client().get("/a", query, Object.class);
 
         assertThat(lastQuery.get()).isEqualTo("user_id=7");
+    }
+
+    @Test
+    @DisplayName("v8 추천의 조건 영향과 영향 공고 목록을 실제 JSON 계약으로 읽는다")
+    void readsConditionImpactContract() {
+        responses.put("/snapshot-v8", Response.of(200,
+                "{\"message\":\"ok\",\"data\":{\"snapshot_id\":\"s-v8\","
+                        + "\"kind\":\"RECOMMENDATION\",\"payload\":{\"current_count\":0,"
+                        + "\"candidates\":[{\"tech_id\":\"java\",\"rank\":1,"
+                        + "\"evidence_status\":\"NOT_HELD\",\"impact\":{"
+                        + "\"tech_id\":\"java\",\"cohort_id\":\"c-1\",\"denominator\":3,"
+                        + "\"required_job_ids\":[\"j-1\",\"j-2\"],"
+                        + "\"preferred_job_ids\":[\"j-2\"],"
+                        + "\"affected_job_ids\":[\"j-1\",\"j-2\"],"
+                        + "\"required_count\":2,\"preferred_count\":1,\"affected_count\":2}"
+                        + "}]}}}"));
+        responses.put("/impact-jobs", Response.of(200,
+                "{\"message\":\"ok\",\"data\":{\"snapshot_id\":\"s-v8\","
+                        + "\"view\":\"IMPACT\",\"tech_id\":\"java\",\"total_count\":1,"
+                        + "\"offset\":0,\"limit\":20,\"current_count\":null,"
+                        + "\"projected_count\":null,\"increased_count\":null,"
+                        + "\"impact_kind\":\"REQUIRED\",\"impact_counts\":{"
+                        + "\"required_count\":2,\"preferred_count\":1,\"affected_count\":2},"
+                        + "\"impact_job_kinds\":{\"j-2\":[\"REQUIRED\",\"PREFERRED\"]},"
+                        + "\"items\":[{\"job_id\":\"j-2\",\"eligibility\":\"CONDITIONAL\"}]}}"));
+
+        CSnapshot snapshot = client().get("/snapshot-v8", Map.of(), CSnapshot.class);
+        CRelatedJobs jobs = client().get("/impact-jobs", Map.of(), CRelatedJobs.class);
+
+        assertThat(snapshot.payload().candidates()).singleElement().satisfies(candidate -> {
+            assertThat(candidate.whatIf()).isNull();
+            assertThat(candidate.impact().affectedCount()).isEqualTo(2);
+            assertThat(candidate.impact().requiredJobIds()).containsExactly("j-1", "j-2");
+        });
+        assertThat(jobs.impactKind()).isEqualTo("REQUIRED");
+        assertThat(jobs.impactCounts().affectedCount()).isEqualTo(2);
+        assertThat(jobs.impactJobKinds().get("j-2")).containsExactly("REQUIRED", "PREFERRED");
+        assertThat(jobs.items()).singleElement()
+                .satisfies(job -> assertThat(job.eligibility()).isEqualTo("CONDITIONAL"));
+        assertThat(jobs.currentCount()).isNull();
     }
 
     @Test

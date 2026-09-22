@@ -1,5 +1,6 @@
 import { Link, useSearchParams } from 'react-router'
 import { toNextSkills, toWhatIfJobs } from '@/features/matching/api/adapter'
+import { ConditionImpactSummary, formatImpactIncrease } from '@/features/matching/components/ConditionImpactSummary'
 import {
   useRecommendations,
   useTarget,
@@ -9,28 +10,31 @@ import { hasComputedValue } from '@/shared/api/computeState'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { DataRegion } from '@/shared/ui/DataRegion'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
-import { MeterBar } from '@/shared/ui/MeterBar'
 import { PageHero } from '@/shared/ui/PageHero'
 import { StateCard } from '@/shared/ui/StateCard'
+import type { NextSkillEvidenceStatus } from '@/features/matching/model/view'
 
 /**
  * What-if · 확정 디자인 `Final v2`의 `03 What-if` (S15P21E102-279).
  *
- * What-if의 의미는 **"이 기술 Evidence가 요구 Level이 되었다고 가정할 때 기술요건이
- * 매칭되는 공고가 얼마나 늘어나는가"** 다. 합격 가능성 증가가 아니다.
+ * 현행 What-if는 추천 기술이 필수 또는 우대로 언급된 공고를 보여 준다.
  *
  * <h2>숫자와 목록이 한 응답에서 온다</h2>
  *
- * 증가 건수와 아래 목록이 같은 호출의 결과다. 인수 조건이 "What-if 증가 건수와 신규
- * 부합 공고 목록이 동일한 결과를 사용할 것"이고, 숫자를 추천 API에서 목록을 여기서
- * 읽으면 그 사이에 새 계산이 생겼을 때 둘이 어긋난다. 후보 칩의 `+N`만 추천 응답에서
- * 오는데, 그건 목록이 아니라 탐색용 표시다.
+ * 필수·우대·합집합 건수와 아래 목록이 같은 호출의 결과다. 후보 칩만 추천 응답에서
+ * 오며 탐색용 표시다. 마감 여부가 두 호출 사이에 달라질 수 있으므로 상세 수치가
+ * 해당 목록의 권위 있는 값이다.
  *
  * 어느 후보를 보는지는 **주소에 실린다**(`?tech=kafka`). 추천 화면에서 넘어온 링크가
  * 그 값을 담고 있고, 새로고침해도 같은 후보가 열려야 하며, 링크를 공유할 수도 있어야
  * 한다. 화면 안 상태로 두면 셋 다 깨진다.
  */
 const PER_PAGE = 20
+
+const EVIDENCE_LABEL: Readonly<Partial<Record<NextSkillEvidenceStatus, string>>> = {
+  NOT_HELD: '미보유',
+  PERSONAL_LEVEL_UNKNOWN: '내 수준 미판정',
+}
 
 export function WhatIfPage() {
   const [params, setParams] = useSearchParams()
@@ -41,16 +45,22 @@ export function WhatIfPage() {
     recommendations.data === undefined ? [] : toNextSkills(recommendations.data)
 
   const requested = params.get('tech')
+  const requestedKind = params.get('kind')
+  const kind = requestedKind === 'REQUIRED' || requestedKind === 'PREFERRED'
+    ? requestedKind : 'ALL'
+  const requestedPage = Number(params.get('page') ?? '1')
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
   const selected =
     candidates.find((candidate) => candidate.techId === requested) ?? candidates[0]
 
-  const whatIf = useWhatIf(target.data?.targetKey, selected?.techId, {
-    page: 1,
-    perPage: PER_PAGE,
-  })
+  const whatIf = useWhatIf(
+    target.data?.targetKey,
+    selected?.affectedJobCount === null ? undefined : selected?.techId,
+    { page, perPage: PER_PAGE, kind },
+  )
   const data = whatIf.data
   const jobs = data === undefined ? [] : toWhatIfJobs(data)
-  const counts = data?.counts ?? null
+  const impact = data?.impactCounts ?? null
   const ready = hasComputedValue(data)
 
   return (
@@ -66,8 +76,8 @@ export function WhatIfPage() {
         <PageHero
           title={
             selected === undefined
-              ? '기술을 배우면 맞는 공고가 얼마나 늘까요?'
-              : `${selected.techName}을(를) 배우면 맞는 공고가 얼마나 늘까요?`
+              ? '추천 기술 관련 공고'
+              : `${selected.techName} 관련 공고`
           }
         />
       </div>
@@ -85,7 +95,7 @@ export function WhatIfPage() {
                 key={candidate.techId}
                 type="button"
                 aria-pressed={active}
-                onClick={() => setParams({ tech: candidate.techId })}
+                onClick={() => setParams({ tech: candidate.techId, kind, page: '1' })}
                 className={`flex items-center gap-2 rounded-[10px] px-3.5 py-2.5 text-[13px] font-bold transition-colors ${
                   active
                     ? 'bg-tone-accent-bg text-brand-ink'
@@ -96,9 +106,9 @@ export function WhatIfPage() {
                   #{candidate.rank}
                 </span>
                 {candidate.techName}
-                {candidate.increasedCount !== null && (
+                {candidate.affectedJobCount !== null && (
                   <span className="text-[12.5px] font-extrabold text-brand-600">
-                    +{candidate.increasedCount}
+                    {formatImpactIncrease(candidate.affectedJobCount)}
                   </span>
                 )}
               </button>
@@ -119,8 +129,8 @@ export function WhatIfPage() {
         {selected === undefined && !recommendations.isLoading && (
           <StateCard
             kind="EMPTY"
-            title="가정해 볼 후보가 없어요"
-            description="학습 추천에서 후보를 확인한 뒤, 기술을 배웠을 때의 공고 변화를 볼 수 있습니다."
+            title="추천 기술이 없어요"
+            description="학습 추천에서 후보를 확인한 뒤 관련 공고를 볼 수 있습니다."
             action={
               <Link
                 to="/recommendations"
@@ -135,71 +145,38 @@ export function WhatIfPage() {
         {ready && selected !== undefined && (
           /* v2의 `571 / 757`. 왼쪽이 가정, 오른쪽이 그 결과로 새로 매칭되는 공고다. */
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[571px_minmax(0,1fr)]">
-            <DataRegion title="예상 변화">
+            <DataRegion title="추천 기술">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-[22px] leading-[1.2] font-[750] tracking-[-0.03em] text-brand-ink">
                   {selected.techName}
                 </h2>
-                {selected.fromLevel === null ? (
-                  <span className="rounded-lg border border-brand-line bg-white px-2 py-1 text-[11.5px] font-[750] text-brand-faint">
-                    현재 근거 없음
-                  </span>
-                ) : (
+                {selected.fromLevel !== null ? (
                   <LevelBadge level={selected.fromLevel} />
-                )}
+                ) : selected.evidenceStatus !== null && EVIDENCE_LABEL[selected.evidenceStatus] !== undefined ? (
+                  <span className="rounded-lg border border-brand-line bg-white px-2 py-1 text-[11.5px] font-[750] text-brand-faint">
+                    {EVIDENCE_LABEL[selected.evidenceStatus]}
+                  </span>
+                ) : null}
               </div>
 
-              {counts === null ? (
+              {impact === null ? (
                 <p className="mt-5 text-[12.5px] leading-[1.7] text-brand-muted">
-                  이 후보의 공고 수 변화는 아직 계산되지 않았습니다.
+                  새 추천 기준의 공고 수를 계산하고 있습니다.
                 </p>
               ) : (
                 <div className="mt-5">
-                  <p className="text-[11.5px] text-brand-faint">
-                    필수 기술을 모두 충족하는 공고
-                  </p>
-                  <div className="mt-2 flex items-end gap-4">
-                    <div>
-                      <p className="text-[11px] text-brand-faint">현재</p>
-                      <p className="text-[22px] leading-none font-[850] tracking-[-0.04em] text-brand-ink-soft">
-                        {counts.currentCount}
-                      </p>
-                    </div>
-                    <p className="text-[52px] leading-none font-[850] tracking-[-0.05em] text-brand-600">
-                      +{counts.increasedCount}
-                    </p>
-                    <div>
-                      <p className="text-[11px] text-brand-faint">확보 후</p>
-                      <p className="text-[22px] leading-none font-[850] tracking-[-0.04em] text-brand-ink">
-                        {counts.projectedCount}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex gap-1">
-                    <div style={{ flex: Math.max(counts.currentCount, 1) }}>
-                      <MeterBar
-                        value={counts.currentCount}
-                        total={counts.currentCount}
-                        tone="muted"
-                        height={8}
-                      />
-                    </div>
-                    <div style={{ flex: Math.max(counts.increasedCount, 1) }}>
-                      <MeterBar
-                        value={counts.increasedCount}
-                        total={counts.increasedCount}
-                        height={8}
-                      />
-                    </div>
-                  </div>
+                  <ConditionImpactSummary
+                    affectedCount={impact.affectedCount}
+                    requiredCount={impact.requiredCount}
+                    preferredCount={impact.preferredCount}
+                    emphasis
+                  />
                 </div>
               )}
 
               {selected.reasons.length > 0 && (
-                <>
-                  <p className="mt-6 text-[11px] font-extrabold tracking-[0.1em] text-brand-faint">
-                    추천 이유
-                  </p>
+                <details className="mt-5 text-[12px] text-brand-muted">
+                  <summary className="w-fit cursor-pointer font-semibold hover:text-brand-ink">추천 이유</summary>
                   <ul className="mt-2 grid gap-1.5">
                     {selected.reasons.map((reason) => (
                       <li
@@ -213,23 +190,54 @@ export function WhatIfPage() {
                       </li>
                     ))}
                   </ul>
-                </>
+                </details>
               )}
             </DataRegion>
 
-            <DataRegion title="새로 맞는 공고">
+            <DataRegion title="공고 목록">
+              {impact !== null && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {([
+                    ['ALL', `전체 ${formatImpactIncrease(impact.affectedCount)}`],
+                    ['REQUIRED', `필수 ${formatImpactIncrease(impact.requiredCount)}`],
+                    ['PREFERRED', `우대 ${formatImpactIncrease(impact.preferredCount)}`],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={kind === value}
+                      onClick={() => setParams({ tech: selected.techId, kind: value, page: '1' })}
+                      className={`rounded-lg px-3 py-2 text-[12px] font-bold ${kind === value ? 'bg-tone-accent-bg text-brand-ink' : 'text-brand-muted hover:bg-[#F5F7FA]'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {jobs.length === 0 ? (
                 <StateCard
                   kind="EMPTY"
-                  title="새로 부합하는 공고가 없어요"
-                  description="이 기술을 채워도 필수를 모두 충족하게 되는 공고는 이번 비교 집합에 없습니다."
+                  title={page > 1 && (data?.totalCount ?? 0) > 0
+                    ? '이 페이지에는 남은 공고가 없어요'
+                    : '관련 공고가 없어요'}
+                  description={page > 1 && (data?.totalCount ?? 0) > 0
+                    ? '활성 공고가 바뀌었을 수 있습니다. 이전 페이지로 돌아가 확인해 주세요.'
+                    : '현재 활성 공고에 이 기술 언급이 없습니다.'}
                   action={
-                    <Link
-                      to="/jobs"
-                      className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
-                    >
-                      현재 공고 보기
-                    </Link>
+                    page > 1 ? (
+                      <button type="button"
+                        onClick={() => setParams({ tech: selected.techId, kind, page: String(page - 1) })}
+                        className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
+                      >
+                        이전 페이지
+                      </button>
+                    ) : (
+                      <Link to="/jobs"
+                        className="gj-clickable inline-flex rounded-xl border border-brand-line bg-white px-4 py-2.5 text-[13px] font-[750] text-brand-ink"
+                      >
+                        현재 공고 보기
+                      </Link>
+                    )
                   }
                 />
               ) : (
@@ -244,6 +252,11 @@ export function WhatIfPage() {
                           <p className="text-[14px] font-[750] tracking-[-0.02em] text-brand-ink">
                             {job.title}
                           </p>
+                          <div className="flex gap-1.5">
+                            {job.requiredImpact && <span className="rounded bg-tone-accent-bg px-2 py-0.5 text-[11px] font-bold text-brand-ink">필수</span>}
+                            {job.preferredImpact && <span className="rounded bg-tone-neutral-bg px-2 py-0.5 text-[11px] font-bold text-tone-neutral">우대</span>}
+                            {job.conditional && <span className="rounded bg-tone-caution-bg px-2 py-0.5 text-[11px] font-bold text-tone-caution">조건 확인 필요</span>}
+                          </div>
                           {job.sourceUrl !== null && (
                             <a
                               href={job.sourceUrl}
@@ -259,15 +272,14 @@ export function WhatIfPage() {
                       </li>
                     ))}
                   </ul>
-                  {/*
-                    목록 길이와 증가 건수가 같은지 화면이 말한다. 다르면 페이징이
-                    잘린 것이고, 그 사실이 보여야 한다.
-                  */}
+                  {/* 선택한 영향 종류의 전체 수와 현재 페이지 범위를 함께 보여준다. */}
                   <p className="mt-3 text-center text-[12px] text-brand-faint">
-                    {data !== undefined && data.hasNext
-                      ? `${data.totalCount}건 중 ${jobs.length}건 표시`
-                      : `${jobs.length}건 전체 표시`}
+                    {`${data?.totalCount ?? jobs.length}건 중 ${(page - 1) * PER_PAGE + 1}~${(page - 1) * PER_PAGE + jobs.length}건 표시`}
                   </p>
+                  <div className="mt-3 flex justify-center gap-2">
+                    {page > 1 && <button type="button" onClick={() => setParams({ tech: selected.techId, kind, page: String(page - 1) })} className="rounded-lg border border-brand-line px-3 py-2 text-[12px] font-bold">이전</button>}
+                    {data?.hasNext && <button type="button" onClick={() => setParams({ tech: selected.techId, kind, page: String(page + 1) })} className="rounded-lg border border-brand-line px-3 py-2 text-[12px] font-bold">다음</button>}
+                  </div>
                 </>
               )}
             </DataRegion>

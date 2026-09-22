@@ -583,8 +583,9 @@ C 원천: RECOMMENDATION Snapshot의 `gap`(`technology-gap/v2`) + `demand` + `pe
   `NOT_HELD`는 `reasonCodes`에 레벨 미달 사유가 있으면 `LEVEL_SHORT`, 아니면
   `NO_EVIDENCE`. **`UNKNOWN`을 부족으로 세지 않는다** — `summary`의 부족 집계에
   `undeterminedCount`는 들어가지 않는다.
-- `fillDelta`는 `candidates[].what_if.increased_count`다. C는 What-if를 **상위 3개
-  후보에만** 계산하므로 나머지 행은 `null`이다(§6-2). 행끼리 더하지 않는다.
+- `fillDelta`는 v8 추천 후보의 `impact.affected_count`다. 확인된 필수·우대 기술
+  조건과 새로 맞는 **서로 다른 공고** 수이며, 필수 전체 충족이나 지원 가능 공고 수가
+  아니다. 상위 3개 후보 외에는 `null`이다. 행끼리 더하지 않는다.
 - `personalLevel`이 `null`인 것은 "미보유"가 아니라 "판정되지 않음"이다.
   `assessmentCeiling`·`attributionStatus`를 함께 내려 화면이 구분할 수 있게 한다.
 
@@ -600,8 +601,9 @@ C 원천: RECOMMENDATION Snapshot의 `candidates` + `explanation.facts`
     "personalLevel": null,
     "evidenceStatus": "NOT_HELD",
     "demand": { "requiredCount": 21, "requiredRatio": 0.24, "rank": 4 },
-    "whatIf": { "denominator": 87, "currentCount": 12, "projectedCount": 19,
-                "increasedCount": 7 },
+    "whatIf": null,
+    "impact": { "requiredCount": 9, "preferredCount": 25,
+                "affectedCount": 32 },
     "prerequisiteTechIds": ["java"],
     "missingPrerequisiteTechIds": [],
     "unknownPrerequisiteTechIds": ["docker"],
@@ -614,31 +616,40 @@ C 원천: RECOMMENDATION Snapshot의 `candidates` + `explanation.facts`
 
 `reasons`는 `explanation.facts`에서 해당 `tech_id`의 `text`를 순서대로 옮긴 문장이다.
 점수를 노출하지 않는다. `targetLevel`은 C가 주지 않으므로 필드를 두지 않는다(§6-3).
+v8은 비교 집합의 모든 공고에서 해석된 필수·우대 절만 비교하며, 다른 절이 미해석이거나
+공고가 조건부여도 확인된 절의 영향을 센다. `affectedCount`는 필수·우대 공고 ID의
+합집합이라 두 건수의 단순 합이 아니다. 구 결과의 `whatIf`는 읽기 호환용이며 새 추천
+순위와 화면에는 사용하지 않는다. 활성 공고 필터는 C의 Snapshot 조회 시 후보 영향
+건수에도 적용한다.
 
 ### 4.7 `GET /api/v1/me/recommendations/{techId}/what-if` — What-if와 신규 부합 공고 (화면 03)
 
-쿼리: `page`, `perPage`
+쿼리: `page`, `perPage`, `kind=ALL|REQUIRED|PREFERRED` (기본 `ALL`)
 
-C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/job-postings?mode=WHAT_IF&recommended_tech_id={techId}`
+C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/job-postings?mode=IMPACT&recommended_tech_id={techId}&impact_kind={kind}`
 
 ```json
 {
   "dataStatus": "READY", "statusReason": "NONE",
   "techId": "kafka",
-  "counts": { "denominator": 87, "currentCount": 12, "projectedCount": 19,
-              "increasedCount": 7 },
+  "counts": null,
+  "impactKind": "ALL",
+  "impactCounts": { "requiredCount": 9, "preferredCount": 25,
+                    "affectedCount": 32 },
   "page": 1, "perPage": 20, "hasNext": false,
-  "totalCount": 7,
+  "totalCount": 32,
   "items": [{ "jobId": "...", "title": "...", "companyName": "...",
               "region": "서울", "careerLevel": "신입", "deadline": "...",
-              "sourceUrl": "https://..." }],
+              "sourceUrl": "https://...", "requiredImpact": true,
+              "preferredImpact": false }],
   "dataGaps": []
 }
 ```
 
-증가 건수와 목록이 **한 응답, 한 호출**에서 나온다. C의 `WHAT_IF` 모드는 신규 증가
-공고만 준다. 화면 10의 `increasedCount`와 이 화면의 목록 길이가 어긋나면 그건 표시
-버그가 아니라 서로 다른 Snapshot을 읽은 것이다.
+건수와 목록은 **한 응답, 한 호출**에서 나온다. `ALL` 목록은
+`impactCounts.affectedCount`, 나머지 탭은 각 종류의 건수를 분모로 페이지를 나눈다.
+한 공고에 두 종류의 영향이 있으면 두 배지를 보이되 ALL 목록에서는 한 번만 센다.
+마감된 공고는 추천 카드와 이 상세 목록 양쪽에서 같은 활성 필터로 제외한다.
 
 ### 4.8 `GET /api/v1/technologies/{techId}/trends` — 출처별 Trend (화면 13)
 

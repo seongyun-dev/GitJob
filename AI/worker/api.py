@@ -1607,6 +1607,7 @@ def create_compute_app(
             else None
         )
         if value is not None:
+            payload = active_recommendation_payload(value["payload"])
             return {
                 "message": "C compact user result",
                 "data": {
@@ -1614,12 +1615,55 @@ def create_compute_app(
                     "kind": "RECOMMENDATION",
                     "result_status": value["status"],
                     "recompute_required": value["recompute_required"],
-                    "payload": value["payload"],
+                    "payload": payload,
                 },
             }
         if snapshot_id.startswith("ur-"):
             raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
         return {"message": "C snapshot", "data": snapshot(snapshot_id, user_id)}
+
+    def active_recommendation_payload(payload: dict) -> dict:
+        """Serve live impact counts without mutating the immutable calculation."""
+        if (
+            matching_active_mode != "projection"
+            or payload.get("algorithm_version")
+            != "c-recommendation/condition-impact/v8"
+        ):
+            return payload
+        from recommendation.engine import ConditionImpact, active_condition_impact
+
+        candidates = payload.get("candidates", [])
+        impacts = [
+            ConditionImpact.model_validate(candidate["impact"])
+            for candidate in candidates
+        ]
+        all_ids = {
+            job_id for impact in impacts for job_id in impact.affected_job_ids
+        }
+        try:
+            active_ids = database().get_active_job_ids(all_ids, as_of=datetime.now(UTC))
+        except LookupError:
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+        result = dict(payload)
+        result["candidates"] = [
+            {
+                **candidate,
+                "impact": active_condition_impact(impact, active_ids).model_dump(
+                    mode="json"
+                ),
+            }
+            for candidate, impact in zip(candidates, impacts, strict=True)
+        ]
+        if isinstance(payload.get("explanation"), dict):
+            explanation = dict(payload["explanation"])
+            # Immutable facts quote the calculation-time counts. Once the live
+            # posting gate changes those counts, do not serve a stale claim.
+            explanation["facts"] = [
+                fact for fact in explanation.get("facts", [])
+                if fact.get("kind") != "IMPACT"
+            ]
+            result["explanation"] = explanation
+        return result
 
     @app.get(prefix + "/results/{result_id}", dependencies=auth)
     def get_user_result(result_id: ResultReferenceId, user_id: Identifier):
@@ -1665,8 +1709,9 @@ def create_compute_app(
     def get_postings(
         snapshot_id: ResultReferenceId,
         user_id: Identifier,
-        mode: Literal["CURRENT", "WHAT_IF"] = "CURRENT",
+        mode: Literal["CURRENT", "WHAT_IF", "IMPACT"] = "CURRENT",
         recommended_tech_id: str | None = None,
+        impact_kind: Literal["ALL", "REQUIRED", "PREFERRED"] = "ALL",
         page: Annotated[int, Query(ge=0)] = 0,
         size: Annotated[int, Query(ge=1, le=50)] = 20,
     ):
@@ -1686,7 +1731,10 @@ def create_compute_app(
         if matching_active_mode == "projection":
             all_ids = set(result.current_job_ids)
             for candidate in result.candidates:
-                all_ids.update(candidate.what_if.projected_job_ids)
+                if candidate.impact is not None:
+                    all_ids.update(candidate.impact.affected_job_ids)
+                elif candidate.what_if is not None:
+                    all_ids.update(candidate.what_if.projected_job_ids)
             try:
                 active_ids = database().get_active_job_ids(
                     all_ids, as_of=datetime.now(UTC)
@@ -1698,6 +1746,7 @@ def create_compute_app(
             user_id=user_id,
             view=mode,
             tech_id=recommended_tech_id,
+            impact_kind=impact_kind,
             offset=page * size,
             limit=size,
             active_job_ids=active_ids,

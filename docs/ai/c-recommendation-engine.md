@@ -4,6 +4,51 @@
 
 ## 실행 계약
 
+### 현행 v8: 조건 영향 기반 다음 기술 추천
+
+`c-recommendation/condition-impact/v8` / `recommendation-snapshot/v4`부터 추천의
+`필수 전체 충족 공고 증가` 순위와 후보 What-if는 폐기한다. 과거 v1~v7 Snapshot은
+검증·조회 호환만 유지한다. 공고 매칭 화면의 `current_count`는 별도의 전체 충족 KPI라
+계속 저장하지만 추천 후보를 고르거나 설명할 때 쓰지 않는다.
+
+- ACTIVE_MATCHING `matching_jobs` 전체를 순회한다. ELIGIBLE/CONDITIONAL 모두 포함하되
+  조건부를 지원 가능으로 승격하지 않는다. `requirements.required`와
+  `requirements.preferred`의 **해석된 절에 후보 기술이 등장하는 공고**를 센다.
+  `unresolved`나 일반 언급을 필수·우대로 승격하지 않는다. 다른 필수 절이 남아
+  있거나 OR의 다른 대안을 이미 보유해도 후보 기술을 요구/우대하는 공고로 센다.
+- 이 숫자는 개인의 현재 수준이나 공고의 L1~L3 요구 수준과 무관한 기술 관련 공고
+  규모다. L2/L3 공고도 기술 수요로 포함하지만, L1 학습만으로 그 조건이나 공고
+  전체를 충족했다고 주장하지 않는다. `current_count`의 엄격 부합 판정은 그대로다.
+- 기술별 `impact.required_job_ids`, `preferred_job_ids`, `affected_job_ids`를
+  중복 없는 정렬 ID로 저장한다. `affected`는 앞의 두 집합의 합집합이다. 추천 Top3는
+  `affected_count` 내림차순, 동률이면 `required_count` 내림차순, 선행 준비 여부,
+  필수 수요, 불확실성, 전체 수요, `tech_id`로 고른다. Trend는 선출된 Top3 안에서만
+  전체 영향 건수가 10% 이내인 후보의 순서를 보정한다.
+- 후보에는 `impact`만 있고 구 `what_if`는 없다. 설명도 `IMPACT` Fact로 필수·우대·
+  중복 제외 건수를 구분한다. Snapshot ID는 immutable content hash이며 검증 시
+  저장된 impact를 동일 cohort/Evidence에서 재계산한다. C 계산 저장소의 스키마
+  migration은 없다. BE는 V28로 계산 시도에 계약 버전을 추가한다.
+- `GET .../snapshots/{id}`의 compact 사용자 결과는 현재 활성 공고 ID로 impact
+  건수를 필터링한 조회 표현을 반환한다. 저장된 Snapshot은 변경하지 않는다. 상세
+  `job-postings?mode=IMPACT&impact_kind=ALL|REQUIRED|PREFERRED`도 동일한 활성
+  필터를 적용하고 건수·페이지 목록·공고별 영향 종류를 한 응답에서 보낸다.
+- 활성 필터는 저장된 Top3를 새 후보로 교체하지 않는다. 새 공고 Projection 게시로
+  결과가 STALE이 되면 BE가 재계산을 요청하며, 완료 전까지 순위는 이전 계산 기준일 수 있다.
+- 배포 순서는 C Worker/API → BE V28 migration 및 서버 → FE다. C가 먼저 `IMPACT` 조회를 받을 수 있어야
+  BE가 구 `WHAT_IF`를 호출하지 않고 전환할 수 있다. BE 계약 버전을
+  `active-matching/job-demand-v4+recommendation-v8`로 올려 기존 사용자를 새 결과로
+  재계산한다. 구 FAILED/RETRYING 시도는 `legacy` 계약으로 남고 현재 계약의 재계산을
+  막지 않는다. 구 결과가 아직 최신인 사용자의 새 상세 조회는 IMPACT를 보내지 않고
+  `COMPUTE_PENDING`으로 대기한다. 구 결과는 호환 조회 대상으로 보존한다. 배포 후에는 재계산 완료 여부,
+  추천 카드와 상세의 활성 공고 건수 일치, 필수·우대 탭 합집합, CONDITIONAL 표시를
+  확인한다. **구 BE/C 바이너리만 단순 재배포하는 롤백은 안전하지 않다.** 구 BE의
+  `findLatest`는 계약 버전 없이 최신 행을 고르므로 저장된 v8 결과를 구 `WHAT_IF`
+  경로에 전달할 수 있고, 구 C는 v8 Snapshot을 읽지 못한다. 운영 배포 전에는 구 계약
+  행을 선택하는 호환 롤백 빌드 또는 복구 가능한 DB 체크포인트를 별도로 준비하고
+  실제 롤백 리허설을 통과해야 한다. v8 저장 결과를 무조건 삭제하지 않는다.
+
+아래의 `current/projected/increased` What-if 설명은 **v1~v7 구 결과 계약**이다.
+
 `AI/recommendation/engine.py`의 `build_recommendations(cohort, analysis, user_id=..., analysis_id=..., prerequisites=None)`가 `RecommendationSnapshot`을 반환한다. 입력은 [C 채용 cohort](c-job-demand.md)의 `JobCohort`와 [B Evidence 소비 입력](c-recommendation.md)의 `EvidenceAnalysis`다. 요청 user/analysis 소유권이 맞아야 하며 두 Registry 버전이 다르면 거절한다.
 
 수요는 전달한 cohort에서 다시 집계한다. 결과에 `demand`의 직무·기간·필터·분모·원본 run·Registry·parser·quality·집계 버전, `held`의 B Rule·레벨 정책·보유 정책 버전과 근거, `gap`의 missing/unknown 구분, 전체 `prerequisite_snapshot`, `algorithm_version`, `tie_break_rule`을 함께 저장한다. 결과는 `model_dump_json()` / `RecommendationSnapshot.model_validate_json()`으로 왕복한다.

@@ -207,9 +207,9 @@ export function toNextSkills(dto: RecommendationDto): NextSkillView[] {
     techName: technologyDisplayName(candidate.techId),
     fromLevel: toLevel(candidate.personalLevel),
     evidenceStatus: toEvidenceStatus(candidate.evidenceStatus),
-    currentFullMatch: candidate.whatIf?.currentCount ?? null,
-    projectedFullMatch: candidate.whatIf?.projectedCount ?? null,
-    increasedCount: candidate.whatIf?.increasedCount ?? null,
+    requiredImpactCount: candidate.impact?.requiredCount ?? null,
+    preferredImpactCount: candidate.impact?.preferredCount ?? null,
+    affectedJobCount: candidate.impact?.affectedCount ?? null,
     requiredCount: candidate.demand?.requiredCount ?? null,
     reasons: candidate.reasons,
     unknownPrerequisiteTechIds: candidate.unknownPrerequisiteTechIds,
@@ -224,5 +224,8 @@ export function toWhatIfJobs(dto: WhatIfDto): WhatIfJobView[] {
     title: item.title ?? '제목 없음',
     meta: [item.companyName, item.region, item.careerLevel].filter(Boolean).join(' · '),
     sourceUrl: item.sourceUrl,
+    requiredImpact: item.requiredImpact,
+    preferredImpact: item.preferredImpact,
+    conditional: item.eligibility === 'CONDITIONAL',
   }))
 }

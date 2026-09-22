@@ -1,15 +1,16 @@
-"""Order an already-chosen Top3 when the job gain cannot really separate it.
+"""Order an already-chosen Top3 when the primary job count is near-tied.
 
 <h2>왜 집합이 아니라 순서만 다루는가</h2>
 
-후보 자격과 Top3 집합은 `increased_count` 가 정한다(S15P21E102-354). 이 모듈은 그
+Top3 집합은 추천 계산이 정한다. 구 결과는 `increased_count`, 현행 v8은 관련 공고
+`affected_count`를 우선한다. 이 모듈은 그
 결과를 **입력으로 받아** 순서만 바꾸며, 후보를 넣거나 빼지 않는다. 출력이 입력의
 순열이 아니면 예외다 -- Trend 가 후보 선정으로 역류하는 것을 규약이 아니라 코드로
 막는다. 4위 후보의 Trend 가 아무리 높아도 이 모듈은 그 후보를 볼 일이 없다.
 
 <h2>왜 near-tie 인가</h2>
 
-`+31` 과 `+30` 은 "공고 한 건"이다. 그 한 건으로 학습 순서를 정하는 것은 측정이
+`31건` 과 `30건` 은 "공고 한 건" 차이다. 그 한 건으로 학습 순서를 정하는 것은 측정이
 말해 주지 않는 것을 말하는 것이다. 차이가 작을 때는 gain 대신 시장에서 실제로
 관측된 저장소 수(`active_repo_count`)를 쓴다. 차이가 크면 gain 이 그대로 이긴다 --
 Trend 는 gain 을 뒤집는 힘이 아니라 gain 이 침묵할 때 답하는 지표다.
@@ -32,7 +33,7 @@ near-tie 는 추이적이지 않다. `31~29`, `29~27` 이 각각 10% 안이어�
 from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple, Protocol
 
-#: 더 큰 `increased_count` 대비 몇 %까지를 "사실상 같은 증가"로 볼 것인가.
+#: 더 큰 주 지표 건수 대비 몇 %까지를 "사실상 같은 순위"로 볼 것인가.
 #: 백분율 정수로 두는 것은 비교를 정수 연산으로 하기 위해서다 -- `3/30 <= 0.10`
 #: 같은 경계값을 부동소수에 맡기면 같은 입력이 환경에 따라 다른 순서를 낼 수 있다.
 NEAR_TIE_THRESHOLD_PERCENT = 10

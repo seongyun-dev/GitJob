@@ -10,19 +10,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
- * 추천 기술을 채웠을 때의 신규 부합 공고 (S15P21E102-279).
+ * 추천 기술 학습 시 확인된 조건에 영향을 받는 공고 (S15P21E102-279).
  *
- * <p>C를 한 번만 부른다. 증가 건수와 목록이 같은 응답에서 나와야 한다는 것이 인수
- * 조건이고, 숫자를 추천 API에서 목록을 이 API에서 읽으면 그 사이에 새 Snapshot이 생겼을 때
- * 둘이 어긋난다.</p>
+ * <p>C를 한 번만 부른다. 활성 공고의 영향 건수와 목록은 같은 응답에서 나온다.</p>
  *
- * <p>{@code WHAT_IF} 모드는 새로 늘어나는 공고만 준다. 현재 충족 공고까지 합친 목록이
- * 아니므로 이 목록의 길이는 증가 건수와 같은 것을 센다.</p>
+ * <p>현행 추천은 {@code IMPACT} 모드를 사용한다. 전체 채용 조건 충족을 뜻하지 않는다.</p>
  */
 @Service
 public class WhatIfService {
 
-    private static final String WHAT_IF = "WHAT_IF";
+    private static final String IMPACT = "IMPACT";
 
     private final CComputeApi compute;
     private final ComputeResultReader reader;
@@ -41,12 +38,19 @@ public class WhatIfService {
     }
 
     public WhatIfResponse whatIf(long userId, String techId, int page, int perPage) {
-        Computed<CRelatedJobs> computed = reader.read(userId, snapshot ->
-                compute.relatedJobs(snapshot.recommendationSnapshotId(), userId, WHAT_IF, techId,
+        return whatIf(userId, techId, "ALL", page, perPage);
+    }
+
+    public WhatIfResponse whatIf(long userId, String techId, String impactKind,
+                                 int page, int perPage) {
+        Computed<CRelatedJobs> computed = reader.readCurrentContract(userId, snapshot ->
+                compute.relatedJobs(snapshot.recommendationSnapshotId(), userId, IMPACT, techId,
+                        impactKind,
                         ComputePaging.toComputePage(page), perPage));
 
         if (!computed.hasValue()) {
             return WhatIfResponse.pending(computed.state(), Basis.of(computed.target()), techId,
+                    impactKind,
                     page, perPage);
         }
         CRelatedJobs value = computed.value();

@@ -16,7 +16,7 @@ class ExplanationFact(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     fact_id: str
-    kind: Literal["DEMAND", "WHAT_IF", "PREREQUISITE", "EVIDENCE", "QUALITY"]
+    kind: Literal["DEMAND", "WHAT_IF", "IMPACT", "PREREQUISITE", "EVIDENCE", "QUALITY"]
     tech_id: str | None
     text: str
     values: dict[str, JsonValue]
@@ -95,26 +95,48 @@ def explain_recommendations(
                 values,
             )
         )
-        what_if = candidate.what_if
-        values = {
-            "current_count": what_if.current_count,
-            "projected_count": what_if.projected_count,
-            "increased_count": what_if.increased_count,
-            "newly_matched_job_ids": list(what_if.newly_matched_job_ids),
-            "cohort_id": snapshot.cohort_id,
-        }
-        facts.append(
-            _fact(
-                "WHAT_IF",
-                candidate.tech_id,
-                f"{candidate.tech_id} 하나를 추가하면 기술요건 기준 부합 공고는 {what_if.current_count}건에서 {what_if.projected_count}건으로 {what_if.increased_count}건 증가합니다.",
-                values,
-                (
-                    str(jobs[job_id].source_url)
-                    for job_id in what_if.newly_matched_job_ids
-                ),
+        if candidate.impact is not None:
+            impact = candidate.impact
+            facts.append(
+                _fact(
+                    "IMPACT",
+                    candidate.tech_id,
+                    f"{candidate.tech_id} 관련 공고 {impact.affected_count}건(필수 {impact.required_count}건 · 우대 {impact.preferred_count}건).",
+                    {
+                        "required_count": impact.required_count,
+                        "preferred_count": impact.preferred_count,
+                        "affected_count": impact.affected_count,
+                        "required_job_ids": list(impact.required_job_ids),
+                        "preferred_job_ids": list(impact.preferred_job_ids),
+                        "cohort_id": snapshot.cohort_id,
+                    },
+                    (
+                        str(jobs[job_id].source_url)
+                        for job_id in impact.affected_job_ids
+                    ),
+                )
             )
-        )
+        elif candidate.what_if is not None:
+            what_if = candidate.what_if
+            values = {
+                "current_count": what_if.current_count,
+                "projected_count": what_if.projected_count,
+                "increased_count": what_if.increased_count,
+                "newly_matched_job_ids": list(what_if.newly_matched_job_ids),
+                "cohort_id": snapshot.cohort_id,
+            }
+            facts.append(
+                _fact(
+                    "WHAT_IF",
+                    candidate.tech_id,
+                    f"{candidate.tech_id} 하나를 추가하면 기술요건 기준 부합 공고는 {what_if.current_count}건에서 {what_if.projected_count}건으로 {what_if.increased_count}건 증가합니다.",
+                    values,
+                    (
+                        str(jobs[job_id].source_url)
+                        for job_id in what_if.newly_matched_job_ids
+                    ),
+                )
+            )
         if candidate.prerequisite_tech_ids:
             values = {
                 "prerequisite_tech_ids": list(candidate.prerequisite_tech_ids),

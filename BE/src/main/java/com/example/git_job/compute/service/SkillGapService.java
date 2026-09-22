@@ -68,7 +68,7 @@ public class SkillGapService {
     }
 
     private Computed<CSnapshot> read(long userId) {
-        return reader.read(userId, snapshot ->
+        return reader.readCurrentContract(userId, snapshot ->
                 compute.recommendation(snapshot.recommendationSnapshotId(), userId));
     }
 

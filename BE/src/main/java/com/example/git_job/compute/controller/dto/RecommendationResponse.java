@@ -84,6 +84,7 @@ public record RecommendationResponse(
             String evidenceStatus,
             Demand demand,
             WhatIfResponse.Counts whatIf,
+            Impact impact,
             List<String> prerequisiteTechIds,
             List<String> missingPrerequisiteTechIds,
             List<String> unknownPrerequisiteTechIds,
@@ -105,6 +106,10 @@ public record RecommendationResponse(
                             demand.requiredRatio(), demand.rank()),
                     whatIf == null ? null : new WhatIfResponse.Counts(whatIf.currentCount(),
                             whatIf.projectedCount(), whatIf.increasedCount()),
+                    candidate.impact() == null ? null : new Impact(
+                            candidate.impact().requiredCount(),
+                            candidate.impact().preferredCount(),
+                            candidate.impact().affectedCount()),
                     nullToEmpty(candidate.prerequisiteTechIds()),
                     nullToEmpty(candidate.missingPrerequisiteTechIds()),
                     nullToEmpty(candidate.unknownPrerequisiteTechIds()),
@@ -116,6 +121,10 @@ public record RecommendationResponse(
 
     /** 이 기술을 요구한 공고. 비율의 분모는 같은 COHORT의 공고 수다. */
     public record Demand(int requiredCount, double requiredRatio, int rank) {
+    }
+
+    /** 서로 다른 공고 기준. 필수·우대 공고가 겹치므로 affectedCount는 합산값이 아니다. */
+    public record Impact(int requiredCount, int preferredCount, int affectedCount) {
     }
 
     private static <T> List<T> nullToEmpty(List<T> values) {

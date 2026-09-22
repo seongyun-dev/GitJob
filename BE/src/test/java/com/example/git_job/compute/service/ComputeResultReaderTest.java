@@ -275,4 +275,27 @@ class ComputeResultReaderTest {
     void readyWhenValuePresent() {
         assertThat(reader.read(USER_ID, snapshot -> "value").state().isReady()).isTrue();
     }
+
+    @Test
+    @DisplayName("새 계약 조회는 나중 레거시 fallback보다 이전 v8 Snapshot을 읽는다")
+    void readsCurrentContractSnapshotInsteadOfLaterLegacyFallback() {
+        ComputeSnapshot current = new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2",
+                "c-v8", "ev-v8", "BACKEND|서울|신입",
+                ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, Instant.EPOCH);
+        ComputeSnapshot fallback = new ComputeSnapshot(USER_ID, "b".repeat(64), "c-1", "c-2",
+                "c-v7", "ev-fallback", "BACKEND|서울|신입",
+                "active-matching/job-demand-v4+recommendation-v7", Instant.now());
+        when(snapshots.findLatest(USER_ID, TARGET.targetKey())).thenReturn(Optional.of(fallback));
+        when(snapshots.findLatest(USER_ID, TARGET.targetKey(),
+                ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION))
+                .thenReturn(Optional.of(current));
+
+        Computed<String> computed = reader.readCurrentContract(USER_ID,
+                snapshot -> snapshot.recommendationSnapshotId());
+
+        assertThat(computed.value()).isEqualTo("c-v8");
+        verify(snapshots, never()).findLatest(USER_ID, TARGET.targetKey());
+        verify(snapshots).findLatest(USER_ID, TARGET.targetKey(),
+                ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION);
+    }
 }

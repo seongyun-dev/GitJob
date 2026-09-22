@@ -108,6 +108,23 @@ class ComputeStoreIntegrationTest {
     }
 
     @Test
+    @DisplayName("새 계약 조회는 나중에 저장된 구 계약 Snapshot을 건너뛴다")
+    void findsLatestForContractWhenLegacyFallbackWasSavedLater() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            Instant earlier = Instant.now().minus(1, ChronoUnit.HOURS);
+            store.save(snapshot(userId, EVIDENCE_VERSION, "ev-v8", earlier,
+                    ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION));
+            store.save(snapshot(userId, "b".repeat(64), "ev-fallback", Instant.now(),
+                    "active-matching/job-demand-v4+recommendation-v7"));
+
+            assertThat(store.findLatest(userId, "BACKEND|서울|신입",
+                    ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION).orElseThrow().eventId())
+                    .isEqualTo("ev-v8");
+        });
+    }
+
+    @Test
     @DisplayName("계산 attempt는 lease, backoff, terminal 상태를 원자적으로 지킨다")
     void computeAttemptLifecycleIsBounded() throws Exception {
         withDatabase((jdbc, userId) -> {
@@ -215,6 +232,34 @@ class ComputeStoreIntegrationTest {
     }
 
     @Test
+    @DisplayName("계약 변경 시 구 FAILED 시도를 보존하며 새 계약 시도로 재시작한다")
+    void newContractReplacesLegacyFailedAttempt() throws Exception {
+        withDatabase((jdbc, userId) -> {
+            ComputeSnapshotStore store = new ComputeSnapshotStore(jdbc);
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            String target = "BACKEND|서울|신입";
+            ComputeAttempt old = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now, now.plusSeconds(30), 3).orElseThrow();
+            store.markFailed(old, "COMPUTE_INVALID_INPUT", now.plusSeconds(1));
+            jdbc.update("""
+                    UPDATE user_c_compute_attempt
+                    SET compute_contract_version = 'legacy'
+                    WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                    """, userId, target, EVIDENCE_VERSION);
+
+            assertThat(store.findAttempt(userId, target, EVIDENCE_VERSION)).isEmpty();
+            ComputeAttempt fresh = store.tryStartAttempt(userId, target, EVIDENCE_VERSION,
+                    now.plusSeconds(2), now.plusSeconds(32), 3).orElseThrow();
+            assertThat(fresh.status()).isEqualTo("RUNNING");
+            assertThat(fresh.attemptCount()).isEqualTo(1);
+            assertThat(fresh.runToken()).isNotEqualTo(old.runToken());
+            store.markFailed(old, "COMPUTE_UNAVAILABLE", now.plusSeconds(3));
+            assertThat(store.findAttempt(userId, target, EVIDENCE_VERSION))
+                    .contains(fresh);
+        });
+    }
+
+    @Test
     @DisplayName("기여 판정과 계보가 준비된 사용자만 복구하고 구형 사용자가 배치를 막지 않는다")
     void findsUsersMissingComputeState() throws Exception {
         withDatabase((jdbc, userId) -> {
@@ -315,6 +360,15 @@ class ComputeStoreIntegrationTest {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'legacy')
                     """, userId, EVIDENCE_VERSION, COHORT, DEMAND, RECOMMENDATION,
                     "ev-legacy", "BACKEND|서울|신입", java.sql.Timestamp.from(now));
+
+            ComputeAttempt old = store.tryStartAttempt(userId, "BACKEND|서울|신입",
+                    EVIDENCE_VERSION, now, now.plusSeconds(30), 3).orElseThrow();
+            store.markFailed(old, "COMPUTE_INVALID_INPUT", now.plusSeconds(1));
+            jdbc.update("""
+                    UPDATE user_c_compute_attempt
+                    SET compute_contract_version = 'legacy'
+                    WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                    """, userId, "BACKEND|서울|신입", EVIDENCE_VERSION);
 
             assertThat(store.usersMissingComputeState(
                     ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, 20))

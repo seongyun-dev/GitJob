@@ -1,4 +1,4 @@
-"""Deterministic next-technology candidates and one-technology job deltas."""
+"""Deterministic next-technology candidates and related-job counts."""
 
 import json
 from collections.abc import Callable, Mapping
@@ -33,10 +33,14 @@ from registry.contracts import TechId
 
 #: S15P21E102-354 changed who may be a candidate, so it is a new calculation and
 #: not a new reading of the old one. v6 stays for reading stored results.
-NEW_SKILL_ALGORITHM_VERSION = "c-recommendation/lexicographic/v7"
+NEW_SKILL_ALGORITHM_VERSION = "c-recommendation/condition-impact/v8"
 RECOMMENDATION_ALGORITHM_VERSION = NEW_SKILL_ALGORITHM_VERSION
 EXPANDED_ALGORITHM_VERSIONS = frozenset(
-    {"c-recommendation/lexicographic/v6", NEW_SKILL_ALGORITHM_VERSION}
+    {
+        "c-recommendation/lexicographic/v6",
+        "c-recommendation/lexicographic/v7",
+        NEW_SKILL_ALGORITHM_VERSION,
+    }
 )
 PREREQUISITE_POLICY_VERSION = "c-learning-prerequisites/v1"
 LEGACY_TIE_BREAK_RULE = "prerequisites-ready,gain-desc,required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
@@ -48,6 +52,15 @@ TIE_BREAK_RULE = "gain-desc,prerequisites-ready,required-count-desc,uncertainty-
 TREND_TIE_BREAK_RULE = (
     "gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,"
     "required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
+)
+IMPACT_TIE_BREAK_RULE = (
+    "affected-jobs-desc,required-jobs-desc,prerequisites-ready,"
+    "required-demand-desc,uncertainty-asc,total-demand-desc,tech-id-asc"
+)
+IMPACT_TREND_TIE_BREAK_RULE = (
+    "affected-jobs-desc,top3-near-tie-weekly-active-repo-v1,"
+    "required-jobs-desc,prerequisites-ready,required-demand-desc,"
+    "uncertainty-asc,total-demand-desc,tech-id-asc"
 )
 
 
@@ -324,6 +337,106 @@ class WhatIfResult(EvidenceModel):
         return self
 
 
+class ConditionImpact(EvidenceModel):
+    """Postings that explicitly mention one candidate in resolved requirements.
+
+    This is not a full-job or personal-level match. Each list counts distinct
+    postings, not clauses; a posting can mention the technology in both kinds.
+    """
+
+    tech_id: TechId
+    cohort_id: NonBlank
+    denominator: StrictInt = Field(ge=0)
+    required_job_ids: tuple[NonBlank, ...]
+    preferred_job_ids: tuple[NonBlank, ...]
+    affected_job_ids: tuple[NonBlank, ...]
+    required_count: StrictInt = Field(ge=0)
+    preferred_count: StrictInt = Field(ge=0)
+    affected_count: StrictInt = Field(ge=0)
+
+    @model_validator(mode="after")
+    def verify_counts(self) -> "ConditionImpact":
+        for ids in (
+            self.required_job_ids,
+            self.preferred_job_ids,
+            self.affected_job_ids,
+        ):
+            if ids != tuple(sorted(set(ids))):
+                raise ValueError("impact job IDs must be unique and sorted")
+        if self.affected_job_ids != tuple(
+            sorted(set(self.required_job_ids) | set(self.preferred_job_ids))
+        ):
+            raise ValueError("affected jobs must be the required/preferred union")
+        if (
+            self.required_count != len(self.required_job_ids)
+            or self.preferred_count != len(self.preferred_job_ids)
+            or self.affected_count != len(self.affected_job_ids)
+            or self.affected_count > self.denominator
+        ):
+            raise ValueError("impact counts must match posting IDs and denominator")
+        return self
+
+
+def condition_impact(
+    jobs: tuple[MatchingJobInput, ...],
+    _held_tech_ids: frozenset[str],
+    _personal_levels: dict[str, str],
+    tech_id: str,
+    cohort_id: str,
+) -> ConditionImpact:
+    """Count candidate mentions in parsed clauses, independent of current level.
+
+    Learning at L1 does not establish eligibility for an L2/L3 requirement, so
+    these counts describe relevant openings rather than newly fulfilled jobs.
+    Unresolved/general mentions are not promoted to required or preferred.
+    """
+    required_ids: set[str] = set()
+    preferred_ids: set[str] = set()
+    for job in jobs:
+        for clause in job.requirements.required:
+            if tech_id in clause.tech_ids:
+                required_ids.add(job.job_id)
+        for clause in job.requirements.preferred:
+            if tech_id in clause.tech_ids:
+                preferred_ids.add(job.job_id)
+    required = tuple(sorted(required_ids))
+    preferred = tuple(sorted(preferred_ids))
+    affected = tuple(sorted(required_ids | preferred_ids))
+    return ConditionImpact(
+        tech_id=tech_id,
+        cohort_id=cohort_id,
+        denominator=len(jobs),
+        required_job_ids=required,
+        preferred_job_ids=preferred,
+        affected_job_ids=affected,
+        required_count=len(required),
+        preferred_count=len(preferred),
+        affected_count=len(affected),
+    )
+
+
+def active_condition_impact(
+    impact: ConditionImpact, active_job_ids: AbstractSet[str] | None
+) -> ConditionImpact:
+    """Apply the same live-availability gate to card counts and detail lists."""
+    if active_job_ids is None:
+        return impact
+    required = tuple(job for job in impact.required_job_ids if job in active_job_ids)
+    preferred = tuple(job for job in impact.preferred_job_ids if job in active_job_ids)
+    affected = tuple(sorted(set(required) | set(preferred)))
+    return ConditionImpact(
+        tech_id=impact.tech_id,
+        cohort_id=impact.cohort_id,
+        denominator=impact.denominator,
+        required_job_ids=required,
+        preferred_job_ids=preferred,
+        affected_job_ids=affected,
+        required_count=len(required),
+        preferred_count=len(preferred),
+        affected_count=len(affected),
+    )
+
+
 def simulate_what_if(
     cohort: JobCohort,
     selection: HeldTechnologySelection,
@@ -409,7 +522,12 @@ class RecommendationCandidate(EvidenceModel):
     unknown_prerequisite_tech_ids: tuple[TechId, ...]
     reason_codes: tuple[NonBlank, ...]
     fact_ids: tuple[NonBlank, ...]
-    what_if: WhatIfResult
+    what_if: WhatIfResult | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    impact: ConditionImpact | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class _RecommendationContent(EvidenceModel):
@@ -417,6 +535,7 @@ class _RecommendationContent(EvidenceModel):
         "recommendation-snapshot/v1",
         "recommendation-snapshot/v2",
         "recommendation-snapshot/v3",
+        "recommendation-snapshot/v4",
     ] = "recommendation-snapshot/v2"
     evidence_input_version: (
         Literal[
@@ -445,6 +564,7 @@ class _RecommendationContent(EvidenceModel):
         "c-recommendation/lexicographic/v5",
         "c-recommendation/lexicographic/v6",
         "c-recommendation/lexicographic/v7",
+        "c-recommendation/condition-impact/v8",
     ] = RECOMMENDATION_ALGORITHM_VERSION
     prerequisite_policy_version: NonBlank
     prerequisite_snapshot: PrerequisiteSnapshot
@@ -455,6 +575,8 @@ class _RecommendationContent(EvidenceModel):
             "gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,"
             "required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
         ),
+        IMPACT_TIE_BREAK_RULE,
+        IMPACT_TREND_TIE_BREAK_RULE,
     ] = TIE_BREAK_RULE
     #: 순서를 바꾼 근거. 값만 남기면 같은 입력이 다른 순서를 낸 이유를 나중에
     #: 설명할 수 없으므로 주차·출처·지표까지 함께 고정한다. 없을 때는 아예
@@ -524,14 +646,18 @@ class RecommendationSnapshot(_RecommendationContent):
             "c-recommendation/lexicographic/v4",
             "c-recommendation/lexicographic/v5",
             "c-recommendation/lexicographic/v6",
+            "c-recommendation/lexicographic/v7",
             NEW_SKILL_ALGORITHM_VERSION,
         }
         # 순서 규칙은 계산과 따로 움직인다. Trend tie-break 는 후보 자격도
         # `increased_count` 도 바꾸지 않으므로 `algorithm_version` 을 올리지 않고
         # 여기서 갈린다. 대신 어느 규칙으로 정렬했는지가 payload 에 남아야 같은
         # v7 아래의 두 순서 의미가 섞이지 않는다.
+        impact_version = self.algorithm_version == NEW_SKILL_ALGORITHM_VERSION
         allowed_rules = (
-            {TIE_BREAK_RULE, TREND_TIE_BREAK_RULE}
+            {IMPACT_TIE_BREAK_RULE, IMPACT_TREND_TIE_BREAK_RULE}
+            if impact_version
+            else {TIE_BREAK_RULE, TREND_TIE_BREAK_RULE}
             if modern
             else {LEGACY_TIE_BREAK_RULE}
         )
@@ -545,10 +671,10 @@ class RecommendationSnapshot(_RecommendationContent):
         # 근거가 있는데 규칙이 예전 것이면, 저장된 순서를 그 근거로 재현할 수 없다.
         # 반대 방향은 막지 않는다 -- 규칙만 있고 근거가 없는 것은 "적용하려 했으나
         # 게시된 주차가 없었다"는 실제로 일어나는 사실이다.
-        if (
-            self.trend_tiebreak is not None
-            and self.tie_break_rule != TREND_TIE_BREAK_RULE
-        ):
+        if self.trend_tiebreak is not None and self.tie_break_rule not in {
+            TREND_TIE_BREAK_RULE,
+            IMPACT_TREND_TIE_BREAK_RULE,
+        }:
             raise ValueError("trend basis requires the trend tie-break rank policy")
         if self.demand.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
             raise ValueError("ACTIVE_MATCHING_COHORT_REQUIRED")
@@ -563,7 +689,12 @@ class RecommendationSnapshot(_RecommendationContent):
             raise ValueError("snapshot Evidence/Gap policy mismatch")
         expanded = self.algorithm_version in EXPANDED_ALGORITHM_VERSIONS
         if expanded and (
-            self.schema_version != "recommendation-snapshot/v3"
+            self.schema_version
+            != (
+                "recommendation-snapshot/v4"
+                if impact_version
+                else "recommendation-snapshot/v3"
+            )
             or self.evidence_input_version is None
             or self.matching_jobs is None
         ):
@@ -630,7 +761,10 @@ class RecommendationSnapshot(_RecommendationContent):
             self.candidates
         ):
             raise ValueError("duplicate recommendation candidate")
-        new_skill_policy = self.algorithm_version == NEW_SKILL_ALGORITHM_VERSION
+        new_skill_policy = self.algorithm_version in {
+            "c-recommendation/lexicographic/v7",
+            NEW_SKILL_ALGORITHM_VERSION,
+        }
         for candidate in self.candidates:
             if not _is_candidate_eligible(
                 candidate.tech_id,
@@ -640,6 +774,23 @@ class RecommendationSnapshot(_RecommendationContent):
                 personal_levels=self.personal_levels,
             ):
                 raise ValueError("candidate must be an evaluated missing technology")
+            if impact_version:
+                if candidate.what_if is not None or candidate.impact is None:
+                    raise ValueError("v8 candidate requires condition impact only")
+                expected_impact = condition_impact(
+                    self.matching_jobs or (),
+                    frozenset(self.held.held_tech_ids),
+                    self.personal_levels,
+                    candidate.tech_id,
+                    self.cohort_id,
+                )
+                if candidate.impact != expected_impact:
+                    raise ValueError(
+                        "candidate impact must use snapshot cohort and evidence"
+                    )
+                continue
+            if candidate.impact is not None or candidate.what_if is None:
+                raise ValueError("legacy candidate requires What-if only")
             projected = (
                 _level_matching_job_ids(
                     calculation_jobs,
@@ -675,7 +826,8 @@ def _reordered_by_trend(
 ) -> tuple[list[tuple[tuple, dict]], "TrendTieBreakBasis | None"]:
     """Reorder the settled Top3 inside near-tie clusters; never re-select.
 
-    `key[0]` 은 `-increased_count` 이고 나머지는 S15P21E102-202 가 정한 순서다.
+    `key[0]` 은 구 버전에서는 `-increased_count`, v8에서는
+    `-affected_count`다. 나머지 키는 해당 버전의 동률 순서다.
     무리 안에서는 앞자리만 Trend 로 갈리고 나머지는 그대로 이어진다.
 
     조회는 **여기서 한 번** 일어난다. 후보마다 부르지 않으므로 추천 한 건이
@@ -723,8 +875,8 @@ def build_recommendations(
     `trend_lookup` 은 **Top3 가 정해진 뒤에** 그 세 `tech_id` 로만 호출된다
     (S15P21E102-355). 값이 아니라 조회 함수를 받는 것은 후보가 정해지기 전에는
     무엇을 물어야 할지 알 수 없고, 후보 풀 전체를 묻는 것은 bounded 조회가 아니기
-    때문이다. 후보 자격·`increased_count`·What-if 는 이 값을 보지 않으므로 Trend 가
-    후보를 고르는 일은 없다. 주지 않으면 결과는 예전과 바이트까지 같다.
+    때문이다. 후보 자격·1차 영향 건수는 이 값을 보지 않으므로 Trend 가
+    후보를 고르는 일은 없다.
     """
     if cohort.criteria.purpose is not CohortPurpose.ACTIVE_MATCHING:
         raise ValueError("ACTIVE_MATCHING_COHORT_REQUIRED")
@@ -850,7 +1002,10 @@ def build_recommendations(
     )
     # Derived from the version actually emitted, so the builder and the snapshot
     # validator cannot drift apart on who is eligible.
-    new_skill_policy = algorithm_version == NEW_SKILL_ALGORITHM_VERSION
+    new_skill_policy = algorithm_version in {
+        "c-recommendation/lexicographic/v7",
+        NEW_SKILL_ALGORITHM_VERSION,
+    }
 
     ranked: list[tuple[tuple, dict]] = []
     for row in demand.technologies:
@@ -874,18 +1029,31 @@ def build_recommendations(
             for tech_id in required
             if decisions[tech_id].status is HeldStatus.UNKNOWN
         )
-        what_if = (
-            _level_what_if(
-                cohort,
-                row.tech_id,
+        impact = (
+            condition_impact(
+                cohort.matching_jobs,
+                frozenset(held.held_tech_ids),
                 personal_levels,
-                held,
-                data_gaps=tuple(sorted(data_gaps)),
-                jobs=calculation_jobs,
+                row.tech_id,
+                cohort.cohort_id,
             )
-            if level_aware
-            else simulate_what_if(cohort, held, row.tech_id, jobs=calculation_jobs)
+            if expanded and cohort.matching_jobs is not None
+            else None
         )
+        what_if = None
+        if impact is None:
+            what_if = (
+                _level_what_if(
+                    cohort,
+                    row.tech_id,
+                    personal_levels,
+                    held,
+                    data_gaps=tuple(sorted(data_gaps)),
+                    jobs=calculation_jobs,
+                )
+                if level_aware
+                else simulate_what_if(cohort, held, row.tech_id, jobs=calculation_jobs)
+            )
         held_l0 = level_aware and personal_levels.get(row.tech_id) == "L0"
         reasons = {"DEMAND_IN_SELECTED_COHORT"}
         # A technology the user demonstrably holds must not be explained as "no
@@ -896,11 +1064,18 @@ def build_recommendations(
             if row.tech_id in gap.missing_tech_ids or held_l0
             else "NO_PERSONAL_USE_EVIDENCE"
         )
-        reasons.add(
-            "DIRECT_JOB_INCREASE"
-            if what_if.increased_count
-            else "NO_IMMEDIATE_JOB_INCREASE"
-        )
+        if impact is not None:
+            reasons.add(
+                "DIRECT_CONDITION_IMPACT"
+                if impact.affected_count
+                else "NO_DIRECT_CONDITION_IMPACT"
+            )
+        else:
+            reasons.add(
+                "DIRECT_JOB_INCREASE"
+                if what_if is not None and what_if.increased_count
+                else "NO_IMMEDIATE_JOB_INCREASE"
+            )
         if missing:
             reasons.add("PREREQUISITES_MISSING")
         if unknown:
@@ -909,25 +1084,41 @@ def build_recommendations(
             reasons.add("PREREQUISITES_HELD")
         if not required:
             reasons.add("NO_PREREQUISITE_IMPOSED_BY_POLICY")
+        affected_job_ids = (
+            impact.affected_job_ids
+            if impact is not None
+            else what_if.newly_matched_job_ids
+            if what_if is not None
+            else ()
+        )
         fact_ids = {
             f"demand:{cohort.cohort_id}:{row.tech_id}",
             f"evidence:{analysis.analysis_id}:{row.tech_id}",
-            f"what-if:{cohort.cohort_id}:{row.tech_id}",
-            *(
-                f"job:{cohort.cohort_id}:{job_id}"
-                for job_id in what_if.newly_matched_job_ids
-            ),
+            f"{'impact' if impact is not None else 'what-if'}:{cohort.cohort_id}:{row.tech_id}",
+            *(f"job:{cohort.cohort_id}:{job_id}" for job_id in affected_job_ids),
         }
         if rule:
             fact_ids.update(rule.fact_ids)
         uncertainty = len(unknown) + len(decisions[row.tech_id].data_gaps)
         key = (
-            -what_if.increased_count,
-            bool(missing or unknown),
-            -row.required_count,
-            uncertainty,
-            -row.total_count,
-            row.tech_id,
+            (
+                -impact.affected_count,
+                -impact.required_count,
+                bool(missing or unknown),
+                -row.required_count,
+                uncertainty,
+                -row.total_count,
+                row.tech_id,
+            )
+            if impact is not None
+            else (
+                -what_if.increased_count,
+                bool(missing or unknown),
+                -row.required_count,
+                uncertainty,
+                -row.total_count,
+                row.tech_id,
+            )
         )
         ranked.append(
             (
@@ -948,6 +1139,7 @@ def build_recommendations(
                     "reason_codes": tuple(sorted(reasons)),
                     "fact_ids": tuple(sorted(fact_ids)),
                     "what_if": what_if,
+                    "impact": impact,
                 },
             )
         )
@@ -972,9 +1164,27 @@ def build_recommendations(
         status = "NO_CANDIDATES"
     else:
         status = "PARTIAL" if data_gaps else "READY"
+    if expanded:
+        tie_break_rule = (
+            IMPACT_TREND_TIE_BREAK_RULE
+            if trend_tiebreak is not None
+            else IMPACT_TIE_BREAK_RULE
+        )
+    elif algorithm_version in {
+        "c-recommendation/lexicographic/v3",
+        "c-recommendation/lexicographic/v4",
+        "c-recommendation/lexicographic/v5",
+        "c-recommendation/lexicographic/v6",
+        "c-recommendation/lexicographic/v7",
+    }:
+        tie_break_rule = (
+            TREND_TIE_BREAK_RULE if trend_tiebreak is not None else TIE_BREAK_RULE
+        )
+    else:
+        tie_break_rule = LEGACY_TIE_BREAK_RULE
     content = _RecommendationContent(
         schema_version=(
-            "recommendation-snapshot/v3" if expanded else "recommendation-snapshot/v2"
+            "recommendation-snapshot/v4" if expanded else "recommendation-snapshot/v2"
         ),
         evidence_input_version=(analysis.schema_version if expanded else None),
         user_id=user_id,
@@ -997,23 +1207,7 @@ def build_recommendations(
         ),
         data_gaps=tuple(sorted(data_gaps)),
         algorithm_version=algorithm_version,
-        # 근거가 있을 때만 Trend 규칙을 적는다. 근거 없이 규칙만 적으면 그 순서를
-        # 재현할 방법이 없고, 근거가 없으면 정렬도 예전과 같으므로 규칙도 예전
-        # 것이 사실이다. 게시된 주차가 없으면 payload 는 바이트까지 v7 그대로다.
-        tie_break_rule=(
-            TREND_TIE_BREAK_RULE
-            if trend_tiebreak is not None
-            else TIE_BREAK_RULE
-            if algorithm_version
-            in {
-                "c-recommendation/lexicographic/v3",
-                "c-recommendation/lexicographic/v4",
-                "c-recommendation/lexicographic/v5",
-                "c-recommendation/lexicographic/v6",
-                NEW_SKILL_ALGORITHM_VERSION,
-            }
-            else LEGACY_TIE_BREAK_RULE
-        ),
+        tie_break_rule=tie_break_rule,
         trend_tiebreak=trend_tiebreak,
         personal_levels=personal_levels if level_aware else {},
         assessment_ceilings=assessment_ceilings if level_aware else {},
@@ -1027,14 +1221,19 @@ def build_recommendations(
 class RelatedJobsPage(EvidenceModel):
     snapshot_id: NonBlank
     cohort_id: NonBlank
-    view: Literal["CURRENT", "WHAT_IF"]
+    view: Literal["CURRENT", "WHAT_IF", "IMPACT"]
     tech_id: TechId | None
+    impact_kind: Literal["ALL", "REQUIRED", "PREFERRED"] | None = None
     total_count: StrictInt = Field(ge=0)
     offset: StrictInt = Field(ge=0)
     limit: StrictInt = Field(ge=1, le=100)
-    current_count: StrictInt = Field(ge=0)
-    projected_count: StrictInt = Field(ge=0)
-    increased_count: StrictInt = Field(ge=0)
+    current_count: StrictInt | None = Field(default=None, ge=0)
+    projected_count: StrictInt | None = Field(default=None, ge=0)
+    increased_count: StrictInt | None = Field(default=None, ge=0)
+    impact_counts: dict[str, StrictInt] | None = None
+    impact_job_kinds: dict[NonBlank, tuple[Literal["REQUIRED", "PREFERRED"], ...]] = (
+        Field(default_factory=dict)
+    )
     items: tuple[CohortJob | MatchingJobInput, ...]
     data_gaps: tuple[NonBlank, ...]
 
@@ -1070,13 +1269,14 @@ def list_related_jobs(
     snapshot: RecommendationSnapshot,
     *,
     user_id: str,
-    view: Literal["CURRENT", "WHAT_IF"],
+    view: Literal["CURRENT", "WHAT_IF", "IMPACT"],
     tech_id: str | None = None,
+    impact_kind: Literal["ALL", "REQUIRED", "PREFERRED"] = "ALL",
     offset: int = 0,
     limit: int = 20,
     active_job_ids: AbstractSet[str] | None = None,
 ) -> RelatedJobsPage:
-    """Read immutable CURRENT IDs or WHAT_IF newly-added IDs, without recompute."""
+    """Page legacy full-match IDs or v8 resolved-clause impact IDs."""
     if snapshot.user_id != user_id:
         raise PermissionError("recommendation snapshot belongs to another user")
     if (
@@ -1091,6 +1291,8 @@ def list_related_jobs(
         for job_id in snapshot.current_job_ids
         if active_job_ids is None or job_id in active_job_ids
     )
+    impact_counts = None
+    impact_job_kinds = {}
     if view == "CURRENT":
         if tech_id is not None:
             raise ValueError("CURRENT list does not take a candidate technology")
@@ -1103,7 +1305,7 @@ def list_related_jobs(
         candidate = next(
             (item for item in snapshot.candidates if item.tech_id == tech_id), None
         )
-        if candidate is None:
+        if candidate is None or candidate.what_if is None:
             raise ValueError("WHAT_IF list requires a candidate in this snapshot")
         ids = tuple(
             job_id
@@ -1119,20 +1321,50 @@ def list_related_jobs(
             len(projected_ids),
             len(ids),
         )
+    elif view == "IMPACT":
+        candidate = next(
+            (item for item in snapshot.candidates if item.tech_id == tech_id), None
+        )
+        if candidate is None or candidate.impact is None:
+            raise ValueError("IMPACT list requires a v8 candidate in this snapshot")
+        impact = active_condition_impact(candidate.impact, active_job_ids)
+        ids = {
+            "ALL": impact.affected_job_ids,
+            "REQUIRED": impact.required_job_ids,
+            "PREFERRED": impact.preferred_job_ids,
+        }[impact_kind]
+        impact_counts = {
+            "required_count": impact.required_count,
+            "preferred_count": impact.preferred_count,
+            "affected_count": impact.affected_count,
+        }
+        for job_id in ids[offset : offset + limit]:
+            impact_job_kinds[job_id] = tuple(
+                kind
+                for kind, member_ids in (
+                    ("REQUIRED", impact.required_job_ids),
+                    ("PREFERRED", impact.preferred_job_ids),
+                )
+                if job_id in member_ids
+            )
+        projected_count = increased_count = None
     else:
-        raise ValueError("view must be CURRENT or WHAT_IF")
+        raise ValueError("view must be CURRENT, WHAT_IF, or IMPACT")
     jobs = {job.job_id: job for job in snapshot.calculation_jobs}
     return RelatedJobsPage(
         snapshot_id=snapshot.snapshot_id,
         cohort_id=snapshot.cohort_id,
         view=view,
         tech_id=tech_id,
+        impact_kind=impact_kind if view == "IMPACT" else None,
         total_count=len(ids),
         offset=offset,
         limit=limit,
-        current_count=len(current_ids),
+        current_count=None if view == "IMPACT" else len(current_ids),
         projected_count=projected_count,
         increased_count=increased_count,
+        impact_counts=impact_counts,
+        impact_job_kinds=impact_job_kinds,
         items=tuple(jobs[job_id] for job_id in ids[offset : offset + limit]),
         data_gaps=snapshot.data_gaps,
     )

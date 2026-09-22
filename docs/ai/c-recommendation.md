@@ -87,6 +87,18 @@ v2 레벨 검증은 B가 전달한 레벨의 조건만 확인한다. 조건이 �
 
 언어·인프라는 SBOM 직접 의존성이 본질적으로 없을 수 있다. 따라서 dependency gate만으로 미사용을 단정하지 않는다. accepted 구현 근거를 추천에 사용할 수 있지만 B의 언어 Rule이나 새 레벨을 C가 임의로 정의하지 않는다.
 
+## 현행 추천 의미 (v8)
+
+`c-recommendation/condition-impact/v8`부터 다음 학습 기술은 공고의 모든 필수 조건을
+완전히 채우는 건수가 아니라, **후보 기술을 확인된 필수·우대 조건으로 언급한 서로
+다른 공고 수**로 추천한다. `matching_jobs`의 조건부 공고와 일부 미해석 공고도
+확인된 절은 센다. L2/L3 요구 공고도 기술 관련 수요로 세지만 L1 학습으로 해당
+수준을 충족했다고 판정하지 않는다. OR의 다른 대안을 이미 보유한 공고도 해당 기술의
+수요에는 포함한다. 미해석·일반 언급은 필수·우대로 승격하지 않는다.
+`impact`에는 필수·우대·합집합 공고 ID와 건수가 저장되며,
+화면과 상세 목록에는 같은 활성 공고 필터를 적용한다. 아래 v7 What-if 설명은 저장된
+구 결과의 읽기 호환 계약이며 새 추천의 순위나 화면에 사용하지 않는다.
+
 ## 병합·Gap·설명
 
 유효한 긍정은 PARTIAL 분석이나 실패한 peer repository가 있어도 유지한다. FAILED 전체 분석, FAILED/UNSUPPORTED/PERMISSION_DENIED repository의 proof는 수용하지 않는다. accepted observation이 없는 incomplete/unsupported 결과를 개인 미보유로 바꾸지 않는다.

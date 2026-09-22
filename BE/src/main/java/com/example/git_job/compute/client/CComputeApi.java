@@ -86,16 +86,25 @@ public class CComputeApi {
     }
 
     /**
-     * 공고 목록. {@code WHAT_IF}는 그 기술을 채웠을 때 <b>새로 늘어나는</b> 공고만 준다.
+     * 공고 목록. 현행 추천은 {@code IMPACT}로 확인된 기술 조건에 영향을 받는 공고를
+     * 조회한다. {@code WHAT_IF}는 구 결과 조회 전용이다.
      *
      * @param techId {@code CURRENT}에서는 {@code null}이다. 값이 있으면 보내지 않는다.
      */
     public CRelatedJobs relatedJobs(String snapshotId, long userId, String mode, String techId,
                                     int page, int size) {
+        return relatedJobs(snapshotId, userId, mode, techId, "ALL", page, size);
+    }
+
+    public CRelatedJobs relatedJobs(String snapshotId, long userId, String mode, String techId,
+                                    String impactKind, int page, int size) {
         Map<String, Object> query = new HashMap<>();
         query.put("user_id", String.valueOf(userId));
         query.put("mode", mode);
         query.put("recommended_tech_id", techId);
+        if ("IMPACT".equals(mode)) {
+            query.put("impact_kind", impactKind);
+        }
         query.put("page", page);
         query.put("size", size);
         return client.get(RECOMMENDATIONS + snapshotId + "/job-postings", query,

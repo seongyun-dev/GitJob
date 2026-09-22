@@ -35,7 +35,7 @@ public class ComputeSnapshotStore {
      * 409 충돌을 막을 뿐, 이미 행이 있는 사용자를 다시 큐에 넣지는 않는다.</p>
      */
     public static final String CURRENT_COMPUTE_CONTRACT_VERSION =
-            "active-matching/job-demand-v4+recommendation-v7";
+            "active-matching/job-demand-v4+recommendation-v8";
 
     private static final RowMapper<ComputeSnapshot> MAPPER = (rs, row) -> new ComputeSnapshot(
             rs.getLong("user_id"),
@@ -93,6 +93,23 @@ public class ComputeSnapshotStore {
     }
 
     /**
+     * 이 사용자의 이 목표 직무에서 지정한 계산 계약으로 만든 가장 최근 결과.
+     *
+     * <p>새 계약 전용 화면은 이 조회를 써야 한다. 계약을 가리지 않고 최신 한 행을 먼저
+     * 고른 뒤 버전을 검사하면, 나중에 저장된 fallback 행이 그보다 이른 현재 계약 행을
+     * 가려 재계산이 끝났어도 계속 대기 상태가 된다.</p>
+     */
+    public Optional<ComputeSnapshot> findLatest(long userId, String targetKey,
+                                                String computeContractVersion) {
+        return jdbc.query("SELECT " + COLUMNS + """
+                 FROM user_c_snapshot
+                WHERE user_id = ? AND target_key = ? AND compute_contract_version = ?
+                ORDER BY computed_at DESC
+                LIMIT 1
+                """, MAPPER, userId, targetKey, computeContractVersion).stream().findFirst();
+    }
+
+    /**
      * 저장한다. 이미 있으면 아무것도 하지 않는다.
      *
      * @return 실제로 새 행이 생겼으면 {@code true}. 로그에서 "계산했다"와 "이미 있었다"를
@@ -120,7 +137,9 @@ public class ComputeSnapshotStore {
                        attempt_count, run_token, next_retry_at, updated_at
                 FROM user_c_compute_attempt
                 WHERE user_id = ? AND target_key = ? AND evidence_version = ?
-                """, ATTEMPT_MAPPER, userId, targetKey, evidenceVersion).stream().findFirst();
+                  AND compute_contract_version = ?
+                """, ATTEMPT_MAPPER, userId, targetKey, evidenceVersion,
+                CURRENT_COMPUTE_CONTRACT_VERSION).stream().findFirst();
     }
 
     /** lease 또는 backoff가 끝난 정확한 실행. 실제 claim은 {@link #tryStartAttempt}가 한다. */
@@ -129,10 +148,12 @@ public class ComputeSnapshotStore {
                 SELECT user_id, target_key, evidence_version, status, reason,
                        attempt_count, run_token, next_retry_at, updated_at
                 FROM user_c_compute_attempt
-                WHERE status IN ('RUNNING', 'RETRYING') AND next_retry_at <= ?
+                WHERE compute_contract_version = ?
+                  AND status IN ('RUNNING', 'RETRYING') AND next_retry_at <= ?
                 ORDER BY updated_at, user_id
                 LIMIT ?
-                """, ATTEMPT_MAPPER, java.sql.Timestamp.from(now), limit);
+                """, ATTEMPT_MAPPER, CURRENT_COMPUTE_CONTRACT_VERSION,
+                java.sql.Timestamp.from(now), limit);
     }
 
     /**
@@ -207,6 +228,7 @@ public class ComputeSnapshotStore {
                     WHERE attempt.user_id = ut.user_id
                       AND attempt.target_key = ut.target_role || '|' || ut.regions || '|'
                                                || ut.career_levels
+                      AND attempt.compute_contract_version = ?
                 )
                 ORDER BY CASE WHEN EXISTS (
                     SELECT 1
@@ -217,7 +239,7 @@ public class ComputeSnapshotStore {
                 ) THEN 1 ELSE 0 END,
                 ut.updated_at, ut.user_id
                 LIMIT ?
-                """, Long.class, computeContractVersion, limit);
+                """, Long.class, computeContractVersion, computeContractVersion, limit);
     }
 
     /** 스케줄러가 읽은 정확한 실행만 지운다. 이후 재생성된 행은 token이 달라 보존된다. */
@@ -225,9 +247,9 @@ public class ComputeSnapshotStore {
         jdbc.update("""
                 DELETE FROM user_c_compute_attempt
                 WHERE user_id = ? AND target_key = ? AND evidence_version = ?
-                  AND run_token = ?
+                  AND compute_contract_version = ? AND run_token = ?
                 """, attempt.userId(), attempt.targetKey(), attempt.evidenceVersion(),
-                attempt.runToken());
+                CURRENT_COMPUTE_CONTRACT_VERSION, attempt.runToken());
     }
 
     /**
@@ -242,31 +264,47 @@ public class ComputeSnapshotStore {
         return jdbc.query("""
                 INSERT INTO user_c_compute_attempt
                     (user_id, target_key, evidence_version, status, reason, attempt_count,
-                     run_token, next_retry_at, updated_at)
-                VALUES (?, ?, ?, 'RUNNING', 'COMPUTING', 1, ?, ?, ?)
+                     run_token, next_retry_at, updated_at, compute_contract_version)
+                VALUES (?, ?, ?, 'RUNNING', 'COMPUTING', 1, ?, ?, ?, ?)
                 ON CONFLICT (user_id, target_key, evidence_version) DO UPDATE SET
-                    status = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                    status = CASE WHEN user_c_compute_attempt.compute_contract_version
+                                      <> EXCLUDED.compute_contract_version THEN 'RUNNING'
+                                  WHEN user_c_compute_attempt.attempt_count >= ?
                                   THEN 'FAILED' ELSE 'RUNNING' END,
-                    reason = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                    reason = CASE WHEN user_c_compute_attempt.compute_contract_version
+                                      <> EXCLUDED.compute_contract_version THEN 'COMPUTING'
+                                  WHEN user_c_compute_attempt.attempt_count >= ?
                                   THEN 'COMPUTE_RETRY_EXHAUSTED' ELSE 'COMPUTING' END,
-                    attempt_count = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                    attempt_count = CASE WHEN user_c_compute_attempt.compute_contract_version
+                                             <> EXCLUDED.compute_contract_version THEN 1
+                                         WHEN user_c_compute_attempt.attempt_count >= ?
                                          THEN user_c_compute_attempt.attempt_count
                                          ELSE user_c_compute_attempt.attempt_count + 1 END,
-                    run_token = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                    run_token = CASE WHEN user_c_compute_attempt.compute_contract_version
+                                         <> EXCLUDED.compute_contract_version
+                                     THEN EXCLUDED.run_token
+                                     WHEN user_c_compute_attempt.attempt_count >= ?
                                      THEN user_c_compute_attempt.run_token
                                      ELSE EXCLUDED.run_token END,
-                    next_retry_at = CASE WHEN user_c_compute_attempt.attempt_count >= ?
+                    next_retry_at = CASE WHEN user_c_compute_attempt.compute_contract_version
+                                             <> EXCLUDED.compute_contract_version
+                                         THEN EXCLUDED.next_retry_at
+                                         WHEN user_c_compute_attempt.attempt_count >= ?
                                          THEN NULL ELSE EXCLUDED.next_retry_at END,
+                    compute_contract_version = EXCLUDED.compute_contract_version,
                     updated_at = EXCLUDED.updated_at
-                WHERE user_c_compute_attempt.status <> 'FAILED'
-                  AND (user_c_compute_attempt.next_retry_at IS NULL
-                       OR user_c_compute_attempt.next_retry_at <= ?)
+                WHERE user_c_compute_attempt.compute_contract_version
+                          <> EXCLUDED.compute_contract_version
+                   OR (user_c_compute_attempt.status <> 'FAILED'
+                       AND (user_c_compute_attempt.next_retry_at IS NULL
+                            OR user_c_compute_attempt.next_retry_at <= ?))
                 RETURNING user_id, target_key, evidence_version, status, reason,
                           attempt_count, run_token, next_retry_at, updated_at
                 """, ATTEMPT_MAPPER,
                 userId, targetKey, evidenceVersion,
                 runToken,
                 java.sql.Timestamp.from(leaseUntil), java.sql.Timestamp.from(now),
+                CURRENT_COMPUTE_CONTRACT_VERSION,
                 maxAttempts, maxAttempts, maxAttempts, maxAttempts, maxAttempts,
                 java.sql.Timestamp.from(now)).stream().findFirst();
     }
@@ -277,10 +315,11 @@ public class ComputeSnapshotStore {
                 UPDATE user_c_compute_attempt
                 SET status = 'RETRYING', reason = ?, next_retry_at = ?, updated_at = ?
                 WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND compute_contract_version = ?
                   AND run_token = ? AND status = 'RUNNING'
                 """, reason, java.sql.Timestamp.from(nextRetryAt), java.sql.Timestamp.from(now),
                 attempt.userId(), attempt.targetKey(), attempt.evidenceVersion(),
-                attempt.runToken());
+                CURRENT_COMPUTE_CONTRACT_VERSION, attempt.runToken());
     }
 
     public void markFailed(ComputeAttempt attempt, String reason, Instant now) {
@@ -288,18 +327,21 @@ public class ComputeSnapshotStore {
                 UPDATE user_c_compute_attempt
                 SET status = 'FAILED', reason = ?, next_retry_at = NULL, updated_at = ?
                 WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND compute_contract_version = ?
                   AND run_token = ? AND status = 'RUNNING'
                 """, reason, java.sql.Timestamp.from(now), attempt.userId(), attempt.targetKey(),
-                attempt.evidenceVersion(), attempt.runToken());
+                attempt.evidenceVersion(), CURRENT_COMPUTE_CONTRACT_VERSION,
+                attempt.runToken());
     }
 
     public void clearAttempt(ComputeAttempt attempt) {
         jdbc.update("""
                 DELETE FROM user_c_compute_attempt
                 WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                  AND compute_contract_version = ?
                   AND run_token = ? AND status = 'RUNNING'
                 """, attempt.userId(), attempt.targetKey(), attempt.evidenceVersion(),
-                attempt.runToken());
+                CURRENT_COMPUTE_CONTRACT_VERSION, attempt.runToken());
     }
 
     /**
@@ -317,6 +359,7 @@ public class ComputeSnapshotStore {
                            attempt_count, run_token
                     FROM user_c_compute_attempt
                     WHERE user_id = ? AND target_key = ? AND evidence_version = ?
+                      AND compute_contract_version = ?
                       AND run_token = ? AND status = 'FAILED'
                     FOR UPDATE
                 ), changed AS (
@@ -344,7 +387,8 @@ public class ComputeSnapshotStore {
                 )
                 SELECT changed.* FROM changed CROSS JOIN audited
                 """, ATTEMPT_MAPPER,
-                userId, targetKey, evidenceVersion, expectedRunToken,
+                userId, targetKey, evidenceVersion, CURRENT_COMPUTE_CONTRACT_VERSION,
+                expectedRunToken,
                 pendingToken, java.sql.Timestamp.from(now), java.sql.Timestamp.from(now),
                 auditId, actorUserId, operatorReason.strip(), java.sql.Timestamp.from(now)
         ).stream().findFirst();

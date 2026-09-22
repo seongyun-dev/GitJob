@@ -75,8 +75,20 @@ public class ComputeResultReader {
      *               {@link CComputeException}만 상태로 번역된다.
      */
     public <T> Computed<T> read(long userId, Reader<T> reader) {
+        return read(userId, null, reader);
+    }
+
+    /** 새 계약 전용 화면에서 구 Snapshot을 읽지 않고 재계산 대기 상태로 돌린다. */
+    public <T> Computed<T> readCurrentContract(long userId, Reader<T> reader) {
+        return read(userId, ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION, reader);
+    }
+
+    private <T> Computed<T> read(long userId, String requiredContract, Reader<T> reader) {
         Target target = requireTarget(userId);
-        ComputeSnapshot snapshot = snapshots.findLatest(userId, target.targetKey()).orElse(null);
+        Optional<ComputeSnapshot> latest = requiredContract == null
+                ? snapshots.findLatest(userId, target.targetKey())
+                : snapshots.findLatest(userId, target.targetKey(), requiredContract);
+        ComputeSnapshot snapshot = latest.orElse(null);
         if (snapshot == null) {
             return new Computed<>(target, null, pendingState(userId, target), null);
         }

@@ -88,7 +88,11 @@ export const queryKeys = {
   matchingSkillGap: (targetKey: string) => ['matching', targetKey, 'skill-gap'] as const,
   matchingRecommendations: (targetKey: string) =>
     ['matching', targetKey, 'recommendations'] as const,
-  matchingWhatIf: (targetKey: string, techId: string, params: PageParams) =>
+  matchingWhatIf: (
+    targetKey: string,
+    techId: string,
+    params: PageParams & { kind: 'ALL' | 'REQUIRED' | 'PREFERRED' },
+  ) =>
     ['matching', targetKey, 'what-if', techId, params] as const,
 
   // 시장 지표 -- 개인 결과가 아니라 사용자 단위로 나뉘지 않는다.

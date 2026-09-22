@@ -527,14 +527,47 @@ def test_projection_active_mode_filters_count_page_detail_and_what_if(
             PREFIX + f"/recommendations/{result_id}/job-postings",
             params={
                 "user_id": "user-1",
-                "mode": "WHAT_IF",
+                "mode": "IMPACT",
                 "recommended_tech_id": "docker",
             },
         )
         assert what_if.status_code == 200, what_if.text
         delta = what_if.json()["data"]
-        assert delta["total_count"] == delta["increased_count"]
+        assert delta["total_count"] == delta["impact_counts"]["affected_count"]
         assert {row["job_id"] for row in delta["items"]} <= store.active_job_ids
+        overview = active_client.get(
+            PREFIX + f"/snapshots/{result_id}", params={"user_id": "user-1"}
+        )
+        assert overview.status_code == 200, overview.text
+        docker = next(
+            item for item in overview.json()["data"]["payload"]["candidates"]
+            if item["tech_id"] == "docker"
+        )
+        assert docker["impact"]["affected_count"] == delta["impact_counts"]["affected_count"]
+        for kind, count_key in (
+            ("REQUIRED", "required_count"),
+            ("PREFERRED", "preferred_count"),
+        ):
+            filtered = active_client.get(
+                PREFIX + f"/recommendations/{result_id}/job-postings",
+                params={
+                    "user_id": "user-1",
+                    "mode": "IMPACT",
+                    "recommended_tech_id": "docker",
+                    "impact_kind": kind,
+                },
+            )
+            assert filtered.status_code == 200, filtered.text
+            filtered_data = filtered.json()["data"]
+            assert filtered_data["impact_kind"] == kind
+            assert filtered_data["total_count"] == delta["impact_counts"][count_key]
+            assert all(
+                kind in filtered_data["impact_job_kinds"][row["job_id"]]
+                for row in filtered_data["items"]
+            )
+            assert {
+                row["job_id"] for row in filtered_data["items"]
+            } <= store.active_job_ids
 
 
 def test_postgres_current_result_payload_is_slim_and_head_is_atomic(client):

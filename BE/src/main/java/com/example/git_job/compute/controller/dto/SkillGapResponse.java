@@ -16,9 +16,9 @@ import java.util.Map;
  *
  * <h2>fillDelta가 대부분 null인 이유</h2>
  *
- * <p>C는 What-if를 상위 3개 후보에만 계산한다. 나머지 행에 숫자를 만들어 넣으려면 B가
- * What-if를 다시 계산해야 하는데, 그것은 하지 않기로 한 일이다. 계약 §6-2의 미결
- * 항목이며, 그때까지 이 열은 세 행에만 값이 있다.</p>
+ * <p>C는 v8 조건 영향을 상위 3개 후보에만 계산한다. 나머지 행에 숫자를 만들어 넣으려면
+ * B가 계산을 재구현해야 하므로 null로 둔다. 구 {@code fillDelta} 필드명은 공개 계약
+ * 호환을 위해 남기되 값은 전체 부합 증가가 아닌 중복 제외 조건 영향 공고 수다.</p>
  */
 public record SkillGapResponse(
         String dataStatus,
@@ -75,9 +75,9 @@ public record SkillGapResponse(
             return Map.of();
         }
         return recommendation.candidates().stream()
-                .filter(candidate -> candidate.whatIf() != null)
+                .filter(candidate -> candidate.impact() != null)
                 .collect(java.util.stream.Collectors.toMap(CSnapshot.Candidate::techId,
-                        candidate -> candidate.whatIf().increasedCount(),
+                        candidate -> candidate.impact().affectedCount(),
                         (first, second) -> first));
     }
 
@@ -110,7 +110,7 @@ public record SkillGapResponse(
      * @param personalLevel     {@code null}은 미보유가 아니라 미판정이다.
      * @param assessmentCeiling BE의 규칙이 배제할 수 있었던 최고 Level. 화면은 이 값 위를
      *                          "확인되지 않음"으로 표시해야 한다.
-     * @param fillDelta         이 기술만 채웠을 때 늘어나는 공고 수. 행끼리 더하지 않는다 --
+     * @param fillDelta         이 기술로 새로 맞는 조건이 있는 공고 수. 행끼리 더하지 않는다 --
      *                          같은 공고가 여러 행에 걸쳐 있어 합계는 뜻을 갖지 않는다.
      */
     public record Row(

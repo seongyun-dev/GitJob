@@ -65,18 +65,18 @@ export function fetchRecommendations(): Promise<RecommendationDto> {
 }
 
 /**
- * 추천 기술을 채웠을 때 새로 부합하는 공고.
+ * 추천 기술이 필수 또는 우대로 언급된 공고.
  *
- * 증가 건수와 목록이 한 응답에서 온다. 숫자를 추천 API에서 목록을 여기서 읽으면 그
- * 사이에 새 계산이 생겼을 때 화면의 "+7건"과 아래 목록이 어긋난다.
+ * 활성 공고의 필수·우대·중복 제외 건수와 목록이 한 응답에서 온다.
  */
 export function fetchWhatIf(
   techId: string,
-  params: { page: number; perPage: number },
+  params: { page: number; perPage: number; kind: 'ALL' | 'REQUIRED' | 'PREFERRED' },
 ): Promise<WhatIfDto> {
   const query = new URLSearchParams({
     page: String(params.page),
     perPage: String(params.perPage),
+    kind: params.kind,
   })
   return get<WhatIfDto>(
     `/me/recommendations/${encodeURIComponent(techId)}/what-if?${query.toString()}`,

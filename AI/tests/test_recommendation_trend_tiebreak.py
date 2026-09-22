@@ -20,6 +20,7 @@ from test_recommendation_engine import make_cohort, make_job, recommend
 
 from job.cohort import build_cohort
 from recommendation.engine import (
+    IMPACT_TIE_BREAK_RULE,
     LEGACY_TIE_BREAK_RULE,
     RECOMMENDATION_ALGORITHM_VERSION,
     TIE_BREAK_RULE,
@@ -592,7 +593,7 @@ def test_identity_e_a_current_version_snapshot_without_trend_still_reads_back():
     assert "trend_tiebreak" not in stored
     restored = RecommendationSnapshot.model_validate(stored)
     assert restored.model_dump(mode="json") == stored
-    assert restored.tie_break_rule == TIE_BREAK_RULE
+    assert restored.tie_break_rule == IMPACT_TIE_BREAK_RULE
 
 
 # --- 실제 v7 계산 위에서의 near-tie -------------------------------------------
@@ -663,14 +664,14 @@ def test_current_near_tie_is_reordered_by_the_weekly_repository_count():
     plain = current_recommend(31, 30)
     assert plain.algorithm_version == RECOMMENDATION_ALGORITHM_VERSION
     assert tech_order(plain) == ["docker", "redis"]
-    assert [item.what_if.increased_count for item in plain.candidates] == [31, 30]
+    assert [item.impact.affected_count for item in plain.candidates] == [31, 30]
 
     trended = current_recommend(
         31, 30, trend_lookup=lookup_of({"docker": 100, "redis": 300})
     )
     assert tech_order(trended) == ["redis", "docker"]
     # 순서만 바뀐다 -- 증가 공고 수는 후보를 따라간다.
-    gains = {item.tech_id: item.what_if.increased_count for item in trended.candidates}
+    gains = {item.tech_id: item.impact.affected_count for item in trended.candidates}
     assert gains == {"docker": 31, "redis": 30}
     assert [item.rank for item in trended.candidates] == [1, 2]
     assert trended.trend_tiebreak.values == {"docker": 100, "redis": 300}
@@ -708,7 +709,7 @@ def test_current_wide_gap_is_not_reordered_even_by_a_much_larger_trend():
         40, 25, trend_lookup=lookup_of({"docker": 100, "redis": 300})
     )
     assert tech_order(trended) == ["docker", "redis"]
-    assert [item.what_if.increased_count for item in trended.candidates] == [40, 25]
+    assert [item.impact.affected_count for item in trended.candidates] == [40, 25]
 
 
 def test_identity_f_the_same_basis_replays_to_the_same_snapshot_and_order():

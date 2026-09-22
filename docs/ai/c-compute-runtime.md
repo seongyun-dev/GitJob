@@ -46,7 +46,7 @@ timezone이 있는 `occurred_at`. 요청/결과의 도메인 DTO는 아래 기�
 | `POST /internal/v1/c/archive-trends/completed` | v1은 검증된 activity export와 저장된 PUBLIC_GITHUB ID로 current 관측을 유지한다. `archive_version=v2`는 같은 trusted root의 A 원본 snapshot path/URI/SHA-256을 추가로 받고 `C_ARCHIVE_A_SNAPSHOT_URI_ROOT`와 URI를 결속해 월별 commit lineage가 일치한 역사 관측만 저장한다. [Archive 계약](c-archive-trend.md) |
 | `POST /internal/v1/c/trends/resolve` | B가 목표 직무별 JOB 월간 수요, 주간 Repo Activity 또는 고정 기간 Archive v1/v2의 최신 완료 Snapshot ID를 자연 키로 조회. 서로 다른 source·직무/필터·Registry·algorithm·PARTIAL·기간·granularity는 섞지 않음 |
 | `GET /internal/v1/c/snapshots/{snapshot_id}` | 불변 결과. 개인 결과는 `user_id` 필수, 타 사용자/없는 결과 모두 404 |
-| `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=CURRENT\|WHAT_IF`, `recommended_tech_id`, page/size. WHAT_IF는 **신규 증가 공고만** |
+| `GET /internal/v1/c/recommendations/{snapshot_id}/job-postings` | `user_id`, `mode=IMPACT`, `recommended_tech_id`, `impact_kind=ALL\|REQUIRED\|PREFERRED`, page/size. 현행 추천은 확인된 조건과 새로 맞는 활성 공고와 종류·건수를 함께 반환. CURRENT/WHAT_IF는 구 결과 호환 |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-postings` | 공고별 부분 부합 목록과 같은 추천 결과의 `current_count`·`demand`. `user_id`, page/size, `include_conditional=false` |
 | `GET /internal/v1/c/recommendations/{snapshot_id}/matching-job-posting` | 동일 저장 평가의 상세. `user_id`, `job_id` |
 | `GET /internal/v1/c/registry` | 실행 중인 정확한 Registry Snapshot과 meta의 schema/content version·SHA-256 |

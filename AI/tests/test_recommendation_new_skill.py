@@ -13,7 +13,7 @@ Evidence semantics are deliberately untouched: a technology that is UNKNOWN in t
 Evidence layer stays UNKNOWN in the snapshot's gap. Only candidate eligibility moved.
 
 Trend-based near-tie ordering is out of scope here (S15P21E102-355); this file only
-pins the Top3 *set* and its ``increased_count`` DESC order.
+pins the Top3 *set* and its distinct affected-job count order under v8.
 """
 
 from evidence_fixtures import proof_payload
@@ -28,7 +28,7 @@ from recommendation.engine import (
 )
 from recommendation.evidence import EvidenceAnalysis
 
-V7 = "c-recommendation/lexicographic/v7"
+V8 = "c-recommendation/condition-impact/v8"
 
 
 def held_technology(tech_id: str, *, personal_level: str | None = None) -> dict:
@@ -188,12 +188,12 @@ def test_case_e_recommending_unknown_does_not_change_evidence_meaning():
 
 
 # --------------------------------------------------------------------------
-# CASE F / I -- Top3 set and order come from increased_count
+# CASE F / I -- Top3 set and order come from affected_count
 # --------------------------------------------------------------------------
 
 
 def top3_scenario():
-    """docker +3, redis +2, postgresql +1 -- a strict increased_count ordering."""
+    """docker 3, redis 2, postgresql 1 -- a strict affected-count ordering."""
     postings = [
         *[posting(f"docker-{i}", required=("Docker",)) for i in range(3)],
         *[posting(f"redis-{i}", required=("Redis",)) for i in range(2)],
@@ -206,11 +206,11 @@ def top3_scenario():
     )
 
 
-def test_case_f_top3_is_ordered_by_increased_count_desc():
+def test_case_f_top3_is_ordered_by_affected_count_desc():
     result = top3_scenario()
 
     assert candidate_ids(result) == ["docker", "redis", "postgresql"]
-    assert [item.what_if.increased_count for item in result.candidates] == [3, 2, 1]
+    assert [item.impact.affected_count for item in result.candidates] == [3, 2, 1]
     assert [item.rank for item in result.candidates] == [1, 2, 3]
 
 
@@ -249,21 +249,21 @@ def test_case_k_incomplete_coverage_keeps_candidates_and_reports_partial():
 
 
 # --------------------------------------------------------------------------
-# CASE L -- What-if follows the candidates
+# CASE L -- condition impact follows the candidates
 # --------------------------------------------------------------------------
 
 
-def test_case_l_what_if_is_available_for_the_top_candidate():
+def test_case_l_condition_impact_is_available_for_the_top_candidate():
     result = top3_scenario()
     top = result.candidates[0]
 
-    page = list_related_jobs(result, user_id="user-1", view="WHAT_IF", tech_id="docker")
+    page = list_related_jobs(result, user_id="user-1", view="IMPACT", tech_id="docker")
 
     assert top.tech_id == "docker"
-    assert top.what_if.increased_count == 3
+    assert top.impact.affected_count == 3
     assert page.total_count == 3
     assert tuple(sorted(item.job_id for item in page.items)) == tuple(
-        sorted(top.what_if.newly_matched_job_ids)
+        sorted(top.impact.affected_job_ids)
     )
 
 
@@ -275,7 +275,7 @@ def test_case_l_what_if_is_available_for_the_top_candidate():
 def test_new_eligibility_uses_its_own_algorithm_version_and_round_trips():
     result = top3_scenario()
 
-    assert result.algorithm_version == V7
+    assert result.algorithm_version == V8
     assert (
         RecommendationSnapshot.model_validate_json(result.model_dump_json()) == result
     )

@@ -14,7 +14,7 @@ import { StateCard } from '@/shared/ui/StateCard'
  * 다음 학습 기술 · 확정 디자인 `Final v2`의 `10 Next Skill Overview`
  * (S15P21E102-279).
  *
- * **정렬 기준은 공고 수 증가분 하나다.** 순위·증감·근거 문장은 전부 C가 계산한
+ * **정렬 기준은 추천 기술이 언급된 중복 제외 공고 수다.** 순위·건수·근거 문장은 전부 C가 계산한
  * 결과이고 화면이 만들지 않는다. 추천 점수라는 값은 계산된 적이 없으므로 표시할
  * 자리도 두지 않는다.
  *
@@ -49,7 +49,7 @@ export function RecommendationPage() {
     <div>
       <PageHero
         title="다음에 배울 기술"
-        description="배우면 필수 기술을 모두 충족하는 공고가 많이 늘어나는 순서예요."
+        description="관련 공고가 많은 기술부터 보여드려요."
         aside={
           basis !== undefined && jobCount !== null ? (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-line bg-white px-3.5 py-2 text-[12.5px] font-[750] text-brand-ink-soft">

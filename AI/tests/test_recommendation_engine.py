@@ -137,7 +137,7 @@ def test_active_recommendation_uses_all_matching_candidates_without_vacuous_matc
 
     assert len(cohort.jobs) == 1
     assert len(cohort.matching_jobs or ()) == 2
-    assert result.algorithm_version == "c-recommendation/lexicographic/v7"
+    assert result.algorithm_version == "c-recommendation/condition-impact/v8"
     assert result.demand.denominator == 2
     assert result.demand.matching_count == 2
     assert len(result.matching_jobs or ()) == 2
@@ -176,7 +176,7 @@ def test_v3_without_personal_levels_never_falls_back_to_held_only_matching():
 
     result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
 
-    assert result.algorithm_version == "c-recommendation/lexicographic/v7"
+    assert result.algorithm_version == "c-recommendation/condition-impact/v8"
     assert result.current_count == 0
     assert result.current_job_ids == ()
     # Held evidence without a personal level still never promotes a job to
@@ -264,17 +264,15 @@ def test_v3_l0_candidate_projects_only_l1_and_related_page_uses_same_ids():
     result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
     candidate = result.candidates[0]
     page = list_related_jobs(
-        result, user_id="user-1", view="WHAT_IF", tech_id=candidate.tech_id
+        result, user_id="user-1", view="IMPACT", tech_id=candidate.tech_id
     )
 
     assert candidate.tech_id == "java"
     assert candidate.evidence_status == "L0"
-    assert candidate.what_if.current_count == 0
-    assert candidate.what_if.projected_count == 1
-    assert candidate.what_if.newly_matched_job_ids == ("job-1",)
+    assert candidate.impact.required_count == 1
+    assert candidate.impact.affected_job_ids == ("job-1",)
     assert (
-        tuple(item.job_id for item in page.items)
-        == candidate.what_if.newly_matched_job_ids
+        tuple(item.job_id for item in page.items) == candidate.impact.affected_job_ids
     )
 
 
@@ -637,19 +635,20 @@ def test_raw_classified_cohort_demand_and_related_lists_agree_through_json_round
     assert docker.demand.required_count == 2
     assert docker.demand.preferred_count == 1
     assert docker.demand.total_count == 3
-    assert docker.what_if.current_count == 1
-    assert docker.what_if.projected_count == 3
-    assert docker.what_if.increased_count == 2
+    # L2/L3 postings remain technology-related, without being counted as
+    # personally fulfilled jobs by the separate strict matching calculation.
+    assert docker.impact.required_job_ids == ("alternative", "delta")
+    assert docker.impact.required_count == 2
+    assert docker.impact.preferred_count == 1
+    assert docker.impact.affected_count == 3
     restored = RecommendationSnapshot.model_validate_json(result.model_dump_json())
     page = list_related_jobs(
-        restored, user_id="user-1", view="WHAT_IF", tech_id="docker"
+        restored, user_id="user-1", view="IMPACT", tech_id="docker"
     )
-    assert page.total_count == docker.what_if.increased_count
-    assert {job.job_id for job in page.items} == {"alternative", "delta"}
+    assert page.total_count == docker.impact.affected_count
+    assert {job.job_id for job in page.items} == {"alternative", "current", "delta"}
     assert all(
-        job.requirements.required
-        and str(job.source_url).startswith("https://example.com/")
-        for job in page.items
+        str(job.source_url).startswith("https://example.com/") for job in page.items
     )
 
 

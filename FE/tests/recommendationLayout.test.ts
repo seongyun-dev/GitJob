@@ -72,6 +72,31 @@ test('PERSONAL_LEVEL_UNKNOWN 을 L0 이나 미보유로 표현하지 않는다',
   assert.match(card, /skill\.evidenceStatus === null/)
 })
 
+test('관련 공고는 +N건과 필수·우대 건수를 간결하게 표시한다', () => {
+  const summary = withoutComments(source('features/matching/components/ConditionImpactSummary.tsx'))
+
+  assert.match(summary, /관련 공고/)
+  assert.match(summary, /필수 \{requiredCount\.toLocaleString\('ko-KR'\)\}건 · 우대 \{preferredCount\.toLocaleString\('ko-KR'\)\}건/)
+  assert.match(summary, /formatImpactIncrease\(affectedCount\)/)
+  assert.equal(summary.includes('새로 맞'), false)
+  assert.equal(summary.includes('다른 조건은 별도 확인'), false)
+})
+
+test('What-if의 개인 수준 미판정은 미보유와 구분한다', () => {
+  const page = withoutComments(source('features/matching/pages/WhatIfPage.tsx'))
+
+  assert.match(page, /PERSONAL_LEVEL_UNKNOWN: '내 수준 미판정'/)
+  assert.match(page, /NOT_HELD: '미보유'/)
+  assert.equal(page.includes('현재 근거 없음'), false)
+})
+
+test('관련 공고 화면의 긴 추천 이유도 접혀 있다', () => {
+  const page = source('features/matching/pages/WhatIfPage.tsx')
+
+  assert.match(page, /<details className="mt-5 text-\[12px\] text-brand-muted">/)
+  assert.match(page, /<summary[^>]*>추천 이유<\/summary>/)
+})
+
 test('추천 Top3 는 고정 폭 사이드 열이 아니라 공용 3열 규칙을 쓴다', () => {
   const page = withoutComments(source('features/matching/pages/RecommendationPage.tsx'))
 
@@ -91,13 +116,13 @@ test('3열 규칙은 카드 높이를 늘리지 않고 열이 min-content 로 �
   assert.match(css, /grid-template-columns: minmax\(0, 1\.25fr\) minmax\(0, 1fr\) minmax\(0, 1fr\)/)
 })
 
-test('세 카드가 같은 근거 노출 규칙을 쓴다', () => {
+test('세 카드의 긴 추천 이유는 기본적으로 접혀 있다', () => {
   const card = source('features/matching/components/NextSkillCard.tsx')
 
-  // 1순위만 전부 펴고 후순위는 한 줄만 주던 규칙이 카드 높이를 벌려 놓았다.
-  assert.equal(card.includes('emphasis ? skill.reasons : skill.reasons.slice(0, 1)'), false)
-  assert.match(card, /const leadReasons = skill\.reasons\.slice\(0, 2\)/)
-  assert.match(card, /const restReasons = skill\.reasons\.slice\(2\)/)
+  assert.match(card, /<details/)
+  assert.match(card, /<summary[^>]*>추천 이유<\/summary>/)
+  assert.equal(card.includes('leadReasons'), false)
+  assert.equal(card.includes('restReasons'), false)
 })
 
 test('부분 분석 배너는 추천 화면에서 면적만 줄이고 경고 색을 유지한다', () => {

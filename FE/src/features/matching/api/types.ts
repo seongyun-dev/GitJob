@@ -121,7 +121,7 @@ export interface SkillGapRowDto {
   /** BE의 규칙이 배제할 수 있었던 최고 Level. 이 위는 "확인되지 않음"이다. */
   assessmentCeiling: string | null
   reasonCodes: string[]
-  /** C가 상위 후보에만 계산한다. 대부분 `null`이며 0이 아니다. */
+  /** 추천 기술 관련 공고 수. C가 상위 후보에만 계산하므로 대부분 null이다. */
   fillDelta: number | null
 }
 
@@ -147,6 +147,12 @@ export interface WhatIfCountsDto {
   increasedCount: number
 }
 
+export interface ConditionImpactDto {
+  requiredCount: number
+  preferredCount: number
+  affectedCount: number
+}
+
 export interface RecommendationDto extends ComputeStateFields {
   basis: Basis
   candidates: {
@@ -156,6 +162,7 @@ export interface RecommendationDto extends ComputeStateFields {
     evidenceStatus: string | null
     demand: { requiredCount: number; requiredRatio: number; rank: number } | null
     whatIf: WhatIfCountsDto | null
+    impact: ConditionImpactDto | null
     prerequisiteTechIds: string[]
     missingPrerequisiteTechIds: string[]
     unknownPrerequisiteTechIds: string[]
@@ -170,8 +177,10 @@ export interface RecommendationDto extends ComputeStateFields {
 export interface WhatIfDto extends ComputeStateFields {
   basis: Basis
   techId: string | null
-  /** 증가 건수와 아래 목록이 같은 응답에서 온다. 어긋날 수 없다. */
+  /** v1~v7 호환 필드. v8에서는 null이며 impactCounts를 사용한다. */
   counts: WhatIfCountsDto | null
+  impactKind: 'ALL' | 'REQUIRED' | 'PREFERRED' | null
+  impactCounts: ConditionImpactDto | null
   page: number
   perPage: number
   hasNext: boolean
@@ -185,6 +194,9 @@ export interface WhatIfDto extends ComputeStateFields {
     region: string | null
     careerLevel: string | null
     deadline: string | null
+    requiredImpact: boolean
+    preferredImpact: boolean
+    eligibility: string | null
   }[]
   dataGaps: string[]
 }

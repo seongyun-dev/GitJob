@@ -59,11 +59,30 @@ public record CSnapshot(String snapshotId, String kind, String resultStatus,
             String evidenceStatus,
             TechnologyDemand demand,
             WhatIf whatIf,
+            Impact impact,
             List<String> prerequisiteTechIds,
             List<String> missingPrerequisiteTechIds,
             List<String> unknownPrerequisiteTechIds,
             List<String> reasonCodes,
             List<String> dataGaps
+    ) {
+        /** Stored v2/v3 test fixtures and pre-v8 snapshots. */
+        public Candidate(String techId, int rank, String evidenceStatus,
+                TechnologyDemand demand, WhatIf whatIf,
+                List<String> prerequisiteTechIds, List<String> missingPrerequisiteTechIds,
+                List<String> unknownPrerequisiteTechIds, List<String> reasonCodes,
+                List<String> dataGaps) {
+            this(techId, rank, evidenceStatus, demand, whatIf, null,
+                    prerequisiteTechIds, missingPrerequisiteTechIds,
+                    unknownPrerequisiteTechIds, reasonCodes, dataGaps);
+        }
+    }
+
+    public record Impact(
+            String techId, String cohortId, int denominator,
+            List<String> requiredJobIds, List<String> preferredJobIds,
+            List<String> affectedJobIds, int requiredCount,
+            int preferredCount, int affectedCount
     ) {
     }
 

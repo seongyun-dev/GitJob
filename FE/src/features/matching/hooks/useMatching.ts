@@ -130,13 +130,13 @@ export function useRecommendations(targetKey: string | undefined) {
 /**
  * What-if. 기술을 고르기 전에는 부르지 않는다.
  *
- * 증가 건수와 목록이 이 한 응답에서 온다. 추천 화면의 숫자를 여기에 끌어다 쓰면 두
- * 값이 서로 다른 계산에서 나올 수 있다.
+ * 선택한 조건 종류와 페이지는 캐시 키에 포함한다. 상세의 건수와 목록은 같은
+ * 응답을 사용하며 추천 카드의 이전 시점 숫자로 대체하지 않는다.
  */
 export function useWhatIf(
   targetKey: string | undefined,
   techId: string | undefined,
-  params: { page: number; perPage: number },
+  params: { page: number; perPage: number; kind: 'ALL' | 'REQUIRED' | 'PREFERRED' },
 ) {
   return useQuery({
     queryKey: queryKeys.matchingWhatIf(targetKey ?? '', techId ?? '', params),

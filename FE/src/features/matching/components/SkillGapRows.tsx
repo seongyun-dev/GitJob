@@ -3,6 +3,7 @@ import type {
   SkillGapRowView,
   SkillGapVerdict,
 } from '@/features/matching/model/view'
+import { formatImpactIncrease } from '@/features/matching/components/ConditionImpactSummary'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
 
 /**
@@ -12,8 +13,8 @@ import { LevelBadge } from '@/shared/ui/LevelBadge'
  * 구분하면 이 화면의 주제("점수가 아니라 구분")가 사라진다.
  *
  * **`판단 근거 부족`을 부족과 섞지 않는 것이 규칙이다.** 선언(L0)만 확인된 기술은
- * 사용 여부를 판정하지 않았을 뿐이라 Gap 집계에서 빠지고, `채우면 +N`도 계산하지
- * 않는다(`null`). 0으로 채우면 "채워도 안 늘어난다"는 다른 사실이 된다.
+ * 사용 여부를 판정하지 않았을 뿐이라 Gap 집계에서 빠진다. 관련 공고 건수는
+ * 추천 상위 후보에만 계산한다(`null`은 미계산).
  */
 export const SKILL_GAP_TEMPLATE = '82px 200px 120px 160px 150px 110px'
 
@@ -70,7 +71,7 @@ function GapRow({ row }: { row: SkillGapRowView }) {
           row.fillDelta === null || row.fillDelta === 0 ? 'text-brand-faint' : 'text-brand-600'
         }`}
       >
-        {row.fillDelta === null ? '—' : row.fillDelta === 0 ? '0' : `+${row.fillDelta}`}
+        {row.fillDelta === null ? '—' : formatImpactIncrease(row.fillDelta)}
       </p>
     </div>
   )

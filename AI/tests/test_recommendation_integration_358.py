@@ -294,7 +294,7 @@ def test_engine_applies_trend_only_inside_the_already_selected_top3():
     assert snapshot.gap.unknown_tech_ids == ("docker", "gcp", "redis")
     assert snapshot.status == "PARTIAL"
     assert {
-        candidate.tech_id: candidate.what_if.increased_count
+        candidate.tech_id: candidate.impact.affected_count
         for candidate in snapshot.candidates
     } == {"docker": 31, "redis": 30, "aws": 20}
 
@@ -367,10 +367,10 @@ def test_no_personal_level_keeps_repository_candidate_eligibility():
     assert "docker" in {candidate.tech_id for candidate in snapshot.candidates}
 
 
-def test_compatibility_preserves_existing_what_if_increased_count_contract():
+def test_condition_impact_counts_match_stored_job_ids():
     snapshot = _build_fixture_snapshot(trend_store=TREND_A)
 
     for candidate in snapshot.candidates:
-        assert candidate.what_if.increased_count == len(
-            set(candidate.what_if.newly_matched_job_ids)
+        assert candidate.impact.affected_count == len(
+            set(candidate.impact.affected_job_ids)
         )
