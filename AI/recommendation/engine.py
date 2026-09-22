@@ -31,14 +31,16 @@ from recommendation.evidence import (
 from recommendation.trend_tiebreak import TieBreakCandidate, apply_trend_tiebreak
 from registry.contracts import TechId
 
-#: S15P21E102-354 changed who may be a candidate, so it is a new calculation and
-#: not a new reading of the old one. v6 stays for reading stored results.
-NEW_SKILL_ALGORITHM_VERSION = "c-recommendation/condition-impact/v8"
+#: v8 changed candidate eligibility and impact semantics; v9 changes the rank
+#: formula. Both older calculations remain readable with their original IDs.
+IMPACT_V8_ALGORITHM_VERSION = "c-recommendation/condition-impact/v8"
+NEW_SKILL_ALGORITHM_VERSION = "c-recommendation/condition-impact/v9"
 RECOMMENDATION_ALGORITHM_VERSION = NEW_SKILL_ALGORITHM_VERSION
 EXPANDED_ALGORITHM_VERSIONS = frozenset(
     {
         "c-recommendation/lexicographic/v6",
         "c-recommendation/lexicographic/v7",
+        IMPACT_V8_ALGORITHM_VERSION,
         NEW_SKILL_ALGORITHM_VERSION,
     }
 )
@@ -53,14 +55,22 @@ TREND_TIE_BREAK_RULE = (
     "gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,"
     "required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
 )
-IMPACT_TIE_BREAK_RULE = (
+IMPACT_V8_TIE_BREAK_RULE = (
     "affected-jobs-desc,required-jobs-desc,prerequisites-ready,"
     "required-demand-desc,uncertainty-asc,total-demand-desc,tech-id-asc"
 )
-IMPACT_TREND_TIE_BREAK_RULE = (
+IMPACT_V8_TREND_TIE_BREAK_RULE = (
     "affected-jobs-desc,top3-near-tie-weekly-active-repo-v1,"
     "required-jobs-desc,prerequisites-ready,required-demand-desc,"
     "uncertainty-asc,total-demand-desc,tech-id-asc"
+)
+IMPACT_TIE_BREAK_RULE = (
+    "required-jobs-desc,preferred-jobs-desc,prerequisites-ready,"
+    "required-demand-desc,uncertainty-asc,total-demand-desc,tech-id-asc"
+)
+IMPACT_TREND_TIE_BREAK_RULE = (
+    "required-jobs-desc,preferred-jobs-desc,top3-exact-tie-weekly-active-repo-v1,"
+    "prerequisites-ready,required-demand-desc,uncertainty-asc,total-demand-desc,tech-id-asc"
 )
 
 
@@ -564,7 +574,8 @@ class _RecommendationContent(EvidenceModel):
         "c-recommendation/lexicographic/v5",
         "c-recommendation/lexicographic/v6",
         "c-recommendation/lexicographic/v7",
-        "c-recommendation/condition-impact/v8",
+        IMPACT_V8_ALGORITHM_VERSION,
+        NEW_SKILL_ALGORITHM_VERSION,
     ] = RECOMMENDATION_ALGORITHM_VERSION
     prerequisite_policy_version: NonBlank
     prerequisite_snapshot: PrerequisiteSnapshot
@@ -575,6 +586,8 @@ class _RecommendationContent(EvidenceModel):
             "gain-desc,top3-near-tie-weekly-active-repo-v1,prerequisites-ready,"
             "required-count-desc,uncertainty-asc,total-count-desc,tech-id-asc"
         ),
+        IMPACT_V8_TIE_BREAK_RULE,
+        IMPACT_V8_TREND_TIE_BREAK_RULE,
         IMPACT_TIE_BREAK_RULE,
         IMPACT_TREND_TIE_BREAK_RULE,
     ] = TIE_BREAK_RULE
@@ -647,15 +660,21 @@ class RecommendationSnapshot(_RecommendationContent):
             "c-recommendation/lexicographic/v5",
             "c-recommendation/lexicographic/v6",
             "c-recommendation/lexicographic/v7",
+            IMPACT_V8_ALGORITHM_VERSION,
             NEW_SKILL_ALGORITHM_VERSION,
         }
         # 순서 규칙은 계산과 따로 움직인다. Trend tie-break 는 후보 자격도
         # `increased_count` 도 바꾸지 않으므로 `algorithm_version` 을 올리지 않고
         # 여기서 갈린다. 대신 어느 규칙으로 정렬했는지가 payload 에 남아야 같은
         # v7 아래의 두 순서 의미가 섞이지 않는다.
-        impact_version = self.algorithm_version == NEW_SKILL_ALGORITHM_VERSION
+        impact_version = self.algorithm_version in {
+            IMPACT_V8_ALGORITHM_VERSION,
+            NEW_SKILL_ALGORITHM_VERSION,
+        }
         allowed_rules = (
             {IMPACT_TIE_BREAK_RULE, IMPACT_TREND_TIE_BREAK_RULE}
+            if self.algorithm_version == NEW_SKILL_ALGORITHM_VERSION
+            else {IMPACT_V8_TIE_BREAK_RULE, IMPACT_V8_TREND_TIE_BREAK_RULE}
             if impact_version
             else {TIE_BREAK_RULE, TREND_TIE_BREAK_RULE}
             if modern
@@ -673,6 +692,7 @@ class RecommendationSnapshot(_RecommendationContent):
         # 게시된 주차가 없었다"는 실제로 일어나는 사실이다.
         if self.trend_tiebreak is not None and self.tie_break_rule not in {
             TREND_TIE_BREAK_RULE,
+            IMPACT_V8_TREND_TIE_BREAK_RULE,
             IMPACT_TREND_TIE_BREAK_RULE,
         }:
             raise ValueError("trend basis requires the trend tie-break rank policy")
@@ -763,6 +783,7 @@ class RecommendationSnapshot(_RecommendationContent):
             raise ValueError("duplicate recommendation candidate")
         new_skill_policy = self.algorithm_version in {
             "c-recommendation/lexicographic/v7",
+            IMPACT_V8_ALGORITHM_VERSION,
             NEW_SKILL_ALGORITHM_VERSION,
         }
         for candidate in self.candidates:
@@ -776,7 +797,7 @@ class RecommendationSnapshot(_RecommendationContent):
                 raise ValueError("candidate must be an evaluated missing technology")
             if impact_version:
                 if candidate.what_if is not None or candidate.impact is None:
-                    raise ValueError("v8 candidate requires condition impact only")
+                    raise ValueError("impact candidate requires condition impact only")
                 expected_impact = condition_impact(
                     self.matching_jobs or (),
                     frozenset(self.held.held_tech_ids),
@@ -823,12 +844,14 @@ class RecommendationSnapshot(_RecommendationContent):
 def _reordered_by_trend(
     top3: list[tuple[tuple, dict]],
     trend_lookup: "Callable[[tuple[str, ...]], TrendTieBreakBasis | None] | None",
+    *,
+    exact_impact_ties: bool = False,
 ) -> tuple[list[tuple[tuple, dict]], "TrendTieBreakBasis | None"]:
-    """Reorder the settled Top3 inside near-tie clusters; never re-select.
+    """Reorder only the settled Top3; never re-select a fourth candidate.
 
     `key[0]` 은 구 버전에서는 `-increased_count`, v8에서는
-    `-affected_count`다. 나머지 키는 해당 버전의 동률 순서다.
-    무리 안에서는 앞자리만 Trend 로 갈리고 나머지는 그대로 이어진다.
+    `-affected_count`, v9에서는 `-required_count`다. v9는 필수·우대 건수가
+    둘 다 같은 후보끼리만 Trend로 가른다. 구 버전의 near-tie는 그대로 읽는다.
 
     조회는 **여기서 한 번** 일어난다. 후보마다 부르지 않으므로 추천 한 건이
     네트워크를 세 번 왕복하는 일이 없다.
@@ -843,17 +866,42 @@ def _reordered_by_trend(
         # 묻지 않은 기술의 값이 섞이면 저장된 근거가 저장된 순서를 설명하지 못한다.
         raise ValueError("trend basis must answer only the Top3 technologies")
     by_tech = {payload["tech_id"]: (key, payload) for key, payload in top3}
-    reordered = apply_trend_tiebreak(
-        tuple(
-            TieBreakCandidate(
-                tech_id=payload["tech_id"],
-                increased_count=-key[0],
-                rest_key=tuple(key[1:]),
+    if exact_impact_ties:
+        # In v9 a higher required count must never lose to a Trend value or
+        # to a preferred-only reach. Trend orders only an exact required AND
+        # preferred tie among the already selected Top3 candidates.
+        grouped: list[list[tuple[tuple, dict]]] = []
+        for item in top3:
+            if not grouped or grouped[-1][0][0][:2] != item[0][:2]:
+                grouped.append([])
+            grouped[-1].append(item)
+        reordered = [
+            candidate
+            for group in grouped
+            for candidate in apply_trend_tiebreak(
+                tuple(
+                    TieBreakCandidate(
+                        tech_id=payload["tech_id"],
+                        increased_count=-key[0],
+                        rest_key=tuple(key[2:]),
+                    )
+                    for key, payload in group
+                ),
+                basis.values,
             )
-            for key, payload in top3
-        ),
-        basis.values,
-    )
+        ]
+    else:
+        reordered = apply_trend_tiebreak(
+            tuple(
+                TieBreakCandidate(
+                    tech_id=payload["tech_id"],
+                    increased_count=-key[0],
+                    rest_key=tuple(key[1:]),
+                )
+                for key, payload in top3
+            ),
+            basis.values,
+        )
     return [by_tech[item.tech_id] for item in reordered], basis
 
 
@@ -1004,6 +1052,7 @@ def build_recommendations(
     # validator cannot drift apart on who is eligible.
     new_skill_policy = algorithm_version in {
         "c-recommendation/lexicographic/v7",
+        IMPACT_V8_ALGORITHM_VERSION,
         NEW_SKILL_ALGORITHM_VERSION,
     }
 
@@ -1040,6 +1089,10 @@ def build_recommendations(
             if expanded and cohort.matching_jobs is not None
             else None
         )
+        # A general mention is useful for demand browsing, but it cannot
+        # produce a required/preferred posting list for a learning card.
+        if impact is not None and impact.affected_count == 0:
+            continue
         what_if = None
         if impact is None:
             what_if = (
@@ -1102,8 +1155,8 @@ def build_recommendations(
         uncertainty = len(unknown) + len(decisions[row.tech_id].data_gaps)
         key = (
             (
-                -impact.affected_count,
                 -impact.required_count,
+                -impact.preferred_count,
                 bool(missing or unknown),
                 -row.required_count,
                 uncertainty,
@@ -1147,7 +1200,9 @@ def build_recommendations(
     # 합치면 4위 후보가 Trend 만으로 Top3 에 들어올 수 있고, 그것은 순서 보정이
     # 아니라 후보 선정이다(S15P21E102-355).
     top3 = sorted(ranked, key=lambda item: item[0])[:3]
-    top3, trend_tiebreak = _reordered_by_trend(top3, trend_lookup)
+    top3, trend_tiebreak = _reordered_by_trend(
+        top3, trend_lookup, exact_impact_ties=expanded
+    )
     candidates = tuple(
         RecommendationCandidate(rank=rank, **payload)
         for rank, (_, payload) in enumerate(top3, start=1)
@@ -1276,7 +1331,7 @@ def list_related_jobs(
     limit: int = 20,
     active_job_ids: AbstractSet[str] | None = None,
 ) -> RelatedJobsPage:
-    """Page legacy full-match IDs or v8 resolved-clause impact IDs."""
+    """Page legacy full-match IDs or v8/v9 resolved-clause impact IDs."""
     if snapshot.user_id != user_id:
         raise PermissionError("recommendation snapshot belongs to another user")
     if (
@@ -1326,7 +1381,7 @@ def list_related_jobs(
             (item for item in snapshot.candidates if item.tech_id == tech_id), None
         )
         if candidate is None or candidate.impact is None:
-            raise ValueError("IMPACT list requires a v8 candidate in this snapshot")
+            raise ValueError("IMPACT list requires an impact candidate")
         impact = active_condition_impact(candidate.impact, active_job_ids)
         ids = {
             "ALL": impact.affected_job_ids,

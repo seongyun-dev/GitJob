@@ -659,8 +659,8 @@ def current_recommend(*counts, trend_lookup=None):
     )
 
 
-def test_current_near_tie_is_reordered_by_the_weekly_repository_count():
-    # 31 vs 30 -- 차이 1/31 = 3.2%.
+def test_current_required_count_cannot_be_reordered_by_weekly_repository_count():
+    # v9에서는 필수 공고 한 건 차이를 Trend가 뒤집지 않는다.
     plain = current_recommend(31, 30)
     assert plain.algorithm_version == RECOMMENDATION_ALGORITHM_VERSION
     assert tech_order(plain) == ["docker", "redis"]
@@ -669,12 +669,22 @@ def test_current_near_tie_is_reordered_by_the_weekly_repository_count():
     trended = current_recommend(
         31, 30, trend_lookup=lookup_of({"docker": 100, "redis": 300})
     )
-    assert tech_order(trended) == ["redis", "docker"]
-    # 순서만 바뀐다 -- 증가 공고 수는 후보를 따라간다.
+    assert tech_order(trended) == ["docker", "redis"]
+    # 순서 보정 근거는 저장되지만 필수 공고 수를 뒤집을 수 없다.
     gains = {item.tech_id: item.impact.affected_count for item in trended.candidates}
     assert gains == {"docker": 31, "redis": 30}
     assert [item.rank for item in trended.candidates] == [1, 2]
     assert trended.trend_tiebreak.values == {"docker": 100, "redis": 300}
+
+
+def test_current_exact_required_and_preferred_tie_uses_weekly_repository_count():
+    plain = current_recommend(30, 30)
+    assert tech_order(plain) == ["docker", "redis"]
+
+    trended = current_recommend(
+        30, 30, trend_lookup=lookup_of({"docker": 100, "redis": 300})
+    )
+    assert tech_order(trended) == ["redis", "docker"]
 
 
 def test_current_a_fourth_candidate_never_enters_the_top3_through_trend():

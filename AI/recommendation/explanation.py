@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
-from recommendation.engine import RecommendationSnapshot
+from recommendation.engine import NEW_SKILL_ALGORITHM_VERSION, RecommendationSnapshot
 from recommendation.evidence import ProfiledHeldTechnology
 
 EXPLANATION_VERSION = "c-fact-explanation/v2"
@@ -97,11 +97,19 @@ def explain_recommendations(
         )
         if candidate.impact is not None:
             impact = candidate.impact
+            impact_text = (
+                f"{candidate.tech_id} 필수 공고 {impact.required_count}건 · "
+                f"우대 공고 {impact.preferred_count}건 "
+                f"(겹침 제외 전체 {impact.affected_count}건)."
+                if snapshot.algorithm_version == NEW_SKILL_ALGORITHM_VERSION
+                else f"{candidate.tech_id} 관련 공고 {impact.affected_count}건"
+                f"(필수 {impact.required_count}건 · 우대 {impact.preferred_count}건)."
+            )
             facts.append(
                 _fact(
                     "IMPACT",
                     candidate.tech_id,
-                    f"{candidate.tech_id} 관련 공고 {impact.affected_count}건(필수 {impact.required_count}건 · 우대 {impact.preferred_count}건).",
+                    impact_text,
                     {
                         "required_count": impact.required_count,
                         "preferred_count": impact.preferred_count,

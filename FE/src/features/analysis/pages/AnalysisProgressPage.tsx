@@ -64,6 +64,7 @@ export function AnalysisProgressPage() {
   useEffect(() => {
     if (phase !== null && hasResult(phase)) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
+      void queryClient.invalidateQueries({ queryKey: ['matching'] })
     }
   }, [phase, queryClient])
 

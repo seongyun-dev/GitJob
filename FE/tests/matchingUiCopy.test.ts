@@ -43,7 +43,7 @@ test('추천과 관련 공고의 빈 상태는 다음 행동을 제공한다', (
   assert.match(whatIf, /관련 공고가 없어요[\s\S]{0,700}action=/)
 })
 
-test('다음 기술은 관련 공고 수와 필수·우대 건수를 표시한다', () => {
+test('다음 기술은 필수·우대 공고 수를 합치지 않고 표시한다', () => {
   const card = source('components/NextSkillCard.tsx')
   const detail = source('pages/WhatIfPage.tsx')
   const summary = source('components/ConditionImpactSummary.tsx')
@@ -52,12 +52,12 @@ test('다음 기술은 관련 공고 수와 필수·우대 건수를 표시한�
   const recommendation = source('pages/RecommendationPage.tsx')
   const chain = source('components/RecommendationChain.tsx')
 
-  assert.match(card, /<ConditionImpactSummary[\s\S]*affectedCount=\{affectedJobCount\}[\s\S]*requiredCount=\{requiredImpactCount\}[\s\S]*preferredCount=\{preferredImpactCount\}/)
-  assert.match(detail, /<ConditionImpactSummary[\s\S]*affectedCount=\{impact\.affectedCount\}[\s\S]*requiredCount=\{impact\.requiredCount\}[\s\S]*preferredCount=\{impact\.preferredCount\}/)
+  assert.match(card, /<ConditionImpactSummary[\s\S]*requiredCount=\{requiredImpactCount\}[\s\S]*preferredCount=\{preferredImpactCount\}/)
+  assert.match(detail, /<ConditionImpactSummary[\s\S]*requiredCount=\{impact\.requiredCount\}[\s\S]*preferredCount=\{impact\.preferredCount\}/)
   assert.match(summary, /return `\+\$\{count\.toLocaleString\('ko-KR'\)\}건`/)
-  assert.match(summary, /formatImpactIncrease\(affectedCount\)/)
-  assert.match(summary, /관련 공고/)
-  assert.match(summary, /필수 \{requiredCount\.toLocaleString\('ko-KR'\)\}건 · 우대 \{preferredCount\.toLocaleString\('ko-KR'\)\}건/)
+  assert.equal(summary.includes('affectedCount'), false)
+  assert.match(summary, />필수 공고</)
+  assert.match(summary, /우대 공고 \{preferredCount\.toLocaleString\('ko-KR'\)\}건/)
   assert.equal(summary.includes('새로 맞'), false)
   assert.equal(summary.includes('다른 조건은 별도 확인'), false)
   assert.match(card, /공고 보기/)

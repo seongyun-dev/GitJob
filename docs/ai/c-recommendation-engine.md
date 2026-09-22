@@ -4,7 +4,7 @@
 
 ## 실행 계약
 
-### 현행 v8: 조건 영향 기반 다음 기술 추천
+### 현행 v9: 필수 공고 우선의 조건 영향 추천
 
 `c-recommendation/condition-impact/v8` / `recommendation-snapshot/v4`부터 추천의
 `필수 전체 충족 공고 증가` 순위와 후보 What-if는 폐기한다. 과거 v1~v7 Snapshot은
@@ -21,9 +21,11 @@
   전체를 충족했다고 주장하지 않는다. `current_count`의 엄격 부합 판정은 그대로다.
 - 기술별 `impact.required_job_ids`, `preferred_job_ids`, `affected_job_ids`를
   중복 없는 정렬 ID로 저장한다. `affected`는 앞의 두 집합의 합집합이다. 추천 Top3는
-  `affected_count` 내림차순, 동률이면 `required_count` 내림차순, 선행 준비 여부,
-  필수 수요, 불확실성, 전체 수요, `tech_id`로 고른다. Trend는 선출된 Top3 안에서만
-  전체 영향 건수가 10% 이내인 후보의 순서를 보정한다.
+  v8은 `affected_count`를 우선했다. v9는 `required_count` 내림차순,
+  `preferred_count` 내림차순, 선행 준비 여부, 필수 수요, 불확실성, 전체 수요,
+  `tech_id`로 Top3를 고른다. 필수·우대 영향이 모두 0인 일반 언급 후보는 추천하지
+  않는다. Trend는 선출된 Top3 중 필수·우대 건수가 **둘 다 같은** 후보만 재정렬한다.
+  두 건수는 공고가 겹칠 수 있으므로 합산하지 않는다.
 - 후보에는 `impact`만 있고 구 `what_if`는 없다. 설명도 `IMPACT` Fact로 필수·우대·
   중복 제외 건수를 구분한다. Snapshot ID는 immutable content hash이며 검증 시
   저장된 impact를 동일 cohort/Evidence에서 재계산한다. C 계산 저장소의 스키마
@@ -32,6 +34,11 @@
   건수를 필터링한 조회 표현을 반환한다. 저장된 Snapshot은 변경하지 않는다. 상세
   `job-postings?mode=IMPACT&impact_kind=ALL|REQUIRED|PREFERRED`도 동일한 활성
   필터를 적용하고 건수·페이지 목록·공고별 영향 종류를 한 응답에서 보낸다.
+- 추천 카드 전용 `GET .../recommendations/{id}/summary?user_id=...`는 같은 사용자
+  소유권·결과 상태·활성 영향 건수를 유지하면서 held/gap 원본과 공고 ID 배열을 제외한다.
+  BE 추천 조회만 이 경로를 쓰며 Skill Gap은 전체 Snapshot을 계속 읽는다. 목록은
+  필수 영향이 있으면 `impact_kind=REQUIRED`, 없고 우대만 있으면 `PREFERRED`를 기본으로
+  연다. 기존 v8 Snapshot은 원래 순위·ID대로 읽는다.
 - 활성 필터는 저장된 Top3를 새 후보로 교체하지 않는다. 새 공고 Projection 게시로
   결과가 STALE이 되면 BE가 재계산을 요청하며, 완료 전까지 순위는 이전 계산 기준일 수 있다.
 - 배포 순서는 C Worker/API → BE V28 migration 및 서버 → FE다. C가 먼저 `IMPACT` 조회를 받을 수 있어야
@@ -46,6 +53,12 @@
   경로에 전달할 수 있고, 구 C는 v8 Snapshot을 읽지 못한다. 운영 배포 전에는 구 계약
   행을 선택하는 호환 롤백 빌드 또는 복구 가능한 DB 체크포인트를 별도로 준비하고
   실제 롤백 리허설을 통과해야 한다. v8 저장 결과를 무조건 삭제하지 않는다.
+
+2026-09-22 추가: v9 계산 반영 시에는 C API/Worker가 v8·v9를 모두 읽을 수 있는 상태로
+먼저 배포하고, 그 다음 BE 계약을 `active-matching/job-demand-v4+recommendation-v9`로
+올린다. 현재 계약이 v9인 BE 화면은 기존 v8만 있는 사용자에게 재계산 완료 전까지
+대기 상태를 표시한다. 운영 적용 전 재계산 큐·건수·시간을 확인해야 하며, 단순한 FE 캐시
+갱신으로 v8 결과가 v9로 바뀌지는 않는다.
 
 아래의 `current/projected/increased` What-if 설명은 **v1~v7 구 결과 계약**이다.
 

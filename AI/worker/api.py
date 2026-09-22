@@ -101,10 +101,14 @@ class AnalysisCompleted(Event):
     cohort_snapshot_id: SnapshotId
     demand_snapshot_id: SnapshotId | None = None
     evidence: EvidenceAnalysis
-    target_key: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)] | None = None
-    projection_version_id: Annotated[
-        str, StringConstraints(strict=True, pattern=r"^jp-[0-9a-f]{64}$")
-    ] | None = None
+    target_key: (
+        Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)]
+        | None
+    ) = None
+    projection_version_id: (
+        Annotated[str, StringConstraints(strict=True, pattern=r"^jp-[0-9a-f]{64}$")]
+        | None
+    ) = None
 
     @field_validator("target_key")
     @classmethod
@@ -116,7 +120,9 @@ class AnalysisCompleted(Event):
     @model_validator(mode="after")
     def projection_requires_resolved_demand(self) -> "AnalysisCompleted":
         if self.projection_version_id is not None and self.demand_snapshot_id is None:
-            raise ValueError("Projection analysis requires its resolved Demand snapshot")
+            raise ValueError(
+                "Projection analysis requires its resolved Demand snapshot"
+            )
         return self
 
 
@@ -607,28 +613,18 @@ def create_compute_app(
     projection_fallback = os.getenv(
         "C_JOB_DEMAND_PROJECTION_FALLBACK", "false"
     ).lower() in {"1", "true", "yes"}
-    demand_query_engine = os.getenv(
-        "C_JOB_DEMAND_QUERY_ENGINE", "python"
-    ).lower()
+    demand_query_engine = os.getenv("C_JOB_DEMAND_QUERY_ENGINE", "python").lower()
     if demand_query_engine not in {"python", "shadow", "sql"}:
         raise ValueError("C_JOB_DEMAND_QUERY_ENGINE must be python, shadow, or sql")
     demand_query_fallback = os.getenv(
         "C_JOB_DEMAND_QUERY_FALLBACK", "false"
     ).lower() in {"1", "true", "yes"}
-    matching_active_mode = os.getenv(
-        "C_JOB_MATCHING_ACTIVE_MODE", "legacy"
-    ).lower()
+    matching_active_mode = os.getenv("C_JOB_MATCHING_ACTIVE_MODE", "legacy").lower()
     if matching_active_mode not in {"legacy", "projection"}:
-        raise ValueError(
-            "C_JOB_MATCHING_ACTIVE_MODE must be legacy or projection"
-        )
-    matching_compute_mode = os.getenv(
-        "C_JOB_MATCHING_COMPUTE_MODE", "legacy"
-    ).lower()
+        raise ValueError("C_JOB_MATCHING_ACTIVE_MODE must be legacy or projection")
+    matching_compute_mode = os.getenv("C_JOB_MATCHING_COMPUTE_MODE", "legacy").lower()
     if matching_compute_mode not in {"legacy", "projection"}:
-        raise ValueError(
-            "C_JOB_MATCHING_COMPUTE_MODE must be legacy or projection"
-        )
+        raise ValueError("C_JOB_MATCHING_COMPUTE_MODE must be legacy or projection")
     from worker.projection_shadow import ProjectionShadow, compare_demands
 
     shadow = (
@@ -677,6 +673,7 @@ def create_compute_app(
     def projection_metrics_snapshot() -> dict[str, Any]:
         with projection_metrics_lock:
             return dict(projection_metrics)
+
     intake_runner = None
     if configured_intake and registry is not None:
         from worker.intake import configured_runner
@@ -751,9 +748,7 @@ def create_compute_app(
             return None
         payload = dict(value["payload"])
         if result_id.startswith("c-") or "explanation" not in payload:
-            legacy = db.get_snapshot(
-                value["recommendation_snapshot_id"], owner=owner
-            )
+            legacy = db.get_snapshot(value["recommendation_snapshot_id"], owner=owner)
             legacy_payload = legacy.get("payload") if isinstance(legacy, dict) else None
             if result_id.startswith("c-") and isinstance(legacy_payload, dict):
                 payload = dict(legacy_payload)
@@ -959,17 +954,13 @@ def create_compute_app(
             else {"status": "UNKNOWN"}
         )
         if (
-            (
-                projection_mode == "projection"
-                or matching_active_mode == "projection"
-                or matching_compute_mode == "projection"
-            )
-            and projection_readiness.get("status") != "READY"
-        ):
+            projection_mode == "projection"
+            or matching_active_mode == "projection"
+            or matching_compute_mode == "projection"
+        ) and projection_readiness.get("status") != "READY":
             raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
-        if (
-            matching_compute_mode == "projection"
-            and not projection_readiness.get("market_sql_ready", False)
+        if matching_compute_mode == "projection" and not projection_readiness.get(
+            "market_sql_ready", False
         ):
             raise HTTPException(503, "JOB_PROJECTION_SIDECAR_NOT_READY")
         return {
@@ -1182,6 +1173,7 @@ def create_compute_app(
                     error_recorded = True
 
             try:
+
                 def python_projection():
                     return (
                         intake_runner.resolve_projected_job_selector(selector)
@@ -1214,9 +1206,7 @@ def create_compute_app(
                     if head is None:
                         return None
                     criteria = selector.criteria_at(head["observed_at"])
-                    demand = sql_projection_for(
-                        criteria, head["projection_version_id"]
-                    )
+                    demand = sql_projection_for(criteria, head["projection_version_id"])
                     return criteria, demand
 
                 if demand_query_engine == "sql":
@@ -1253,9 +1243,7 @@ def create_compute_app(
                     raise LookupError("projection head unavailable")
                 criteria, projected = selected
                 demand = (
-                    projected.snapshot
-                    if hasattr(projected, "snapshot")
-                    else projected
+                    projected.snapshot if hasattr(projected, "snapshot") else projected
                 )
                 if demand_query_engine == "shadow" and query_shadow:
                     python_demand = demand
@@ -1598,13 +1586,9 @@ def create_compute_app(
         return execute(event, "ANALYSIS", event.user_id, compute)
 
     @app.get(prefix + "/snapshots/{snapshot_id}", dependencies=auth)
-    def get_snapshot(
-        snapshot_id: ResultReferenceId, user_id: Identifier | None = None
-    ):
+    def get_snapshot(snapshot_id: ResultReferenceId, user_id: Identifier | None = None):
         value = (
-            resolved_user_result(snapshot_id, user_id)
-            if user_id is not None
-            else None
+            resolved_user_result(snapshot_id, user_id) if user_id is not None else None
         )
         if value is not None:
             payload = active_recommendation_payload(value["payload"])
@@ -1620,15 +1604,22 @@ def create_compute_app(
             }
         if snapshot_id.startswith("ur-"):
             raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
-        return {"message": "C snapshot", "data": snapshot(snapshot_id, user_id)}
+        stored = snapshot(snapshot_id, user_id)
+        if user_id is not None and stored["kind"] == "RECOMMENDATION":
+            stored = {
+                **stored,
+                "payload": active_recommendation_payload(stored["payload"]),
+            }
+        return {"message": "C snapshot", "data": stored}
 
     def active_recommendation_payload(payload: dict) -> dict:
         """Serve live impact counts without mutating the immutable calculation."""
-        if (
-            matching_active_mode != "projection"
-            or payload.get("algorithm_version")
-            != "c-recommendation/condition-impact/v8"
-        ):
+        if matching_active_mode != "projection" or payload.get(
+            "algorithm_version"
+        ) not in {
+            "c-recommendation/condition-impact/v8",
+            "c-recommendation/condition-impact/v9",
+        }:
             return payload
         from recommendation.engine import ConditionImpact, active_condition_impact
 
@@ -1637,9 +1628,7 @@ def create_compute_app(
             ConditionImpact.model_validate(candidate["impact"])
             for candidate in candidates
         ]
-        all_ids = {
-            job_id for impact in impacts for job_id in impact.affected_job_ids
-        }
+        all_ids = {job_id for impact in impacts for job_id in impact.affected_job_ids}
         try:
             active_ids = database().get_active_job_ids(all_ids, as_of=datetime.now(UTC))
         except LookupError:
@@ -1659,11 +1648,112 @@ def create_compute_app(
             # Immutable facts quote the calculation-time counts. Once the live
             # posting gate changes those counts, do not serve a stale claim.
             explanation["facts"] = [
-                fact for fact in explanation.get("facts", [])
+                fact
+                for fact in explanation.get("facts", [])
                 if fact.get("kind") != "IMPACT"
             ]
             result["explanation"] = explanation
         return result
+
+    @app.get(prefix + "/recommendations/{snapshot_id}/summary", dependencies=auth)
+    def get_recommendation_summary(snapshot_id: ResultReferenceId, user_id: Identifier):
+        """Send only the fields consumed by B's next-skill card.
+
+        The immutable full snapshot remains available for Skill Gap, What-if,
+        integrity validation, and historical reads. A recommendation card does
+        not need the user's entire held/gap evidence or every affected job ID.
+        """
+        value = resolved_user_result(snapshot_id, user_id)
+        if value is None:
+            if snapshot_id.startswith("ur-"):
+                raise HTTPException(404, "RESULT_NOT_FOUND")
+            stored = snapshot(snapshot_id, user_id, "RECOMMENDATION")
+            payload = active_recommendation_payload(stored["payload"])
+            result_status = "LEGACY"
+            recompute_required = False
+        else:
+            payload = active_recommendation_payload(value["payload"])
+            result_status = value["status"]
+            recompute_required = value["recompute_required"]
+        selected = {
+            key: payload[key]
+            for key in (
+                "user_id",
+                "analysis_id",
+                "cohort_id",
+                "status",
+                "current_count",
+                "demand",
+                "personal_levels",
+                "assessment_ceilings",
+                "data_gaps",
+                "explanation",
+            )
+            if key in payload
+        }
+        if isinstance(selected.get("demand"), dict):
+            selected["demand"] = {
+                key: value
+                for key, value in selected["demand"].items()
+                if key != "technologies"
+            }
+        if isinstance(selected.get("explanation"), dict):
+            selected["explanation"] = {
+                "mode": selected["explanation"].get("mode"),
+                "facts": [
+                    {
+                        key: fact[key]
+                        for key in ("kind", "tech_id", "text")
+                        if key in fact
+                    }
+                    for fact in selected["explanation"].get("facts", [])
+                    if isinstance(fact, dict)
+                ],
+            }
+        selected["candidates"] = [
+            {
+                **{key: value for key, value in candidate.items() if key != "fact_ids"},
+                "impact": (
+                    {
+                        key: value
+                        for key, value in candidate["impact"].items()
+                        if key
+                        not in {
+                            "required_job_ids",
+                            "preferred_job_ids",
+                            "affected_job_ids",
+                        }
+                    }
+                    if isinstance(candidate.get("impact"), dict)
+                    else None
+                ),
+                "what_if": (
+                    {
+                        key: value
+                        for key, value in candidate["what_if"].items()
+                        if key
+                        not in {
+                            "current_job_ids",
+                            "newly_matched_job_ids",
+                            "projected_job_ids",
+                        }
+                    }
+                    if isinstance(candidate.get("what_if"), dict)
+                    else None
+                ),
+            }
+            for candidate in payload.get("candidates", [])
+        ]
+        return {
+            "message": "C recommendation summary",
+            "data": {
+                "snapshot_id": snapshot_id,
+                "kind": "RECOMMENDATION",
+                "result_status": result_status,
+                "recompute_required": recompute_required,
+                "payload": selected,
+            },
+        }
 
     @app.get(prefix + "/results/{result_id}", dependencies=auth)
     def get_user_result(result_id: ResultReferenceId, user_id: Identifier):
@@ -1762,9 +1852,7 @@ def create_compute_app(
                     current_result["result_id"] if current_result is not None else None
                 ),
                 "result_status": (
-                    current_result["status"]
-                    if current_result is not None
-                    else "LEGACY"
+                    current_result["status"] if current_result is not None else "LEGACY"
                 ),
                 "recompute_required": (
                     current_result["recompute_required"]

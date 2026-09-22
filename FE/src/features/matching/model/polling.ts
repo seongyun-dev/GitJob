@@ -30,6 +30,17 @@ export function matchingPageStaleTime(state: DataStatusState | undefined): numbe
     : 0
 }
 
+/**
+ * 추천과 What-if는 같은 사용자·목표·분석 결과를 함께 읽는다. 확정값을 화면 전환마다
+ * 다시 계산하는 듯 보이게 하지 않으며, 직무 저장·분석 완료·세션 전환에서 명시적으로
+ * 무효화한다. PREPARING은 즉시 stale로 남겨 폴링을 멈추지 않는다.
+ */
+export function matchingResultStaleTime(state: DataStatusState | undefined): number {
+  return state?.dataStatus === 'READY' || state?.dataStatus === 'PARTIAL'
+    ? JOB_DEMAND_STALE_MS
+    : 0
+}
+
 /** 수요 캐시는 READY 결과만 재사용한다. 계산 중 상태를 캐시로 묶어 두지 않는다. */
 export function jobDemandStaleTime(state: DataStatusState | undefined): number {
   return state?.dataStatus === 'READY' ? JOB_DEMAND_STALE_MS : 0

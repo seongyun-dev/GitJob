@@ -28,7 +28,7 @@ from recommendation.engine import (
 )
 from recommendation.evidence import EvidenceAnalysis
 
-V8 = "c-recommendation/condition-impact/v8"
+CURRENT_IMPACT_VERSION = "c-recommendation/condition-impact/v9"
 
 
 def held_technology(tech_id: str, *, personal_level: str | None = None) -> dict:
@@ -275,7 +275,7 @@ def test_case_l_condition_impact_is_available_for_the_top_candidate():
 def test_new_eligibility_uses_its_own_algorithm_version_and_round_trips():
     result = top3_scenario()
 
-    assert result.algorithm_version == V8
+    assert result.algorithm_version == CURRENT_IMPACT_VERSION
     assert (
         RecommendationSnapshot.model_validate_json(result.model_dump_json()) == result
     )

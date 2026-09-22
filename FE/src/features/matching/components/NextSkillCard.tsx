@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { ConditionImpactSummary } from '@/features/matching/components/ConditionImpactSummary'
+import { whatIfHref } from '@/features/matching/model/whatIfNavigation'
 import type { NextSkillEvidenceStatus, NextSkillView } from '@/features/matching/model/view'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
 
@@ -14,8 +15,9 @@ import { LevelBadge } from '@/shared/ui/LevelBadge'
  *
  * <h2>무엇이 가장 먼저 읽혀야 하는가 (S15P21E102-364)</h2>
  *
- * 정렬 기준인 중복 제외 관련 공고 수가 가장 크게 보이고, 필수·우대 건수는
- * 바로 아래에 분리한다. 전체 충족이나 지원 가능을 뜻하지 않는다.
+ * 필수 공고 수를 가장 크게 보이고 우대 공고 수는 바로 아래에 분리한다. 두 수는
+ * 같은 공고가 겹칠 수 있으므로 화면에서 합치지 않는다. 전체 충족이나 지원 가능을
+ * 뜻하지 않는다.
  *
  * `emphasis`는 1순위다. 크기 차이가 곧 정렬 기준의 표현이지만 그 차이를 카드 높이로
  * 주지는 않는다 — 높이는 `.gj-trio`의 `align-items: start` 아래에서 내용이 정한다.
@@ -128,7 +130,6 @@ export function NextSkillCard({
           </p>
         ) : (
           <ConditionImpactSummary
-            affectedCount={affectedJobCount}
             requiredCount={requiredImpactCount}
             preferredCount={preferredImpactCount}
             emphasis={emphasis}
@@ -158,9 +159,13 @@ export function NextSkillCard({
         <p className="mt-5 rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-faint">
           새 기준으로 다시 계산 중
         </p>
+      ) : affectedJobCount === 0 ? (
+        <p className="mt-5 rounded-xl border border-brand-line px-4 py-3 text-center text-[13.5px] font-[750] text-brand-faint">
+          현재 볼 수 있는 공고 없음
+        </p>
       ) : (
         <Link
-          to={`/what-if?tech=${skill.techId}`}
+          to={whatIfHref(skill)}
           onClick={onSelect}
           className={`mt-5 block rounded-xl px-4 py-3 text-center text-[13.5px] font-[750] ${
             emphasis

@@ -59,6 +59,17 @@ public class CComputeApi {
     }
 
     /**
+     * 추천 화면 전용 경량 Snapshot. Skill Gap은 Gap까지 필요한 전체 Snapshot을 읽는다.
+     *
+     * <p>개인 결과이므로 전체 Snapshot 조회와 똑같이 인증된 사용자 ID를 C에 보낸다.
+     * C가 소유자가 아닌 Snapshot을 404로 숨기는 계약도 그대로 유지한다.</p>
+     */
+    public CSnapshot recommendationSummary(String snapshotId, long userId) {
+        return client.get(RECOMMENDATIONS + snapshotId + "/summary",
+                Map.of("user_id", String.valueOf(userId)), CSnapshot.class);
+    }
+
+    /**
      * 공용 수요 Snapshot. 개인 결과가 아니므로 {@code user_id}를 붙이지 않는다.
      *
      * <p>붙이면 C가 소유자 조건으로 조회해 공용 결과를 찾지 못한다.</p>

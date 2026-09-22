@@ -56,7 +56,8 @@ public class SkillGapService {
     }
 
     public RecommendationResponse recommendations(long userId) {
-        Computed<CSnapshot> computed = read(userId);
+        Computed<CSnapshot> computed = reader.readCurrentContract(userId, snapshot ->
+                compute.recommendationSummary(snapshot.recommendationSnapshotId(), userId));
         if (!computed.hasValue()) {
             return RecommendationResponse.pending(computed.state(), Basis.of(computed.target()));
         }

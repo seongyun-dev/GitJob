@@ -15,6 +15,7 @@ import {
   marketPollInterval,
   MATCHING_PAGE_STALE_MS,
   matchingPageStaleTime,
+  matchingResultStaleTime,
   pollInterval,
 } from '@/features/matching/model/polling'
 import { queryKeys } from '@/shared/api/queryKeys'
@@ -123,6 +124,7 @@ export function useRecommendations(targetKey: string | undefined) {
     queryKey: queryKeys.matchingRecommendations(targetKey ?? ''),
     queryFn: fetchRecommendations,
     enabled: targetKey !== undefined,
+    staleTime: (query) => matchingResultStaleTime(query.state.data),
     refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }
@@ -142,6 +144,7 @@ export function useWhatIf(
     queryKey: queryKeys.matchingWhatIf(targetKey ?? '', techId ?? '', params),
     queryFn: () => fetchWhatIf(techId as string, params),
     enabled: targetKey !== undefined && techId !== undefined && techId !== '',
+    staleTime: (query) => matchingResultStaleTime(query.state.data),
     refetchInterval: (query) => pollInterval(query.state.data, query.state.error !== null),
   })
 }

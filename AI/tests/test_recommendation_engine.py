@@ -137,7 +137,7 @@ def test_active_recommendation_uses_all_matching_candidates_without_vacuous_matc
 
     assert len(cohort.jobs) == 1
     assert len(cohort.matching_jobs or ()) == 2
-    assert result.algorithm_version == "c-recommendation/condition-impact/v8"
+    assert result.algorithm_version == "c-recommendation/condition-impact/v9"
     assert result.demand.denominator == 2
     assert result.demand.matching_count == 2
     assert len(result.matching_jobs or ()) == 2
@@ -176,7 +176,7 @@ def test_v3_without_personal_levels_never_falls_back_to_held_only_matching():
 
     result = recommend(cohort, EvidenceAnalysis.model_validate(payload))
 
-    assert result.algorithm_version == "c-recommendation/condition-impact/v8"
+    assert result.algorithm_version == "c-recommendation/condition-impact/v9"
     assert result.current_count == 0
     assert result.current_job_ids == ()
     # Held evidence without a personal level still never promotes a job to

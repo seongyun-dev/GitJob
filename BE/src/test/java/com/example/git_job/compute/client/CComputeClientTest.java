@@ -137,6 +137,35 @@ class CComputeClientTest {
     }
 
     @Test
+    @DisplayName("추천 요약은 소유자 조건을 붙여 경량 C endpoint와 같은 봉투를 읽는다")
+    void readsRecommendationSummary() {
+        responses.put("/internal/v1/c/recommendations/snapshot-1/summary", Response.of(200,
+                "{\"message\":\"ok\",\"data\":{"
+                        + "\"snapshot_id\":\"snapshot-1\",\"kind\":\"RECOMMENDATION\","
+                        + "\"result_status\":\"READY\",\"recompute_required\":false,"
+                        + "\"payload\":{\"status\":\"READY\",\"current_count\":2,"
+                        + "\"candidates\":[{\"tech_id\":\"docker\",\"rank\":1,"
+                        + "\"impact\":{\"denominator\":13,\"required_count\":3,\"preferred_count\":5,"
+                        + "\"affected_count\":7}}],\"demand\":{\"cohort_id\":\"cohort-1\","
+                        + "\"status\":\"READY\",\"denominator\":13,\"criteria\":{},"
+                        + "\"input_count\":20},\"explanation\":{\"mode\":\"RULE\","
+                        + "\"facts\":[]}}}}"));
+
+        CSnapshot snapshot = new CComputeApi(client()).recommendationSummary("snapshot-1", 7L);
+
+        assertThat(lastQuery.get()).isEqualTo("user_id=7");
+        assertThat(snapshot.resultStatus()).isEqualTo("READY");
+        assertThat(snapshot.recomputeRequired()).isFalse();
+        assertThat(snapshot.payload().currentCount()).isEqualTo(2);
+        assertThat(snapshot.payload().demand().denominator()).isEqualTo(13);
+        assertThat(snapshot.payload().demand().technologies()).isNull();
+        assertThat(snapshot.payload().candidates().getFirst().impact().requiredCount())
+                .isEqualTo(3);
+        assertThat(snapshot.payload().candidates().getFirst().impact().requiredJobIds())
+                .isNull();
+    }
+
+    @Test
     @DisplayName("모든 요청에 Bearer 토큰을 싣는다")
     void sendsBearerToken() {
         responses.put("/ready", Response.of(200, "{\"message\":\"ok\",\"data\":{\"status\":\"READY\"}}"));

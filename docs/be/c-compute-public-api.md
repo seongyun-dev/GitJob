@@ -591,7 +591,12 @@ C 원천: RECOMMENDATION Snapshot의 `gap`(`technology-gap/v2`) + `demand` + `pe
 
 ### 4.6 `GET /api/v1/me/recommendations` — 다음 학습 기술 (화면 10)
 
-C 원천: RECOMMENDATION Snapshot의 `candidates` + `explanation.facts`
+C 원천: `GET /internal/v1/c/recommendations/{snapshotId}/summary?user_id={authenticatedUserId}`의
+`candidates` + `explanation.facts`. 전체 `GET /snapshots/{id}`는 Skill Gap에서 계속 쓴다.
+summary는 동일 소유권·결과 상태와 필수/우대 영향 건수를 보존하되 Evidence 원본,
+공고 ID 배열을 전송하지 않는다. 새 계산 계약은
+`active-matching/job-demand-v4+recommendation-v9`이며 v8 저장 결과는 원래 ID로
+조회 가능하지만 BE 현재 화면에는 v9 재계산 후 표시한다.
 
 ```json
 {
@@ -616,11 +621,15 @@ C 원천: RECOMMENDATION Snapshot의 `candidates` + `explanation.facts`
 
 `reasons`는 `explanation.facts`에서 해당 `tech_id`의 `text`를 순서대로 옮긴 문장이다.
 점수를 노출하지 않는다. `targetLevel`은 C가 주지 않으므로 필드를 두지 않는다(§6-3).
-v8은 비교 집합의 모든 공고에서 해석된 필수·우대 절만 비교하며, 다른 절이 미해석이거나
+v8~v9는 비교 집합의 모든 공고에서 해석된 필수·우대 절만 비교하며, 다른 절이 미해석이거나
 공고가 조건부여도 확인된 절의 영향을 센다. `affectedCount`는 필수·우대 공고 ID의
 합집합이라 두 건수의 단순 합이 아니다. 구 결과의 `whatIf`는 읽기 호환용이며 새 추천
 순위와 화면에는 사용하지 않는다. 활성 공고 필터는 C의 Snapshot 조회 시 후보 영향
 건수에도 적용한다.
+v9 추천 Top3는 `requiredCount` 내림차순을 먼저, `preferredCount`를 다음으로
+비교한다. `affectedCount`는 합집합 조회용이며 필수·우대를 더한 점수가 아니다.
+FE는 필수 공고 수를 카드의 주 수치로 보여주고, 공고 목록은 필수 건수가 있으면
+`kind=REQUIRED`, 없고 우대 건수가 있으면 `kind=PREFERRED`를 기본으로 연다.
 
 ### 4.7 `GET /api/v1/me/recommendations/{techId}/what-if` — What-if와 신규 부합 공고 (화면 03)
 

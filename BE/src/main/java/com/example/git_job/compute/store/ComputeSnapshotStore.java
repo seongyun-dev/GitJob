@@ -35,7 +35,7 @@ public class ComputeSnapshotStore {
      * 409 충돌을 막을 뿐, 이미 행이 있는 사용자를 다시 큐에 넣지는 않는다.</p>
      */
     public static final String CURRENT_COMPUTE_CONTRACT_VERSION =
-            "active-matching/job-demand-v4+recommendation-v8";
+            "active-matching/job-demand-v4+recommendation-v9";
 
     private static final RowMapper<ComputeSnapshot> MAPPER = (rs, row) -> new ComputeSnapshot(
             rs.getLong("user_id"),

@@ -7,6 +7,10 @@ import {
   useWhatIf,
 } from '@/features/matching/hooks/useMatching'
 import { hasComputedValue } from '@/shared/api/computeState'
+import {
+  defaultWhatIfImpactKind,
+  type WhatIfImpactKind,
+} from '@/features/matching/model/whatIfNavigation'
 import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { DataRegion } from '@/shared/ui/DataRegion'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
@@ -45,13 +49,17 @@ export function WhatIfPage() {
     recommendations.data === undefined ? [] : toNextSkills(recommendations.data)
 
   const requested = params.get('tech')
-  const requestedKind = params.get('kind')
-  const kind = requestedKind === 'REQUIRED' || requestedKind === 'PREFERRED'
-    ? requestedKind : 'ALL'
   const requestedPage = Number(params.get('page') ?? '1')
   const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
   const selected =
     candidates.find((candidate) => candidate.techId === requested) ?? candidates[0]
+  const requestedKind = params.get('kind')
+  const kind: WhatIfImpactKind =
+    requestedKind === 'ALL' || requestedKind === 'REQUIRED' || requestedKind === 'PREFERRED'
+      ? requestedKind
+      : selected === undefined
+        ? 'ALL'
+        : defaultWhatIfImpactKind(selected)
 
   const whatIf = useWhatIf(
     target.data?.targetKey,
@@ -95,7 +103,11 @@ export function WhatIfPage() {
                 key={candidate.techId}
                 type="button"
                 aria-pressed={active}
-                onClick={() => setParams({ tech: candidate.techId, kind, page: '1' })}
+                onClick={() => setParams({
+                  tech: candidate.techId,
+                  kind: defaultWhatIfImpactKind(candidate),
+                  page: '1',
+                })}
                 className={`flex items-center gap-2 rounded-[10px] px-3.5 py-2.5 text-[13px] font-bold transition-colors ${
                   active
                     ? 'bg-tone-accent-bg text-brand-ink'
@@ -106,11 +118,15 @@ export function WhatIfPage() {
                   #{candidate.rank}
                 </span>
                 {candidate.techName}
-                {candidate.affectedJobCount !== null && (
+                {(candidate.requiredImpactCount ?? 0) > 0 ? (
                   <span className="text-[12.5px] font-extrabold text-brand-600">
-                    {formatImpactIncrease(candidate.affectedJobCount)}
+                    필수 {candidate.requiredImpactCount?.toLocaleString('ko-KR')}건
                   </span>
-                )}
+                ) : (candidate.preferredImpactCount ?? 0) > 0 ? (
+                  <span className="text-[12.5px] font-extrabold text-brand-600">
+                    우대 {candidate.preferredImpactCount?.toLocaleString('ko-KR')}건
+                  </span>
+                ) : null}
               </button>
             )
           })}
@@ -166,7 +182,6 @@ export function WhatIfPage() {
               ) : (
                 <div className="mt-5">
                   <ConditionImpactSummary
-                    affectedCount={impact.affectedCount}
                     requiredCount={impact.requiredCount}
                     preferredCount={impact.preferredCount}
                     emphasis

@@ -203,7 +203,11 @@ class MemoryStore:
 
     def get_active_job_ids(self, job_ids, *, as_of=None):
         requested = frozenset(job_ids)
-        return requested if self.active_job_ids is None else requested & self.active_job_ids
+        return (
+            requested
+            if self.active_job_ids is None
+            else requested & self.active_job_ids
+        )
 
     def renew(self, ticket):
         return True
@@ -253,6 +257,57 @@ def _prepare(client):
     reply = client.post(PREFIX + "/analyses/completed", json=request)
     result_id = snapshot_ref(reply, "RECOMMENDATION")
     return result_id, request, reply
+
+
+def test_recommendation_summary_keeps_candidate_counts_without_heavy_evidence(client):
+    result_id, _, _ = _prepare(client)
+    params = {"user_id": "user-1"}
+    full = client.get(PREFIX + f"/snapshots/{result_id}", params=params)
+    summary = client.get(
+        PREFIX + f"/recommendations/{result_id}/summary", params=params
+    )
+
+    assert full.status_code == 200, full.text
+    assert summary.status_code == 200, summary.text
+    full_data = full.json()["data"]
+    summary_data = summary.json()["data"]
+    assert summary_data["snapshot_id"] == result_id
+    assert summary_data["kind"] == "RECOMMENDATION"
+    assert summary_data["payload"]["candidates"]
+    assert (
+        summary_data["payload"]["personal_levels"]
+        == full_data["payload"]["personal_levels"]
+    )
+    assert summary_data["payload"]["demand"] == {
+        key: value
+        for key, value in full_data["payload"]["demand"].items()
+        if key != "technologies"
+    }
+    assert not {"held", "gap", "jobs", "matching_jobs"}.intersection(
+        summary_data["payload"]
+    )
+    for candidate in summary_data["payload"]["candidates"]:
+        if candidate["impact"] is not None:
+            assert not {
+                "required_job_ids",
+                "preferred_job_ids",
+                "affected_job_ids",
+            }.intersection(candidate["impact"])
+    assert all(
+        set(fact) <= {"kind", "tech_id", "text"}
+        for fact in summary_data["payload"]["explanation"]["facts"]
+    )
+    assert len(summary.content) < len(full.content)
+    assert (
+        client.get(
+            PREFIX + f"/recommendations/{result_id}/summary",
+            params={"user_id": "user-2"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(PREFIX + f"/recommendations/{result_id}/summary").status_code == 422
+    )
 
 
 def test_partial_matching_roundtrip_pages_detail_and_active_whatif(client):
@@ -513,9 +568,7 @@ def test_projection_active_mode_filters_count_page_detail_and_what_if(
         assert listing.status_code == 200, listing.text
         data = listing.json()["data"]
         assert data["total_count"] == 1
-        assert [row["job"]["job_id"] for row in data["items"]] == [
-            "partial"
-        ]
+        assert [row["job"]["job_id"] for row in data["items"]] == ["partial"]
 
         hidden = active_client.get(
             PREFIX + f"/recommendations/{result_id}/matching-job-posting",
@@ -540,10 +593,25 @@ def test_projection_active_mode_filters_count_page_detail_and_what_if(
         )
         assert overview.status_code == 200, overview.text
         docker = next(
-            item for item in overview.json()["data"]["payload"]["candidates"]
+            item
+            for item in overview.json()["data"]["payload"]["candidates"]
             if item["tech_id"] == "docker"
         )
-        assert docker["impact"]["affected_count"] == delta["impact_counts"]["affected_count"]
+        assert (
+            docker["impact"]["affected_count"]
+            == delta["impact_counts"]["affected_count"]
+        )
+        summary = active_client.get(
+            PREFIX + f"/recommendations/{result_id}/summary",
+            params={"user_id": "user-1"},
+        )
+        assert summary.status_code == 200, summary.text
+        summary_docker = next(
+            item
+            for item in summary.json()["data"]["payload"]["candidates"]
+            if item["tech_id"] == "docker"
+        )
+        assert summary_docker["impact"]["affected_count"] == delta["total_count"]
         for kind, count_key in (
             ("REQUIRED", "required_count"),
             ("PREFERRED", "preferred_count"),
@@ -568,6 +636,31 @@ def test_projection_active_mode_filters_count_page_detail_and_what_if(
             assert {
                 row["job_id"] for row in filtered_data["items"]
             } <= store.active_job_ids
+
+        # Legacy c- IDs without a compact user_result still need the same
+        # active filter on overview, summary, and the actual posting list.
+        store.active_job_ids = set()
+        empty = active_client.get(
+            PREFIX + f"/recommendations/{result_id}/job-postings",
+            params={
+                "user_id": "user-1",
+                "mode": "IMPACT",
+                "recommended_tech_id": "docker",
+            },
+        ).json()["data"]
+        empty_summary = active_client.get(
+            PREFIX + f"/recommendations/{result_id}/summary",
+            params={"user_id": "user-1"},
+        ).json()["data"]
+        empty_overview = active_client.get(
+            PREFIX + f"/snapshots/{result_id}", params={"user_id": "user-1"}
+        ).json()["data"]
+        assert empty["total_count"] == 0
+        for payload in (empty_summary["payload"], empty_overview["payload"]):
+            docker = next(
+                item for item in payload["candidates"] if item["tech_id"] == "docker"
+            )
+            assert docker["impact"]["affected_count"] == 0
 
 
 def test_postgres_current_result_payload_is_slim_and_head_is_atomic(client):
@@ -600,6 +693,24 @@ def test_postgres_current_result_payload_is_slim_and_head_is_atomic(client):
         "job_matching_ref",
     }.intersection(result["compact_payload"])
     assert isinstance(result["compact_payload"]["explanation"], dict)
+    summary = client.get(
+        PREFIX + f"/recommendations/{result['result_id']}/summary",
+        params={"user_id": "user-1"},
+    )
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["data"]["snapshot_id"] == result["result_id"]
+    assert (
+        summary.json()["data"]["result_status"]
+        == store.get_user_result(result["result_id"], owner="user-1")["status"]
+    )
+    assert "held" not in summary.json()["data"]["payload"]
+    assert (
+        client.get(
+            PREFIX + f"/recommendations/{result['result_id']}/summary",
+            params={"user_id": "user-2"},
+        ).status_code
+        == 404
+    )
 
 
 def test_postgres_current_head_does_not_regress_on_late_older_completion(client):
@@ -805,9 +916,9 @@ def test_postgres_c_and_ur_aliases_share_legacy_status_and_explanation(client):
     assert legacy_data["status"] == compact_data["status"] == "LEGACY"
     assert not legacy_data["recompute_required"]
     assert not compact_data["recompute_required"]
-    assert legacy_data["payload"]["explanation"] == compact_data["payload"][
-        "explanation"
-    ]
+    assert (
+        legacy_data["payload"]["explanation"] == compact_data["payload"]["explanation"]
+    )
 
 
 def test_matching_result_budget_rejects_without_publishing_a_truncated_snapshot(

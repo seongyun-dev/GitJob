@@ -72,14 +72,23 @@ test('PERSONAL_LEVEL_UNKNOWN 을 L0 이나 미보유로 표현하지 않는다',
   assert.match(card, /skill\.evidenceStatus === null/)
 })
 
-test('관련 공고는 +N건과 필수·우대 건수를 간결하게 표시한다', () => {
+test('추천 카드는 필수 공고를 우선하고 우대 공고를 별도로 표시한다', () => {
   const summary = withoutComments(source('features/matching/components/ConditionImpactSummary.tsx'))
 
-  assert.match(summary, /관련 공고/)
-  assert.match(summary, /필수 \{requiredCount\.toLocaleString\('ko-KR'\)\}건 · 우대 \{preferredCount\.toLocaleString\('ko-KR'\)\}건/)
-  assert.match(summary, /formatImpactIncrease\(affectedCount\)/)
+  assert.match(summary, />필수 공고</)
+  assert.match(summary, /\{requiredCount\.toLocaleString\('ko-KR'\)\}건/)
+  assert.match(summary, /우대 공고 \{preferredCount\.toLocaleString\('ko-KR'\)\}건/)
+  assert.equal(summary.includes('affectedCount'), false)
   assert.equal(summary.includes('새로 맞'), false)
   assert.equal(summary.includes('다른 조건은 별도 확인'), false)
+})
+
+test('What-if 후보 선택칸도 합집합 크기를 주 수치로 다시 내세우지 않는다', () => {
+  const page = withoutComments(source('features/matching/pages/WhatIfPage.tsx'))
+
+  assert.match(page, /필수 \{candidate\.requiredImpactCount\?\.toLocaleString\('ko-KR'\)\}건/)
+  assert.match(page, /우대 \{candidate\.preferredImpactCount\?\.toLocaleString\('ko-KR'\)\}건/)
+  assert.equal(page.includes('formatImpactIncrease(candidate.affectedJobCount)'), false)
 })
 
 test('What-if의 개인 수준 미판정은 미보유와 구분한다', () => {

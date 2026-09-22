@@ -201,7 +201,7 @@ def test_what_if_sources_use_the_job_set_the_counts_were_computed_over():
         if fact.kind == "IMPACT" and fact.tech_id == "docker"
     )
     assert fact.values["required_job_ids"] == ["matching-only-docker"]
-    assert fact.text == "docker 관련 공고 1건(필수 1건 · 우대 0건)."
+    assert fact.text == ("docker 필수 공고 1건 · 우대 공고 0건 (겹침 제외 전체 1건).")
     assert "충족" not in fact.text
     # 근거 URL 은 그 공고의 것이어야 한다. 숫자만 맞고 출처가 비면 설명이 아니다.
     matching = {job.job_id: job for job in result.matching_jobs or ()}

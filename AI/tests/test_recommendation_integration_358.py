@@ -1,9 +1,7 @@
-"""S15P21E102-358 RED integration contracts for 354 + 355.
+"""Integration contracts for next-skill selection and pinned Trend basis.
 
-These tests deliberately describe the Phase-B boundary without changing the
-recommendation engine.  They are expected to fail on develop, and to become
-green only after the 355 trend tie-break is wired into the 354 engine and the
-trend basis is persisted in the immutable snapshot.
+The v9 rank order keeps required/preferred posting counts ahead of Trend;
+the pinned weekly basis remains part of the immutable Snapshot identity.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ from typing import Any
 
 import pytest
 
-TREND_RULE_TOKEN = "top3-near-tie-weekly-active-repo-v1"
+TREND_RULE_TOKEN = "top3-exact-tie-weekly-active-repo-v1"
 TREND_SOURCE = "GITHUB_GH_ARCHIVE"
 TREND_GRANULARITY = "WEEK"
 TREND_METRIC = "active_repo_count"
@@ -282,12 +280,12 @@ def _build_level_compatibility_snapshot(
 
 
 def test_engine_applies_trend_only_inside_the_already_selected_top3():
-    """31/30/20 selects Docker/Redis/AWS; Trend reorders only Docker/Redis."""
+    """31/30/20 selects Docker/Redis/AWS; v9 preserves required-count order."""
     snapshot = _build_fixture_snapshot(trend_store=TREND_A)
 
     assert [candidate.tech_id for candidate in snapshot.candidates] == [
-        "redis",
         "docker",
+        "redis",
         "aws",
     ]
     assert "gcp" not in {candidate.tech_id for candidate in snapshot.candidates}

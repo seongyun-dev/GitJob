@@ -58,6 +58,7 @@ class SkillGapServiceTest {
         resultReader = reader(targets, snapshots);
         service = new SkillGapService(compute, resultReader);
         when(compute.recommendation(anyString(), anyLong())).thenReturn(snapshot("READY"));
+        when(compute.recommendationSummary(anyString(), anyLong())).thenReturn(snapshot("READY"));
     }
 
     private static CSnapshot snapshot(String status) {
@@ -111,7 +112,7 @@ class SkillGapServiceTest {
     @DisplayName("stale 추천·Gap은 제공하면서 비동기 재계산을 요청한다")
     void staleResultRequestsAsyncRecompute() {
         CSnapshot current = snapshot("READY");
-        when(compute.recommendation(anyString(), anyLong())).thenReturn(
+        when(compute.recommendationSummary(anyString(), anyLong())).thenReturn(
                 new CSnapshot(current.snapshotId(), current.kind(), "STALE", true,
                         current.payload()));
         ComputeRetryScheduler scheduler = mock(ComputeRetryScheduler.class);
@@ -183,8 +184,18 @@ class SkillGapServiceTest {
     }
 
     @Test
-    @DisplayName("구 계약 결과는 추천·Gap 모두 새 계산을 기다린다")
-    void oldContractWaitsForV8() {
+    @DisplayName("추천은 경량 요약을, Skill Gap은 전체 Snapshot을 읽는다")
+    void readsSummaryOnlyForRecommendations() {
+        service.recommendations(USER_ID);
+        service.skillGap(USER_ID);
+
+        verify(compute).recommendationSummary(RECOMMENDATION, USER_ID);
+        verify(compute).recommendation(RECOMMENDATION, USER_ID);
+    }
+
+    @Test
+    @DisplayName("v8 결과는 v9 추천·Gap 재계산을 기다린다")
+    void v8ContractWaitsForV9() {
         UserTargetStore targets = mock(UserTargetStore.class);
         ComputeSnapshotStore snapshots = mock(ComputeSnapshotStore.class);
         when(targets.find(USER_ID)).thenReturn(Optional.of(
@@ -200,12 +211,15 @@ class SkillGapServiceTest {
         assertThat(rolling.recommendations(USER_ID).dataStatus()).isEqualTo("PREPARING");
         assertThat(rolling.skillGap(USER_ID).dataStatus()).isEqualTo("PREPARING");
         verify(compute, never()).recommendation(anyString(), anyLong());
+        verify(compute, never()).recommendationSummary(anyString(), anyLong());
     }
 
     @Test
     @DisplayName("추천을 만들 근거가 부족해도 기술별 보유와 미판정 결과는 보여 준다")
     void keepsGapRowsVisibleWhenRecommendationEvidenceIsInsufficient() {
         when(compute.recommendation(anyString(), anyLong()))
+                .thenReturn(snapshot("INSUFFICIENT_EVIDENCE"));
+        when(compute.recommendationSummary(anyString(), anyLong()))
                 .thenReturn(snapshot("INSUFFICIENT_EVIDENCE"));
 
         SkillGapResponse response = service.skillGap(USER_ID);

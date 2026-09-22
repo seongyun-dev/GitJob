@@ -150,6 +150,7 @@ export function RepositorySelectionPage() {
   useEffect(() => {
     if (batchComplete) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
+      void queryClient.invalidateQueries({ queryKey: ['matching'] })
     }
   }, [batchComplete, queryClient])
 
