@@ -80,9 +80,12 @@ class MeMatchingControllerTest {
 
         when(targets.find(USER_ID)).thenReturn(Optional.of(
                 new Target("BACKEND", List.of("서울"), List.of("신입"), Instant.EPOCH)));
-        when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(
-                new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2", RECOMMENDATION,
-                        "ev-1", "BACKEND|서울|신입", Instant.EPOCH)));
+        ComputeSnapshot available = new ComputeSnapshot(USER_ID, "a".repeat(64), "c-1", "c-2",
+                RECOMMENDATION, "ev-1", "BACKEND|서울|신입", Instant.EPOCH);
+        when(snapshots.findLatest(anyLong(), anyString())).thenReturn(Optional.of(available));
+        when(snapshots.findLatest(anyLong(), anyString(),
+                eq(ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION)))
+                .thenReturn(Optional.of(available));
         when(compute.recommendation(anyString(), anyLong())).thenReturn(recommendation());
 
         ComputeResultReader reader = reader(targets, snapshots);
@@ -153,6 +156,8 @@ class MeMatchingControllerTest {
                 .andExpect(status().isOk());
 
         // 999 가 아니라 세션의 7 로 C 를 부른다.
+        verify(snapshots).findLatest(USER_ID, "BACKEND|서울|신입",
+                ComputeSnapshotStore.CURRENT_COMPUTE_CONTRACT_VERSION);
         verify(compute).recommendation(RECOMMENDATION, USER_ID);
         verify(compute, never()).recommendation(anyString(), eq(999L));
     }
