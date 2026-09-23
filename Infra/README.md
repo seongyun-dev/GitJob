@@ -282,19 +282,30 @@ PROFILES=core,app \
 
 현재 EC2 override는 Nginx HTTP 80/HTTPS 443과 split 배포에 필요한 core의
 private binding을 제공한다. 서비스 서버에는
-`/etc/letsencrypt/live/gitjob.shop/fullchain.pem`과
+`/etc/letsencrypt/live/j15e102.p.ssafy.io/fullchain.pem`과
 `privkey.pem`이 있어야 하며, 인증서가 없을 때는 Nginx app을 재기동하지
 않는다. HTTP는 ACME challenge와 health endpoint만 유지하고 나머지는 HTTPS로
-redirect한다.
+redirect한다. Nginx는 `j15e102.p.ssafy.io` Host만 서비스하며 `gitjob.shop`을
+포함한 다른 Host 요청은 기본 virtual host에서 연결을 종료한다.
+
+서비스 서버의 `.env.service`에는 아래 공개 주소를 지정한다. GitHub OAuth App의
+Authorization callback URL도 `GITHUB_REDIRECT_URI`와 일치시킨다.
+
+```dotenv
+PUBLIC_BASE_URL=https://j15e102.p.ssafy.io
+GITHUB_REDIRECT_URI=https://j15e102.p.ssafy.io/api/v1/auth/github/callback
+FRONTEND_CALLBACK_URL=https://j15e102.p.ssafy.io/auth/callback
+CORS_ALLOWED_ORIGINS=https://j15e102.p.ssafy.io
+```
 
 서비스 서버에서 최초 인증서를 발급할 때는 DNS가
-`gitjob.shop`을 서비스 EC2로 가리키고 80/tcp가 외부에서 도달 가능해야
+`j15e102.p.ssafy.io`를 서비스 EC2로 가리키고 80/tcp가 외부에서 도달 가능해야
 한다. 인증서 발급 후 다음 명령으로 app을 재기동한다.
 
 ```bash
 sudo apt-get update
 sudo apt-get install --yes certbot
-sudo certbot certonly --standalone --preferred-challenges http --cert-name gitjob.shop -d gitjob.shop
+sudo certbot certonly --standalone --preferred-challenges http --cert-name j15e102.p.ssafy.io -d j15e102.p.ssafy.io
 ENV_FILE=.env.service COMPOSE_OVERRIDE_FILE=Infra/compose/compose.ec2.yaml PROFILES=core,app ./Infra/scripts/up.sh
 ```
 

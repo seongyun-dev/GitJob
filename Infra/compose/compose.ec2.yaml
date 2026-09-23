@@ -76,8 +76,11 @@ services:
       test:
         - CMD-SHELL
         - >-
-          wget -qO- http://127.0.0.1/health >/dev/null
-          && wget --no-check-certificate -qO- https://127.0.0.1/nginx-health >/dev/null
+          wget -qO- --header='Host: j15e102.p.ssafy.io'
+          http://127.0.0.1/health >/dev/null
+          && wget --no-check-certificate -qO-
+          --header='Host: j15e102.p.ssafy.io'
+          https://127.0.0.1/nginx-health >/dev/null
       interval: 10s
       timeout: 5s
       retries: 12

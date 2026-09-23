@@ -147,10 +147,15 @@ JWT_SECRET=<long-random-secret>
 GITHUB_CLIENT_ID=<github-client-id>
 GITHUB_CLIENT_SECRET=<github-client-secret>
 GITHUB_API_TOKEN=<github-token-if-needed>
-GITHUB_REDIRECT_URI=https://<service-domain>/api/v1/auth/github/callback
+PUBLIC_BASE_URL=https://j15e102.p.ssafy.io
+GITHUB_REDIRECT_URI=https://j15e102.p.ssafy.io/api/v1/auth/github/callback
+FRONTEND_CALLBACK_URL=https://j15e102.p.ssafy.io/auth/callback
 COOKIE_SECURE=true
-CORS_ALLOWED_ORIGINS=https://<service-domain>
+CORS_ALLOWED_ORIGINS=https://j15e102.p.ssafy.io
 ~~~
+
+GitHub OAuth App의 Authorization callback URL도 위 `GITHUB_REDIRECT_URI`와
+같은 값으로 설정한다. `.env.service` 변경은 Backend 컨테이너를 재생성해야 반영된다.
 
 POSTGRES_USER, POSTGRES_DB, Kafka cluster/topic 값은 data 서버와 애플리케이션
 계약에 맞춰 동일하게 유지한다. JPA_DDL_AUTO=update는 초기 개발용이며 운영
