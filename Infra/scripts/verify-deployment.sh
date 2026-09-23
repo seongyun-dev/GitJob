@@ -264,8 +264,13 @@ run_all_checks() {
   elif ! running nginx; then
     undetermined entry-point "nginx 컨테이너가 이 호스트에 없다"
   else
-    entry_status="$(compose exec -T nginx sh -c '
-      code=$(wget -q -O /tmp/verify-entry.out -T 5 -S http://127.0.0.1/health 2>&1 \
+    entry_host="$(read_env PUBLIC_BASE_URL)"
+    entry_host="${entry_host#*://}"
+    entry_host="${entry_host%%/*}"
+    entry_host="${entry_host:-localhost}"
+    entry_status="$(compose exec -T -e VERIFY_ENTRY_HOST="$entry_host" nginx sh -c '
+      code=$(wget -q -O /tmp/verify-entry.out -T 5 -S \
+        --header "Host: $VERIFY_ENTRY_HOST" http://127.0.0.1/health 2>&1 \
         | awk "/HTTP\\//{print \$2; exit}") || true
       printf "%s " "${code:-000}"
       tr -d "\n" < /tmp/verify-entry.out 2>/dev/null
