@@ -160,9 +160,17 @@ html {
     transform: translateY(0);
   }
 
+  /*
+   * `gj-focus-ring` 은 초점 표시만 필요한 자리용이다 · 티켓 S15P21E102-377.
+   *
+   * `gj-clickable` 계열은 hover 에 `translateY(-3px)` 과 그림자가 붙는 버튼·카드용이라,
+   * 본문 안 토글 같은 글자 요소에 붙이면 글자가 떠오른다. 초점 표시는 같아야 하므로
+   * 값을 복제하지 않고 이 선언을 함께 쓴다 — 나중에 링 색이 바뀌면 한 곳만 고친다.
+   */
   .gj-clickable:focus-visible,
   .gj-clickable-card:focus-visible,
-  .gj-clickable-primary:focus-visible {
+  .gj-clickable-primary:focus-visible,
+  .gj-focus-ring:focus-visible {
     outline: 3px solid color-mix(in srgb, var(--color-brand-400) 38%, transparent);
     outline-offset: 3px;
   }

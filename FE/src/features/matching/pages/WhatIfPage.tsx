@@ -15,6 +15,7 @@ import { ComputeStatePanel } from '@/shared/ui/ComputeStatePanel'
 import { DataRegion } from '@/shared/ui/DataRegion'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
 import { PageHero } from '@/shared/ui/PageHero'
+import { ReasonsDisclosure } from '@/shared/ui/ReasonsDisclosure'
 import { StateCard } from '@/shared/ui/StateCard'
 import type { NextSkillEvidenceStatus } from '@/features/matching/model/view'
 
@@ -159,8 +160,15 @@ export function WhatIfPage() {
         )}
 
         {ready && selected !== undefined && (
-          /* v2의 `571 / 757`. 왼쪽이 가정, 오른쪽이 그 결과로 새로 매칭되는 공고다. */
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[571px_minmax(0,1fr)]">
+          /*
+           * v2의 `571 / 757`. 왼쪽이 가정, 오른쪽이 그 결과로 새로 매칭되는 공고다.
+           *
+           * `items-start` 가 있어야 왼쪽 카드가 제 내용만큼만 선다 · 티켓 S15P21E102-377.
+           * grid 의 기본 정렬은 stretch 라, 공고가 수십 건이면 왼쪽 카드가 그 높이까지
+           * 늘어나 아래가 통째로 빈 흰 면이 됐다. 두 칸의 높이는 서로 다른 것을 세는
+           * 값이라 맞출 이유가 없다 — 왼쪽은 기술 하나, 오른쪽은 공고 목록이다.
+           */
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[571px_minmax(0,1fr)]">
             <DataRegion title="추천 기술">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-[22px] leading-[1.2] font-[750] tracking-[-0.03em] text-brand-ink">
@@ -189,24 +197,7 @@ export function WhatIfPage() {
                 </div>
               )}
 
-              {selected.reasons.length > 0 && (
-                <details className="mt-5 text-[12px] text-brand-muted">
-                  <summary className="w-fit cursor-pointer font-semibold hover:text-brand-ink">추천 이유</summary>
-                  <ul className="mt-2 grid gap-1.5">
-                    {selected.reasons.map((reason) => (
-                      <li
-                        key={reason}
-                        className="flex gap-2 text-[12.5px] leading-[1.6] text-brand-muted"
-                      >
-                        <span aria-hidden className="text-brand-600">
-                          ·
-                        </span>
-                        {reason}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
+              <ReasonsDisclosure reasons={selected.reasons} />
             </DataRegion>
 
             <DataRegion title="공고 목록">

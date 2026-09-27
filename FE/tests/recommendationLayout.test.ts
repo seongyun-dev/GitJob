@@ -100,10 +100,52 @@ test('What-if의 개인 수준 미판정은 미보유와 구분한다', () => {
 })
 
 test('관련 공고 화면의 긴 추천 이유도 접혀 있다', () => {
-  const page = source('features/matching/pages/WhatIfPage.tsx')
+  const page = withoutComments(source('features/matching/pages/WhatIfPage.tsx'))
 
-  assert.match(page, /<details className="mt-5 text-\[12px\] text-brand-muted">/)
-  assert.match(page, /<summary[^>]*>추천 이유<\/summary>/)
+  assert.match(page, /<ReasonsDisclosure reasons=\{selected\.reasons\} \/>/)
+  // 표기를 그 자리에 다시 적으면 두 화면이 또 갈린다.
+  assert.equal(page.includes('<details'), false)
+})
+
+/*
+ * 접힘 표시는 브라우저 기본값이 아니라 서비스 것이다 · 티켓 S15P21E102-377.
+ *
+ * 기본 `summary` 는 검은 삼각형과 검은 outline 을 그려서, 닫힌 상태의 "추천 이유"
+ * 만 남의 화면처럼 보였다.
+ */
+
+test('추천 이유 토글은 기본 marker 를 쓰지 않고 초점 표시는 서비스 링이다', () => {
+  const page = withoutComments(source('shared/ui/ReasonsDisclosure.tsx'))
+
+  // 기본 삼각형을 끄고 같은 자리에 우리 글리프를 둔다.
+  assert.match(page, /list-none/)
+  assert.match(page, /\[&::-webkit-details-marker\]:hidden/)
+  assert.match(page, /group-open:rotate-90/)
+  // 초점 표시를 지우지 않는다. 지우면 키보드 사용자가 현재 위치를 잃는다.
+  assert.match(page, /gj-focus-ring/)
+  assert.equal(page.includes('outline-none'), false)
+})
+
+test('gj-focus-ring 은 링 값을 복제하지 않고 기존 선언을 함께 쓴다', () => {
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
+  const rule = css.slice(
+    css.indexOf('.gj-clickable:focus-visible'),
+    css.indexOf('.gj-clickable:focus-visible') + 400,
+  )
+
+  // 같은 선언 블록 안에 있어야 링 색이 바뀔 때 한 곳만 고친다.
+  assert.match(rule, /\.gj-focus-ring:focus-visible/)
+  assert.match(rule, /outline: 3px solid color-mix\(in srgb, var\(--color-brand-400\) 38%, transparent\)/)
+})
+
+test('관련 공고 2열도 카드 높이를 목록 높이에 맞추지 않는다', () => {
+  const page = withoutComments(source('features/matching/pages/WhatIfPage.tsx'))
+
+  /*
+   * `gj-trio` 가 추천 화면에서 세운 규칙과 같다 — 높이는 내용이 정한다.
+   * stretch 면 공고가 수십 건일 때 왼쪽 카드가 그 높이까지 늘어나 아래가 빈 면이 된다.
+   */
+  assert.match(page, /className="grid grid-cols-1 items-start gap-4 lg:grid-cols-\[571px_minmax\(0,1fr\)\]"/)
 })
 
 test('추천 Top3 는 고정 폭 사이드 열이 아니라 공용 3열 규칙을 쓴다', () => {
@@ -126,12 +168,29 @@ test('3열 규칙은 카드 높이를 늘리지 않고 열이 min-content 로 �
 })
 
 test('세 카드의 긴 추천 이유는 기본적으로 접혀 있다', () => {
-  const card = source('features/matching/components/NextSkillCard.tsx')
+  const card = withoutComments(source('features/matching/components/NextSkillCard.tsx'))
 
-  assert.match(card, /<details/)
-  assert.match(card, /<summary[^>]*>추천 이유<\/summary>/)
+  assert.match(card, /<ReasonsDisclosure reasons=\{skill\.reasons\} \/>/)
+  assert.equal(card.includes('<details'), false)
   assert.equal(card.includes('leadReasons'), false)
   assert.equal(card.includes('restReasons'), false)
+})
+
+/*
+ * 같은 흐름의 두 화면이 같은 토글을 쓴다 · 티켓 S15P21E102-377.
+ *
+ * 각자 적어 두었더니 한쪽만 고친 날 학습 추천은 브라우저 기본 검은 삼각형,
+ * 관련 공고는 브랜드 표기로 갈렸다.
+ */
+
+test('학습 추천과 관련 공고는 같은 추천 이유 토글을 공유한다', () => {
+  const shared = "from '@/shared/ui/ReasonsDisclosure'"
+  for (const path of [
+    'features/matching/pages/WhatIfPage.tsx',
+    'features/matching/components/NextSkillCard.tsx',
+  ]) {
+    assert.equal(source(path).includes(shared), true, path)
+  }
 })
 
 test('부분 분석 배너는 추천 화면에서 면적만 줄이고 경고 색을 유지한다', () => {

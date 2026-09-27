@@ -3,6 +3,7 @@ import { ConditionImpactSummary } from '@/features/matching/components/Condition
 import { whatIfHref } from '@/features/matching/model/whatIfNavigation'
 import type { NextSkillEvidenceStatus, NextSkillView } from '@/features/matching/model/view'
 import { LevelBadge } from '@/shared/ui/LevelBadge'
+import { ReasonsDisclosure } from '@/shared/ui/ReasonsDisclosure'
 
 /**
  * 다음 학습 기술 카드 · 화면 10 Recommendation.
@@ -137,19 +138,7 @@ export function NextSkillCard({
         )}
       </div>
 
-      {skill.reasons.length > 0 && (
-        <details className="mt-5 text-[12px] text-brand-muted">
-          <summary className="w-fit cursor-pointer font-semibold hover:text-brand-ink">추천 이유</summary>
-          <ul className="mt-2 grid gap-1.5">
-            {skill.reasons.map((reason) => (
-              <li key={reason} className="flex gap-2 text-[12.5px] leading-[1.6] text-brand-muted">
-                <span aria-hidden className="text-brand-600">·</span>
-                {reason}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <ReasonsDisclosure reasons={skill.reasons} />
 
       {/*
         What-if 화면으로 넘긴다. 어느 기술을 볼지가 쿼리로 실려야 두 화면이
