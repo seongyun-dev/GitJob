@@ -81,19 +81,106 @@ test('진행률은 분모를 함께 말한다', () => {
   assert.equal(batchProgressLabel(batch({ totalCount: 0 })), null)
 })
 
-test('저장소마다 칸 하나이고 실패는 미시작과 다른 색이다', () => {
-  const marks = batchMarks(
-    batch({
-      items: [
-        item({ analysisStatus: 'SUCCEEDED' }),
-        item({ analysisStatus: 'PARTIAL_SUCCEEDED' }),
-        item({ analysisStatus: 'FAILED' }),
-        item({ analysisStatus: 'RUNNING' }),
-      ],
-    }),
-  )
+/*
+ * 막대는 진행률이지 저장소 지도가 아니다 · 티켓 S15P21E102-376.
+ *
+ * 이전에는 `items` 순서대로 칸을 칠해서, 두 번째·세 번째 저장소가 끝나면
+ * `□ ■ ■ □ □` 처럼 가운데가 켜졌다. 그건 "몇 개 끝났나"가 아니라 "누가 끝났나"를
+ * 말하는 그림이고, 화면이 답하려던 질문이 아니다.
+ */
 
-  assert.deepEqual(marks, ['HAVE', 'HAVE', 'WEAK', 'NONE'])
+test('막대는 끝난 개수만큼 왼쪽부터 찬다 — 어느 저장소가 끝났는지와 무관하다', () => {
+  const middleTwoDone = batch({
+    totalCount: 5,
+    completedCount: 2,
+    items: [
+      item({ analysisStatus: 'RUNNING' }),
+      item({ analysisStatus: 'SUCCEEDED' }),
+      item({ analysisStatus: 'SUCCEEDED' }),
+      item({ analysisStatus: 'QUEUED' }),
+      item({ analysisStatus: 'QUEUED' }),
+    ],
+  })
+
+  assert.deepEqual(batchMarks(middleTwoDone), ['HAVE', 'HAVE', 'NONE', 'NONE', 'NONE'])
+})
+
+test('같은 2/5 는 저장소 순서가 달라도 같은 막대를 그린다', () => {
+  const firstTwoDone = batch({
+    totalCount: 5,
+    completedCount: 2,
+    items: [
+      item({ analysisStatus: 'SUCCEEDED' }),
+      item({ analysisStatus: 'SUCCEEDED' }),
+      item({ analysisStatus: 'RUNNING' }),
+      item({ analysisStatus: 'QUEUED' }),
+      item({ analysisStatus: 'QUEUED' }),
+    ],
+  })
+  const lastTwoDone = batch({
+    totalCount: 5,
+    completedCount: 2,
+    items: [
+      item({ analysisStatus: 'QUEUED' }),
+      item({ analysisStatus: 'QUEUED' }),
+      item({ analysisStatus: 'RUNNING' }),
+      item({ analysisStatus: 'SUCCEEDED' }),
+      item({ analysisStatus: 'SUCCEEDED' }),
+    ],
+  })
+
+  assert.deepEqual(batchMarks(firstTwoDone), batchMarks(lastTwoDone))
+})
+
+test('0/5 부터 5/5 까지 한 칸씩 늘어난다', () => {
+  const expected = [
+    ['NONE', 'NONE', 'NONE', 'NONE', 'NONE'],
+    ['HAVE', 'NONE', 'NONE', 'NONE', 'NONE'],
+    ['HAVE', 'HAVE', 'NONE', 'NONE', 'NONE'],
+    ['HAVE', 'HAVE', 'HAVE', 'NONE', 'NONE'],
+    ['HAVE', 'HAVE', 'HAVE', 'HAVE', 'NONE'],
+    ['HAVE', 'HAVE', 'HAVE', 'HAVE', 'HAVE'],
+  ]
+  for (const [completedCount, marks] of expected.entries()) {
+    assert.deepEqual(
+      batchMarks(batch({ totalCount: 5, completedCount })),
+      marks,
+      `${completedCount}/5`,
+    )
+  }
+})
+
+test('실패한 저장소도 끝난 것이라 막대는 끝까지 찬다', () => {
+  /*
+   * BE 의 completedCount 는 "진행 중이 아닌 것"이라 FAILED 를 포함한다
+   * (AnalysisLatestBatchService: rows.filter(row -> !inProgress(row))).
+   * 실패를 막대에서 따로 칠하면 이미 세어진 칸을 한 번 더 세게 된다. 실패 자체는
+   * 저장소 카드와 failedCount 가 말한다.
+   */
+  const oneFailed = batch({
+    totalCount: 3,
+    completedCount: 3,
+    failedCount: 1,
+    items: [
+      item({ analysisStatus: 'SUCCEEDED' }),
+      item({ analysisStatus: 'FAILED' }),
+      item({ analysisStatus: 'SUCCEEDED' }),
+    ],
+  })
+
+  assert.deepEqual(batchMarks(oneFailed), ['HAVE', 'HAVE', 'HAVE'])
+})
+
+test('칸 수는 totalCount 가 정하고 이상값은 그 안으로 접힌다', () => {
+  assert.deepEqual(batchMarks(batch({ totalCount: 0, completedCount: 0 })), [])
+  assert.deepEqual(
+    batchMarks(batch({ totalCount: 2, completedCount: 9 })),
+    ['HAVE', 'HAVE'],
+  )
+  assert.deepEqual(
+    batchMarks(batch({ totalCount: 2, completedCount: -1 })),
+    ['NONE', 'NONE'],
+  )
 })
 
 test('폴링 간격은 서버가 준 값만 따르고 null이면 멈춘다', () => {

@@ -48,25 +48,38 @@ export function batchProgressLabel(batch: LatestBatch | null | undefined): strin
 }
 
 /**
- * 저장소마다 칸 하나. `SegmentBar`가 그대로 받는다.
+ * 저장소마다 칸 하나. `SegmentBar`가 그대로 받는다 · 티켓 S15P21E102-376.
  *
- * 실패를 `NONE`이 아니라 `WEAK`으로 두는 것은, 아직 시작하지 않은 칸과 실패한 칸이
- * 같은 색이면 "무슨 일이 있었는지"를 화면에서 읽을 수 없기 때문이다.
+ * <h2>칸은 진행률이지 저장소 지도가 아니다</h2>
+ *
+ * 이전에는 `items` 순서대로 각 저장소의 상태를 칠했다. 그래서 둘째·셋째 저장소가
+ * 끝나면 `□ ■ ■ □ □` 처럼 가운데가 켜졌다. 그건 "몇 개 끝났나"가 아니라 "누가
+ * 끝났나"를 말하는 그림인데, 이 막대 위에 적힌 문구는 `2/5 완료`다 — 같은 자리에서
+ * 두 가지 다른 말을 했다. 저장소별 상태는 아래 카드가 이미 말한다.
+ *
+ * 그래서 `completedCount`만큼 왼쪽부터 채운다. 어떤 저장소가 먼저 끝났는지는 막대에
+ * 영향을 주지 않는다.
+ *
+ * <h2>실패도 채운다</h2>
+ *
+ * BE의 `completedCount`는 "진행 중이 아닌 것"이라 FAILED를 포함한다
+ * (`AnalysisLatestBatchService`: `rows.filter(row -> !inProgress(row))`). 실패한 칸을
+ * 따로 칠하면 이미 세어진 칸을 한 번 더 세게 되고, 막대 길이가 `completedCount`와
+ * 어긋난다. 실패가 몇 건인지는 `failedCount`가, 어느 저장소인지는 카드가 말한다.
+ *
+ * 칸 수는 `items.length`가 아니라 `totalCount`가 정한다. 둘은 같아야 하지만 같다고
+ * 가정하면, 어긋난 날 분모가 조용히 바뀐 막대를 그리게 된다.
  */
 export function batchMarks(
   batch: LatestBatch | null | undefined,
-): ('HAVE' | 'WEAK' | 'NONE')[] {
-  if (batch == null) {
+): ('HAVE' | 'NONE')[] {
+  if (batch == null || batch.totalCount <= 0) {
     return []
   }
-  return batch.items.map((item) => {
-    if (item.analysisStatus === 'FAILED') {
-      return 'WEAK'
-    }
-    return item.analysisStatus === 'SUCCEEDED' || item.analysisStatus === 'PARTIAL_SUCCEEDED'
-      ? 'HAVE'
-      : 'NONE'
-  })
+  const completed = Math.min(Math.max(batch.completedCount, 0), batch.totalCount)
+  return Array.from({ length: batch.totalCount }, (_unused, index) =>
+    index < completed ? 'HAVE' : 'NONE',
+  )
 }
 
 /**
