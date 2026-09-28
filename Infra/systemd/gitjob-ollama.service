@@ -1,0 +1,21 @@
+# Local inference runtime for the GitJob AI host.
+#
+# A user unit, not a system one: Ollama is installed under the user's home
+# because this host has no passwordless sudo, and a system unit could not reach
+# it without also being given a user to run as. Nothing here needs root.
+[Unit]
+Description=GitJob local Ollama (GPU inference)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=OLLAMA_HOST=127.0.0.1:11434
+# Loopback only. The model is reached through the summary server, which is the
+# thing that validates input; exposing the raw model would bypass that.
+Environment=OLLAMA_KEEP_ALIVE=-1
+ExecStart=%h/.local/ollama/bin/ollama serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

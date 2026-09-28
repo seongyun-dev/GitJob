@@ -1,0 +1,46 @@
+{
+  "tech_id": "apache-spark",
+  "positive": {
+    "files": {
+      "requirements.txt": "pyspark==3.5\n",
+      "src/app.py": "import pyspark\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning apache-spark only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/app.py": "import pyspark\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "requirements.txt": "pyspark==3.5\n",
+        "src/app.py": "import pyspark\n"
+      },
+      "expected_rule_ids": [
+        "apache-spark.l0.dependency",
+        "apache-spark.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/app.py": "import pyspark\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "apache-spark.l0.dependency",
+        "apache-spark.l1.import"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "tech_id": "pandas",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/data.py": "import pandas as pd\nframe = pd.read_csv('data.csv')\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "pandas.l2.api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 requires a pandas import and attributed data-frame operation in one authored Python file; accessor wrappers are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/data.py": "import pandas as pd\nframe = []\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "pandas.l2.api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

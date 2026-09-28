@@ -1,0 +1,44 @@
+{
+  "tech_id": "apache-kafka",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/stream.py": "from kafka import KafkaProducer, KafkaConsumer\ndef transfer():\n    producer = KafkaProducer()\n    consumer = KafkaConsumer('events')\n    producer.send('events', b'x')\n    consumer.poll()\n    consumer.commit()\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "apache-kafka.l3.transactional-consumer"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires attributed producer, consumer, and explicit delivery-control calls in the same function component; the common split producer/consumer architecture is missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/stream.py": "from kafka import KafkaProducer, KafkaConsumer\ndef transfer():\n    producer = KafkaProducer()\n    consumer = KafkaConsumer('events')\n    producer.send('events', b'x')\n    consumer.poll()\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "apache-kafka.l3.transactional-consumer"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "test-only-composition",
+      "kind": "negative",
+      "files": {
+        "tests/stream.py": "from kafka import KafkaProducer, KafkaConsumer\nproducer = KafkaProducer()\nconsumer = KafkaConsumer('events')\nproducer.send('events', b'x')\nconsumer.poll()\nconsumer.commit()\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "apache-kafka.l3.transactional-consumer"
+      ],
+      "tradeoff": "Test-only orchestration is excluded from repository proficiency verdicts."
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "tech_id": "java",
+  "cases": [
+    {
+      "name": "advanced-pattern",
+      "kind": "positive",
+      "files": {
+        "src/Batch.java": "import java.util.concurrent.CompletableFuture;\nimport java.util.function.Function;\nclass Batch<T> {\n  Function<T,T> identity = value -> value;\n  String run() {\n    CompletableFuture<String> task = CompletableFuture.supplyAsync(() -> \"item\");\n    CompletableFuture<String> composed = task.thenCompose(value -> CompletableFuture.completedFuture(value));\n    CompletableFuture<String> recovered = composed.exceptionally(error -> \"fallback\");\n    CompletableFuture.allOf(recovered).join();\n    return recovered.join();\n  }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "java.l3.async-composition-recovery"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Named language-specific advanced pattern; no runtime claim."
+    },
+    {
+      "name": "basic-structured-use",
+      "kind": "positive",
+      "files": {
+        "src/Batch.java": "class Box<T> { java.util.function.Function<T,T> identity = value -> value; }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "java.l2.generic-functional"
+      ],
+      "absent_rule_ids": [
+        "java.l3.async-composition-recovery"
+      ]
+    },
+    {
+      "name": "missing-advanced-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/Batch.java": "import java.util.concurrent.CompletableFuture;\nimport java.util.function.Function;\nclass Batch<T> {\n  Function<T,T> identity = value -> value;\n  String run() {\n    CompletableFuture<String> task = CompletableFuture.supplyAsync(() -> \"item\");\n    CompletableFuture<String> composed = task.thenCompose(value -> CompletableFuture.completedFuture(value));\n    CompletableFuture<String> recovered = composed;\n    CompletableFuture.allOf(recovered).join();\n    return recovered.join();\n  }\n}\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "java.l3.async-composition-recovery"
+      ]
+    },
+    {
+      "name": "missing-structured-use-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/Batch.java": "class Box<T> { T value; }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "java.l2.generic-functional",
+        "java.l3.async-composition-recovery"
+      ]
+    },
+    {
+      "name": "disconnected-declarations",
+      "kind": "near_miss",
+      "files": {
+        "src/Batch.java": "import java.util.concurrent.CompletableFuture;\nimport java.util.function.Function;\nclass Spawn<T> {\n  Function<T,T> identity = value -> value;\n  CompletableFuture<String> task = CompletableFuture.supplyAsync(() -> \"item\");\n}\nclass Other {\n  void run() {\n    CompletableFuture<String> task = CompletableFuture.completedFuture(\"other\");\n    CompletableFuture<String> composed = task.thenCompose(value -> CompletableFuture.completedFuture(value));\n    CompletableFuture<String> recovered = composed.exceptionally(error -> \"fallback\");\n    CompletableFuture.allOf(recovered).join();\n  }\n}\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "java.l3.async-composition-recovery"
+      ],
+      "tradeoff": "Unrelated classes, functions or type aliases in one file cannot pool their advanced signals."
+    },
+    {
+      "name": "documentation-only",
+      "kind": "negative",
+      "files": {
+        "README.md": "import java.util.concurrent.CompletableFuture;\nimport java.util.function.Function;\nclass Batch<T> {\n  Function<T,T> identity = value -> value;\n  String run() {\n    CompletableFuture<String> task = CompletableFuture.supplyAsync(() -> \"item\");\n    CompletableFuture<String> composed = task.thenCompose(value -> CompletableFuture.completedFuture(value));\n    CompletableFuture<String> recovered = composed.exceptionally(error -> \"fallback\");\n    CompletableFuture.allOf(recovered).join();\n    return recovered.join();\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "java.l2.generic-functional",
+        "java.l3.async-composition-recovery"
+      ]
+    },
+    {
+      "name": "vendor-code",
+      "kind": "negative",
+      "files": {
+        "vendor/src/Batch.java": "import java.util.concurrent.CompletableFuture;\nimport java.util.function.Function;\nclass Batch<T> {\n  Function<T,T> identity = value -> value;\n  String run() {\n    CompletableFuture<String> task = CompletableFuture.supplyAsync(() -> \"item\");\n    CompletableFuture<String> composed = task.thenCompose(value -> CompletableFuture.completedFuture(value));\n    CompletableFuture<String> recovered = composed.exceptionally(error -> \"fallback\");\n    CompletableFuture.allOf(recovered).join();\n    return recovered.join();\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "java.l2.generic-functional",
+        "java.l3.async-composition-recovery"
+      ]
+    },
+    {
+      "name": "test-only",
+      "kind": "negative",
+      "files": {
+        "tests/src/Batch.java": "import java.util.concurrent.CompletableFuture;\nimport java.util.function.Function;\nclass Batch<T> {\n  Function<T,T> identity = value -> value;\n  String run() {\n    CompletableFuture<String> task = CompletableFuture.supplyAsync(() -> \"item\");\n    CompletableFuture<String> composed = task.thenCompose(value -> CompletableFuture.completedFuture(value));\n    CompletableFuture<String> recovered = composed.exceptionally(error -> \"fallback\");\n    CompletableFuture.allOf(recovered).join();\n    return recovered.join();\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "java.l2.generic-functional",
+        "java.l3.async-composition-recovery"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,286 @@
+"""`python -m analysis` — the repository analysis consumer process.
+
+Kept out of `worker/`, which runs an HTTP compute API. A consumer and a web
+service fail, restart and scale differently, so they are separate Compose
+services on the same image, the way `collector` and `worker` already are.
+
+Refuses to start when Kafka, the database or the claim table is missing. A
+consumer that silently idles because one environment variable is unset looks
+identical to a quiet topic, and that is discovered days later.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+
+from analysis.claim import ClaimStore, connect, dsn_from_env
+from analysis.clone import RepositoryCloner
+from analysis.consumer import AnalysisConsumer, work_root_from_env
+from analysis.credentials import HttpCredentialBroker
+from analysis.manifests import ManifestScanner
+from analysis.parse import RepositoryParser, verify_grammars
+from analysis.progress import ProgressPublisher
+from analysis.publish import ResultPublisher
+from analysis.results import SCHEMA_VERSION, SCHEMA_VERSION_V2, SCHEMA_VERSION_V3
+from analysis.rules import RegistryStore
+from common.kafka import consumer_from_env, transport_from_env
+
+DEFAULT_TOPIC = "gitjob.repository-analysis.requests.v1"
+DEFAULT_GROUP = "gitjob-repository-analysis"
+# Its own dead letter topic. C's worker publishes a different payload shape to
+# KAFKA_TOPIC_ANALYSIS_DLQ, and mixing the two leaves whoever drains it guessing.
+DEFAULT_DLQ_TOPIC = "gitjob.repository-analysis.dlq.v1"
+# The only path by which an analysis finishes. Without it analysis_job stays
+# at QUEUED however well the worker did its job.
+DEFAULT_RESULTS_TOPIC = "gitjob.repository-analysis.results.v1"
+V2_RESULTS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V2"
+V3_RESULTS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3"
+# 진행 단계 토픽. 기본값이 없는 것은 의도다 -- 이 이름을 채우는 것이 곧 진행 표시를
+# 켜는 일이고, 비워 두면 워커는 예전과 똑같이 결과만 발행한다. B 쪽 설정 이름도
+# 같다(gitjob.kafka.topics.repository-analysis.progress).
+PROGRESS_TOPIC_ENV = "KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS"
+
+
+def build() -> AnalysisConsumer:
+    topic = (
+        os.getenv("KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS") or DEFAULT_TOPIC
+    ).strip()
+    group = (os.getenv("ANALYSIS_CONSUMER_GROUP") or DEFAULT_GROUP).strip()
+
+    transport = consumer_from_env(topic, group)
+    if transport is None:
+        raise SystemExit("KAFKA_BOOTSTRAP_SERVERS is not set; nothing to consume")
+
+    dsn = dsn_from_env()
+    if dsn is None:
+        raise SystemExit("POSTGRES_* is not fully set; the claim store is required")
+    claims = ClaimStore(dsn, lease_seconds=_int("ANALYSIS_CLAIM_LEASE_SECONDS", 900))
+    if not claims.ready():
+        raise SystemExit(
+            "repo_analysis.event_claim is missing; apply "
+            "BE/src/main/resources/db/migrations/002_repo_analysis.sql first"
+        )
+
+    # Grammars are loaded here rather than on first use. A missing wheel would otherwise
+    # raise inside _parse_file, which catches per file: every source becomes a
+    # parse_error, the run reports zero imports, and that is indistinguishable from a
+    # repository with nothing to parse.
+    try:
+        verify_grammars()
+    except Exception as missing:
+        raise SystemExit(
+            f"tree-sitter grammars are not loadable: {missing}"
+        ) from missing
+
+    work_root = work_root_from_env()
+    work_root.mkdir(parents=True, exist_ok=True)
+
+    # 기여 판정을 켜면 히스토리가 필요하다. 얕은 체크아웃에서 blame 은 실패하지
+    # 않고 모든 줄을 tip 커밋에 돌리므로, 둘을 따로 켜게 두면 조용히 틀린 값이
+    # 나오는 설정이 만들어진다. 한 스위치로 묶는다.
+    attribute_authors = _flag("ANALYSIS_ATTRIBUTE_AUTHORS", default=False)
+    cloner = RepositoryCloner(
+        work_root=work_root,
+        github_base_url=os.getenv("GITHUB_CLONE_BASE_URL", "https://github.com"),
+        timeout_seconds=_int("ANALYSIS_CLONE_TIMEOUT_SECONDS", 600),
+        max_bytes=_int("ANALYSIS_MAX_REPOSITORY_BYTES", 2 * 1024 * 1024 * 1024),
+        with_history=attribute_authors,
+    )
+    credential_broker = credential_broker_from_env()
+
+    dlq_topic = (
+        os.getenv("KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ") or DEFAULT_DLQ_TOPIC
+    ).strip() or None
+    parser = RepositoryParser(
+        max_file_bytes=_int("ANALYSIS_MAX_FILE_BYTES", 1024 * 1024),
+        max_files=_int("ANALYSIS_MAX_FILES", 50_000),
+    )
+    scanner = ManifestScanner(
+        max_file_bytes=_int("ANALYSIS_MAX_MANIFEST_BYTES", 512 * 1024),
+        max_manifests=_int("ANALYSIS_MAX_MANIFESTS", 500),
+    )
+    # The worker reads the registry; it never writes it. The version comes from
+    # each event, so a deployment that overlaps two versions serves both.
+    registry = RegistryStore(connect=lambda: connect(dsn))
+
+    result_schema_version, configured_results_topic = result_destination_from_env()
+    results_topic = (
+        os.getenv("KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS") or DEFAULT_RESULTS_TOPIC
+    ).strip()
+
+    results_transport = transport_from_env(default_client_id="gitjob-analysis-results")
+    if results_transport is None:
+        raise SystemExit(
+            "KAFKA_BOOTSTRAP_SERVERS is not set; results cannot be published"
+        )
+    results = ResultPublisher(
+        results_transport,
+        results_topic,
+        schema_version=SCHEMA_VERSION,
+    )
+    results_v2 = None
+    v2_topic = (
+        configured_results_topic
+        if result_schema_version == SCHEMA_VERSION_V2
+        else (os.getenv(V2_RESULTS_TOPIC_ENV) or "").strip()
+    )
+    if result_schema_version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3} and v2_topic:
+        results_v2_transport = transport_from_env(
+            default_client_id="gitjob-analysis-results-v2"
+        )
+        if results_v2_transport is None:
+            raise SystemExit(
+                "KAFKA_BOOTSTRAP_SERVERS is not set; v2 results cannot be published"
+            )
+        results_v2 = ResultPublisher(
+            results_v2_transport,
+            v2_topic,
+            schema_version=SCHEMA_VERSION_V2,
+        )
+    results_v3 = None
+    if result_schema_version == SCHEMA_VERSION_V3:
+        results_v3_transport = transport_from_env(
+            default_client_id="gitjob-analysis-results-v3"
+        )
+        if results_v3_transport is None:
+            raise SystemExit(
+                "KAFKA_BOOTSTRAP_SERVERS is not set; v3 results cannot be published"
+            )
+        results_v3 = ResultPublisher(
+            results_v3_transport,
+            configured_results_topic,
+            schema_version=SCHEMA_VERSION_V3,
+        )
+
+    progress = None
+    progress_topic = (os.getenv(PROGRESS_TOPIC_ENV) or "").strip()
+    if progress_topic:
+        progress_transport = transport_from_env(
+            default_client_id="gitjob-analysis-progress"
+        )
+        # 결과 전송과 달리 SystemExit 을 던지지 않는다. 브로커가 없으면 결과도
+        # 못 보내므로 위에서 이미 멈춘 뒤이고, 여기서 다시 멈출 이유는 표시용
+        # 토픽 하나뿐이다 -- 그 이유로 워커를 못 뜨게 하지 않는다.
+        if progress_transport is not None:
+            progress = ProgressPublisher(progress_transport, progress_topic)
+
+    return AnalysisConsumer(
+        transport=transport,
+        claims=claims,
+        cloner=cloner,
+        progress=progress,
+        credential_broker=credential_broker,
+        parser=parser,
+        scanner=scanner,
+        registry=registry,
+        results=results,
+        results_v2=results_v2,
+        results_v3=results_v3,
+        dlq_topic=dlq_topic,
+        max_attempts=_int("ANALYSIS_MAX_ATTEMPTS", 5),
+        attribute_authors=attribute_authors,
+        dlq_transport=(
+            transport_from_env(default_client_id="gitjob-analysis-dlq")
+            if dlq_topic
+            else None
+        ),
+    )
+
+
+def _flag(name: str, *, default: bool) -> bool:
+    """Read a boolean switch. Anything unrecognised keeps the default.
+
+    Not `bool(os.getenv(...))`: that reads "false" and "0" as true, which would
+    turn on a full clone for a deployment that tried to turn it off.
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def credential_broker_from_env() -> HttpCredentialBroker | None:
+    if not _flag("ANALYSIS_PRIVATE_REPOSITORIES_ENABLED", default=False):
+        return None
+    broker_url = (os.getenv("ANALYSIS_CREDENTIAL_BROKER_URL") or "").strip()
+    service_token = (os.getenv("ANALYSIS_WORKER_SERVICE_TOKEN") or "").strip()
+    if not broker_url or not service_token:
+        raise SystemExit(
+            "ANALYSIS_CREDENTIAL_BROKER_URL and ANALYSIS_WORKER_SERVICE_TOKEN "
+            "are required when private repository analysis is enabled"
+        )
+    return HttpCredentialBroker(
+        broker_url,
+        service_token,
+        timeout_seconds=_int("ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS", 5),
+    )
+
+
+def result_destination_from_env(
+    env: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    values = os.environ if env is None else env
+    result_schema_version = (
+        values.get("ANALYSIS_RESULT_SCHEMA_VERSION") or SCHEMA_VERSION
+    ).strip()
+    if result_schema_version == SCHEMA_VERSION:
+        results_topic = (
+            values.get("KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS")
+            or DEFAULT_RESULTS_TOPIC
+        ).strip()
+    elif result_schema_version == SCHEMA_VERSION_V2:
+        results_topic = (values.get(V2_RESULTS_TOPIC_ENV) or "").strip()
+        if not results_topic:
+            raise SystemExit(
+                f"{V2_RESULTS_TOPIC_ENV} is required for {SCHEMA_VERSION_V2}"
+            )
+    elif result_schema_version == SCHEMA_VERSION_V3:
+        results_topic = (values.get(V3_RESULTS_TOPIC_ENV) or "").strip()
+        if not results_topic:
+            raise SystemExit(
+                f"{V3_RESULTS_TOPIC_ENV} is required for {SCHEMA_VERSION_V3}"
+            )
+    else:
+        raise SystemExit(
+            f"unsupported ANALYSIS_RESULT_SCHEMA_VERSION {result_schema_version!r}"
+        )
+    if result_schema_version != SCHEMA_VERSION:
+        legacy_topic = (
+            values.get("KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS")
+            or DEFAULT_RESULTS_TOPIC
+        ).strip()
+        topics = [legacy_topic, results_topic]
+        if result_schema_version == SCHEMA_VERSION_V3 and values.get(
+            V2_RESULTS_TOPIC_ENV
+        ):
+            topics.append(values[V2_RESULTS_TOPIC_ENV].strip())
+        if len(set(topics)) != len(topics):
+            raise SystemExit("versioned result topics must be distinct")
+    return result_schema_version, results_topic
+
+
+def _int(name: str, default: int) -> int:
+    try:
+        value = int((os.getenv(name) or "").strip())
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+    )
+    consumer = build()
+    consumer.install_signal_handlers()
+    consumer.run()
+
+
+if __name__ == "__main__":
+    main()

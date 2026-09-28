@@ -1,0 +1,40 @@
+{
+  "tech_id": "python",
+  "positive": {
+    "files": {
+      "src/main.py": "def main():\n    return 1\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning python only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/main.py": "def main():\n    return 1\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "src/main.py": "def main():\n    return 1\n"
+      },
+      "expected_rule_ids": [
+        "python.l1.source"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/main.py": "def main():\n    return 1\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "python.l1.source"
+      ]
+    }
+  ]
+}

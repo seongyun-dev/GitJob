@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitjob.local/contracts/repository-analysis-result-v1.schema.json",
+  "title": "RepositoryAnalysisResultEvent",
+  "description": "Analysis worker -> backend. One event per finished analysis, success or failure. The worker never writes analysis_job or analysis_evidence: the backend owns those tables and this event is how the result reaches them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "schema_version",
+    "event_type",
+    "occurred_at",
+    "trace_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "description": "Deduplication key for the consumer. Delivery is at-least-once, so the backend must treat a repeated event_id as already applied."
+    },
+    "schema_version": {
+      "const": "repository-analysis-result/v1"
+    },
+    "event_type": {
+      "const": "repository.analysis.completed"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "description": "Copied from the request event so one analysis is one trace end to end."
+    },
+    "payload": {
+      "$ref": "#/$defs/RepositoryAnalysisResultPayload"
+    }
+  },
+  "$defs": {
+    "RepositoryAnalysisResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_id",
+        "request_event_id",
+        "registry_version",
+        "commit_sha",
+        "status"
+      ],
+      "properties": {
+        "analysis_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "description": "The backend resolves user_id and repository_id from this. The worker holds no user identity and must not carry one."
+        },
+        "request_event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "description": "event_id of the request this answers. Lets the backend tell a genuine re-analysis apart from a redelivery of the same work."
+        },
+        "registry_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$",
+          "description": "The registry the worker actually evaluated against, echoed from the request. analysis_evidence stores it, so evidence stays traceable to the rules that produced it."
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The analyzed commit. Evidence permalinks are built from this plus file_path and start_line."
+        },
+        "status": {
+          "enum": ["COMPLETED", "FAILED"],
+          "description": "FAILED travels on this topic too. The DLQ is for operators; a user-visible failure has to reach the backend, or analysis_job stays QUEUED forever."
+        },
+        "error_code": {
+          "type": ["string", "null"],
+          "maxLength": 64,
+          "description": "Required when status is FAILED, absent otherwise. Same vocabulary the worker records in repo_analysis.event_claim: REPOSITORY_NOT_FOUND, REPOSITORY_NOT_ACCESSIBLE, REPOSITORY_TOO_LARGE, CLONE_TIMEOUT, CLONE_FAILED, GIT_NOT_AVAILABLE, REGISTRY_VERSION_UNKNOWN."
+        },
+        "error_detail": {
+          "type": ["string", "null"],
+          "maxLength": 500,
+          "description": "Operator-facing cause, typically git's stderr. Never rendered to end users; error_code is what the UI switches on."
+        },
+        "technologies": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/TechnologyVerdict" },
+          "description": "Empty on failure, and legitimately empty when nothing matched."
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/$defs/EvidenceItem" },
+          "description": "Capped per rule by the worker before it gets here; maxItems is the message-size backstop, not the selection rule."
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "#/$defs/TechnologyCandidate" },
+          "description": "Dependencies that matched no registry technology. Observations only: the worker cannot know how many users a candidate affects, so the backend aggregates."
+        },
+        "stats": { "$ref": "#/$defs/AnalysisStats" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "FAILED" } }, "required": ["status"] },
+          "then": { "required": ["error_code"] }
+        }
+      ]
+    },
+
+    "TechnologyVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tech_id", "level", "matched_rule_ids"],
+      "properties": {
+        "tech_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "level": {
+          "enum": ["L0", "L1", "L2", "L3"],
+          "description": "Highest rule_type satisfied for this technology. L0 found (declared dependency), L1 applied (import, config, annotation), L2 used (core API call, own contribution), L3 advanced (operational maturity)."
+        },
+        "matched_rule_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "description": "Every rule that matched, not just the one that set the level. A level with no rule behind it is not explainable, and explainability is the point of Evidence."
+        }
+      }
+    },
+
+    "EvidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One fact that supported one rule. Maps to a row in analysis_evidence.",
+      "required": ["rule_id", "fact_type", "file_path", "start_line", "end_line", "fact_payload"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "fact_type": {
+          "enum": ["IMPORT", "DEPENDENCY", "ANNOTATION", "CONFIG_KEY", "API_CALL"]
+        },
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "description": "Repository-relative, forward slashes. Half of the permalink."
+        },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "fact_payload": {
+          "type": "object",
+          "description": "The matched fact's fields, keyed by the fact_field vocabulary the rules use: MODULE, COORDINATE, ECOSYSTEM, SCOPE, LANGUAGE, FILE_PATH. Stored as jsonb so a new fact type does not need a schema change here."
+        },
+        "code_snippet": {
+          "type": ["string", "null"],
+          "maxLength": 2000,
+          "description": "Optional. The checkout is deleted when the job ends, so this is the only offline copy; without it the UI needs GitHub to render the evidence."
+        },
+        "commit_sha": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit that last changed this line, from git blame. Null when authorship could not be read -- a shallow checkout, a file git could not blame, or contribution analysis turned off -- and the backend reads that as not verified rather than guessing. Deliberately the commit and not the author: deciding whose commit it is needs the requesting user's identity, and this payload travels a topic that outlives their consent."
+        }
+      }
+    },
+
+    "TechnologyCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "An unmatched dependency, observed once in this analysis. Imports are deliberately not a source: an import path has no reliable package boundary in Java or C#, while a manifest entry is already the right unit.",
+      "required": ["ecosystem", "coordinate", "occurrence_count"],
+      "properties": {
+        "ecosystem": {
+          "enum": ["MAVEN", "NPM", "PYPI", "NUGET"]
+        },
+        "coordinate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Version stripped and normalized per ecosystem: group:artifact for MAVEN, name (scope included) for NPM, PEP 503 name for PYPI, lowercased id for NUGET. Versions must not be part of it or one library fragments into a new candidate on every release."
+        },
+        "scope": {
+          "type": ["string", "null"],
+          "maxLength": 40,
+          "description": "The declaration's scope as written (implementation, testImplementation, devDependencies, ...). Kept because a test-only dependency should not later count the same as a production one, and re-deriving it would mean re-cloning."
+        },
+        "occurrence_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Declarations within this repository, for example one per module of a multi-module build. The backend ranks by distinct users, not by this."
+        }
+      }
+    },
+
+    "AnalysisStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the run saw. Operational, not user-facing: a sudden drop in files_parsed across analyses means an extractor broke, and without these numbers that looks the same as repositories getting simpler.",
+      "properties": {
+        "files_parsed": { "type": "integer", "minimum": 0 },
+        "files_skipped": { "type": "integer", "minimum": 0 },
+        "import_count": { "type": "integer", "minimum": 0 },
+        "dependency_count": { "type": "integer", "minimum": 0 },
+        "bytes_on_disk": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

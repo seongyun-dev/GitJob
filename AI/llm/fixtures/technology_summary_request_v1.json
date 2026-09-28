@@ -1,0 +1,62 @@
+{
+  "schema_version": "technology-summary-request/v1",
+  "locale": "ko-KR",
+  "technology": {
+    "tech_id": "spring-security",
+    "display_name": "Spring Security",
+    "repository_level": "L2",
+    "personal_level": "L2",
+    "registry_version": "registry-20260910.2"
+  },
+  "authorship": "MOSTLY_MINE",
+  "levels": [
+    { "level": "L2", "rules": ["인증 필터 체인 구성"], "mine": true },
+    { "level": "L1", "rules": ["Spring Security import"], "mine": true }
+  ],
+  "next_level": {
+    "level": "L3",
+    "rule": "메서드 보안 활성화",
+    "missing": ["@EnableMethodSecurity", "@PreAuthorize"]
+  },
+  "highlights": [
+    {
+      "index": 0,
+      "fact_type": "API_CALL",
+      "value": "SecurityFilterChain",
+      "file": "config/SecurityConfig.java",
+      "mine": true
+    },
+    {
+      "index": 1,
+      "fact_type": "API_CALL",
+      "value": "authorizeHttpRequests",
+      "file": "config/SecurityConfig.java",
+      "mine": true
+    },
+    {
+      "index": 2,
+      "fact_type": "API_CALL",
+      "value": "passwordEncoder",
+      "file": "config/SecurityConfig.java",
+      "mine": true
+    },
+    {
+      "index": 3,
+      "fact_type": "IMPORT",
+      "value": "org.springframework.security.web",
+      "file": "filter/JwtAuthenticationFilter.java",
+      "mine": true
+    },
+    {
+      "index": 4,
+      "fact_type": "IMPORT",
+      "value": "org.springframework.security.core",
+      "file": "service/UserDetailsServiceImpl.java",
+      "mine": false
+    }
+  ],
+  "repositories": [
+    { "full_name": "gitjob-example/card-service-backend", "mine": true }
+  ],
+  "period": { "first": "2025-08-11", "last": "2025-08-19", "months": 1 }
+}

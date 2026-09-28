@@ -1,0 +1,28 @@
+# Technology summary HTTP server, the endpoint the EC2 backend calls.
+#
+# @REPO_ROOT@ and @PYTHON@ are substituted by
+# Infra/scripts/llm-install-services-wsl.sh at install time; a path baked into
+# the repository would only be right on one machine.
+[Unit]
+Description=GitJob technology summary server
+# Wants, not Requires: the server answers with a FALLBACK summary when the model
+# is unreachable, and a card without a generated sentence is still a working
+# card. Refusing to start would turn a degraded feature into a dead endpoint.
+Wants=gitjob-ollama.service
+After=gitjob-ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@/AI
+# 0.0.0.0 so the Windows-side Tailscale bridge can reach into this distro's
+# NAT. That does not put the port on the LAN.
+Environment=APP_HOST=0.0.0.0
+Environment=APP_PORT=18080
+Environment=OLLAMA_BASE_URL=http://127.0.0.1:11434
+Environment=LLM_MODEL=qwen3.5:4b
+ExecStart=@PYTHON@ -m llm
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

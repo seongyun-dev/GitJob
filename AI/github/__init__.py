@@ -1,0 +1,1 @@
+"""GitHub analysis boundary."""

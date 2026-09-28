@@ -1,0 +1,80 @@
+{
+  "tech_id": "gcp",
+  "positive": {
+    "files": {
+      "infra/main.tf": "provider \"google\" {\n}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning gcp only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "README.md": "GCP_REGION=example\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "runtime-dependency",
+      "files": {
+        "requirements.txt": "google-cloud-storage==1.0\n"
+      },
+      "expected_rule_ids": [
+        "gcp.l0.dependency"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "project-import",
+      "files": {
+        "src/app.py": "import google.cloud.storage\n"
+      },
+      "expected_rule_ids": [
+        "gcp.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "terraform-provider",
+      "files": {
+        "main.tf": "provider \"google\" {\n}\n"
+      },
+      "expected_rule_ids": [
+        "gcp.l1.terraform"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "other-cloud-provider",
+      "files": {
+        "main.tf": "provider \"aws\" {\n}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "gcp.l1.terraform"
+      ]
+    },
+    {
+      "name": "test-only-dependency",
+      "files": {
+        "requirements-dev.txt": "google-cloud-storage==1.0\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "gcp.l0.dependency"
+      ]
+    },
+    {
+      "name": "unrelated-source-import",
+      "files": {
+        "src/app.py": "import json\njson.loads(\"{}\")\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "gcp.l1.import"
+      ]
+    }
+  ]
+}

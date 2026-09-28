@@ -1,0 +1,74 @@
+{
+  "tech_id": "jenkins",
+  "positive": {
+    "files": {
+      "Jenkinsfile": "pipeline {\n  agent any\n  stages { stage('build') { steps { echo 'ok' } } }\n}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning jenkins only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "Jenkinsfile": "// intentionally empty stub\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "parallel-library-lifecycle",
+      "files": {
+        "Jenkinsfile": "@Library('synthetic-library') _\npipeline {\n  agent any\n  stages {\n    stage('Build') { steps { echo 'build' } }\n    stage('Test') { parallel {\n      stage('Unit') { steps { echo 'unit' } }\n    } }\n  }\n  post { always { echo 'done' } }\n}\n"
+      },
+      "expected_rule_ids": [
+        "jenkins.l0.pipeline",
+        "jenkins.l1.stage",
+        "jenkins.l2.lifecycle",
+        "jenkins.l3.parallel-library"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "one-stage",
+      "files": {
+        "Jenkinsfile": "pipeline {\n agent any\n stages {\n stage('Build') { steps { echo 'build' } }\n }\n}\n"
+      },
+      "expected_rule_ids": [
+        "jenkins.l0.pipeline",
+        "jenkins.l1.stage"
+      ],
+      "absent_rule_ids": [
+        "jenkins.l2.lifecycle",
+        "jenkins.l3.parallel-library"
+      ]
+    },
+    {
+      "name": "node-only",
+      "files": {
+        "Jenkinsfile": "node { echo \"hello\" }\n"
+      },
+      "expected_rule_ids": [
+        "jenkins.l0.pipeline"
+      ],
+      "absent_rule_ids": [
+        "jenkins.l1.stage",
+        "jenkins.l2.lifecycle",
+        "jenkins.l3.parallel-library"
+      ]
+    },
+    {
+      "name": "keyword-strings-are-not-pipeline",
+      "files": {
+        "Jenkinsfile": "println \"pipeline stage agent post parallel credentials\"\nprintln \"stage\"\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "jenkins.l0.pipeline",
+        "jenkins.l1.stage",
+        "jenkins.l2.lifecycle",
+        "jenkins.l3.parallel-library"
+      ]
+    }
+  ]
+}

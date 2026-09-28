@@ -1,0 +1,23 @@
+# File-based target registration for node-exporter.
+#
+# Dashboard queries intentionally select cluster/role/instance labels instead
+# of embedding hostnames or IP addresses. Add a new server here (or replace
+# this file with service-discovery output) and existing graphs include it
+# after Prometheus refreshes the file.
+- targets:
+    - node-exporter:9100
+  labels:
+    cluster: gitjob
+    role: service
+    node: service-1
+    host: service-server
+    environment: production
+
+- targets:
+    - 100.70.66.38:9100
+  labels:
+    cluster: gitjob
+    role: data
+    node: data-1
+    host: data-server
+    environment: production

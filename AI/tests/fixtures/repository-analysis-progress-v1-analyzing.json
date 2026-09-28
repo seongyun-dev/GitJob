@@ -1,0 +1,11 @@
+{
+  "event_id": "ev_progress_1",
+  "schema_version": "repository-analysis-progress/v1",
+  "event_type": "repository.analysis.progressed",
+  "occurred_at": "2026-09-18T01:02:03Z",
+  "trace_id": "tr_1",
+  "payload": {
+    "analysis_id": "an_1",
+    "stage": "ANALYZING_REPOSITORY"
+  }
+}

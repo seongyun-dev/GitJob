@@ -1,0 +1,48 @@
+{
+  "tech_id": "jpa",
+  "positive": {
+    "files": {
+      "pom.xml": "<project><dependencies><dependency><groupId>jakarta.persistence</groupId><artifactId>jakarta.persistence-api</artifactId></dependency></dependencies></project>",
+      "src/Entity.java": "import jakarta.persistence.Entity;\n@Entity class Sample {}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning jpa only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/Entity.java": "import jakarta.persistence.Entity;\nclass Sample {}\n",
+      "src/Unrelated.java": "import java.util.List;\nclass Unrelated {}\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "pom.xml": "<project><dependencies><dependency><groupId>jakarta.persistence</groupId><artifactId>jakarta.persistence-api</artifactId></dependency></dependencies></project>",
+        "src/Entity.java": "import jakarta.persistence.Entity;\n@Entity class Sample {}\n"
+      },
+      "expected_rule_ids": [
+        "jpa.l0.dependency",
+        "jpa.l1.import",
+        "jpa.l1.annotation"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/Entity.java": "import jakarta.persistence.Entity;\nclass Sample {}\n",
+        "src/Unrelated.java": "import java.util.List;\nclass Unrelated {}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "jpa.l0.dependency",
+        "jpa.l1.import",
+        "jpa.l1.annotation"
+      ]
+    }
+  ]
+}

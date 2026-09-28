@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitjob.local/contracts/technology-summary-v1.schema.json",
+  "title": "TechnologySummary",
+  "description": "Local LLM -> backend. One object per (user, technology). This schema is passed to Ollama as `format`, so it must stay inside the subset Ollama's grammar compiler accepts: no $ref, no allOf/anyOf/oneOf, no pattern, no conditional keywords. It constrains syntax only -- a structurally valid object can still name an API the user never called, so the AI service must run the content checks in docs/ai/technology-summary-contract.md ch5 before returning anything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tech_id",
+    "headline",
+    "summary",
+    "gap",
+    "used_highlights",
+    "confidence"
+  ],
+  "properties": {
+    "tech_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "description": "Echo of the requested tech_id. The AI service rejects the response when it differs -- a 4B model does substitute a neighbouring technology, and an unchecked swap would file Spring Security's summary under Spring Boot."
+    },
+    "headline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "One line naming what the person actually did with the technology. Shown as the card title, so it carries no level string: the level is rendered beside it and repeating it wastes the only line the card has."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Two or three sentences restating the fact pack in Korean prose. Restatement, not inference -- every proper noun in it must already appear in highlights.value, next_level.missing, the display name, or a repository name."
+    },
+    "gap": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200,
+      "description": "One sentence on what is missing for the next level, derived from next_level.missing. Null when next_level is null (the technology is already at its highest defined rule). This field, not summary, is what makes the card actionable: 'why not L3' is more useful to a person than 'why L2'."
+    },
+    "used_highlights": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Indexes of the highlights the summary leaned on. Indexes rather than evidence ids because a 4B model reproduces small integers reliably and 40-character ids it does not. The AI service checks every entry is in range; an out-of-range index means the model invented a fact and the whole response is discarded.",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 7
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ],
+      "description": "How specific the input was, not how sure the model feels. HIGH means highlights held an API_CALL the person wrote; MEDIUM means only imports or dependencies; LOW means authorship was NOT_VERIFIED or highlights was empty. The screen can hide LOW summaries without hiding the level, which stays rule-derived either way."
+    }
+  }
+}

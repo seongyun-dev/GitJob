@@ -1,0 +1,31 @@
+{
+  "tech_id": "hadoop",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/WordCount.java": "import org.apache.hadoop.conf.Configuration;\nimport org.apache.hadoop.fs.FileSystem;\nimport org.apache.hadoop.mapreduce.Job;\nclass WordCount { void run(Configuration conf) throws Exception { FileSystem fs = FileSystem.get(conf); Job job = Job.getInstance(conf); job.setMapperClass(Mapper.class); } }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "hadoop.l3.filesystem-job"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires attributed HDFS FileSystem, MapReduce Job creation, and mapper/reducer configuration in the same Java class; XML-only jobs and wrapper APIs are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/WordCount.java": "import org.apache.hadoop.conf.Configuration;\nimport org.apache.hadoop.fs.FileSystem;\nimport org.apache.hadoop.mapreduce.Job;\nclass WordCount { void run(Configuration conf) throws Exception { FileSystem fs = FileSystem.get(conf); Job job = Job.getInstance(conf); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "hadoop.l3.filesystem-job"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

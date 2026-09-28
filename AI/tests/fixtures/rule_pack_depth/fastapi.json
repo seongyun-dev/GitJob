@@ -1,0 +1,44 @@
+{
+  "tech_id": "fastapi",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/main.py": "from contextlib import asynccontextmanager\nfrom fastapi import FastAPI\ndef create_app():\n    @asynccontextmanager\n    async def lifespan(app):\n        resource = await open_resource()\n        try:\n            yield resource\n        finally:\n            await resource.close()\n    return FastAPI(lifespan=lifespan)\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "fastapi.l3.composed-application"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires a FastAPI application factory whose nested asynccontextmanager lifespan, yield, and try/finally cleanup share one function component; common module-level lifespan definitions are conservatively missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/main.py": "from contextlib import asynccontextmanager\nfrom fastapi import FastAPI\ndef create_app():\n    @asynccontextmanager\n    async def lifespan(app):\n        resource = await open_resource()\n        yield resource\n    return FastAPI(lifespan=lifespan)\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "fastapi.l3.composed-application"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    },
+    {
+      "name": "module-lifespan-separated-from-constructor",
+      "kind": "near_miss",
+      "files": {
+        "src/main.py": "from contextlib import asynccontextmanager\nfrom fastapi import FastAPI\n@asynccontextmanager\nasync def lifespan(app):\n    resource = await open_resource()\n    try:\n        yield resource\n    finally:\n        await resource.close()\napp = FastAPI(lifespan=lifespan)\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "fastapi.l3.composed-application"
+      ],
+      "tradeoff": "The common module-level lifespan form is conservatively missed because the current facts cannot bind the constructor argument back to the function component."
+    }
+  ]
+}

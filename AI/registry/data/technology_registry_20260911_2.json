@@ -1,0 +1,2740 @@
+{
+  "schema_version": "technology-registry/v1",
+  "registry_version": "registry-20260911.2",
+  "technologies": [
+    {
+      "tech_id": "c",
+      "display_name": "C",
+      "categories": [
+        "BACKEND",
+        "AI_DATA",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "cpp",
+      "display_name": "C++",
+      "categories": [
+        "BACKEND",
+        "AI_DATA",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "csharp",
+      "display_name": "C#",
+      "categories": [
+        "BACKEND",
+        "MOBILE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "go",
+      "display_name": "Go",
+      "categories": [
+        "BACKEND",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "java",
+      "display_name": "Java",
+      "categories": [
+        "BACKEND",
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "kotlin",
+      "display_name": "Kotlin",
+      "categories": [
+        "BACKEND",
+        "MOBILE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kotlinlang.org/docs/home.html"
+      ]
+    },
+    {
+      "tech_id": "python",
+      "display_name": "Python",
+      "categories": [
+        "BACKEND",
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "javascript",
+      "display_name": "JavaScript",
+      "categories": [
+        "FRONTEND",
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "typescript",
+      "display_name": "TypeScript",
+      "categories": [
+        "FRONTEND",
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "php",
+      "display_name": "PHP",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "sql",
+      "display_name": "SQL",
+      "categories": [
+        "BACKEND",
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.postgresql.org/docs/current/tutorial-sql.html"
+      ]
+    },
+    {
+      "tech_id": "html",
+      "display_name": "HTML",
+      "categories": [
+        "FRONTEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://html.spec.whatwg.org/multipage/"
+      ]
+    },
+    {
+      "tech_id": "css",
+      "display_name": "CSS",
+      "categories": [
+        "FRONTEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.w3.org/Style/CSS/"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "display_name": "Spring Framework",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "display_name": "Spring Boot",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "display_name": "JPA",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://jakarta.ee/specifications/persistence/"
+      ]
+    },
+    {
+      "tech_id": "mybatis",
+      "display_name": "MyBatis",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://mybatis.org/mybatis-3/"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "display_name": ".NET",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/"
+      ]
+    },
+    {
+      "tech_id": "nodejs",
+      "display_name": "Node.js",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://nodejs.org/docs/latest/api/"
+      ]
+    },
+    {
+      "tech_id": "nestjs",
+      "display_name": "NestJS",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.nestjs.com/first-steps"
+      ]
+    },
+    {
+      "tech_id": "django",
+      "display_name": "Django",
+      "categories": [
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.djangoproject.com/en/stable/"
+      ]
+    },
+    {
+      "tech_id": "fastapi",
+      "display_name": "FastAPI",
+      "categories": [
+        "BACKEND",
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://fastapi.tiangolo.com/tutorial/"
+      ]
+    },
+    {
+      "tech_id": "react",
+      "display_name": "React",
+      "categories": [
+        "FRONTEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://react.dev/learn"
+      ]
+    },
+    {
+      "tech_id": "nextjs",
+      "display_name": "Next.js",
+      "categories": [
+        "FRONTEND",
+        "BACKEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://nextjs.org/docs"
+      ]
+    },
+    {
+      "tech_id": "vuejs",
+      "display_name": "Vue.js",
+      "categories": [
+        "FRONTEND"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://vuejs.org/guide/introduction.html"
+      ]
+    },
+    {
+      "tech_id": "unity",
+      "display_name": "Unity",
+      "categories": [
+        "MOBILE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.unity3d.com/Manual/index.html"
+      ]
+    },
+    {
+      "tech_id": "numpy",
+      "display_name": "NumPy",
+      "categories": [
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://numpy.org/doc/stable/"
+      ]
+    },
+    {
+      "tech_id": "pandas",
+      "display_name": "pandas",
+      "categories": [
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pandas.pydata.org/docs/"
+      ]
+    },
+    {
+      "tech_id": "scikit-learn",
+      "display_name": "scikit-learn",
+      "categories": [
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://scikit-learn.org/stable/"
+      ]
+    },
+    {
+      "tech_id": "pytorch",
+      "display_name": "PyTorch",
+      "categories": [
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pytorch.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "tensorflow",
+      "display_name": "TensorFlow",
+      "categories": [
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.tensorflow.org/api_docs"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "display_name": "Apache Spark",
+      "categories": [
+        "AI_DATA",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://spark.apache.org/documentation"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "display_name": "Apache Hadoop",
+      "categories": [
+        "AI_DATA",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hadoop.apache.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "display_name": "Apache Kafka",
+      "categories": [
+        "BACKEND",
+        "AI_DATA",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.apache.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "display_name": "MySQL",
+      "categories": [
+        "BACKEND",
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://dev.mysql.com/doc/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "display_name": "PostgreSQL",
+      "categories": [
+        "BACKEND",
+        "AI_DATA",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.postgresql.org/docs/current/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "display_name": "MongoDB",
+      "categories": [
+        "BACKEND",
+        "AI_DATA"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "display_name": "Redis",
+      "categories": [
+        "BACKEND",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/"
+      ]
+    },
+    {
+      "tech_id": "docker",
+      "display_name": "Docker",
+      "categories": [
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.docker.com/get-started/"
+      ]
+    },
+    {
+      "tech_id": "kubernetes",
+      "display_name": "Kubernetes",
+      "categories": [
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kubernetes.io/docs/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "display_name": "AWS",
+      "categories": [
+        "BACKEND",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/index.html"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "display_name": "Azure",
+      "categories": [
+        "BACKEND",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/azure/"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "display_name": "Google Cloud",
+      "categories": [
+        "BACKEND",
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://cloud.google.com/docs"
+      ]
+    },
+    {
+      "tech_id": "jenkins",
+      "display_name": "Jenkins",
+      "categories": [
+        "INFRASTRUCTURE"
+      ],
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.jenkins.io/doc/"
+      ]
+    }
+  ],
+  "mappings": [
+    {
+      "tech_id": "cpp",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "C++",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://isocpp.org/docs"
+      ]
+    },
+    {
+      "tech_id": "csharp",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "C#",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/dotnet/csharp/"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Spring",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Jakarta Persistence",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://jakarta.ee/specifications/persistence/"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": ".NET Core",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/"
+      ]
+    },
+    {
+      "tech_id": "nodejs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Node",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://nodejs.org/docs/latest/api/"
+      ]
+    },
+    {
+      "tech_id": "nestjs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Nest",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.nestjs.com/first-steps"
+      ]
+    },
+    {
+      "tech_id": "vuejs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Vue",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://vuejs.org/guide/introduction.html"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.apache.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Spark",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://spark.apache.org/documentation"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Hadoop",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hadoop.apache.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "GCP",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://cloud.google.com/docs"
+      ]
+    },
+    {
+      "tech_id": "unity",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Unity3D",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.unity3d.com/Manual/index.html"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "MySQL",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://dev.mysql.com/doc/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Postgres",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.postgresql.org/docs/current/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "MongoDB",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Redis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/"
+      ]
+    },
+    {
+      "tech_id": "docker",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Docker",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.docker.com/get-started/"
+      ]
+    },
+    {
+      "tech_id": "kubernetes",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "K8s",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kubernetes.io/docs/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Amazon Web Services",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/index.html"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Microsoft Azure",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/azure/"
+      ]
+    },
+    {
+      "tech_id": "jenkins",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Jenkins",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.jenkins.io/doc/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-data-jpa",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/jpa/reference/"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-web",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "mybatis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.mybatis.spring.boot:mybatis-spring-boot-starter",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://mybatis.org/spring-boot-starter/mybatis-spring-boot-autoconfigure/"
+      ]
+    },
+    {
+      "tech_id": "nestjs",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "@nestjs/core",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/@nestjs/core"
+      ]
+    },
+    {
+      "tech_id": "react",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "react",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/react"
+      ]
+    },
+    {
+      "tech_id": "nextjs",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "next",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/next"
+      ]
+    },
+    {
+      "tech_id": "vuejs",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "vue",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/vue"
+      ]
+    },
+    {
+      "tech_id": "django",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "django",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/Django/"
+      ]
+    },
+    {
+      "tech_id": "fastapi",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "fastapi",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/fastapi/"
+      ]
+    },
+    {
+      "tech_id": "numpy",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "numpy",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/numpy/"
+      ]
+    },
+    {
+      "tech_id": "pandas",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "pandas",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/pandas/"
+      ]
+    },
+    {
+      "tech_id": "scikit-learn",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "scikit-learn",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/scikit-learn/"
+      ]
+    },
+    {
+      "tech_id": "pytorch",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "torch",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/torch/"
+      ]
+    },
+    {
+      "tech_id": "tensorflow",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "tensorflow",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/tensorflow/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "mongodb",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/mongodb"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "redis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/redis/"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.boot",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "jakarta.persistence",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://jakarta.ee/specifications/persistence/"
+      ]
+    },
+    {
+      "tech_id": "mybatis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.apache.ibatis",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://mybatis.org/mybatis-3/getting-started.html"
+      ]
+    },
+    {
+      "tech_id": "django",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "django",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.djangoproject.com/en/stable/"
+      ]
+    },
+    {
+      "tech_id": "fastapi",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "fastapi",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://fastapi.tiangolo.com/tutorial/"
+      ]
+    },
+    {
+      "tech_id": "numpy",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "numpy",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://numpy.org/doc/stable/"
+      ]
+    },
+    {
+      "tech_id": "pandas",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "pandas",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pandas.pydata.org/docs/"
+      ]
+    },
+    {
+      "tech_id": "scikit-learn",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "sklearn",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://scikit-learn.org/stable/"
+      ]
+    },
+    {
+      "tech_id": "pytorch",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "torch",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pytorch.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "tensorflow",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "tensorflow",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.tensorflow.org/api_docs"
+      ]
+    },
+    {
+      "tech_id": "react",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "react",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://react.dev/learn"
+      ]
+    },
+    {
+      "tech_id": "nextjs",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "next",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://nextjs.org/docs"
+      ]
+    },
+    {
+      "tech_id": "vuejs",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "vue",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://vuejs.org/guide/introduction.html"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "DOTNET",
+      "value": "Microsoft",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/"
+      ]
+    },
+    {
+      "tech_id": "c",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "C",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "cpp",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "C++",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "csharp",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "C#",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "go",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "Go",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "java",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "Java",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "kotlin",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "Kotlin",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "python",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "Python",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "javascript",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "JavaScript",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "typescript",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "TypeScript",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "php",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "PHP",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "sql",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "SQL",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "html",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "HTML",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "css",
+      "mapping_type": "GITHUB_LANGUAGE",
+      "ecosystem": null,
+      "value": "CSS",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "apache-kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/apache-kafka"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "apache-spark",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/apache-spark"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "hadoop",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/hadoop"
+      ]
+    },
+    {
+      "tech_id": "docker",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "docker",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/docker"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "redis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/redis"
+      ]
+    },
+    {
+      "tech_id": "jenkins",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "jenkins",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/jenkins"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "aws",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/index.html"
+      ]
+    },
+    {
+      "tech_id": "css",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "css",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.github.com/en/rest/repos/repos#list-repository-languages"
+      ]
+    },
+    {
+      "tech_id": "django",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "django",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.djangoproject.com/en/stable/"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": ".NET",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/"
+      ]
+    },
+    {
+      "tech_id": "html",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "html",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.github.com/en/rest/repos/repos#list-repository-languages"
+      ]
+    },
+    {
+      "tech_id": "kotlin",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "kotlin",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.github.com/en/rest/repos/repos#list-repository-languages"
+      ]
+    },
+    {
+      "tech_id": "nextjs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Next.js",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://nextjs.org/docs"
+      ]
+    },
+    {
+      "tech_id": "nodejs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Node.js",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://nodejs.org/docs/latest/api/"
+      ]
+    },
+    {
+      "tech_id": "python",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Python",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.github.com/en/rest/repos/repos#list-repository-languages"
+      ]
+    },
+    {
+      "tech_id": "sql",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "sql",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.github.com/en/rest/repos/repos#list-repository-languages"
+      ]
+    },
+    {
+      "tech_id": "vuejs",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": "Vue.js",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://vuejs.org/guide/introduction.html"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.postgresql:postgresql",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://jdbc.postgresql.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-webmvc",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.apache.kafka",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.apache.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.kafka",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-kafka/reference/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "kafka",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka-python.readthedocs.io/en/master/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "aiokafka",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://aiokafka.readthedocs.io/en/stable/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "kafkajs",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.js.org/docs/getting-started"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.data.redis",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/redis/reference/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "redis.clients.jedis",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "ioredis",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.postgresql",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://jdbc.postgresql.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "psycopg",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.psycopg.org/psycopg3/docs/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "psycopg2",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.psycopg.org/docs/"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "com.mysql",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://dev.mysql.com/doc/connector-j/en/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "com.mongodb",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/drivers/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "pymongo",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/drivers/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "mongodb",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/drivers/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.data.jpa",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/jpa/reference/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.hibernate",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hibernate.org/orm/documentation/"
+      ]
+    },
+    {
+      "tech_id": "react",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "react-dom",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://react.dev/reference/react-dom"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.kafka:kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.apache.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.kafka:spring-kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-kafka/reference/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "kafka-python",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/kafka-python/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "aiokafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/aiokafka/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "kafkajs",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/kafkajs"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-data-redis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/redis/reference/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "ioredis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/ioredis"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "psycopg",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/psycopg/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "psycopg2",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/psycopg2/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "pg",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/pg"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "pymysql",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/PyMySQL/"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "mysql2",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/mysql2"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "pymongo",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/pymongo/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "mongoose",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/mongoose"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.data:spring-data-jpa",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/jpa/reference/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.hibernate:hibernate-core",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hibernate.org/orm/documentation/"
+      ]
+    },
+    {
+      "tech_id": "react",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "react-dom",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/react-dom"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.core",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.context",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.beans",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.web",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.aop",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.expression",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.jdbc",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.transaction",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.stereotype",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.http",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.util",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-core",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-context",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-beans",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-web",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-webmvc",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-aop",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-expression",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-jdbc",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework:spring-tx",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-framework/reference/overview.html#overview-modules"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "confluent_kafka",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.confluent.io/platform/current/clients/confluent-kafka-python/html/index.html"
+      ]
+    },
+    {
+      "tech_id": "django",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "rest_framework",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.django-rest-framework.org/api-guide/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.springframework.data.mongodb",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/mongodb/reference/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "mongoose",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://mongoosejs.com/docs/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "motor",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/languages/python/pymongo-driver/current/integrations/asyncio/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "io.lettuce.core",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "redis",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "redis",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "confluent-kafka",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/confluent-kafka/"
+      ]
+    },
+    {
+      "tech_id": "django",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "djangorestframework",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/djangorestframework/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.mongodb:mongodb-driver",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.mongodb.com/docs/drivers/"
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-data-mongodb",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-data/mongodb/reference/"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "com.mysql:mysql-connector-j",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://dev.mysql.com/doc/connector-j/en/"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "mysql:mysql-connector-java",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://dev.mysql.com/doc/connector-j/en/"
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "mysqlclient",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/mysqlclient/"
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "psycopg2-binary",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/psycopg2-binary/"
+      ]
+    },
+    {
+      "tech_id": "pytorch",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "torchvision",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/torchvision/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "io.lettuce:lettuce-core",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "redis.clients:jedis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://redis.io/docs/latest/develop/clients/"
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "redis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/redis"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.kafka:kafka-clients",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.apache.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.kafka:kafka-streams",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://kafka.apache.org/documentation/"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.hibernate.orm:hibernate-core",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hibernate.org/orm/documentation/"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "pyspark",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://spark.apache.org/docs/latest/"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.apache.spark",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://spark.apache.org/docs/latest/"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "pyspark",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/pyspark/"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.spark:spark-core_2.13",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://spark.apache.org/docs/latest/"
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.spark:spark-sql_2.13",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://spark.apache.org/docs/latest/"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "org.apache.hadoop",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hadoop.apache.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.hadoop:hadoop-client",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hadoop.apache.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.hadoop:hadoop-common",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hadoop.apache.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "boto3",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/sdk-for-python/v1/developer-guide/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "botocore",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/sdk-for-python/v1/developer-guide/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "@aws-sdk",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "software.amazon.awssdk",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/home.html"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "boto3",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/boto3/"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "@aws-sdk/client-s3",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/@aws-sdk/client-s3"
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "software.amazon.awssdk:s3",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/home.html"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "azure",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/azure/developer/python/sdk/azure-sdk-overview"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "@azure",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/azure/developer/javascript/sdk/overview"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "DOTNET",
+      "value": "Azure",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/azure/sdk/azure-sdk-for-dotnet"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "azure-storage-blob",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/azure-storage-blob/"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "@azure/storage-blob",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/@azure/storage-blob"
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NUGET",
+      "value": "Azure.Storage.Blobs",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.nuget.org/packages/Azure.Storage.Blobs"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "PYTHON",
+      "value": "google.cloud",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://cloud.google.com/python/docs/reference/storage/latest"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "@google-cloud",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://cloud.google.com/nodejs/docs/reference/storage/latest"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVA",
+      "value": "com.google.cloud",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://cloud.google.com/java/docs/reference/google-cloud-storage/latest/overview"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "PYPI",
+      "value": "google-cloud-storage",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://pypi.org/project/google-cloud-storage/"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NPM",
+      "value": "@google-cloud/storage",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.npmjs.com/package/@google-cloud/storage"
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "com.google.cloud:google-cloud-storage",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://cloud.google.com/java/docs/reference/google-cloud-storage/latest/overview"
+      ]
+    },
+    {
+      "tech_id": "unity",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "DOTNET",
+      "value": "UnityEngine",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.unity3d.com/Manual/intro-to-scripting.html"
+      ]
+    },
+    {
+      "tech_id": "nestjs",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "JAVASCRIPT",
+      "value": "@nestjs",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.nestjs.com/first-steps"
+      ]
+    },
+    {
+      "tech_id": "mybatis",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.mybatis:mybatis",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://mybatis.org/mybatis-3/getting-started.html"
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "jakarta.persistence:jakarta.persistence-api",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://jakarta.ee/specifications/persistence/"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "STACKOVERFLOW_TAG",
+      "ecosystem": null,
+      "value": "hdfs",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://stackoverflow.com/questions/tagged/hdfs"
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.apache.hadoop:hadoop-hdfs",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://hadoop.apache.org/docs/stable/"
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "MAVEN",
+      "value": "org.springframework.boot:spring-boot-starter-actuator",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://docs.spring.io/spring-boot/reference/using/build-systems.html"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "ALIAS",
+      "ecosystem": null,
+      "value": ".NET MAUI",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/maui/what-is-maui"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "PACKAGE",
+      "ecosystem": "NUGET",
+      "value": "Microsoft.Maui.Controls",
+      "match_mode": "EXACT",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://www.nuget.org/packages/Microsoft.Maui.Controls"
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "mapping_type": "IMPORT_PATH",
+      "ecosystem": "DOTNET",
+      "value": "Microsoft.Maui",
+      "match_mode": "PREFIX",
+      "status": "ACTIVE",
+      "provenance_refs": [
+        "https://learn.microsoft.com/en-us/dotnet/maui/what-is-maui"
+      ]
+    }
+  ]
+}

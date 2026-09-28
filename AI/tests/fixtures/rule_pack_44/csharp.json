@@ -1,0 +1,40 @@
+{
+  "tech_id": "csharp",
+  "positive": {
+    "files": {
+      "src/App.cs": "namespace Demo; class App { static void Main() {} }\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning csharp only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/App.cs": "namespace Demo; class App { static void Main() {} }\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "src/App.cs": "namespace Demo; class App { static void Main() {} }\n"
+      },
+      "expected_rule_ids": [
+        "csharp.l1.source"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/App.cs": "namespace Demo; class App { static void Main() {} }\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l1.source"
+      ]
+    }
+  ]
+}

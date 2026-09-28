@@ -1,0 +1,40 @@
+{
+  "tech_id": "css",
+  "positive": {
+    "files": {
+      "src/site.css": "main { display: block; }\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning css only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/site.css": "main { display: block; }\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "src/site.css": "main { display: block; }\n"
+      },
+      "expected_rule_ids": [
+        "css.l1.source"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/site.css": "main { display: block; }\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "css.l1.source"
+      ]
+    }
+  ]
+}

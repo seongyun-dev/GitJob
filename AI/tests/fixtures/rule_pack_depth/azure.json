@@ -1,0 +1,79 @@
+{
+  "tech_id": "azure",
+  "cases": [
+    {
+      "name": "network-managed-least-privilege",
+      "kind": "positive",
+      "files": {
+        "infra/main.tf": "provider \"azurerm\" {}\nresource \"azurerm_resource_group\" \"main\" {}\nresource \"azurerm_virtual_network\" \"main\" { resource_group_name = azurerm_resource_group.main.name }\nresource \"azurerm_subnet\" \"db\" { virtual_network_name = azurerm_virtual_network.main.name }\nresource \"azurerm_postgresql_flexible_server\" \"data\" { delegated_subnet_id = azurerm_subnet.db.id\nresource_group_name = azurerm_resource_group.main.name }\nresource \"azurerm_role_definition\" \"reader\" { actions = [\"Microsoft.DBforPostgreSQL/flexibleServers/read\"]\nassignable_scopes = [azurerm_postgresql_flexible_server.data.id] }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "azure.l2.managed-resource",
+        "azure.l3.network-managed-iam"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires explicit same-file reference paths connecting managed service, network and narrow IAM structure; applied/effective behavior is not claimed."
+    },
+    {
+      "name": "provider-only",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"azurerm\" {}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [
+        "azure.l1.terraform"
+      ],
+      "absent_rule_ids": [
+        "azure.l2.managed-resource",
+        "azure.l3.network-managed-iam"
+      ],
+      "tradeoff": "A provider declaration establishes configured identity only and cannot prove provisioned resources."
+    },
+    {
+      "name": "wildcard-policy",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"azurerm\" {}\nresource \"azurerm_resource_group\" \"main\" {}\nresource \"azurerm_virtual_network\" \"main\" { resource_group_name = azurerm_resource_group.main.name }\nresource \"azurerm_subnet\" \"db\" { virtual_network_name = azurerm_virtual_network.main.name }\nresource \"azurerm_postgresql_flexible_server\" \"data\" { delegated_subnet_id = azurerm_subnet.db.id\nresource_group_name = azurerm_resource_group.main.name }\nresource \"azurerm_role_definition\" \"reader\" { actions = [\"*\"]\nassignable_scopes = [azurerm_resource_group.main.id] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "azure.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "azure.l3.network-managed-iam"
+      ],
+      "tradeoff": "Wildcard action/resource literals fail the conservative least-privilege predicate."
+    },
+    {
+      "name": "unrelated-resource-sum",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"azurerm\" {}\nresource \"azurerm_resource_group\" \"main\" {}\nresource \"azurerm_virtual_network\" \"main\" { resource_group_name = azurerm_resource_group.main.name }\nresource \"azurerm_subnet\" \"db\" { virtual_network_name = azurerm_virtual_network.main.name }\nresource \"azurerm_postgresql_flexible_server\" \"data\" { delegated_subnet_id = \"detached\"\nresource_group_name = azurerm_resource_group.main.name }\nresource \"azurerm_role_definition\" \"reader\" { actions = [\"Microsoft.Storage/storageAccounts/read\"]\nassignable_scopes = [\"detached\"] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "azure.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "azure.l3.network-managed-iam"
+      ],
+      "tradeoff": "Network, managed and narrow IAM resources without explicit reference paths must not combine into an L3 architecture claim."
+    },
+    {
+      "name": "comment-and-heredoc-lookalike",
+      "kind": "negative",
+      "files": {
+        "infra/main.tf": "# resource \"azurerm_virtual_network\" \"fake\" {}\nlocals {\n sample = <<EOF\nresource \"azurerm_postgresql_flexible_server\" \"fake\" {}\nEOF\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "azure.l2.managed-resource",
+        "azure.l3.network-managed-iam"
+      ],
+      "tradeoff": "Commented and heredoc resource text is not executable Terraform structure."
+    }
+  ]
+}

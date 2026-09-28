@@ -6,6 +6,39 @@
 .env
 .env.*
 !.env.example
+!.env.ci.example
+
+# Local infrastructure data and generated backups
+/.local/
+
+# Personal working documents — not shared with the team.
+# New personal notes go under /docs/plans/ so they are ignored automatically.
+# Team-facing docs live in docs/<part>/ and stay tracked.
+/docs/plans/
+/docs/shared/WORKING-RULES.md
+
+# Worknet collection snapshots
+/data/worknet/
+
+# Saramin collection snapshots
+/data/saramin/
+
+# Scheduled-collection run history (S15P21E102-107). Operational output:
+# it records what ran on one machine, not anything the team shares.
+/data/collection-history.jsonl
+
+# Temporary JobKorea collection snapshots
+/data/jobkorea/
+
+# GH Archive hourly archives. 17.6MB/hour measured — a month is ~13GB, so this
+# must never be staged. The watcher (S15P21E102-144) writes here.
+/data/gharchive/
+
+# GameJob collection snapshots
+/data/gamejob/
+
+# Career collection snapshots
+/data/career/
 
 # Spring Boot local / secret configuration
 application-local.yml
@@ -30,6 +63,7 @@ application-prod-secret.yaml
 *.keystore
 
 # JetBrains
+/.idea/
 .idea/**/workspace.xml
 .idea/**/tasks.xml
 .idea/**/usage.statistics.xml
@@ -162,6 +196,14 @@ eggs/
 .eggs/
 lib/
 lib64/
+
+# 위 `lib/`는 setuptools 빌드 산출물(`./lib`)을 잡으려는 규칙인데 경로가 고정돼 있지
+# 않아 **FE 소스의 `lib/` 폴더까지 삼킨다.** 실제로 티켓 S15P21E102-281에서
+# `FE/src/features/matching/lib/`가 커밋되지 않을 뻔했다 — 빌드는 로컬에서만 통과하고
+# 받는 사람 쪽에서 모듈을 못 찾는 형태라 알아채기 어렵다. FE 소스만 되살린다.
+!FE/src/**/lib/
+!FE/src/**/lib/**
+
 parts/
 sdist/
 var/

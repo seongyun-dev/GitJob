@@ -1,0 +1,2403 @@
+"""Internal C compute API. Authentication/serving for end users remains in B."""
+
+import hmac
+import json
+import logging
+import os
+import time
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from threading import Lock
+from typing import Annotated, Any, Literal
+
+import psycopg
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from psycopg.conninfo import make_conninfo
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from common.health import create_health_app
+from github.contracts import GitHubRepoSnapshotBatch
+from job.classifier import JOB_REQUIREMENT_PARSER_VERSION
+from job.cohort import (
+    JOB_QUALITY_VERSION,
+    CohortCriteria,
+    CohortPurpose,
+    JobCohort,
+    normalize_cohort_filters,
+)
+from job.contracts import JobAnalysisInputBatch
+from job.demand import JOB_DEMAND_AGGREGATION_VERSION, DemandSnapshot
+from recommendation.evidence import EvidenceAnalysis
+from registry.contracts import TechnologyRegistry, load_registry
+from registry.mapper import RegistryMapper
+from trend.archive import PeriodGranularity
+from worker.archive_input import ArchiveInputUnavailable, ArchiveTrendFields
+from worker.lease import LeaseHeartbeat
+from worker.store import (
+    TREND_RANKING_UNITS,
+    Artifact,
+    ComputeStore,
+    IdempotencyConflict,
+    LeaseLost,
+    StoredMatchingIntegrityError,
+    digest,
+)
+
+LOGGER = logging.getLogger(__name__)
+Identifier = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    ),
+]
+SnapshotId = Annotated[str, StringConstraints(strict=True, pattern=r"^c-[0-9a-f]{64}$")]
+ResultReferenceId = Annotated[
+    str, StringConstraints(strict=True, pattern=r"^(?:c|ur)-[0-9a-f]{64}$")
+]
+REGISTRY_ROOT = Path(__file__).resolve().parents[1] / "registry/data"
+
+
+class Event(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["c-compute-event/v1"]
+    event_id: Identifier
+    trace_id: Identifier
+    occurred_at: datetime
+
+    @field_validator("occurred_at")
+    @classmethod
+    def aware_timestamp(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("occurred_at requires timezone")
+        return value.astimezone(UTC)
+
+
+class JobCompleted(Event):
+    batch: JobAnalysisInputBatch
+    criteria: CohortCriteria
+
+
+class AnalysisCompleted(Event):
+    user_id: Identifier
+    analysis_id: Identifier
+    cohort_snapshot_id: SnapshotId
+    demand_snapshot_id: SnapshotId | None = None
+    evidence: EvidenceAnalysis
+    target_key: (
+        Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)]
+        | None
+    ) = None
+    projection_version_id: (
+        Annotated[str, StringConstraints(strict=True, pattern=r"^jp-[0-9a-f]{64}$")]
+        | None
+    ) = None
+
+    @field_validator("target_key")
+    @classmethod
+    def valid_target_key(cls, value: str | None) -> str | None:
+        if value is not None and any(ord(character) < 32 for character in value):
+            raise ValueError("target_key contains a control character")
+        return value
+
+    @model_validator(mode="after")
+    def projection_requires_resolved_demand(self) -> "AnalysisCompleted":
+        if self.projection_version_id is not None and self.demand_snapshot_id is None:
+            raise ValueError(
+                "Projection analysis requires its resolved Demand snapshot"
+            )
+        return self
+
+
+class PublicReposCompleted(Event):
+    batch: GitHubRepoSnapshotBatch
+    include_partial: StrictBool = False
+
+
+class TrendCompleted(Event):
+    tech_id: Annotated[
+        str, StringConstraints(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=80)
+    ]
+    source: Literal["JOB", "GITHUB"]
+    periods: tuple[str, ...] = Field(min_length=1, max_length=48)
+    demand_snapshot_ids: tuple[SnapshotId, ...] = ()
+    csv_text: str | None = None
+    source_version: str | None = None
+    source_uri: str | None = None
+
+    @model_validator(mode="after")
+    def require_job_scope_reference(self) -> "TrendCompleted":
+        # JOB stream identity comes from the referenced Demand criteria. Without
+        # one there is no target role/filter identity under which the result can
+        # later be resolved, so storing a PREPARING orphan is never useful.
+        if self.source == "JOB" and not self.demand_snapshot_ids:
+            raise ValueError("JOB Trend requires at least one demand snapshot")
+        return self
+
+
+class ArchiveTrendCompleted(Event, ArchiveTrendFields):
+    """Trusted local activity references plus immutable C public snapshots."""
+
+
+class JobCohortResolveSelector(BaseModel):
+    """Stable B selector for one currently verified receipt.
+
+    The selector names a scope, never a time: C binds `as_of` to the newest
+    verified observation. `purpose` picks which question that scope answers --
+    a role's active matching cohort, or the whole current market. The role rules
+    are not restated here; `criteria_at` builds the real `CohortCriteria` and
+    lets the contract judge, so a market can never quietly carry a role.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["job-cohort-resolve-selector/v1"]
+    # Absent for CURRENT_MARKET only. Kept ahead of `purpose` so the stored
+    # request shape of every existing ACTIVE_MATCHING selector is unchanged.
+    target_role: StrictStr | None = None
+    purpose: CohortPurpose = CohortPurpose.ACTIVE_MATCHING
+    sources: tuple[StrictStr, ...] | None = None
+    regions: tuple[StrictStr, ...] = ()
+    career_levels: tuple[StrictStr, ...] = ()
+    min_jobs: StrictInt | None = Field(default=None, ge=1)
+
+    @field_validator("target_role")
+    @classmethod
+    def normalize_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return CohortCriteria.model_validate(
+            {"target_role": value, "as_of": "2020-01-01T00:00:00Z"}
+        ).target_role
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "JobCohortResolveSelector":
+        # Reject an impossible scope now rather than at the first poll, so the
+        # caller sees 422 instead of a cohort that never resolves.
+        self.criteria_at(datetime(2020, 1, 1, tzinfo=UTC))
+        return self
+
+    @field_validator("sources", "regions", "career_levels")
+    @classmethod
+    def normalize_filters(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return normalize_cohort_filters(values)
+
+    @field_validator("sources")
+    @classmethod
+    def normalize_sources(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return normalize_cohort_filters(values, uppercase=True)
+
+    def criteria_at(self, as_of: datetime) -> CohortCriteria:
+        return CohortCriteria(
+            target_role=self.target_role,
+            purpose=self.purpose,
+            as_of=as_of,
+            sources=self.sources or (),
+            regions=self.regions,
+            career_levels=self.career_levels,
+            min_jobs=1 if self.min_jobs is None else self.min_jobs,
+        )
+
+
+class TrendResolveSelector(BaseModel):
+    """Natural keys for public Trend heads; source families never share a key."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal[
+        "JOB", "WEEKLY_REPO_ACTIVITY", "GH_ARCHIVE", "GH_ARCHIVE_HISTORICAL"
+    ]
+    tech_id: Annotated[
+        str, StringConstraints(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=80)
+    ]
+    periods: tuple[str, ...] = Field(default=(), max_length=48)
+    granularity: PeriodGranularity | None = None
+    include_partial: StrictBool = False
+    target_role: StrictStr | None = None
+    sources: tuple[StrictStr, ...] | None = None
+    regions: tuple[StrictStr, ...] = ()
+    career_levels: tuple[StrictStr, ...] = ()
+    min_jobs: StrictInt | None = Field(default=None, ge=1)
+
+    @field_validator("target_role")
+    @classmethod
+    def normalize_optional_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return CohortCriteria.model_validate(
+            {"target_role": value, "as_of": "2020-01-01T00:00:00Z"}
+        ).target_role
+
+    @field_validator("sources", "regions", "career_levels")
+    @classmethod
+    def normalize_job_filters(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return normalize_cohort_filters(values)
+
+    @field_validator("sources")
+    @classmethod
+    def normalize_job_sources(
+        cls, values: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return normalize_cohort_filters(values, uppercase=True)
+
+    @model_validator(mode="after")
+    def source_specific_scope(self) -> "TrendResolveSelector":
+        job_scope = bool(
+            self.target_role is not None
+            or self.sources is not None
+            or self.regions
+            or self.career_levels
+            or self.min_jobs is not None
+        )
+        if self.source == "WEEKLY_REPO_ACTIVITY":
+            if self.periods or self.granularity is not None or job_scope:
+                raise ValueError("weekly resolve does not accept a fixed period scope")
+            return self
+        if self.source == "JOB":
+            if (
+                not self.periods
+                or self.granularity is not PeriodGranularity.MONTH
+                or self.target_role is None
+                or self.include_partial
+            ):
+                raise ValueError("JOB resolve requires a target role and MONTH periods")
+        elif job_scope:
+            raise ValueError("archive resolve does not accept JOB cohort filters")
+        if not self.periods or self.granularity is None:
+            raise ValueError("archive resolve requires periods and granularity")
+        if (
+            self.source == "GH_ARCHIVE_HISTORICAL"
+            and self.granularity is not PeriodGranularity.MONTH
+        ):
+            raise ValueError("historical archive resolve supports MONTH only")
+        from trend.archive import _period_index
+
+        indices = tuple(
+            _period_index(period, self.granularity) for period in self.periods
+        )
+        if indices != tuple(sorted(set(indices))):
+            raise ValueError("periods must be unique and ascending")
+        return self
+
+    def public_identity(self) -> dict[str, Any]:
+        common = {
+            "source": self.source,
+            "tech_id": self.tech_id,
+            "include_partial": self.include_partial,
+        }
+        if self.source != "WEEKLY_REPO_ACTIVITY":
+            common.update(
+                periods=list(self.periods),
+                granularity=self.granularity.value,
+            )
+        if self.source == "JOB":
+            common.update(
+                target_role=self.target_role,
+                sources=list(self.sources or ()),
+                regions=list(self.regions),
+                career_levels=list(self.career_levels),
+                min_jobs=1 if self.min_jobs is None else self.min_jobs,
+            )
+        return common
+
+
+class TrendResolveBatchRequest(BaseModel):
+    """A bounded comparison request; every selector shares one source scope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    selectors: tuple[TrendResolveSelector, ...] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def one_source_scope(self) -> "TrendResolveBatchRequest":
+        tech_ids = tuple(selector.tech_id for selector in self.selectors)
+        if len(tech_ids) != len(set(tech_ids)):
+            raise ValueError("batch tech_ids must be unique")
+        # Lists inside the dumped values are not hashable, so compare their stable
+        # JSON representation instead of accepting subtly different periods/filters.
+        serialized_scopes = {
+            digest(selector.model_dump(mode="json", exclude={"tech_id"}))
+            for selector in self.selectors
+        }
+        if len(serialized_scopes) != 1:
+            raise ValueError("batch selectors must share one source scope")
+        return self
+
+
+class BodyLimit:
+    """Enforce a limit even for chunked requests before Pydantic parses JSON."""
+
+    def __init__(self, app, *, limit: int):
+        self.app, self.limit = app, limit
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            size += len(message.get("body", b""))
+            if size > self.limit:
+                response = JSONResponse(
+                    status_code=413,
+                    content={
+                        "code": "INPUT_TOO_LARGE",
+                        "message": "Request body exceeds the C input limit",
+                    },
+                )
+                return await response(scope, receive, send)
+            chunks.append(message)
+            if not message.get("more_body", False):
+                break
+        position = 0
+
+        async def replay():
+            nonlocal position
+            if position < len(chunks):
+                message = chunks[position]
+                position += 1
+                return message
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
+def configured_database_url() -> str | None:
+    if os.environ.get("C_COMPUTE_DATABASE_URL"):
+        return os.environ["C_COMPUTE_DATABASE_URL"]
+    required = ("POSTGRES_HOST", "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD")
+    if not all(os.environ.get(key) for key in required):
+        return None
+    return make_conninfo(
+        host=os.environ["POSTGRES_HOST"],
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    )
+
+
+def default_registry(*, dsn: str | None = None) -> TechnologyRegistry:
+    from registry.db import PostgresRegistryStore, RegistryStoreError
+
+    backend = os.getenv("C_REGISTRY_BACKEND", "postgres")
+    if backend == "postgres":
+        dsn = dsn or configured_database_url()
+        if not dsn:
+            raise RegistryStoreError("C Registry database is not configured")
+        source = PostgresRegistryStore(dsn)
+        selected = source.resolve_version(
+            os.getenv("C_REGISTRY_VERSION", "technology-registry/v1")
+        )
+        return source.load_registry(selected.registry_version)
+    if backend != "file":
+        raise RegistryStoreError("C_REGISTRY_BACKEND must be postgres or file")
+    configured = os.getenv("C_REGISTRY_PATH")
+    path = (
+        Path(configured)
+        if configured
+        else REGISTRY_ROOT / "technology_registry_20260911_4.json"
+    )
+    source_root = Path(
+        os.getenv(
+            "C_REGISTRY_REPOSITORY_ROOT", str(Path(__file__).resolve().parents[2])
+        )
+    )
+    return load_registry(path, repository_root=source_root)
+
+
+def compute_versions(kind: str, registry: TechnologyRegistry) -> dict[str, str]:
+    """A retry must not silently run different rules after a deployment."""
+    versions = {
+        "runtime": "c-compute-runtime/v3",
+        "registry": registry.registry_version,
+        "registry_sha256": digest(registry.model_dump(mode="json")),
+    }
+    if kind == "JOB_BATCH":
+        from job.input_union import INPUT_UNION_VERSION
+        from job.requirements import (
+            JOB_REQUIRED_LEVEL_POLICY_VERSION,
+            JOB_REQUIREMENTS_SCHEMA_VERSION,
+        )
+        from registry.review import REVIEW_QUEUE_VERSION
+
+        versions.update(
+            parser=JOB_REQUIREMENT_PARSER_VERSION,
+            quality=JOB_QUALITY_VERSION,
+            aggregation=JOB_DEMAND_AGGREGATION_VERSION,
+            input_union=INPUT_UNION_VERSION,
+            requirements=JOB_REQUIREMENTS_SCHEMA_VERSION,
+            required_level_policy=JOB_REQUIRED_LEVEL_POLICY_VERSION,
+            review_queue=REVIEW_QUEUE_VERSION,
+        )
+    elif kind == "ANALYSIS":
+        from job.matching import JOB_MATCHING_VERSION
+        from recommendation.engine import (
+            PREREQUISITE_POLICY_VERSION,
+            RECOMMENDATION_ALGORITHM_VERSION,
+        )
+        from recommendation.evidence import HELD_POLICY_VERSION, LEVEL_POLICY_VERSION
+        from recommendation.explanation import EXPLANATION_VERSION
+
+        versions.update(
+            algorithm=RECOMMENDATION_ALGORITHM_VERSION,
+            prerequisites=PREREQUISITE_POLICY_VERSION,
+            held=HELD_POLICY_VERSION,
+            level=LEVEL_POLICY_VERSION,
+            aggregation=JOB_DEMAND_AGGREGATION_VERSION,
+            explanation=EXPLANATION_VERSION,
+            matching=JOB_MATCHING_VERSION,
+        )
+    elif kind == "PUBLIC_REPO":
+        from github.public_analysis import PUBLIC_PARSER_VERSION
+
+        versions["parser"] = PUBLIC_PARSER_VERSION
+    else:
+        from trend.contracts import TREND_VERSION
+        from trend.job import JOB_TREND_POLICY_VERSION
+
+        versions["trend"] = TREND_VERSION
+        versions["job_population"] = JOB_TREND_POLICY_VERSION
+    return versions
+
+
+def archive_compute_versions(
+    archive_version: Literal["v1", "v2"], registry: TechnologyRegistry
+) -> dict[str, str]:
+    """Pin the current or historical Archive algorithm in event identity."""
+
+    versions = compute_versions("TREND", registry)
+    if archive_version == "v2":
+        from trend.archive_v2 import HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION
+
+        versions["archive_trend"] = HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION
+    else:
+        from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION
+
+        versions["archive_trend"] = ARCHIVE_TREND_ALGORITHM_VERSION
+    return versions
+
+
+def startup_registry(*, dsn: str | None = None) -> TechnologyRegistry | None:
+    """Retry only startup DB interruptions; a loaded snapshot stays process-pinned."""
+    from registry.db import RegistryStoreError
+
+    for attempt in range(1, 4):
+        try:
+            return default_registry(dsn=dsn)
+        except psycopg.OperationalError as exc:
+            # Exception messages can contain connection details. Log only safe tags.
+            LOGGER.warning(
+                "C Registry startup DB failure attempt=%s/3 error_type=%s sqlstate=%s",
+                attempt,
+                type(exc).__name__,
+                exc.sqlstate,
+            )
+            if attempt == 3:
+                # The process supervisor can restart after DB recovery. Keeping a
+                # live process with registry=None would never retry until rollout.
+                raise RuntimeError("Registry startup retries exhausted") from None
+            time.sleep(attempt)
+        except (RegistryStoreError, psycopg.Error) as exc:
+            LOGGER.error(
+                "C Registry requires setup or repair error_type=%s; "
+                "check migrations and approved import, then restart Worker",
+                type(exc).__name__,
+            )
+            # Missing approval/config/schema is not fixed by repeated DB reads.
+            # Keep liveness and authenticated /ready=503 available for diagnosis.
+            return None
+    return None  # All three attempts above either return or raise.
+
+
+def _weekly_trend_tiebreak(store: ComputeStore):
+    """Bounded Top3 Trend lookup for the recommendation build (S15P21E102-355).
+
+    조회는 추천을 저장할 때 한 번이다. 요청마다 부르지 않는 것은 결과가 snapshot
+    에 고정되기 때문이고, 후보마다 부르지 않는 것은 세 `tech_id` 를 한 질의로 물을
+    수 있기 때문이다(기간 목록 1회 + 값 1회).
+
+    Trend 를 얻지 못하면 `None` 을 돌려주어 기존 순서를 그대로 쓴다. Trend 는
+    순서 보정이지 추천 생성의 전제가 아니므로, 주간 집계가 아직 없다고 해서
+    추천 자체가 실패하면 안 된다. 조회 실패도 같게 다룬다.
+    """
+
+    from recommendation.engine import TrendTieBreakBasis
+    from recommendation.trend_tiebreak import TREND_METRIC, resolve_trend_basis
+
+    def lookup(tech_ids: tuple[str, ...]) -> TrendTieBreakBasis | None:
+        try:
+            basis = resolve_trend_basis(store, tech_ids)
+        except Exception:  # noqa: BLE001 -- 넓게 잡는 것이 의도다
+            # DB 장애든 저장된 payload 손상이든, Trend 조회 실패가 추천 생성을
+            # 막으면 안 된다. 여기서 좁은 예외만 잡으면 예상 못한 한 가지가
+            # 사용자의 추천 전체를 없앤다. 실패는 기록하고 기존 순서로 간다.
+            LOGGER.warning("trend tie-break lookup failed; keeping base order")
+            return None
+        if basis is None:
+            return None
+        return TrendTieBreakBasis(
+            source=basis.source,
+            granularity=basis.granularity,
+            period=basis.period,
+            metric=TREND_METRIC,
+            values=dict(basis.values),
+        )
+
+    return lookup
+
+
+def create_compute_app(
+    *,
+    store: ComputeStore | None = None,
+    token: str | None = None,
+    registry: TechnologyRegistry | None = None,
+    artifact_reader: Any = None,
+    max_body_bytes: int = 8 * 1024 * 1024,
+    intake_config: Path | None = None,
+) -> FastAPI:
+    app = create_health_app("worker")
+    app.add_middleware(BodyLimit, limit=max_body_bytes)
+    if registry is None:
+        registry = startup_registry(dsn=getattr(store, "_dsn", None))
+    mapper = RegistryMapper(registry) if registry is not None else None
+    token = token if token is not None else os.getenv("C_COMPUTE_TOKEN", "")
+    if store is None:
+        dsn = configured_database_url()
+        if dsn:
+            store = ComputeStore(
+                dsn, lease_seconds=int(os.getenv("C_COMPUTE_LEASE_SECONDS", "120"))
+            )
+    if (
+        artifact_reader is None
+        and os.getenv("C_ARTIFACT_ROOT")
+        and os.getenv("C_ARTIFACT_URI_PREFIX")
+    ):
+        from github.public_analysis import LocalMirrorArtifactReader
+
+        artifact_reader = LocalMirrorArtifactReader(
+            Path(os.environ["C_ARTIFACT_ROOT"]), os.environ["C_ARTIFACT_URI_PREFIX"]
+        )
+
+    configured_intake = intake_config or os.getenv("C_INTAKE_CONFIG")
+    projection_mode = os.getenv("C_JOB_DEMAND_PROJECTION_MODE", "legacy").lower()
+    if projection_mode not in {"legacy", "shadow", "projection"}:
+        raise ValueError(
+            "C_JOB_DEMAND_PROJECTION_MODE must be legacy, shadow, or projection"
+        )
+    projection_fallback = os.getenv(
+        "C_JOB_DEMAND_PROJECTION_FALLBACK", "false"
+    ).lower() in {"1", "true", "yes"}
+    demand_query_engine = os.getenv("C_JOB_DEMAND_QUERY_ENGINE", "python").lower()
+    if demand_query_engine not in {"python", "shadow", "sql"}:
+        raise ValueError("C_JOB_DEMAND_QUERY_ENGINE must be python, shadow, or sql")
+    demand_query_fallback = os.getenv(
+        "C_JOB_DEMAND_QUERY_FALLBACK", "false"
+    ).lower() in {"1", "true", "yes"}
+    matching_active_mode = os.getenv("C_JOB_MATCHING_ACTIVE_MODE", "legacy").lower()
+    if matching_active_mode not in {"legacy", "projection"}:
+        raise ValueError("C_JOB_MATCHING_ACTIVE_MODE must be legacy or projection")
+    matching_compute_mode = os.getenv("C_JOB_MATCHING_COMPUTE_MODE", "legacy").lower()
+    if matching_compute_mode not in {"legacy", "projection"}:
+        raise ValueError("C_JOB_MATCHING_COMPUTE_MODE must be legacy or projection")
+    from worker.projection_shadow import ProjectionShadow, compare_demands
+
+    shadow = (
+        ProjectionShadow(
+            sample_rate=float(os.getenv("C_JOB_DEMAND_PROJECTION_SHADOW_RATE", "0.01")),
+            queue_size=int(os.getenv("C_JOB_DEMAND_PROJECTION_SHADOW_QUEUE", "4")),
+        )
+        if projection_mode == "shadow"
+        else None
+    )
+    query_shadow = (
+        ProjectionShadow(
+            sample_rate=float(os.getenv("C_JOB_DEMAND_QUERY_SHADOW_RATE", "0.01")),
+            queue_size=int(os.getenv("C_JOB_DEMAND_QUERY_SHADOW_QUEUE", "4")),
+        )
+        if projection_mode == "projection" and demand_query_engine == "shadow"
+        else None
+    )
+    from worker.summary_cache import SummaryCache
+
+    summary_cache = SummaryCache(
+        max_size=int(os.getenv("C_JOB_DEMAND_SUMMARY_CACHE_SIZE", "256"))
+    )
+    projection_metrics = {
+        "projection_query_total": 0,
+        "projection_query_success_total": 0,
+        "projection_query_error_total": 0,
+        "projection_fallback_total": 0,
+        "projection_old_head_fallback_total": 0,
+        "projection_error_fallback_total": 0,
+        "projection_legacy_fallback_total": 0,
+        "projection_query_shadow_sidecar_skipped_total": 0,
+        "projection_query_last_duration_ms": None,
+        "projection_query_last_projection_version_id": None,
+    }
+    projection_metrics_lock = Lock()
+
+    def increment_projection_metric(name: str) -> None:
+        with projection_metrics_lock:
+            projection_metrics[name] += 1
+
+    def update_projection_metrics(**values) -> None:
+        with projection_metrics_lock:
+            projection_metrics.update(values)
+
+    def projection_metrics_snapshot() -> dict[str, Any]:
+        with projection_metrics_lock:
+            return dict(projection_metrics)
+
+    intake_runner = None
+    if configured_intake and registry is not None:
+        from worker.intake import configured_runner
+
+        if store is None or len(token) < 32:
+            raise ValueError("automatic intake requires configured database and token")
+        intake_runner = configured_runner(
+            Path(configured_intake), store, mapper, registry
+        )
+
+    @asynccontextmanager
+    async def lifespan(application):
+        if intake_runner:
+            intake_runner.start()
+        try:
+            yield
+        finally:
+            if intake_runner:
+                intake_runner.stop()
+            if shadow:
+                shadow.close()
+            if query_shadow:
+                query_shadow.close()
+
+    app.router.lifespan_context = lifespan
+    app.state.intake_runner = intake_runner
+
+    def authorized(authorization: Annotated[str | None, Header()] = None):
+        if len(token) < 32:
+            raise HTTPException(503, "C_COMPUTE_NOT_CONFIGURED")
+        supplied = authorization.removeprefix("Bearer ") if authorization else ""
+        if (
+            not authorization
+            or not authorization.startswith("Bearer ")
+            or not hmac.compare_digest(supplied.encode(), token.encode())
+        ):
+            raise HTTPException(401, "INTERNAL_AUTH_REQUIRED")
+        if registry is None:
+            raise HTTPException(503, "C_REGISTRY_UNAVAILABLE")
+
+    def database() -> ComputeStore:
+        if store is None:
+            raise HTTPException(503, "C_DATABASE_NOT_CONFIGURED")
+        return store
+
+    def snapshot(snapshot_id: str, owner: str | None, kind: str | None = None):
+        value = database().get_snapshot(snapshot_id, owner=owner)
+        if not value or (kind and value["kind"] != kind):
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
+        return value
+
+    def recommendation_snapshot_id(result_id: str, owner: str) -> str:
+        if result_id.startswith("c-"):
+            return result_id
+        value = database().get_user_result(result_id, owner=owner)
+        if value is None:
+            raise HTTPException(404, "RESULT_NOT_FOUND")
+        return value["recommendation_snapshot_id"]
+
+    def resolved_user_result(result_id: str, owner: str) -> dict[str, Any] | None:
+        """Resolve ur/c aliases and hydrate fields omitted by older compact rows."""
+
+        db = database()
+        if not hasattr(db, "get_user_result"):
+            return None
+        value = db.get_user_result(
+            result_id,
+            owner=owner,
+            compare_projection=matching_active_mode == "projection",
+        )
+        if value is None:
+            return None
+        payload = dict(value["payload"])
+        if result_id.startswith("c-") or "explanation" not in payload:
+            legacy = db.get_snapshot(value["recommendation_snapshot_id"], owner=owner)
+            legacy_payload = legacy.get("payload") if isinstance(legacy, dict) else None
+            if result_id.startswith("c-") and isinstance(legacy_payload, dict):
+                payload = dict(legacy_payload)
+            explanation = (
+                legacy_payload.get("explanation")
+                if isinstance(legacy_payload, dict)
+                else None
+            )
+            if isinstance(explanation, dict):
+                payload["explanation"] = explanation
+        return {**value, "payload": payload}
+
+    def execute(
+        event: Event,
+        kind: str,
+        owner: str | None,
+        compute: Callable[[], list[Artifact]],
+    ):
+        db = database()
+        request_payload = event.model_dump(mode="json")
+        # trace_id is delivery diagnostics, not computation input or idempotency identity.
+        request_payload.pop("trace_id")
+        if isinstance(event, AnalysisCompleted):
+            # Preserve hashes of events accepted before these additive rolling-deploy fields.
+            if event.target_key is None:
+                request_payload.pop("target_key", None)
+            if event.projection_version_id is None:
+                request_payload.pop("projection_version_id", None)
+        if isinstance(event, ArchiveTrendCompleted):
+            if event.archive_version == "v1":
+                # Preserve the pre-v2 request hash for legacy retries.
+                request_payload.pop("archive_version", None)
+            request_payload["compute_versions"] = archive_compute_versions(
+                event.archive_version, registry
+            )
+        else:
+            request_payload["compute_versions"] = compute_versions(kind, registry)
+        ticket = db.claim(
+            event_id=event.event_id,
+            kind=kind,
+            owner=owner,
+            occurred_at=event.occurred_at,
+            request=request_payload,
+        )
+        if ticket.status == "COMPLETED":
+            return {
+                "message": "C computation complete",
+                "data": {
+                    "event_id": event.event_id,
+                    "status": "COMPLETED",
+                    "results": ticket.results,
+                },
+            }
+        if ticket.token is None:
+            return JSONResponse(
+                status_code=202,
+                headers={"Retry-After": "2"},
+                content={
+                    "message": "C computation in progress",
+                    "data": {
+                        "event_id": event.event_id,
+                        "status": "PREPARING",
+                        "results": [],
+                    },
+                },
+            )
+        try:
+            with LeaseHeartbeat(db, ticket):
+                results = db.complete(ticket, compute())
+        except Exception:
+            try:
+                db.fail(ticket, "COMPUTE_FAILED")
+            except psycopg.Error:
+                pass  # The persisted lease allows recovery after database reconnect.
+            LOGGER.warning(
+                "C computation failed kind=%s event_id=%s trace_id=%s",
+                kind,
+                event.event_id,
+                event.trace_id,
+            )
+            raise
+        LOGGER.info(
+            "C computation completed kind=%s event_id=%s trace_id=%s",
+            kind,
+            event.event_id,
+            event.trace_id,
+        )
+        return {
+            "message": "C computation complete",
+            "data": {
+                "event_id": event.event_id,
+                "status": "COMPLETED",
+                "results": results,
+            },
+        }
+
+    @app.exception_handler(HTTPException)
+    async def http_error(request: Request, exc: HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"code": str(exc.detail), "message": str(exc.detail)},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_input(request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": "INVALID_INPUT",
+                "message": "Request does not satisfy the C compute contract",
+            },
+        )
+
+    @app.exception_handler(ValueError)
+    async def invalid_domain_input(request: Request, exc: ValueError):
+        from job.matching import MatchingResultTooLarge
+
+        if isinstance(exc, IdempotencyConflict):
+            code, status = "IDEMPOTENCY_CONFLICT", 409
+        elif isinstance(exc, MatchingResultTooLarge):
+            code, status = "RESULT_TOO_LARGE", 413
+        else:
+            code, status = "INVALID_INPUT", 422
+        return JSONResponse(status_code=status, content={"code": code, "message": code})
+
+    @app.exception_handler(StoredMatchingIntegrityError)
+    async def stored_matching_integrity_error(
+        request: Request, exc: StoredMatchingIntegrityError
+    ):
+        LOGGER.error("Stored matching integrity check failed", exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "STORED_MATCHING_INTEGRITY_FAILED",
+                "message": "Stored matching result failed an integrity check",
+            },
+        )
+
+    @app.exception_handler(PermissionError)
+    async def wrong_scope(request: Request, exc: PermissionError):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "code": "EVIDENCE_SCOPE_MISMATCH",
+                "message": "Evidence does not belong to the requested analysis",
+            },
+        )
+
+    @app.exception_handler(LeaseLost)
+    async def lease_lost(request: Request, exc: LeaseLost):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": "LEASE_LOST",
+                "message": "Retry the same event after the current attempt finishes",
+            },
+        )
+
+    @app.exception_handler(psycopg.Error)
+    async def db_error(request: Request, exc: psycopg.Error):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "C_DATABASE_UNAVAILABLE",
+                "message": "C database or migration is unavailable",
+            },
+        )
+
+    @app.exception_handler(ArchiveInputUnavailable)
+    async def archive_input_unavailable(request: Request, exc: ArchiveInputUnavailable):
+        LOGGER.error(
+            "Archive input unavailable error_type=%s errno=%s activity_path=%r endpoint=%s",
+            exc.error_type,
+            exc.errno,
+            exc.activity_path,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "ARCHIVE_INPUT_UNAVAILABLE",
+                "message": "Archive input cannot be read; check the input mount and permissions",
+            },
+        )
+
+    @app.exception_handler(Exception)
+    async def compute_error(request: Request, exc: Exception):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "COMPUTE_FAILED",
+                "message": "C computation failed; retry the same event",
+            },
+        )
+
+    @app.get("/ready", dependencies=[Depends(authorized)])
+    def ready():
+        if not database().ready():
+            raise HTTPException(503, "C_MIGRATION_REQUIRED")
+        projection_readiness = (
+            database().get_job_projection_readiness()
+            if hasattr(database(), "get_job_projection_readiness")
+            else {"status": "UNKNOWN"}
+        )
+        if (
+            projection_mode == "projection"
+            or matching_active_mode == "projection"
+            or matching_compute_mode == "projection"
+        ) and projection_readiness.get("status") != "READY":
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
+        if matching_compute_mode == "projection" and not projection_readiness.get(
+            "market_sql_ready", False
+        ):
+            raise HTTPException(503, "JOB_PROJECTION_SIDECAR_NOT_READY")
+        return {
+            "message": "C compute ready",
+            "data": {
+                "status": "READY",
+                "registry_version": registry.registry_version,
+                "job_projection": projection_readiness,
+                "job_matching_active_mode": matching_active_mode,
+            },
+        }
+
+    prefix = "/internal/v1/c"
+    auth = [Depends(authorized)]
+
+    from worker.review_api import install_review_routes
+
+    install_review_routes(
+        app, prefix=prefix, auth=auth, database=database, mapper=mapper
+    )
+
+    @app.get(prefix + "/intake/status", dependencies=auth)
+    def intake_status():
+        return {
+            "message": "C completed-output intake status",
+            "data": {
+                "configured": intake_runner is not None,
+                "running": bool(intake_runner and intake_runner.running),
+                "last_poll": intake_runner.last_report if intake_runner else None,
+                "public_sources": intake_runner.public_reports if intake_runner else [],
+                "job_projection_mode": projection_mode,
+                "job_projection_shadow": shadow.metrics() if shadow else None,
+                "job_projection_metrics": projection_metrics_snapshot(),
+                "job_demand_query_engine": demand_query_engine,
+                "job_demand_query_fallback": demand_query_fallback,
+                "job_demand_query_shadow": (
+                    query_shadow.metrics() if query_shadow else None
+                ),
+                "job_demand_summary_cache": summary_cache.metrics(),
+                "job_matching_active_mode": matching_active_mode,
+                "job_matching_compute_mode": matching_compute_mode,
+            },
+        }
+
+    @app.post(prefix + "/job-cohorts/resolve", dependencies=auth)
+    def resolve_job_cohort(
+        request: CohortCriteria | JobCohortResolveSelector,
+    ):
+        from worker.jobs import job_stream
+
+        selector = request if isinstance(request, JobCohortResolveSelector) else None
+        criteria = request if isinstance(request, CohortCriteria) else None
+        versions = compute_versions("JOB_BATCH", registry)
+        response_versions = {
+            **versions,
+            # This is a transport capability, not computation identity. Keeping
+            # it out of job_stream/input-union hashes avoids rebuilding snapshots.
+            "analysis_target_key": "current-user-result-target/v1",
+            # B sends the exact resolved Demand pair back on analysis completion
+            # only when this capability is present, keeping rolling deploys safe.
+            "analysis_demand_snapshot": "analysis-demand-snapshot/v1",
+        }
+        if matching_compute_mode == "projection":
+            projection_head = database().get_job_projection_head()
+            if projection_head is None:
+                raise HTTPException(503, "JOB_PROJECTION_NOT_READY")
+            response_versions["job_projection"] = projection_head[
+                "projection_version_id"
+            ]
+            if selector is not None:
+                criteria = selector.criteria_at(projection_head["observed_at"])
+            if criteria is None:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            projected = database().query_job_projection_cohort(
+                criteria,
+                projection_version_id=projection_head["projection_version_id"],
+            )
+            references_by_kind = database().store_projection_compatibility_pair(
+                projected.cohort, projected.snapshot
+            )
+            references = [
+                {
+                    "kind": "COHORT",
+                    "snapshot_id": references_by_kind["cohort_snapshot_id"],
+                },
+                {
+                    "kind": "DEMAND",
+                    "snapshot_id": references_by_kind["demand_snapshot_id"],
+                },
+            ]
+            message = "C pinned Projection cohort and demand reference"
+        elif intake_runner and intake_runner.job_set_sink:
+            if selector is not None:
+                selected = intake_runner.resolve_job_selector(selector)
+                criteria, result = selected if selected is not None else (None, None)
+            else:
+                result = intake_runner.resolve_job_criteria(criteria)
+            if not result:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            if result.get("status") == "PREPARING":
+                return JSONResponse(
+                    status_code=202,
+                    headers={"Retry-After": "2"},
+                    content={
+                        "message": "C cohort computation in progress",
+                        "data": {
+                            "status": "PREPARING",
+                            "criteria": criteria.model_dump(mode="json"),
+                            "compute_versions": versions,
+                        },
+                    },
+                )
+            references = result["results"]
+            message = "C latest verified input-union cohort and demand reference"
+        else:
+            if criteria is None:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            stream = job_stream(criteria, versions)
+            pair = database().get_job_head_pair(stream)
+            references = (
+                []
+                if pair is None
+                else [
+                    {"kind": "COHORT", "snapshot_id": pair["cohort_snapshot_id"]},
+                    {"kind": "DEMAND", "snapshot_id": pair["demand_snapshot_id"]},
+                ]
+            )
+            message = "C latest completed cohort and demand reference"
+        by_kind = {
+            row.get("kind"): row.get("snapshot_id")
+            for row in references
+            if isinstance(row, dict)
+        }
+        if (
+            len(references) != 2
+            or set(by_kind) != {"COHORT", "DEMAND"}
+            or not all(isinstance(value, str) for value in by_kind.values())
+        ):
+            raise HTTPException(404, "COHORT_NOT_PREPARED")
+        return {
+            "message": message,
+            "data": {
+                "cohort_snapshot_id": by_kind["COHORT"],
+                "demand_snapshot_id": by_kind["DEMAND"],
+                "criteria": criteria.model_dump(mode="json"),
+                "compute_versions": response_versions,
+            },
+        }
+
+    def _preparing_demand_response(criteria: CohortCriteria):
+        return JSONResponse(
+            status_code=202,
+            headers={"Retry-After": "2"},
+            content={
+                "message": "C demand preview computation in progress",
+                "data": {
+                    "status": "PREPARING",
+                    "criteria": criteria.model_dump(mode="json"),
+                },
+            },
+        )
+
+    @app.post(prefix + "/job-demands/preview", dependencies=auth)
+    def preview_job_demand(selector: JobCohortResolveSelector):
+        """Resolve a live selector and return its exact demand in one round trip."""
+
+        def legacy():
+            if not intake_runner or not intake_runner.job_set_sink:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            selected = intake_runner.resolve_job_selector(selector)
+            criteria, result = selected if selected is not None else (None, None)
+            if not result or criteria is None:
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            if result.get("status") == "PREPARING":
+                return criteria, result, None
+            demand_id = next(
+                (
+                    row.get("snapshot_id")
+                    for row in result.get("results", ())
+                    if isinstance(row, dict) and row.get("kind") == "DEMAND"
+                ),
+                None,
+            )
+            if not isinstance(demand_id, str):
+                raise HTTPException(404, "COHORT_NOT_PREPARED")
+            demand = DemandSnapshot.model_validate(
+                snapshot(demand_id, None, "DEMAND")["payload"]
+            )
+            if demand.criteria != criteria:
+                raise RuntimeError("resolved demand criteria is inconsistent")
+            return criteria, result, demand
+
+        if projection_mode == "projection":
+            started = time.perf_counter()
+            increment_projection_metric("projection_query_total")
+            fallback_recorded = False
+            error_recorded = False
+
+            def record_fallback(reason_metric: str) -> None:
+                nonlocal fallback_recorded
+                increment_projection_metric(reason_metric)
+                if not fallback_recorded:
+                    increment_projection_metric("projection_fallback_total")
+                    fallback_recorded = True
+
+            def record_error() -> None:
+                nonlocal error_recorded
+                if not error_recorded:
+                    increment_projection_metric("projection_query_error_total")
+                    error_recorded = True
+
+            try:
+
+                def python_projection():
+                    return (
+                        intake_runner.resolve_projected_job_selector(selector)
+                        if intake_runner
+                        and hasattr(intake_runner, "resolve_projected_job_selector")
+                        else database().resolve_job_projection_selector(selector)
+                    )
+
+                def sql_projection_for(pinned_criteria, projection_version_id):
+                    key = (
+                        projection_version_id,
+                        pinned_criteria.as_of.isoformat(),
+                        json.dumps(
+                            pinned_criteria.model_dump(mode="json"),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    )
+                    return summary_cache.get_or_compute(
+                        key,
+                        lambda: database().query_job_projection_demand_summary(
+                            pinned_criteria,
+                            projection_version_id=projection_version_id,
+                        ),
+                    )
+
+                def sql_projection():
+                    head = database().get_job_projection_head()
+                    if head is None:
+                        return None
+                    criteria = selector.criteria_at(head["observed_at"])
+                    demand = sql_projection_for(criteria, head["projection_version_id"])
+                    return criteria, demand
+
+                if demand_query_engine == "sql":
+                    try:
+                        selected = sql_projection()
+                    except Exception as exc:  # noqa: BLE001 - fallback policy is flag-driven
+                        from worker.job_projection_store import (
+                            JobProjectionSidecarNotReady,
+                        )
+
+                        if isinstance(exc, JobProjectionSidecarNotReady):
+                            record_fallback("projection_old_head_fallback_total")
+                            LOGGER.info(
+                                "projection_sql_old_head_python_fallback "
+                                "reason=SIDECAR_NOT_READY"
+                            )
+                            selected = python_projection()
+                        elif demand_query_fallback:
+                            record_error()
+                            record_fallback("projection_error_fallback_total")
+                            LOGGER.warning(
+                                "projection_sql_error_python_fallback error_type=%s",
+                                type(exc).__name__,
+                            )
+                            selected = python_projection()
+                        else:
+                            record_error()
+                            raise HTTPException(
+                                503, "JOB_PROJECTION_QUERY_FAILED"
+                            ) from None
+                else:
+                    selected = python_projection()
+                if selected is None:
+                    raise LookupError("projection head unavailable")
+                criteria, projected = selected
+                demand = (
+                    projected.snapshot if hasattr(projected, "snapshot") else projected
+                )
+                if demand_query_engine == "shadow" and query_shadow:
+                    python_demand = demand
+                    python_job_ids = tuple(projected.selected_job_ids)
+                    pinned_projection_id = python_demand.projection_version_id
+                    if pinned_projection_id is None:
+                        raise RuntimeError(
+                            "Python projection result has no pinned version"
+                        )
+
+                    def compare_query_engines():
+                        sql_criteria = criteria
+                        sql_demand = sql_projection_for(
+                            sql_criteria, pinned_projection_id
+                        )
+                        sql_job_ids = database().query_job_projection_selected_keys(
+                            sql_criteria,
+                            projection_version_id=pinned_projection_id,
+                        )
+                        return compare_demands(
+                            python_demand,
+                            sql_demand,
+                            legacy_job_ids=python_job_ids,
+                            projected_job_ids=sql_job_ids,
+                        )
+
+                    if query_shadow.should_sample(selector):
+                        readiness = database().get_job_projection_readiness()
+                        readiness_version = readiness.get("projection_version_id")
+                        sidecar_ready = readiness.get("market_sql_ready", False)
+                        same_head = readiness_version in {
+                            None,
+                            pinned_projection_id,
+                        }
+                        if sidecar_ready and same_head:
+                            query_shadow.submit(selector, compare_query_engines)
+                        else:
+                            query_shadow.skip("SIDECAR_NOT_READY_OR_HEAD_CHANGED")
+                            increment_projection_metric(
+                                "projection_query_shadow_sidecar_skipped_total"
+                            )
+                duration_ms = (time.perf_counter() - started) * 1000
+                increment_projection_metric("projection_query_success_total")
+                update_projection_metrics(
+                    projection_query_last_duration_ms=duration_ms,
+                    projection_query_last_projection_version_id=(
+                        demand.projection_version_id
+                    ),
+                )
+                LOGGER.info(
+                    "projection_query_completed duration_ms=%.3f "
+                    "projection_version_id=%s jobs=%s",
+                    duration_ms,
+                    demand.projection_version_id,
+                    demand.denominator,
+                )
+            except (LookupError, RuntimeError, psycopg.Error) as exc:
+                record_error()
+                LOGGER.warning(
+                    "projection_query_failed fallback=%s error_type=%s",
+                    projection_fallback,
+                    type(exc).__name__,
+                )
+                if not projection_fallback:
+                    raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+                record_fallback("projection_legacy_fallback_total")
+                criteria, result, demand = legacy()
+                if demand is None:
+                    return _preparing_demand_response(criteria)
+        else:
+            criteria, result, demand = legacy()
+            if demand is None:
+                return _preparing_demand_response(criteria)
+            if projection_mode == "shadow" and shadow:
+                cohort_id = next(
+                    (
+                        row.get("snapshot_id")
+                        for row in result.get("results", ())
+                        if isinstance(row, dict) and row.get("kind") == "COHORT"
+                    ),
+                    None,
+                )
+
+                def compare():
+                    selected_projection = intake_runner.resolve_projected_job_selector(
+                        selector
+                    )
+                    if selected_projection is None:
+                        raise LookupError("projection head unavailable")
+                    _, projected = selected_projection
+                    legacy_ids = None
+                    if isinstance(cohort_id, str):
+                        cohort = JobCohort.model_validate(
+                            snapshot(cohort_id, None, "COHORT")["payload"]
+                        )
+                        if cohort.matching_jobs is not None:
+                            legacy_ids = tuple(
+                                sorted(job.job_id for job in cohort.matching_jobs)
+                            )
+                    return compare_demands(
+                        demand,
+                        projected.snapshot,
+                        legacy_job_ids=legacy_ids,
+                        projected_job_ids=projected.selected_job_ids,
+                    )
+
+                shadow.submit(selector, compare)
+        return {
+            "message": "C latest verified job demand preview",
+            "data": demand.model_dump(mode="json"),
+        }
+
+    @app.get(prefix + "/registry", dependencies=auth)
+    def get_registry():
+        return {
+            "message": "C Registry snapshot",
+            "data": registry.model_dump(mode="json"),
+            "meta": {
+                "schema_version": registry.schema_version,
+                "registry_version": registry.registry_version,
+                "registry_sha256": digest(registry.model_dump(mode="json")),
+            },
+        }
+
+    @app.get(prefix + "/trends/rankings", dependencies=auth)
+    def get_trend_rankings(
+        source: Literal["GITHUB_GH_ARCHIVE", "JOB"],
+        granularity: PeriodGranularity,
+        period: Annotated[str | None, Query(min_length=4, max_length=16)] = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ):
+        """Rank one period's technologies across the whole Registry.
+
+        <h2>왜 조회하는 쪽이 기술을 고르지 않는가</h2>
+
+        "이 기간에 많이 관측된 기술"은 모집단 전체를 봐야 나오는 답이다. 부르는 쪽이
+        기술 열 개를 지정하면 그 답은 "내가 고른 열 개 중의 순위"가 되고, 그건 다른
+        질문이다. 그래서 이 endpoint 는 `tech_id` 를 받지 않는다.
+
+        <h2>왜 다시 계산하지 않는가</h2>
+
+        숫자는 이미 저장돼 있다. 기술마다 출처별 TREND head 가 있고 payload 에 기간별
+        point 가 들어 있으므로, 순위는 디스크에 있는 것을 정렬한 결과다. 계산 경로를
+        다시 부르면 같은 값을 훨씬 비싸게 얻는다.
+
+        <h2>품질</h2>
+
+        `data_status` 는 저장된 판정을 그대로 옮긴다. 값이 있는데 표본이 얇은 것과 값이
+        없는 것은 다른 사실이고, 앞의 것을 순위에서 빼면 화면은 "측정하지 못했다"고
+        말하게 된다(S15P21E102-327). 상태를 READY 로 바꾸지도 않는다.
+        """
+        names = {
+            technology.tech_id: technology.display_name
+            for technology in registry.technologies
+        }
+        store = database()
+        unit = TREND_RANKING_UNITS[source]
+        # 게시된 기간 목록은 언제나 함께 돌려준다. 화면이 기간을 옮기려면 어디로 갈 수
+        # 있는지 알아야 하고(S15P21E102-329), 그것을 달력으로 계산하면 게시되지 않은
+        # 주를 물어 값이 있는데도 빈 카드가 뜬다.
+        available = store.get_trend_periods(
+            source=source, granularity=granularity.value
+        )
+        # 기간을 생략하면 이 출처가 실제로 게시한 최신 기간이다.
+        period = period or (available[-1] if available else None)
+        if period is None or period not in available:
+            # 없는 기간은 오류가 아니라 빈 순위다. 그래야 화면이 기간을 옮기다 아직
+            # 집계되지 않은 곳에 닿아도 카드가 사라지지 않는다.
+            return {
+                "message": "C trend ranking",
+                "data": {
+                    "source": source,
+                    "granularity": granularity.value,
+                    "period": period,
+                    "available_periods": available,
+                    "unit": unit,
+                    "sample_repo_count": None,
+                    "registry_version": registry.registry_version,
+                    "technology_population": len(registry.technologies),
+                    "technologies": [],
+                },
+            }
+        rows = store.get_trend_rankings(
+            source=source,
+            granularity=granularity.value,
+            period=period,
+            limit=limit,
+        )
+        return {
+            "message": "C trend ranking",
+            "data": {
+                "source": source,
+                "granularity": granularity.value,
+                "period": period,
+                "available_periods": available,
+                "unit": unit,
+                # 모집단은 한 기간 안에서 기술마다 같다. 이것을 빼면 화면이 raw count 를
+                # 절대값으로 읽고, 코호트 크기가 다른 주차끼리 비교하게 된다
+                # (2026-08-31 = 4,045 / 2026-09-07 = 133).
+                "sample_repo_count": rows[0]["denominator"] if rows else None,
+                "registry_version": registry.registry_version,
+                "technology_population": len(registry.technologies),
+                "technologies": [
+                    {
+                        "tech_id": row["tech_id"],
+                        # Registry 에 없는 tech_id 는 이름을 지어내지 않는다.
+                        "display_name": names.get(row["tech_id"]),
+                        "rank": index + 1,
+                        "value": row["value"],
+                        "data_status": row["data_status"],
+                    }
+                    for index, row in enumerate(rows)
+                ],
+            },
+        }
+
+    @app.get(prefix + "/contracts", dependencies=auth)
+    def get_contracts():
+        return {
+            "message": "C input schemas",
+            "data": {
+                model.__name__: model.model_json_schema()
+                for model in (
+                    CohortCriteria,
+                    JobCohortResolveSelector,
+                    JobCompleted,
+                    AnalysisCompleted,
+                    PublicReposCompleted,
+                    TrendCompleted,
+                    ArchiveTrendCompleted,
+                    TrendResolveSelector,
+                    TrendResolveBatchRequest,
+                )
+            },
+        }
+
+    @app.post(prefix + "/job-batches/completed", dependencies=auth)
+    def job_completed(event: JobCompleted):
+        from worker.jobs import job_artifacts
+
+        def compute():
+            return job_artifacts(
+                event.batch,
+                event.criteria,
+                mapper,
+                compute_versions("JOB_BATCH", registry),
+            )
+
+        return execute(event, "JOB_BATCH", None, compute)
+
+    @app.post(prefix + "/analyses/completed", dependencies=auth)
+    def analysis_completed(event: AnalysisCompleted):
+        from recommendation.engine import build_recommendations
+
+        if (
+            event.user_id != event.evidence.user_id
+            or event.analysis_id != event.evidence.analysis_id
+            or any(r.user_id != event.user_id for r in event.evidence.repositories)
+        ):
+            raise PermissionError("Evidence scope mismatch")
+
+        def compute():
+            cohort = JobCohort.model_validate(
+                snapshot(event.cohort_snapshot_id, None, "COHORT")["payload"]
+            )
+            demand = (
+                DemandSnapshot.model_validate(
+                    snapshot(event.demand_snapshot_id, None, "DEMAND")["payload"]
+                )
+                if event.demand_snapshot_id is not None
+                else None
+            )
+            if event.projection_version_id != cohort.projection_version_id:
+                raise RuntimeError("event and cohort Projection identities differ")
+            if cohort.registry_version != registry.registry_version:
+                raise ValueError("cohort and runtime Registry versions differ")
+            result = build_recommendations(
+                cohort,
+                event.evidence,
+                user_id=event.user_id,
+                analysis_id=event.analysis_id,
+                demand_snapshot=demand,
+                trend_lookup=_weekly_trend_tiebreak(database()),
+            )
+            payload = result.model_dump(mode="json")
+            payload["cohort_snapshot_id"] = event.cohort_snapshot_id
+            if event.projection_version_id is not None:
+                # The recommendation Snapshot is the immutable parent of the
+                # compact result. Equal recommendation content computed against a
+                # later A→B→A projection must still have a distinct parent identity.
+                payload["projection_version_id"] = event.projection_version_id
+            from recommendation.explanation import explain_recommendations
+
+            payload["explanation"] = explain_recommendations(result).model_dump(
+                mode="json"
+            )
+            if cohort.matching_jobs is not None:
+                from job.matching import (
+                    build_job_matching,
+                    matching_reference,
+                    matching_storage_rows,
+                )
+
+                matching_result = build_job_matching(
+                    cohort,
+                    event.evidence,
+                    user_id=event.user_id,
+                    analysis_id=event.analysis_id,
+                )
+                payload["job_matching_ref"] = matching_reference(
+                    matching_result, cohort_snapshot_id=event.cohort_snapshot_id
+                )
+                matching = matching_storage_rows(matching_result)
+                # Page reads need the recommendation KPI and its exact demand basis.
+                # Keep them in the existing JSON metadata row so new results need no
+                # second snapshot lookup and no schema migration. Older rows fall back
+                # to the recommendation snapshot in the read route below.
+                matching["metadata"]["current_count"] = result.current_count
+                matching["metadata"]["demand"] = result.demand.model_dump(mode="json")
+            else:
+                matching = None
+            stream = digest(
+                {
+                    "cohort": event.cohort_snapshot_id,
+                    "criteria": cohort.criteria.model_dump(mode="json"),
+                }
+            )
+            return [
+                Artifact(
+                    "RECOMMENDATION",
+                    event.user_id,
+                    payload,
+                    stream,
+                    matching=matching,
+                    projection_version_id=event.projection_version_id,
+                    result_target_key=event.target_key,
+                )
+            ]
+
+        return execute(event, "ANALYSIS", event.user_id, compute)
+
+    @app.get(prefix + "/snapshots/{snapshot_id}", dependencies=auth)
+    def get_snapshot(snapshot_id: ResultReferenceId, user_id: Identifier | None = None):
+        value = (
+            resolved_user_result(snapshot_id, user_id) if user_id is not None else None
+        )
+        if value is not None:
+            payload = active_recommendation_payload(value["payload"])
+            return {
+                "message": "C compact user result",
+                "data": {
+                    "snapshot_id": snapshot_id,
+                    "kind": "RECOMMENDATION",
+                    "result_status": value["status"],
+                    "recompute_required": value["recompute_required"],
+                    "payload": payload,
+                },
+            }
+        if snapshot_id.startswith("ur-"):
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
+        stored = snapshot(snapshot_id, user_id)
+        if user_id is not None and stored["kind"] == "RECOMMENDATION":
+            stored = {
+                **stored,
+                "payload": active_recommendation_payload(stored["payload"]),
+            }
+        return {"message": "C snapshot", "data": stored}
+
+    def active_recommendation_payload(payload: dict) -> dict:
+        """Serve live impact counts without mutating the immutable calculation."""
+        if matching_active_mode != "projection" or payload.get(
+            "algorithm_version"
+        ) not in {
+            "c-recommendation/condition-impact/v8",
+            "c-recommendation/condition-impact/v9",
+        }:
+            return payload
+        from recommendation.engine import ConditionImpact, active_condition_impact
+
+        candidates = payload.get("candidates", [])
+        impacts = [
+            ConditionImpact.model_validate(candidate["impact"])
+            for candidate in candidates
+        ]
+        all_ids = {job_id for impact in impacts for job_id in impact.affected_job_ids}
+        try:
+            active_ids = database().get_active_job_ids(all_ids, as_of=datetime.now(UTC))
+        except LookupError:
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+        result = dict(payload)
+        result["candidates"] = [
+            {
+                **candidate,
+                "impact": active_condition_impact(impact, active_ids).model_dump(
+                    mode="json"
+                ),
+            }
+            for candidate, impact in zip(candidates, impacts, strict=True)
+        ]
+        if isinstance(payload.get("explanation"), dict):
+            explanation = dict(payload["explanation"])
+            # Immutable facts quote the calculation-time counts. Once the live
+            # posting gate changes those counts, do not serve a stale claim.
+            explanation["facts"] = [
+                fact
+                for fact in explanation.get("facts", [])
+                if fact.get("kind") != "IMPACT"
+            ]
+            result["explanation"] = explanation
+        return result
+
+    @app.get(prefix + "/recommendations/{snapshot_id}/summary", dependencies=auth)
+    def get_recommendation_summary(snapshot_id: ResultReferenceId, user_id: Identifier):
+        """Send only the fields consumed by B's next-skill card.
+
+        The immutable full snapshot remains available for Skill Gap, What-if,
+        integrity validation, and historical reads. A recommendation card does
+        not need the user's entire held/gap evidence or every affected job ID.
+        """
+        value = resolved_user_result(snapshot_id, user_id)
+        if value is None:
+            if snapshot_id.startswith("ur-"):
+                raise HTTPException(404, "RESULT_NOT_FOUND")
+            stored = snapshot(snapshot_id, user_id, "RECOMMENDATION")
+            payload = active_recommendation_payload(stored["payload"])
+            result_status = "LEGACY"
+            recompute_required = False
+        else:
+            payload = active_recommendation_payload(value["payload"])
+            result_status = value["status"]
+            recompute_required = value["recompute_required"]
+        selected = {
+            key: payload[key]
+            for key in (
+                "user_id",
+                "analysis_id",
+                "cohort_id",
+                "status",
+                "current_count",
+                "demand",
+                "personal_levels",
+                "assessment_ceilings",
+                "data_gaps",
+                "explanation",
+            )
+            if key in payload
+        }
+        if isinstance(selected.get("demand"), dict):
+            selected["demand"] = {
+                key: value
+                for key, value in selected["demand"].items()
+                if key != "technologies"
+            }
+        if isinstance(selected.get("explanation"), dict):
+            selected["explanation"] = {
+                "mode": selected["explanation"].get("mode"),
+                "facts": [
+                    {
+                        key: fact[key]
+                        for key in ("kind", "tech_id", "text")
+                        if key in fact
+                    }
+                    for fact in selected["explanation"].get("facts", [])
+                    if isinstance(fact, dict)
+                ],
+            }
+        selected["candidates"] = [
+            {
+                **{key: value for key, value in candidate.items() if key != "fact_ids"},
+                "impact": (
+                    {
+                        key: value
+                        for key, value in candidate["impact"].items()
+                        if key
+                        not in {
+                            "required_job_ids",
+                            "preferred_job_ids",
+                            "affected_job_ids",
+                        }
+                    }
+                    if isinstance(candidate.get("impact"), dict)
+                    else None
+                ),
+                "what_if": (
+                    {
+                        key: value
+                        for key, value in candidate["what_if"].items()
+                        if key
+                        not in {
+                            "current_job_ids",
+                            "newly_matched_job_ids",
+                            "projected_job_ids",
+                        }
+                    }
+                    if isinstance(candidate.get("what_if"), dict)
+                    else None
+                ),
+            }
+            for candidate in payload.get("candidates", [])
+        ]
+        return {
+            "message": "C recommendation summary",
+            "data": {
+                "snapshot_id": snapshot_id,
+                "kind": "RECOMMENDATION",
+                "result_status": result_status,
+                "recompute_required": recompute_required,
+                "payload": selected,
+            },
+        }
+
+    @app.get(prefix + "/results/{result_id}", dependencies=auth)
+    def get_user_result(result_id: ResultReferenceId, user_id: Identifier):
+        value = resolved_user_result(result_id, user_id)
+        if value is not None:
+            return {"message": "C user result", "data": value}
+        if result_id.startswith("c-"):
+            legacy = snapshot(result_id, user_id, "RECOMMENDATION")
+            return {
+                "message": "C legacy user result",
+                "data": {
+                    "result_id": result_id,
+                    "status": "LEGACY",
+                    "recompute_required": False,
+                    "recommendation_snapshot_id": result_id,
+                    "payload": legacy["payload"],
+                },
+            }
+        raise HTTPException(404, "RESULT_NOT_FOUND")
+
+    @app.get(prefix + "/users/{user_id}/results/current", dependencies=auth)
+    def get_current_user_result(
+        user_id: Identifier,
+        target_key: Annotated[str, Query(min_length=1, max_length=200)],
+    ):
+        if any(ord(character) < 32 for character in target_key):
+            raise HTTPException(422, "INVALID_TARGET_KEY")
+        db = database()
+        value = (
+            db.get_current_user_result(
+                owner=user_id,
+                target_key=target_key,
+                compare_projection=matching_active_mode == "projection",
+            )
+            if hasattr(db, "get_current_user_result")
+            else None
+        )
+        if value is None:
+            raise HTTPException(404, "RESULT_NOT_FOUND")
+        return {"message": "C current user result", "data": value}
+
+    @app.get(prefix + "/recommendations/{snapshot_id}/job-postings", dependencies=auth)
+    def get_postings(
+        snapshot_id: ResultReferenceId,
+        user_id: Identifier,
+        mode: Literal["CURRENT", "WHAT_IF", "IMPACT"] = "CURRENT",
+        recommended_tech_id: str | None = None,
+        impact_kind: Literal["ALL", "REQUIRED", "PREFERRED"] = "ALL",
+        page: Annotated[int, Query(ge=0)] = 0,
+        size: Annotated[int, Query(ge=1, le=50)] = 20,
+    ):
+        from recommendation.engine import (
+            list_related_jobs,
+            snapshot_from_stored_payload,
+        )
+
+        legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
+        # The row also carries cohort/explanation/matching/projection metadata.
+        # Reading by the model's field list keeps the next additive key from
+        # turning this page into INVALID_INPUT (S15P21E102-368).
+        result = snapshot_from_stored_payload(
+            snapshot(legacy_snapshot_id, user_id, "RECOMMENDATION")["payload"]
+        )
+        active_ids = None
+        if matching_active_mode == "projection":
+            all_ids = set(result.current_job_ids)
+            for candidate in result.candidates:
+                if candidate.impact is not None:
+                    all_ids.update(candidate.impact.affected_job_ids)
+                elif candidate.what_if is not None:
+                    all_ids.update(candidate.what_if.projected_job_ids)
+            try:
+                active_ids = database().get_active_job_ids(
+                    all_ids, as_of=datetime.now(UTC)
+                )
+            except LookupError:
+                raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+        listing = list_related_jobs(
+            result,
+            user_id=user_id,
+            view=mode,
+            tech_id=recommended_tech_id,
+            impact_kind=impact_kind,
+            offset=page * size,
+            limit=size,
+            active_job_ids=active_ids,
+        )
+        current_result = resolved_user_result(snapshot_id, user_id)
+        return {
+            "message": "C matching job postings",
+            "data": {
+                **listing.model_dump(mode="json"),
+                "calculation_snapshot_id": listing.snapshot_id,
+                "snapshot_id": snapshot_id,
+                "result_id": (
+                    current_result["result_id"] if current_result is not None else None
+                ),
+                "result_status": (
+                    current_result["status"] if current_result is not None else "LEGACY"
+                ),
+                "recompute_required": (
+                    current_result["recompute_required"]
+                    if current_result is not None
+                    else False
+                ),
+            },
+        }
+
+    def legacy_matching_result(snapshot_id: str, user_id: str):
+        from job.matching import MatchingResultTooLarge, validate_job_matching
+
+        payload = snapshot(snapshot_id, user_id, "RECOMMENDATION")["payload"]
+        if "job_matching" not in payload:
+            raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
+        try:
+            result = validate_job_matching(payload["job_matching"])
+            if (
+                result.user_id != user_id
+                or result.analysis_id != payload["analysis_id"]
+                or result.cohort_id != payload["cohort_id"]
+            ):
+                raise ValueError("stored matching scope mismatch")
+            return result
+        except MatchingResultTooLarge as exc:
+            raise HTTPException(413, "LEGACY_MATCHING_RESULT_TOO_LARGE") from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StoredMatchingIntegrityError(
+                "legacy embedded matching result is inconsistent"
+            ) from exc
+
+    def matching_page(
+        snapshot_id: str,
+        user_id: str,
+        *,
+        page: int,
+        size: int,
+        include_conditional: bool,
+    ):
+        legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
+        try:
+            kwargs = {
+                "owner": user_id,
+                "offset": page * size,
+                "limit": size,
+                "include_conditional": include_conditional,
+            }
+            if matching_active_mode == "projection":
+                kwargs.update(active_only=True, as_of=datetime.now(UTC))
+            stored = database().get_matching_page(legacy_snapshot_id, **kwargs)
+        except LookupError:
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+        if stored is None:
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
+        if stored["status"] == "NOT_PREPARED":
+            raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
+        if stored["status"] == "LEGACY_EMBEDDED":
+            result = legacy_matching_result(legacy_snapshot_id, user_id)
+            active_ids = None
+            if matching_active_mode == "projection":
+                try:
+                    active_ids = database().get_active_job_ids(
+                        (row.job.job_id for row in result.jobs),
+                        as_of=datetime.now(UTC),
+                    )
+                except LookupError:
+                    raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+            active_rows = tuple(
+                row
+                for row in result.jobs
+                if (active_ids is None or row.job.job_id in active_ids)
+            )
+            rows = tuple(
+                row
+                for row in active_rows
+                if include_conditional or row.job.eligibility == "ELIGIBLE"
+            )
+            offset = page * size
+            items = (
+                []
+                if offset >= len(rows)
+                else [
+                    row.model_dump(mode="json") for row in rows[offset : offset + size]
+                ]
+            )
+            return {
+                "calculation_snapshot_id": result.calculation_snapshot_id,
+                "metadata": result.model_dump(
+                    mode="json", exclude={"jobs", "calculation_snapshot_id"}
+                ),
+                "total_count": len(active_rows),
+                "eligible_count": sum(
+                    row.job.eligibility == "ELIGIBLE" for row in active_rows
+                ),
+                "conditional_count": sum(
+                    row.job.eligibility == "CONDITIONAL" for row in active_rows
+                ),
+                "items": items,
+                "has_next": offset + size < len(rows),
+            }
+        return stored
+
+    @app.get(
+        prefix + "/recommendations/{snapshot_id}/matching-job-postings",
+        dependencies=auth,
+    )
+    def get_matching_postings(
+        snapshot_id: ResultReferenceId,
+        user_id: Identifier,
+        page: Annotated[int, Query(ge=0)] = 0,
+        size: Annotated[int, Query(ge=1, le=50)] = 20,
+        include_conditional: bool = False,
+    ):
+        stored = matching_page(
+            snapshot_id,
+            user_id,
+            page=page,
+            size=size,
+            include_conditional=include_conditional,
+        )
+        metadata = stored["metadata"]
+        current_count = metadata.get("current_count")
+        if matching_active_mode == "projection" and isinstance(
+            stored.get("active_current_count"), int
+        ):
+            current_count = stored["active_current_count"]
+        demand = metadata.get("demand")
+        if (
+            not isinstance(current_count, int)
+            or current_count < 0
+            or not isinstance(demand, dict)
+            or demand.get("cohort_id") != metadata["cohort_id"]
+        ):
+            # Rolling-deploy compatibility for matching rows written before the
+            # additive metadata existed. The fallback stays inside C, so B still
+            # receives one response and does not fan out per page.
+            recommendation = snapshot(
+                recommendation_snapshot_id(snapshot_id, user_id),
+                user_id,
+                "RECOMMENDATION",
+            )["payload"]
+            current_count = recommendation.get("current_count")
+            demand = recommendation.get("demand")
+        if (
+            not isinstance(current_count, int)
+            or current_count < 0
+            or not isinstance(demand, dict)
+            or demand.get("cohort_id") != metadata["cohort_id"]
+        ):
+            # Embedded v1 recommendations predate both summary fields. Keep those
+            # rows readable and expose unknown instead of inventing a count/basis.
+            current_count = None
+            demand = None
+        total_count = (
+            stored["total_count"] if include_conditional else stored["eligible_count"]
+        )
+        return {
+            "message": "C partial matching job postings",
+            "data": {
+                "snapshot_id": snapshot_id,
+                "result_id": stored.get("result_id"),
+                "result_status": stored.get("result_status", "LEGACY"),
+                "calculation_snapshot_id": stored["calculation_snapshot_id"],
+                "schema_version": metadata["schema_version"],
+                "cohort_id": metadata["cohort_id"],
+                "analysis_id": metadata["analysis_id"],
+                "criteria": metadata["criteria"],
+                "registry_version": metadata["registry_version"],
+                "held_policy_version": metadata["held_policy_version"],
+                "level_policy_version": metadata["level_policy_version"],
+                "evidence_rule_version": metadata["evidence_rule_version"],
+                "total_count": total_count,
+                "conditional_count": stored["conditional_count"],
+                "excluded_conditional_count": (
+                    0 if include_conditional else stored["conditional_count"]
+                ),
+                "current_count": current_count,
+                "demand": demand,
+                "page": page,
+                "size": size,
+                "has_next": stored["has_next"],
+                "items": stored["items"],
+                "data_gaps": metadata["data_gaps"],
+            },
+        }
+
+    @app.get(
+        prefix + "/recommendations/{snapshot_id}/matching-job-posting",
+        dependencies=auth,
+    )
+    def get_matching_posting(
+        snapshot_id: ResultReferenceId,
+        user_id: Identifier,
+        job_id: Annotated[str, Query(min_length=1, max_length=256)],
+    ):
+        legacy_snapshot_id = recommendation_snapshot_id(snapshot_id, user_id)
+        try:
+            kwargs = {"owner": user_id, "job_id": job_id}
+            if matching_active_mode == "projection":
+                kwargs.update(active_only=True, as_of=datetime.now(UTC))
+            stored = database().get_matching_detail(legacy_snapshot_id, **kwargs)
+        except LookupError:
+            raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+        if stored is None:
+            raise HTTPException(404, "SNAPSHOT_NOT_FOUND")
+        if stored["status"] == "NOT_PREPARED":
+            raise HTTPException(409, "JOB_MATCHING_NOT_PREPARED")
+        if stored["status"] == "LEGACY_EMBEDDED":
+            result = legacy_matching_result(legacy_snapshot_id, user_id)
+            row = next((row for row in result.jobs if row.job.job_id == job_id), None)
+            if row is not None and matching_active_mode == "projection":
+                try:
+                    active_ids = database().get_active_job_ids(
+                        (job_id,), as_of=datetime.now(UTC)
+                    )
+                except LookupError:
+                    raise HTTPException(503, "JOB_PROJECTION_NOT_READY") from None
+                if job_id not in active_ids:
+                    row = None
+            stored = {
+                "calculation_snapshot_id": result.calculation_snapshot_id,
+                "metadata": result.model_dump(
+                    mode="json", exclude={"jobs", "calculation_snapshot_id"}
+                ),
+                "item": row.model_dump(mode="json") if row else None,
+            }
+        if stored["item"] is None:
+            raise HTTPException(404, "JOB_NOT_FOUND")
+        metadata = stored["metadata"]
+        return {
+            "message": "C partial matching job detail",
+            "data": {
+                "snapshot_id": snapshot_id,
+                "result_id": stored.get("result_id"),
+                "result_status": stored.get("result_status", "LEGACY"),
+                "calculation_snapshot_id": stored["calculation_snapshot_id"],
+                "cohort_id": metadata["cohort_id"],
+                "analysis_id": metadata["analysis_id"],
+                "item": stored["item"],
+            },
+        }
+
+    @app.post(prefix + "/public-repositories/completed", dependencies=auth)
+    def public_completed(event: PublicReposCompleted):
+        from github.public_analysis import analyze_public_batch
+
+        if artifact_reader is None:
+            raise HTTPException(503, "C_ARTIFACT_READER_NOT_CONFIGURED")
+
+        def compute():
+            result = analyze_public_batch(
+                event.batch,
+                artifact_reader,
+                mapper,
+                include_partial=event.include_partial,
+            )
+            payload = result.model_dump(mode="json")
+            return [
+                Artifact(
+                    "PUBLIC_GITHUB",
+                    None,
+                    payload,
+                    digest(
+                        {
+                            "batch": event.batch.dataset_snapshot_id,
+                            "versions": compute_versions("PUBLIC_REPO", registry),
+                            "collection_policy": event.batch.collection_policy.policy_version,
+                            "include_partial": event.include_partial,
+                        }
+                    ),
+                )
+            ]
+
+        return execute(event, "PUBLIC_REPO", None, compute)
+
+    @app.post(prefix + "/archive-trends/completed", dependencies=auth)
+    def archive_completed(event: ArchiveTrendCompleted):
+        from worker.archive_input import build_archive_artifact
+
+        return execute(
+            event,
+            "TREND",
+            None,
+            lambda: [
+                build_archive_artifact(event, registry=registry, snapshot=snapshot)
+            ],
+        )
+
+    def trend_resolve_context(selector: TrendResolveSelector):
+        from trend.archive import ARCHIVE_TREND_ALGORITHM_VERSION
+        from trend.archive_v2 import (
+            HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION,
+        )
+        from trend.job import JOB_TREND_POLICY_VERSION
+        from worker.trend_streams import (
+            archive_trend_stream,
+            job_trend_filters,
+            job_trend_stream,
+            weekly_activity_trend_stream,
+        )
+
+        active = any(
+            technology.tech_id == selector.tech_id
+            and technology.status.value == "ACTIVE"
+            for technology in registry.technologies
+        )
+        if not active:
+            raise ValueError("tech_id must reference an active Registry technology")
+        expected_job_filters = None
+        if selector.source == "JOB":
+            algorithm = JOB_TREND_POLICY_VERSION
+            minimum = 1 if selector.min_jobs is None else selector.min_jobs
+            expected_job_filters = job_trend_filters(
+                target_role=selector.target_role,
+                sources=selector.sources or (),
+                regions=selector.regions,
+                career_levels=selector.career_levels,
+                min_jobs=minimum,
+                registry_version=registry.registry_version,
+            )
+            stream = job_trend_stream(
+                tech_id=selector.tech_id,
+                periods=selector.periods,
+                target_role=selector.target_role,
+                sources=selector.sources or (),
+                regions=selector.regions,
+                career_levels=selector.career_levels,
+                min_jobs=minimum,
+                registry_version=registry.registry_version,
+                versions=compute_versions("TREND", registry),
+            )
+        elif selector.source == "WEEKLY_REPO_ACTIVITY":
+            algorithm = ARCHIVE_TREND_ALGORITHM_VERSION
+            stream = weekly_activity_trend_stream(
+                tech_id=selector.tech_id,
+                registry_version=registry.registry_version,
+                include_partial=selector.include_partial,
+            )
+        else:
+            historical = selector.source == "GH_ARCHIVE_HISTORICAL"
+            archive_version = "v2" if historical else "v1"
+            algorithm = (
+                HISTORICAL_ARCHIVE_TREND_ALGORITHM_VERSION
+                if historical
+                else ARCHIVE_TREND_ALGORITHM_VERSION
+            )
+            stream = archive_trend_stream(
+                archive_version=archive_version,
+                tech_id=selector.tech_id,
+                periods=selector.periods,
+                granularity=selector.granularity.value,
+                include_partial=selector.include_partial,
+                registry_version=registry.registry_version,
+                algorithm=algorithm,
+            )
+        return stream, algorithm, expected_job_filters
+
+    def resolved_trend_data(
+        selector: TrendResolveSelector,
+        resolved: dict[str, Any],
+        algorithm: str,
+        expected_job_filters,
+    ):
+        from trend.archive import ArchiveTrendResult
+        from trend.archive_v2 import HistoricalArchiveTrendResult
+        from trend.contracts import TrendResult
+
+        payload = resolved.get("payload")
+        if not isinstance(payload, dict):
+            raise TypeError("resolved Trend payload is invalid")
+        try:
+            result = (
+                TrendResult.model_validate(payload)
+                if selector.source == "JOB"
+                else (
+                    HistoricalArchiveTrendResult.model_validate(payload)
+                    if selector.source == "GH_ARCHIVE_HISTORICAL"
+                    else ArchiveTrendResult.model_validate(payload)
+                )
+            )
+        except ValueError as exc:
+            raise RuntimeError("resolved Trend payload is invalid") from exc
+        periods = [point.period for point in result.points]
+        if selector.source == "JOB":
+            consistent = (
+                result.source == "JOB"
+                and result.tech_id == selector.tech_id
+                and result.registry_version == registry.registry_version
+                and result.algorithm_version == algorithm
+                and result.granularity == PeriodGranularity.MONTH.value
+                and periods == list(selector.periods)
+                and result.filters == expected_job_filters
+            )
+            include_partial = False
+        else:
+            expected_granularity = (
+                PeriodGranularity.WEEK
+                if selector.source == "WEEKLY_REPO_ACTIVITY"
+                else selector.granularity
+            )
+            consistent = (
+                result.tech_id == selector.tech_id
+                and result.registry_version == registry.registry_version
+                and result.algorithm_version == algorithm
+                and result.granularity is expected_granularity
+                and result.include_partial is selector.include_partial
+                and (
+                    selector.source == "WEEKLY_REPO_ACTIVITY"
+                    or periods == list(selector.periods)
+                )
+            )
+            include_partial = result.include_partial
+        if not consistent:
+            raise RuntimeError("resolved Trend scope is inconsistent")
+        return {
+            "snapshot_id": resolved["snapshot_id"],
+            "selector": selector.public_identity(),
+            "schema_version": result.schema_version,
+            "status": result.status.value,
+            "registry_version": result.registry_version,
+            "algorithm_version": result.algorithm_version,
+            "granularity": (
+                result.granularity
+                if selector.source == "JOB"
+                else result.granularity.value
+            ),
+            "periods": periods,
+            "include_partial": include_partial,
+            "lineage": {
+                "event_id": resolved["event_id"],
+                "occurred_at": resolved["occurred_at"],
+            },
+        }
+
+    @app.post(prefix + "/trends/resolve", dependencies=auth)
+    def resolve_trend(selector: TrendResolveSelector):
+        stream, algorithm, expected_job_filters = trend_resolve_context(selector)
+        resolved = database().get_head_snapshot("TREND", None, stream)
+        if resolved is None:
+            raise HTTPException(404, "TREND_NOT_PREPARED")
+        return {
+            "message": "C current public Trend reference",
+            "data": resolved_trend_data(
+                selector, resolved, algorithm, expected_job_filters
+            ),
+        }
+
+    @app.post(prefix + "/trends/resolve-batch", dependencies=auth)
+    def resolve_trend_batch(request: TrendResolveBatchRequest):
+        """Resolve up to ten technologies with one B-to-C HTTP round trip."""
+
+        contexts = [
+            (selector, *trend_resolve_context(selector))
+            for selector in request.selectors
+        ]
+        streams = tuple(context[1] for context in contexts)
+        resolved_by_stream = database().get_head_snapshots(
+            kind="TREND", owner=None, streams=streams
+        )
+        items = []
+        for selector, stream, algorithm, expected_job_filters in contexts:
+            resolved = resolved_by_stream.get(stream)
+            if resolved is None:
+                items.append(
+                    {
+                        "tech_id": selector.tech_id,
+                        "status": "NOT_PREPARED",
+                        "code": "TREND_NOT_PREPARED",
+                        "snapshot": None,
+                    }
+                )
+                continue
+            resolved_trend_data(selector, resolved, algorithm, expected_job_filters)
+            items.append(
+                {
+                    "tech_id": selector.tech_id,
+                    "status": "READY",
+                    "code": None,
+                    "snapshot": {
+                        "snapshot_id": resolved["snapshot_id"],
+                        "kind": "TREND",
+                        "payload": resolved["payload"],
+                    },
+                }
+            )
+        return {"message": "C public Trend batch", "data": {"items": items}}
+
+    @app.post(prefix + "/trends/completed", dependencies=auth)
+    def trend_completed(event: TrendCompleted):
+        from trend.github import github_trend, parse_innovation_graph_csv
+        from trend.job import job_trend
+        from worker.trend_streams import source_trend_stream
+
+        def compute():
+            if event.source == "JOB":
+                if (
+                    event.csv_text is not None
+                    or event.source_uri
+                    or event.source_version
+                ):
+                    raise ValueError("JOB input must reference demand snapshots only")
+                demands = tuple(
+                    DemandSnapshot.model_validate(
+                        snapshot(sid, None, "DEMAND")["payload"]
+                    )
+                    for sid in event.demand_snapshot_ids
+                )
+                result = job_trend(
+                    event.tech_id, demands or None, registry, periods=event.periods
+                )
+            else:
+                if event.demand_snapshot_ids:
+                    raise ValueError("GITHUB does not accept demand snapshots")
+                if event.csv_text is not None:
+                    if not event.source_uri or not event.source_version:
+                        raise ValueError("GITHUB source provenance is required")
+                    dataset = parse_innovation_graph_csv(
+                        event.csv_text,
+                        source_version=event.source_version,
+                        source_uri=event.source_uri,
+                    )
+                else:
+                    if event.source_uri or event.source_version:
+                        raise ValueError("GITHUB source metadata requires a dataset")
+                    dataset = None
+                result = github_trend(
+                    event.tech_id, dataset, registry, periods=event.periods
+                )
+            return [
+                Artifact(
+                    "TREND",
+                    None,
+                    result.model_dump(mode="json"),
+                    source_trend_stream(
+                        tech_id=event.tech_id,
+                        source=event.source,
+                        periods=event.periods,
+                        versions=compute_versions("TREND", registry),
+                        # Validated non-period filters include JOB cohort rule
+                        # versions, never values, run IDs or source snapshots.
+                        filters=result.filters,
+                    ),
+                )
+            ]
+
+        return execute(event, "TREND", None, compute)
+
+    return app

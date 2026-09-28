@@ -1,0 +1,20 @@
+[Unit]
+Description=GitJob health probe
+Documentation=https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21E102/-/blob/develop/docs/infra/health-monitoring.md
+# Nothing to check before Docker is up, and a probe during boot would report a
+# failure that is only the machine still starting.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/workspace/S15P21E102
+# Read by the probe; keep the webhook out of this unit file so it is not committed.
+EnvironmentFile=-/etc/gitjob/health-probe.env
+ExecStart=/home/ubuntu/workspace/S15P21E102/Infra/scripts/health-probe.sh
+User=ubuntu
+Group=docker
+# A failing probe is the point, not a unit error. The alert has already been sent by
+# the time the script exits non-zero, and letting systemd mark the unit failed would
+# only add a second, less informative signal.
+SuccessExitStatus=0 1

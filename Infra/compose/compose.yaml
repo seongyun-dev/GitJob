@@ -1,0 +1,1176 @@
+# GitJob shared Compose definition.
+#
+# Profiles are deliberately explicit so WSL can start core first and add
+# application/data/CI services as their source contracts become available:
+#   core, app, data, ci, observability
+# Local cross-profile startup dependencies are added by the WSL/single-host
+# overrides. Keeping them out of this base also allows the HA app overlay to
+# use external state services without enabling local core containers.
+#
+# Host ports are kept in compose.wsl.yaml and compose.ec2.yaml. This base file
+# therefore keeps databases, brokers, CI, and management UIs private.
+
+name: ${COMPOSE_PROJECT_NAME:-gitjob}
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    profiles: [core]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    # Debezium reads the WAL through logical decoding. wal_level is a restart-only
+    # setting, so it is applied here rather than by the CDC migration. Keep the
+    # slot/sender limits above the number of Debezium connectors plus any replica.
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=${POSTGRES_MAX_REPLICATION_SLOTS:-4}
+      - -c
+      - max_wal_senders=${POSTGRES_MAX_WAL_SENDERS:-4}
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  redis:
+    image: redis:7.4.0-alpine
+    profiles: [core]
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - >-
+        if [ -n "$${REDIS_PASSWORD}" ]; then
+          exec redis-server --appendonly yes --save 60 1 --requirepass "$${REDIS_PASSWORD}";
+        else
+          exec redis-server --appendonly yes --save 60 1;
+        fi
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+            redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG;
+          else
+            redis-cli ping | grep -q PONG;
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging: *default-logging
+
+  kafka:
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+    image: apache/kafka:4.0.0
+    hostname: kafka
+    profiles: [core]
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:?KAFKA_CLUSTER_ID must be set}
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    expose:
+      - "9092"
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 20s
+    logging: *default-logging
+
+  # The official Kafka image runs as uid 1000. A fresh named volume is
+  # created by Docker as root-owned, so initialize its ownership once before
+  # the broker starts instead of running the broker itself as root.
+  kafka-data-init:
+    image: apache/kafka:4.0.0
+    profiles: [core]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /tmp/kraft-combined-logs && chown -R 1000:1000 /tmp/kraft-combined-logs"]
+    restart: "no"
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    logging: *default-logging
+
+  # Debezium worker that turns committed analysis_outbox rows into Kafka records.
+  # The backend never produces those events itself while ANALYSIS_OUTBOX_MODE=CDC.
+  # Register the connector after startup: ./Infra/scripts/cdc-register.sh
+  kafka-connect:
+    image: ${DEBEZIUM_CONNECT_IMAGE:-quay.io/debezium/connect:3.4.3}
+    profiles: [core]
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      GROUP_ID: ${CDC_CONNECT_GROUP_ID:-gitjob-cdc}
+      CONFIG_STORAGE_TOPIC: ${CDC_CONFIG_STORAGE_TOPIC:-gitjob.connect.configs}
+      OFFSET_STORAGE_TOPIC: ${CDC_OFFSET_STORAGE_TOPIC:-gitjob.connect.offsets}
+      STATUS_STORAGE_TOPIC: ${CDC_STATUS_STORAGE_TOPIC:-gitjob.connect.status}
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      # Source offsets are what a replacement worker resumes from, so flush often.
+      OFFSET_FLUSH_INTERVAL_MS: ${CDC_OFFSET_FLUSH_INTERVAL_MS:-10000}
+      # The replication password stays in the worker environment; Infra/cdc/connector.json
+      # only references it, so the connector config in Kafka holds no secret.
+      # The Debezium image only turns CONNECT_-prefixed variables into worker
+      # properties; without the prefix the provider is silently absent and the
+      # connector receives the literal string "${env:CDC_DATABASE_PASSWORD}".
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      CDC_DATABASE_PASSWORD: ${CDC_DATABASE_PASSWORD:?CDC_DATABASE_PASSWORD must be set}
+    expose:
+      - "8083"
+    volumes:
+      # The worker's own log files, bounded (S15P21E102-258). The image's
+      # DailyRollingFileAppender cannot cap size or file count, and on
+      # 2026-09-14 it wrote 4.54 GiB into the container and filled the service
+      # host root. `logging:` below bounds only the stdout capture, which is a
+      # different set of files. Read-only is safe: the entrypoint copies its
+      # defaults with `cp -rn`, and it only rewrites this file when
+      # CONNECT_LOG4J_* or LOG_LEVEL is set, neither of which this service does.
+      - ./Infra/cdc/connect-log4j.properties:/kafka/config/log4j.properties:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/connectors >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    logging: *default-logging
+
+  backend:
+    image: ${BACKEND_IMAGE:-gitjob/backend:local}
+    profiles: [app]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      SERVER_PORT: "8080"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${DB_HOST:-postgres}:${DB_PORT:-5432}/${POSTGRES_DB:-gitjob}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-gitjob}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-}
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
+      SPRING_JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8080/api/v1/auth/github/callback}
+      # GITHUB_REDIRECT_URI 와 다른 것이다. 위는 GitHub 이 호출하는 주소라 OAuth 앱
+      # 설정과 일치해야 하고, 아래는 인증이 끝난 뒤 브라우저를 보낼 화면 주소다.
+      # .env.example 에는 있었지만 여기서 전달하지 않아, 값을 넣어도 컨테이너
+      # 안에서는 application.yaml 의 기본값이 쓰였다. 그래서 배포 환경마다 콜백
+      # 주소를 바꿀 방법이 없었다. 기본값은 기존 동작 그대로다.
+      FRONTEND_CALLBACK_URL: ${FRONTEND_CALLBACK_URL:-http://localhost:8080/auth/callback}
+      # 로그인 후 돌아갈 수 있는 경로의 허용 목록. 임의 경로를 허용하면 open
+      # redirect 가 되므로 목록으로 둔다.
+      OAUTH_ALLOWED_REDIRECT_PATHS: ${OAUTH_ALLOWED_REDIRECT_PATHS:-/onboarding/repositories,/repos,/}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      # Unlike JWT_SECRET, application.yaml declares encryption.symmetric-key and
+      # encryption.salt with no fallback, so an empty value is not a defined
+      # state: Hex.decode("") yields an empty salt, and an empty key silently
+      # derives one from an empty password. Mandatory here so that a missing
+      # value is named by `compose config` before a deploy pulls anything,
+      # rather than surfacing as a bean failure at startup. AesBytesEncryptor
+      # hex-decodes the salt, so it must be hex.
+      AES_SYMMETRIC_KEY: ${AES_SYMMETRIC_KEY:?AES_SYMMETRIC_KEY must be set}
+      AES_SALT: ${AES_SALT:?AES_SALT must be set}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # C Compute 내부 API. worker 서비스에는 C_COMPUTE_TOKEN 이 이미 전달되지만
+      # backend 에는 없어서, 값을 넣어도 컨테이너 안에서는 미설정으로 동작했다.
+      # 주소는 데이터 서버의 Tailscale 주소이고 토큰은 worker 와 같은 값이어야 한다.
+      # 둘 다 브라우저로 나가지 않는다 -- FE 는 BE 공개 API 만 호출한다.
+      # 비어 있으면 BE 가 C 를 호출하지 않고 계산 결과를 미준비로 내린다.
+      C_COMPUTE_URL: ${C_COMPUTE_URL:-}
+      C_COMPUTE_TOKEN: ${C_COMPUTE_TOKEN:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      KAFKA_TOPIC_SOURCE_EVENTS: ${KAFKA_TOPIC_SOURCE_EVENTS:-gitjob.source.events}
+      KAFKA_TOPIC_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_ANALYSIS_REQUESTS:-gitjob.analysis.requests}
+      KAFKA_TOPIC_ANALYSIS_RESULTS: ${KAFKA_TOPIC_ANALYSIS_RESULTS:-gitjob.analysis.results}
+      KAFKA_TOPIC_ANALYSIS_DLQ: ${KAFKA_TOPIC_ANALYSIS_DLQ:-gitjob.analysis.dlq}
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:-gitjob.repository-analysis.requests.v1}
+      # Consumed here: the worker's verdicts, evidence and unmatched dependencies.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
+      # 같은 결과의 v3 계약이 오는 토픽. worker 와 같은 변수 이름을 쓴다.
+      #
+      # 워커는 Registry 버전에 따라 발행 토픽을 바꾸고 v1 을 함께 보내지 않는다
+      # (AI/analysis/consumer.py). registry-20260911.3/.4 를 CURRENT 로 올린 뒤 여기가
+      # 비어 있으면 결과가 도달하지 않아 분석이 QUEUED 에 남는다.
+      #
+      # 지금 CURRENT 인 Registry 는 Rule Pack 이 없어 워커가 여전히 v1 로 발행한다.
+      # 그래도 미리 구독해 두는 이유는 순서 때문이다 -- BE 가 먼저 구독하고 있어야
+      # Registry 를 올린 직후의 첫 v3 결과가 유실되지 않는다.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3:-gitjob.repository-analysis.results.v3}
+      # 적용하지 못한 결과가 가는 곳. 역직렬화 오류는 재시도로 고쳐지지 않아 곧바로
+      # 여기로 간다 -- 전에는 로그 한 줄만 남기고 커밋돼 분석이 QUEUED 에 남은 채
+      # 무엇을 재생해야 하는지조차 남지 않았다.
+      #
+      # 브로커에 없으면 전송이 실패하고 컨슈머가 그 레코드에서 멈춘다. 그것은 의도한
+      # 동작이다 -- 안전망이 끊긴 채로 커밋하고 넘어가면 같은 장애를 반복한다.
+      #
+      # worker 의 KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ 와는 다른 토픽이다. 그쪽은
+      # 처리하지 못한 요청이 가는 곳이고 payload 모양이 다르다.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_DLQ: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_DLQ:-gitjob.repository-analysis.results.dlq.v1}
+      # 워커가 단계 전환을 알리는 토픽. 진행 화면이 "저장소 분석중 / 개인 기여도
+      # 분석중"을 말할 수 있는 유일한 근거다.
+      #
+      # 애플리케이션 기본값은 빈 문자열이고(BE/src/main/resources/application.yaml),
+      # 비어 있으면 구독조차 하지 않는다. 여기서 이름을 주는 것이 곧 기능을 켜는
+      # 일이다 -- 그래서 BE 이미지를 먼저 올려도 동작이 바뀌지 않는다.
+      #
+      # 결과 토픽과 달리 DLQ 가 없다. 잃으면 화면이 한 단계 늦을 뿐이고, 표시용
+      # 메시지 하나로 파티션을 세우는 편이 훨씬 비싸다.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS:-gitjob.repository-analysis.progress.v1}
+      # Private repository credential broker. The same service token is injected
+      # into the data-host worker; it never enters Kafka or an image layer.
+      ANALYSIS_PRIVATE_REPOSITORIES_ENABLED: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:-false}
+      ANALYSIS_WORKER_SERVICE_TOKEN: ${ANALYSIS_WORKER_SERVICE_TOKEN:-}
+      # 진행 중 분석이 새 요청을 막는 기간이자, 그것을 넘긴 분석을 StaleAnalysisReaper 가
+      # FAILED(ANALYSIS_TIMED_OUT) 로 정리하는 기준이다. 두 곳이 같은 값을 쓴다 -- 차단만
+      # 풀고 잡을 살려 두면 그 저장소가 uq_analysis_job_active 에 묶여 영구히 분석 불가가 된다.
+      #
+      # 기본 2시간은 analysis-worker 가 한 잡을 붙들 수 있는 최대 시간에서 나왔다:
+      # ANALYSIS_CLONE_TIMEOUT_SECONDS=600 · ANALYSIS_CLAIM_LEASE_SECONDS=900 ·
+      # ANALYSIS_MAX_POLL_INTERVAL_MS=900000 · ANALYSIS_MAX_ATTEMPTS=5 = 최악 75분.
+      # 워커 쪽 값을 올리면 이 값도 함께 올린다.
+      ANALYSIS_ACTIVE_WINDOW: ${ANALYSIS_ACTIVE_WINDOW:-2h}
+      ANALYSIS_COMPLETED_BATCH_VISIBLE_FOR: ${ANALYSIS_COMPLETED_BATCH_VISIBLE_FOR:-30m}
+      ANALYSIS_MAX_BATCH_SIZE: ${ANALYSIS_MAX_BATCH_SIZE:-10}
+      ANALYSIS_REAPER_POLL_INTERVAL: ${ANALYSIS_REAPER_POLL_INTERVAL:-1m}
+      ANALYSIS_REAPER_INITIAL_DELAY: ${ANALYSIS_REAPER_INITIAL_DELAY:-30s}
+      ANALYSIS_OUTBOX_MODE: ${ANALYSIS_OUTBOX_MODE:-CDC}
+      ANALYSIS_OUTBOX_ENABLED: ${ANALYSIS_OUTBOX_ENABLED:-true}
+      ANALYSIS_OUTBOX_POLL_INTERVAL: ${ANALYSIS_OUTBOX_POLL_INTERVAL:-2s}
+      ANALYSIS_OUTBOX_BATCH_SIZE: ${ANALYSIS_OUTBOX_BATCH_SIZE:-20}
+      ANALYSIS_OUTBOX_MAX_ATTEMPTS: ${ANALYSIS_OUTBOX_MAX_ATTEMPTS:-10}
+      ANALYSIS_OUTBOX_SEND_TIMEOUT: ${ANALYSIS_OUTBOX_SEND_TIMEOUT:-10s}
+      ANALYSIS_OUTBOX_RETRY_DELAY: ${ANALYSIS_OUTBOX_RETRY_DELAY:-5s}
+      ANALYSIS_OUTBOX_MAX_RETRY_DELAY: ${ANALYSIS_OUTBOX_MAX_RETRY_DELAY:-5m}
+      # Admin monitoring reads Prometheus server-side; the browser never calls it.
+      # Without these the container cannot see the values in the env file, and
+      # application.yaml resolves base-url to "" — which the service reports as
+      # NOT_CONFIGURED, indistinguishable on screen from a deliberate opt-out.
+      # Left empty by default: the address is on the admin network and a private
+      # IP baked into the image silently points at the wrong host elsewhere.
+      PROMETHEUS_BASE_URL: ${PROMETHEUS_BASE_URL:-}
+      PROMETHEUS_TIMEOUT: ${PROMETHEUS_TIMEOUT:-3s}
+      PROMETHEUS_SCRAPE_INTERVAL: ${PROMETHEUS_SCRAPE_INTERVAL:-15s}
+      PROMETHEUS_CLUSTER: ${PROMETHEUS_CLUSTER:-gitjob}
+      # Quick Access links. Served in the response, not bundled into the frontend,
+      # so the admin hosts stay out of a public JS bundle.
+      GRAFANA_ADMIN_URL: ${GRAFANA_ADMIN_URL:-}
+      PROMETHEUS_ADMIN_URL: ${PROMETHEUS_ADMIN_URL:-}
+      # 기술 카드의 AI 요약. 여기서 전달하지 않아, .env 에 주소를 넣어도 컨테이너
+      # 안에서는 application.yaml 의 기본값(빈 문자열)이 쓰였다 -- 그러면
+      # TechnologySummaryClient 가 enabled=false 로 만들어져 요약을 아예 부르지
+      # 않고, 화면은 status: NONE 을 받아 요약 칸이 영구히 빈 것처럼 보인다.
+      # C_COMPUTE_URL 과 PROMETHEUS_BASE_URL 이 같은 이유로 여기 추가됐다.
+      #
+      # 기본값은 비어 있다. 주소는 tailnet 의 특정 장비(노트북 GPU)를 가리키고
+      # 이 파일은 커밋되므로, 실제 값은 .env 에만 둔다. 비어 있으면 호출하지
+      # 않는 것이 의도된 동작이다 -- 요약 서비스를 띄우지 않은 환경에서 카드가
+      # 매번 timeout 을 기다리지 않는다.
+      LLM_SUMMARY_BASE_URL: ${LLM_SUMMARY_BASE_URL:-}
+      # Spring Duration 이라 단위가 값의 일부다. 단위 없는 120 은 120ms 로 읽혀
+      # 모든 생성이 끊긴다.
+      LLM_SUMMARY_TIMEOUT: ${LLM_SUMMARY_TIMEOUT:-120s}
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-gitjob/frontend:local}
+    profiles: [app]
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.27.1-alpine
+    profiles: [app]
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    volumes:
+      - ./Infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./Infra/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null && wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  collector:
+    image: ${COLLECTOR_IMAGE:-gitjob/collector:local}
+    profiles: [data]
+    restart: unless-stopped
+    # OCR shares this cgroup with the collector health process. Keep enough
+    # headroom for HDFS/Spark on the 4-vCPU, 15-GiB data host.
+    cpus: "${COLLECTOR_CPUS:-2.0}"
+    mem_limit: "${COLLECTOR_MEMORY_LIMIT:-4g}"
+    command: ["python", "-m", "collector"]
+    environment:
+      APP_ENV: ${APP_ENV:-docker}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC_SOURCE_EVENTS: ${KAFKA_TOPIC_SOURCE_EVENTS:-gitjob.source.events}
+      KAFKA_CONSUMER_GROUP: ${COLLECTOR_CONSUMER_GROUP:-gitjob-collector}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      GITHUB_API_RATE_LIMIT_MIN_REMAINING: ${GITHUB_API_RATE_LIMIT_MIN_REMAINING:-100}
+      # GH Archive Raw is published over WebHDFS: this image is a slim Python
+      # runtime with no Hadoop CLI and no JRE (S15P21E102-105).
+      WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
+      WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      # Empty on the data node; set only when the WebHDFS 307 redirect names a
+      # DataNode this container cannot resolve. See `.env.example`.
+      WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
+      RAW_ROOT: ${RAW_ROOT:-hdfs:///gitjob/raw}
+      # S15P21E102-220. Verified runs are published here for C after the
+      # Raw upload succeeds; unset falls back to the same default.
+      ANALYSIS_INPUT_JOBS_ROOT: ${ANALYSIS_INPUT_JOBS_ROOT:-hdfs:///gitjob/analysis_input/jobs}
+      # PaddleOCR downloads its Korean models on first use. Store them beside
+      # the collector cursor in the existing persistent volume so a redeploy
+      # does not download them again.
+      PADDLE_PDX_CACHE_HOME: ${PADDLE_PDX_CACHE_HOME:-/data/.paddlex}
+      PADDLE_PDX_CPU_NUM_THREADS: ${PADDLE_PDX_CPU_NUM_THREADS:-2}
+    volumes:
+      # Collector resume state. The schedule passes
+      # `--cursor ../data/<site>/cursor.json` and WORKDIR is /app, so both the
+      # cursor and the identity store beside it land under /data.
+      #
+      # Without this the container has no mounts at all: the cursor lives on
+      # the container filesystem and dies with it, every run starts with
+      # `ids_known_before_run=0`, and the same posting is collected again. The
+      # 2026-09-08..11 manifests show that happening on every first run of a
+      # day, at 12.8% of all records.
+      #
+      # A named volume rather than a bind mount, matching postgres-data and
+      # kafka-data: the state belongs to the deployment, not to a host path
+      # that has to exist and be writable by uid 1000 first.
+      - collector-state:/data
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  # Same shape as kafka-data-init and the hdfs-*-data-init services: a named
+  # volume arrives root-owned and the service that uses it does not run as root.
+  # The worker image is reused so that `appuser` resolves in the image that
+  # defines it — Infra/docker/worker/Dockerfile pins the uid but lets the base
+  # image pick the gid, so a numeric pair here would be a guess. S15P21E102-235.
+  c-job-staging-init:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /state/c-jobs && chown -R appuser:appuser /state/c-jobs"]
+    restart: "no"
+    volumes:
+      - c-job-staging:/state/c-jobs
+    logging: *default-logging
+
+  worker:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    restart: unless-stopped
+    # C answers recommendation/matching reads and, at boot, ingests every
+    # PUBLIC source declared in `C_INTAKE_CONFIG`. Both are CPU-bound, and this
+    # container shares 4 vCPU with HDFS, Spark, and the archiver. On 2026-09-21
+    # an unbounded C worker took CPU from `spark-c1-archiver` until it had
+    # restarted four times. The ceiling is about twice the highest usage
+    # measured on this host (0.78 vCPU), so it bounds that tail without
+    # throttling ordinary work; the share decides nothing until the host is
+    # actually saturated, and then it decides in HDFS's favour.
+    cpus: "${WORKER_CPUS:-1.5}"
+    cpu_shares: ${WORKER_CPU_SHARES:-512}
+    command: ["python", "-m", "worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-docker}
+      # C HTTP compute is fail-closed until a shared internal token and the
+      # explicit DB migration are configured. Process /health stays liveness.
+      C_COMPUTE_TOKEN: ${C_COMPUTE_TOKEN:-}
+      C_COMPUTE_LEASE_SECONDS: ${C_COMPUTE_LEASE_SECONDS:-120}
+      # Projection rollout gates. Both stay legacy until the runbook gates pass.
+      C_JOB_DEMAND_PROJECTION_MODE: ${C_JOB_DEMAND_PROJECTION_MODE:-legacy}
+      C_JOB_DEMAND_PROJECTION_FALLBACK: ${C_JOB_DEMAND_PROJECTION_FALLBACK:-false}
+      C_JOB_DEMAND_PROJECTION_SHADOW_RATE: ${C_JOB_DEMAND_PROJECTION_SHADOW_RATE:-0.01}
+      C_JOB_DEMAND_PROJECTION_SHADOW_QUEUE: ${C_JOB_DEMAND_PROJECTION_SHADOW_QUEUE:-4}
+      C_JOB_DEMAND_QUERY_ENGINE: ${C_JOB_DEMAND_QUERY_ENGINE:-python}
+      C_JOB_DEMAND_QUERY_FALLBACK: ${C_JOB_DEMAND_QUERY_FALLBACK:-false}
+      C_JOB_DEMAND_QUERY_SHADOW_RATE: ${C_JOB_DEMAND_QUERY_SHADOW_RATE:-0.01}
+      C_JOB_DEMAND_QUERY_SHADOW_QUEUE: ${C_JOB_DEMAND_QUERY_SHADOW_QUEUE:-4}
+      C_JOB_DEMAND_SUMMARY_CACHE_SIZE: ${C_JOB_DEMAND_SUMMARY_CACHE_SIZE:-256}
+      C_JOB_MATCHING_COMPUTE_MODE: ${C_JOB_MATCHING_COMPUTE_MODE:-legacy}
+      C_JOB_MATCHING_ACTIVE_MODE: ${C_JOB_MATCHING_ACTIVE_MODE:-legacy}
+      C_REGISTRY_BACKEND: ${C_REGISTRY_BACKEND:-postgres}
+      C_REGISTRY_VERSION: ${C_REGISTRY_VERSION:-technology-registry/v1}
+      C_REGISTRY_PATH: ${C_REGISTRY_PATH:-}
+      C_INTAKE_CONFIG: ${C_INTAKE_CONFIG:-}
+      C_ARTIFACT_ROOT: ${C_ARTIFACT_ROOT:-}
+      C_ARTIFACT_URI_PREFIX: ${C_ARTIFACT_URI_PREFIX:-}
+      C_ARCHIVE_ACTIVITY_ROOT: ${C_ARCHIVE_ACTIVITY_ROOT:-}
+      C_ARCHIVE_A_SNAPSHOT_URI_ROOT: ${C_ARCHIVE_A_SNAPSHOT_URI_ROOT:-}
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-gitjob}
+      POSTGRES_USER: ${POSTGRES_USER:-gitjob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Weekly Artifact Redis index is on by default here because this is the
+      # service the Weekly resolver runs in; collector carries no REDIS_* block
+      # and a resolver started there would have run without an index.
+      # Override to 0 only for a deliberate Redis-OFF comparison.
+      #
+      # WEEKLY_REDIS_DB and WEEKLY_REDIS_ARTIFACT_INDEX_NAMESPACE are left
+      # undeclared on purpose: the code defaults (db 1,
+      # gitjob:weekly:artifact-index:v1) are the Production contract, and not
+      # declaring them keeps a benchmark shell environment (db 3,
+      # gitjob:benchmark:...) from reaching this container at all.
+      WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED: ${WEEKLY_REDIS_ARTIFACT_INDEX_ENABLED:-1}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_ANALYSIS_REQUESTS:-gitjob.analysis.requests}
+      KAFKA_TOPIC_ANALYSIS_RESULTS: ${KAFKA_TOPIC_ANALYSIS_RESULTS:-gitjob.analysis.results}
+      KAFKA_TOPIC_ANALYSIS_DLQ: ${KAFKA_TOPIC_ANALYSIS_DLQ:-gitjob.analysis.dlq}
+      KAFKA_CONSUMER_GROUP: ${WORKER_CONSUMER_GROUP:-gitjob-analysis-worker}
+      HDFS_URI: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      PARQUET_ROOT: ${PARQUET_ROOT:-hdfs:///gitjob/parquet}
+      SPARK_MASTER_URL: ${SPARK_MASTER_URL:-spark://spark-master:7077}
+    depends_on:
+      # Docker creates a named volume root-owned, and this container runs as
+      # appuser, so without this the first poll fails with PermissionError while
+      # /health keeps reporting the process alive. S15P21E102-235.
+      c-job-staging-init:
+        condition: service_completed_successfully
+    volumes:
+      # S15P21E102-235. `c-intake.json` lives here, read-only, and C_INTAKE_CONFIG
+      # names it as /config/c-intake.json. The directory is mounted rather than the
+      # file: a missing file would make Docker create a directory in its place and
+      # the load would fail, whereas a missing directory only yields an empty
+      # /config, which an unset C_INTAKE_CONFIG ignores. The file itself stays out
+      # of Git — `.local/` is ignored, as with the Jenkins agent secret below.
+      - ${C_INTAKE_CONFIG_DIR:-.local/c-intake}:/config:ro
+      # S15P21E102-220. Published job runs are staged here before the existing
+      # local intake reads them; `job_hdfs_sources[].staging_dir` in
+      # `c-intake.json` must point at this path. Named rather than bind so the
+      # staged runs survive a restart — refetching them would spend the WebHDFS
+      # budget to produce bytes C already computed on.
+      - c-job-staging:/state/c-jobs
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  weekly-trend-consumer:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    restart: unless-stopped
+    command: ["python", "-m", "worker.weekly_activity_consumer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      WEEKLY_ACTIVITY_CONSUMER_GROUP: ${WEEKLY_ACTIVITY_CONSUMER_GROUP:-gitjob-weekly-trend}
+      WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
+      WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
+      C_WEEKLY_HDFS_ROOT: ${C_WEEKLY_HDFS_ROOT:-hdfs:///gitjob/parquet/github/repo_activity_weekly}
+      C_WEEKLY_EXPORT_ROOT: /state/weekly-exports
+      C_WEEKLY_INCLUDE_PARTIAL: ${C_WEEKLY_INCLUDE_PARTIAL:-false}
+      C_COMPUTE_LEASE_SECONDS: ${C_COMPUTE_LEASE_SECONDS:-120}
+      WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS: ${WEEKLY_ACTIVITY_RETRY_DELAY_SECONDS:-60}
+      WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS: ${WEEKLY_ACTIVITY_MAX_RETRY_DELAY_SECONDS:-900}
+      WEEKLY_ACTIVITY_STATUS_FILE: /tmp/weekly-activity-consumer-status.json
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-gitjob}
+      POSTGRES_USER: ${POSTGRES_USER:-gitjob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      C_REGISTRY_BACKEND: ${C_REGISTRY_BACKEND:-postgres}
+      C_REGISTRY_VERSION: ${C_REGISTRY_VERSION:-technology-registry/v1}
+    volumes:
+      - ${C_WEEKLY_EXPORT_DIR:-.local/c-weekly-exports}:/state/weekly-exports:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "worker.weekly_activity_health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  # Consumes gitjob.repository-analysis.requests.v1 and fetches the requested
+  # commit onto local disk. Separate from `worker` (C's compute HTTP API) because
+  # a consumer and a web service restart and scale differently; same image, other
+  # command, as with `collector`.
+  analysis-worker:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [data]
+    restart: unless-stopped
+    command: ["python", "-m", "analysis"]
+    environment:
+      APP_ENV: ${APP_ENV:-docker}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      # The topic B publishes to. Deliberately not KAFKA_TOPIC_ANALYSIS_REQUESTS,
+      # which belongs to C's worker and is a different topic.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_REQUESTS:-gitjob.repository-analysis.requests.v1}
+      # Its own DLQ. C's worker uses KAFKA_TOPIC_ANALYSIS_DLQ for a different payload
+      # shape, and mixing them leaves whoever drains it guessing.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_DLQ:-gitjob.repository-analysis.dlq.v1}
+      # Worker -> backend. Failures ride this topic too: the DLQ is for operators,
+      # and a failure that lives only there leaves analysis_job at QUEUED forever.
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS:-gitjob.repository-analysis.results.v1}
+      # 어떤 결과 계약까지 발행할 수 있게 할지. 값이 v3 면 v3 publisher 가 만들어지고,
+      # 비어 있으면 v1 publisher 만 생긴다(AI/analysis/__main__.py).
+      #
+      # 계약을 고르는 것이 아니라 준비하는 것이다. 실제 계약은 판정에 쓴 Rule Pack 이
+      # 정한다(schema_for_rule_pack). Rule Pack 이 없는 Registry 는 이 값이 v3 여도
+      # v1 로 나가므로, Registry 를 올리기 전에 미리 켜 두어도 동작이 바뀌지 않는다.
+      #
+      # 반대로 켜지 않은 채 registry-20260911.3/.4 를 CURRENT 로 올리면 v3 publisher 가
+      # 없어 분석이 UNSUPPORTED_RESULT_SCHEMA 로 실패한다. 그래서 Registry 전환보다
+      # 먼저 배포한다.
+      #
+      # v3 를 켜면 이 토픽이 반드시 있어야 하고, 없으면 워커가 기동에서 멈춘다.
+      ANALYSIS_RESULT_SCHEMA_VERSION: ${ANALYSIS_RESULT_SCHEMA_VERSION:-repository-analysis-result/v3}
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_RESULTS_V3:-gitjob.repository-analysis.results.v3}
+      # 단계 전환을 알리는 토픽. backend 와 같은 변수 이름을 쓴다.
+      #
+      # 비워 두면 워커는 아무것도 발행하지 않고 분석은 예전과 똑같이 돈다. 이 토픽이
+      # 브로커에 없어도 워커는 멈추지 않는다 -- 전송 실패를 삼키도록 만들어 두었고,
+      # 그렇게 한 이유는 클론과 판정을 마친 claim 을 표시용 메시지 때문에 버리지
+      # 않기 위해서다(AI/analysis/progress.py).
+      KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS: ${KAFKA_TOPIC_REPOSITORY_ANALYSIS_PROGRESS:-gitjob.repository-analysis.progress.v1}
+      ANALYSIS_CONSUMER_GROUP: ${ANALYSIS_CONSUMER_GROUP:-gitjob-repository-analysis}
+      # Must exceed the slowest clone. Below it the broker hands this consumer's
+      # partitions to someone else, who then clones the same repository again.
+      KAFKA_MAX_POLL_INTERVAL_MS: ${ANALYSIS_MAX_POLL_INTERVAL_MS:-900000}
+      ANALYSIS_CLONE_TIMEOUT_SECONDS: ${ANALYSIS_CLONE_TIMEOUT_SECONDS:-600}
+      # Empty while the feature flag is off. In split EC2 mode this points to
+      # the service host's private backend listener, never the public Nginx URL.
+      ANALYSIS_PRIVATE_REPOSITORIES_ENABLED: ${ANALYSIS_PRIVATE_REPOSITORIES_ENABLED:-false}
+      ANALYSIS_CREDENTIAL_BROKER_URL: ${ANALYSIS_CREDENTIAL_BROKER_URL:-}
+      ANALYSIS_WORKER_SERVICE_TOKEN: ${ANALYSIS_WORKER_SERVICE_TOKEN:-}
+      ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS: ${ANALYSIS_CREDENTIAL_BROKER_TIMEOUT_SECONDS:-5}
+      # 근거 한 줄을 누가 썼는지 읽어 Personal Level 을 만들 수 있게 한다.
+      #
+      # 켜면 전체 히스토리를 클론한다. 얕은 체크아웃에서 git blame 은 실패하지
+      # 않고 모든 줄을 tip 커밋에 돌리므로, 히스토리 없이 기여만 읽으면 팀원의
+      # 코드가 전부 마지막에 푸시한 사람의 것이 된다. 그래서 스위치가 하나다.
+      #
+      # 측정(spring-petclinic, 근거 40 파일):
+      #   depth 1  클론 1.4s / 디스크  3MB / blame 2.1s  (답이 틀림)
+      #   full     클론 4.0s / 디스크 13MB / blame 2.7s
+      # 부분 클론(--filter)은 blame 에서 240~800배 느려 쓸 수 없다.
+      #
+      # 기본값이 true 인 이유: 꺼 두면 Evidence 의 commit_sha 가 전부 NULL 로 남고,
+      # 조회 쪽은 그것을 "본인이 안 썼다"가 아니라 "확인되지 않았다"로 읽는다. 즉
+      # personalLevel 이 영영 만들어지지 않는데 화면에는 아무 오류도 나오지 않는다.
+      # 끄고 싶으면 명시적으로 끄는 편이 낫다 -- 조용히 비는 쪽이 기본값이면 안 된다.
+      #
+      # 켜면 전체 히스토리를 받으므로 ANALYSIS_MAX_REPOSITORY_BYTES(기본 2GiB) 에
+      # 걸리는 저장소가 늘 수 있다. 크기는 fetch 뒤에야 알 수 있어
+      # REPOSITORY_TOO_LARGE 로 실패한다(AI/analysis/clone.py). 워커 디스크 여유를
+      # 먼저 확인한다.
+      ANALYSIS_ATTRIBUTE_AUTHORS: ${ANALYSIS_ATTRIBUTE_AUTHORS:-true}
+      ANALYSIS_CLAIM_LEASE_SECONDS: ${ANALYSIS_CLAIM_LEASE_SECONDS:-900}
+      # A repository that times out is a transient failure on every delivery.
+      # Without a cap it is redelivered forever and its partition never moves.
+      ANALYSIS_MAX_ATTEMPTS: ${ANALYSIS_MAX_ATTEMPTS:-5}
+      ANALYSIS_MAX_REPOSITORY_BYTES: ${ANALYSIS_MAX_REPOSITORY_BYTES:-2147483648}
+      ANALYSIS_WORK_ROOT: ${ANALYSIS_WORK_ROOT:-/tmp/gitjob-analysis}
+      ANALYSIS_MAX_FILE_BYTES: ${ANALYSIS_MAX_FILE_BYTES:-1048576}
+      ANALYSIS_MAX_FILES: ${ANALYSIS_MAX_FILES:-50000}
+      # Manifest scan. A manifest is a small file; anything larger is generated
+      # or hostile, and reading it costs more than its dependency list is worth.
+      ANALYSIS_MAX_MANIFEST_BYTES: ${ANALYSIS_MAX_MANIFEST_BYTES:-524288}
+      ANALYSIS_MAX_MANIFESTS: ${ANALYSIS_MAX_MANIFESTS:-500}
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-gitjob}
+      POSTGRES_USER: ${POSTGRES_USER:-gitjob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # No healthcheck: the process serves no port. It refuses to start when Kafka,
+    # the database or the claim table is missing, so a running container has
+    # already proved its dependencies.
+    logging: *default-logging
+
+  repo-snapshot-bootstrap:
+    image: ${WORKER_IMAGE:-gitjob/worker:local}
+    profiles: [tools]
+    restart: "no"
+    command: ["python", "-m", "github.repo_snapshot_bootstrap", "--help"]
+    environment:
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      WEBHDFS_URL: ${WEBHDFS_URL:-http://hdfs-namenode:9870/webhdfs/v1}
+      WEBHDFS_USER: ${WEBHDFS_USER:-hadoop}
+      # Empty on the data node; set only when the WebHDFS 307 redirect names a
+      # DataNode this container cannot resolve. See `.env.example`.
+      WEBHDFS_DATANODE_HOSTS: ${WEBHDFS_DATANODE_HOSTS:-}
+    logging: *default-logging
+
+  # The apache/hadoop image runs as user hadoop. Docker creates a fresh named
+  # volume as root, so prepare the mount before the NameNode/DataNode starts.
+  hdfs-namenode-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-namenode-data:/data
+    logging: *default-logging
+
+  hdfs-datanode-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode-data:/data
+    logging: *default-logging
+
+  hdfs-namenode:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-namenode
+    profiles: [data]
+    restart: unless-stopped
+    # Deliberately a share and not a `cpus` ceiling. HDFS must be able to use
+    # the whole host when it needs to -- a block report or a re-replication
+    # that is throttled turns a slow host into a cluster with dead DataNodes.
+    # A share costs nothing while the host is idle and only decides who yields
+    # when every container wants CPU at once, which is what a reboot is.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.namenode.rpc-address: hdfs-namenode:8020
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+      HDFS-SITE.XML_dfs.namenode.name.dir: file:///data/name
+      ENSURE_NAMENODE_DIR: /data/name
+    command: ["hdfs", "namenode"]
+    depends_on:
+      hdfs-namenode-data-init:
+        condition: service_completed_successfully
+    expose:
+      - "8020"
+      - "9870"
+    volumes:
+      - hdfs-namenode-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  hdfs-datanode:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-datanode
+    profiles: [data]
+    restart: unless-stopped
+    # Same priority as the NameNode, and for the same reason; see above.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode-data-init:
+        condition: service_completed_successfully
+      hdfs-namenode:
+        condition: service_healthy
+    expose:
+      - "9864"
+    volumes:
+      - hdfs-datanode-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  # Additional logical DataNodes on the same physical host. The existing
+  # hdfs-datanode service and volume remain DataNode-1.
+  hdfs-datanode2-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode2-data:/data
+    logging: *default-logging
+
+  hdfs-datanode3-data-init:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R hadoop:hadoop /data"]
+    restart: "no"
+    volumes:
+      - hdfs-datanode3-data:/data
+    logging: *default-logging
+
+  hdfs-datanode2:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-datanode2
+    profiles: [data]
+    restart: unless-stopped
+    # Same priority as the NameNode, and for the same reason; see above.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode2-data-init:
+        condition: service_completed_successfully
+      hdfs-namenode:
+        condition: service_healthy
+    expose:
+      - "9864"
+    volumes:
+      - hdfs-datanode2-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  hdfs-datanode3:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    hostname: hdfs-datanode3
+    profiles: [data]
+    restart: unless-stopped
+    # Same priority as the NameNode, and for the same reason; see above.
+    cpu_shares: ${HDFS_CPU_SHARES:-2048}
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.datanode.data.dir: file:///data/data
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-datanode3-data-init:
+        condition: service_completed_successfully
+      hdfs-namenode:
+        condition: service_healthy
+    expose:
+      - "9864"
+    volumes:
+      - hdfs-datanode3-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  hdfs-bootstrap:
+    image: ${HDFS_IMAGE:-apache/hadoop:3.4.1}
+    profiles: [data]
+    environment:
+      HADOOP_CLUSTER_NAME: ${HADOOP_CLUSTER_NAME:-gitjob}
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      CORE-SITE.XML_fs.defaultFS: ${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      HDFS-SITE.XML_dfs.replication: "${HDFS_REPLICATION_FACTOR:-1}"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        hdfs dfs -mkdir -p /gitjob /gitjob/parquet
+        && hdfs dfs -chown spark:supergroup /gitjob
+        && hdfs dfs -chown spark:supergroup /gitjob/parquet
+    restart: "no"
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+    logging: *default-logging
+
+  spark-master:
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
+    hostname: spark-master
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    expose:
+      - "7077"
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/localhost/8080'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  spark-worker:
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      SPARK_MASTER_URL: ${SPARK_MASTER_URL:-spark://spark-master:7077}
+      SPARK_WORKER_WEBUI_PORT: "8081"
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2G}
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "${SPARK_WORKER_CORES:-2}"
+      - --memory
+      - "${SPARK_WORKER_MEMORY:-2G}"
+      - --webui-port
+      - "8081"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/localhost/8081'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+
+  # C1 Archiver as a managed process rather than a manual submit
+  # (S15P21E102-228).
+  #
+  # `Infra/scripts/spark-c1-archiver.sh` could already run the stream with
+  # ONCE=0, but nothing owned its lifecycle: a killed process or a rebooted
+  # host left C1 down and `github.events` piling up with no signal. The other
+  # long-running pieces here — collector, worker, analysis-worker, spark-worker
+  # — are all `profiles: [data]` + `restart: unless-stopped` + `command:`, so
+  # this follows that and needs no systemd unit.
+  #
+  # **One replica is the duplicate guard.** C1 deliberately has no
+  # `kafka.group.id` (`-102` §5): the checkpoint is the only record of
+  # progress, so two processes on the same checkpoint directory would both
+  # believe they own it. A single service definition is what keeps that from
+  # happening; do not `--scale` this service.
+  #
+  # The image must be the project Spark build, not the upstream base: the
+  # Kafka connector jars and `/opt/gitjob/spark` are added by
+  # `Infra/docker/spark/Dockerfile`. `.env.example` already pins
+  # `SPARK_IMAGE=gitjob/spark:3.5.3` and `deploy.sh` builds it.
+  #
+  #   start   compose --profile data up -d spark-c1-archiver
+  #   stop    compose --profile data stop spark-c1-archiver
+  #   restart compose --profile data restart spark-c1-archiver
+  #   status  compose --profile data ps spark-c1-archiver
+  #   logs    compose --profile data logs -f spark-c1-archiver
+  spark-c1-archiver:
+    image: ${SPARK_IMAGE:-gitjob/spark:local}
+    profiles: [data]
+    restart: unless-stopped
+    environment:
+      # Same expression the other five Kafka clients here use. The data host
+      # runs no broker, so `.env.data` must carry the real endpoint — exactly
+      # as `collector` and `worker` already require. Making this mandatory with
+      # `:?` would change the deployment contract for every profile, since
+      # Compose interpolates the whole file before filtering by profile.
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - ${SPARK_MASTER_URL:-spark://spark-master:7077}
+      - --deploy-mode
+      - client
+      - --name
+      - gitjob-c1-archiver
+      # Mirrors `_lib.sh`'s spark_submit_network_args. In the two-host layout
+      # the driver has to advertise an address the other host can reach.
+      - --conf
+      - spark.driver.bindAddress=${SPARK_DRIVER_BIND_ADDRESS:-0.0.0.0}
+      - --conf
+      - spark.driver.host=${SPARK_DRIVER_HOST:-spark-c1-archiver}
+      # Keep the C1 resource ceiling identical to `_lib.sh` and the data host
+      # env contract. Do not hardcode the production values here.
+      - --conf
+      - spark.executor.cores=${SPARK_EXECUTOR_CORES}
+      - --conf
+      - spark.cores.max=${SPARK_CORES_MAX}
+      - --conf
+      - spark.hadoop.dfs.client.use.datanode.hostname=true
+      # Mirrors spark_submit_storage_args. RF2 is the two-DataNode target.
+      - --conf
+      - spark.hadoop.dfs.replication=${SPARK_HDFS_REPLICATION:-2}
+      - --conf
+      - spark.hadoop.fs.defaultFS=${HDFS_URI:-hdfs://hdfs-namenode:8020}
+      # The driver UI, which the healthcheck below probes.
+      - --conf
+      - spark.ui.port=4040
+      - /opt/gitjob/spark/c1_archiver_stream.py
+      - --bootstrap-servers
+      - ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      - --topics
+      - ${C1_TOPICS:-github.events,so.raw}
+      - --parquet-root
+      - ${PARQUET_ROOT:-hdfs:///gitjob/parquet}
+      # Unchanged from the manual path, so a restart resumes where the last
+      # run stopped: hdfs:///gitjob/checkpoints/c1/{topic}.
+      - --checkpoint-root
+      - ${CHECKPOINT_ROOT:-hdfs:///gitjob/checkpoints}
+      - --max-offsets-per-trigger
+      - ${MAX_OFFSETS_PER_TRIGGER:-10000}
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+    expose:
+      - "4040"
+    # A Structured Streaming query exposes no endpoint of its own; the driver
+    # UI is the thing that disappears when the driver dies, which is exactly
+    # what `restart: unless-stopped` needs to see. Same probe shape as
+    # spark-worker's.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/localhost/4040'"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      # A cold start reads the checkpoint and negotiates with the master.
+      start_period: 120s
+    logging: *default-logging
+
+  jenkins:
+    image: ${JENKINS_IMAGE:-gitjob/jenkins:local}
+    profiles: [ci]
+    restart: unless-stopped
+    environment:
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc_configs/jenkins.yaml
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-}
+      JENKINS_AGENT_NAME: ${JENKINS_AGENT_NAME:-docker-agent}
+      JENKINS_URL: ${JENKINS_URL:-http://localhost:8081}
+      JAVA_OPTS: ${JENKINS_JAVA_OPTS:--Djenkins.install.runSetupWizard=false}
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      - ./Infra/jenkins/casc:/var/jenkins_home/casc_configs:ro
+    expose:
+      - "8080"
+      - "50000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    logging: *default-logging
+
+  # Docker socket access is restricted to the build/deploy agent. It is
+  # convenient for WSL validation but must be replaced or isolated before EC2
+  # is exposed to untrusted jobs.
+  jenkins-agent:
+    image: ${JENKINS_AGENT_IMAGE:-gitjob/jenkins-agent:local}
+    profiles: [ci]
+    entrypoint: ["/usr/local/bin/gitjob-jenkins-agent"]
+    restart: unless-stopped
+    depends_on:
+      jenkins:
+        condition: service_healthy
+    environment:
+      JENKINS_URL: http://jenkins:8080
+      JENKINS_AGENT_NAME: ${JENKINS_AGENT_NAME:-docker-agent}
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - jenkins-agent-workspace:/home/jenkins/agent
+      - ${JENKINS_AGENT_SECRET_FILE:-.local/jenkins/docker-agent.secret}:/run/secrets/jenkins_agent_secret:ro
+    logging: *default-logging
+
+  kafka-ui:
+    image: ${KAFKA_UI_IMAGE:-provectuslabs/kafka-ui:v0.7.2}
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "false"
+      KAFKA_CLUSTERS_0_NAME: gitjob
+      # Follows the same env contract as every other Kafka client here
+      # (kafka-connect, backend, collector). Pinning the literal meant the one
+      # container whose job is to observe the broker was the one container that
+      # could not be pointed at a different one.
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_CLUSTERS_0_READONLY: ${KAFKA_UI_READONLY:-false}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080 >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  redis-insight:
+    image: ${REDIS_INSIGHT_IMAGE:-redis/redisinsight:2.68.0}
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      RI_APP_HOST: 0.0.0.0
+      RI_APP_PORT: "5540"
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "5540"
+    volumes:
+      - redis-insight-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5540 >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+volumes:
+  # No explicit `name` is intentional: Compose prefixes these with the
+  # project name, keeping local and CI data independent.
+  postgres-data:
+  redis-data:
+  kafka-data:
+  # Per-source collector cursors and posting-identity stores, under
+  # /data/<site>/. Losing this re-collects postings already held in HDFS Raw;
+  # it does not lose the postings themselves.
+  collector-state:
+  # Published job runs staged for the C worker's local intake (S15P21E102-220).
+  # Losing this refetches them from HDFS; the published runs are not affected.
+  c-job-staging:
+  hdfs-namenode-data:
+  hdfs-datanode-data:
+  hdfs-datanode2-data:
+  hdfs-datanode3-data:
+  jenkins-home:
+  jenkins-agent-workspace:
+  redis-insight-data:

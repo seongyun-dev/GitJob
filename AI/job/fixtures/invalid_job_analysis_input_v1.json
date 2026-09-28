@@ -1,0 +1,212 @@
+{
+  "fixture_only": true,
+  "cases": [
+    {
+      "name": "unsupported_schema_version",
+      "expected_error": "schema_version",
+      "payload": {
+        "schema_version": "job-analysis-input/v2",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": []
+      }
+    },
+    {
+      "name": "missing_pipeline_run_id",
+      "expected_error": "pipeline_run_id",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "collector_version": "fixture-a-collector-v1",
+        "records": []
+      }
+    },
+    {
+      "name": "numeric_source_posting_id",
+      "expected_error": "source_posting_id",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": [
+          {
+            "source_record_id": "jobkorea:fixture-invalid-1",
+            "source_site": "JOBKOREA",
+            "source_posting_id": 1001,
+            "source_url": "https://example.invalid/jobs/fixture-invalid-1",
+            "company_name": "Invalid Fixture Co",
+            "title": "개발자",
+            "description_text": "본문",
+            "body_status": "TEXT_AVAILABLE",
+            "posting_status": "ACTIVE",
+            "collected_at": "2026-08-31T00:00:00Z",
+            "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "technology_mentions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "text_status_without_description",
+      "expected_error": "TEXT_AVAILABLE body_status requires description_text",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": [
+          {
+            "source_record_id": "jobkorea:fixture-invalid-2",
+            "source_site": "JOBKOREA",
+            "source_posting_id": "fixture-invalid-2",
+            "source_url": "https://example.invalid/jobs/fixture-invalid-2",
+            "company_name": "Invalid Fixture Co",
+            "title": "개발자",
+            "description_text": null,
+            "body_status": "TEXT_AVAILABLE",
+            "posting_status": "ACTIVE",
+            "collected_at": "2026-08-31T00:00:00Z",
+            "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "technology_mentions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsupported_requirement_type",
+      "expected_error": "requirement_type",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": [
+          {
+            "source_record_id": "jobkorea:fixture-invalid-3",
+            "source_site": "JOBKOREA",
+            "source_posting_id": "fixture-invalid-3",
+            "source_url": "https://example.invalid/jobs/fixture-invalid-3",
+            "company_name": "Invalid Fixture Co",
+            "title": "개발자",
+            "description_text": "자격요건: Python",
+            "body_status": "TEXT_AVAILABLE",
+            "posting_status": "ACTIVE",
+            "collected_at": "2026-08-31T00:00:00Z",
+            "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "technology_mentions": [
+              {
+                "raw_technology": "Python",
+                "technology_id": "python",
+                "requirement_type": "MANDATORY",
+                "source_surface": "BODY",
+                "evidence_section": "자격요건",
+                "evidence_text": "Python",
+                "extraction_method": "FIXTURE_RULE"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsafe_source_technology_id",
+      "expected_error": "technology_id",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": [
+          {
+            "source_record_id": "jobkorea:fixture-invalid-4",
+            "source_site": "JOBKOREA",
+            "source_posting_id": "fixture-invalid-4",
+            "source_url": "https://example.invalid/jobs/fixture-invalid-4",
+            "company_name": "Invalid Fixture Co",
+            "title": "React.js 개발자",
+            "description_text": "기술스택: React.js",
+            "body_status": "TEXT_AVAILABLE",
+            "posting_status": "ACTIVE",
+            "collected_at": "2026-08-31T00:00:00Z",
+            "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "technology_mentions": [
+              {
+                "raw_technology": "React.js",
+                "technology_id": "React.js",
+                "requirement_type": "MENTIONED",
+                "source_surface": "BODY",
+                "evidence_section": "기술스택",
+                "evidence_text": "React.js",
+                "extraction_method": "FIXTURE_RULE"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "internal_technology_id_field_name",
+      "expected_error": "technology_id",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": [
+          {
+            "source_record_id": "jobkorea:fixture-invalid-5",
+            "source_site": "JOBKOREA",
+            "source_posting_id": "fixture-invalid-5",
+            "source_url": "https://example.invalid/jobs/fixture-invalid-5",
+            "company_name": "Invalid Fixture Co",
+            "title": "Python 개발자",
+            "description_text": "기술스택: Python",
+            "body_status": "TEXT_AVAILABLE",
+            "posting_status": "ACTIVE",
+            "collected_at": "2026-08-31T00:00:00Z",
+            "content_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "technology_mentions": [
+              {
+                "raw_technology": "Python",
+                "source_technology_id": "python",
+                "requirement_type": "MENTIONED",
+                "source_surface": "BODY",
+                "evidence_section": "기술스택",
+                "evidence_text": "Python",
+                "extraction_method": "FIXTURE_RULE"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "numeric_collected_at",
+      "expected_error": "ISO 8601 date-time string",
+      "payload": {
+        "schema_version": "job-analysis-input/v1",
+        "dataset_snapshot_id": "fixture-invalid-snapshot",
+        "pipeline_run_id": "fixture-invalid-run",
+        "collector_version": "fixture-a-collector-v1",
+        "records": [
+          {
+            "source_record_id": "jobkorea:fixture-invalid-6",
+            "source_site": "JOBKOREA",
+            "source_posting_id": "fixture-invalid-6",
+            "source_url": "https://example.invalid/jobs/fixture-invalid-6",
+            "company_name": "Invalid Fixture Co",
+            "title": "Python 개발자",
+            "description_text": "기술스택: Python",
+            "body_status": "TEXT_AVAILABLE",
+            "posting_status": "ACTIVE",
+            "collected_at": 0,
+            "content_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "technology_mentions": []
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "tech_id": "django",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/service.py": "from django.shortcuts import get_object_or_404\ndef load(model, key):\n    return get_object_or_404(model, pk=key)\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "django.l2.api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 recognizes selected attributed Django query helpers; available facts do not prove select_for_update is lexically enclosed by transaction.atomic, so L3 is withheld."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/service.py": "from django.shortcuts import get_object_or_404\ndef load(model, key):\n    return model.objects.get(pk=key)\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "django.l2.api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

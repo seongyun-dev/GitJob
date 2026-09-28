@@ -1,0 +1,109 @@
+{
+  "tech_id": "csharp",
+  "cases": [
+    {
+      "name": "advanced-pattern",
+      "kind": "positive",
+      "files": {
+        "src/StreamAdapter.cs": "using System;\nusing System.Collections.Generic;\nusing System.Threading.Tasks;\nclass StreamAdapter {\n  public async IAsyncEnumerable<T> Read<T>(IAsyncEnumerable<T> source, IAsyncDisposable resource) {\n    await using (resource) {\n      await foreach (var item in source) {\n        yield return item;\n      }\n    }\n  }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "csharp.l3.async-iterator-disposal"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Named language-specific advanced pattern; no runtime claim."
+    },
+    {
+      "name": "basic-structured-use",
+      "kind": "positive",
+      "files": {
+        "src/StreamAdapter.cs": "using System.Threading.Tasks; class Work { public async Task Run() { await Task.Delay(1); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "csharp.l2.async-query"
+      ],
+      "absent_rule_ids": [
+        "csharp.l3.async-iterator-disposal"
+      ]
+    },
+    {
+      "name": "missing-advanced-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/StreamAdapter.cs": "using System;\nusing System.Collections.Generic;\nusing System.Threading.Tasks;\nclass StreamAdapter {\n  public async IAsyncEnumerable<T> Read<T>(IAsyncEnumerable<T> source, IAsyncDisposable resource) {\n    using (var scope = new System.IO.MemoryStream()) {\n      await foreach (var item in source) {\n        yield return item;\n      }\n    }\n  }\n}\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l3.async-iterator-disposal"
+      ]
+    },
+    {
+      "name": "missing-structured-use-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/StreamAdapter.cs": "using System.Threading.Tasks; class Work { public Task Run() { return Task.CompletedTask; } }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l2.async-query",
+        "csharp.l3.async-iterator-disposal"
+      ]
+    },
+    {
+      "name": "disconnected-declarations",
+      "kind": "near_miss",
+      "files": {
+        "src/StreamAdapter.cs": "using System;\nusing System.Collections.Generic;\nusing System.Threading.Tasks;\nclass Reader {\n  public async IAsyncEnumerable<T> Read<T>(IAsyncEnumerable<T> source) {\n    await foreach (var item in source) { yield return item; }\n  }\n}\nclass Other {\n  public async Task Close(IAsyncDisposable resource) {\n    await using (resource) { await Task.Delay(1); }\n  }\n}\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l3.async-iterator-disposal"
+      ],
+      "tradeoff": "Unrelated classes, functions or type aliases in one file cannot pool their advanced signals."
+    },
+    {
+      "name": "documentation-only",
+      "kind": "negative",
+      "files": {
+        "README.md": "using System;\nusing System.Collections.Generic;\nusing System.Threading.Tasks;\nclass StreamAdapter {\n  public async IAsyncEnumerable<T> Read<T>(IAsyncEnumerable<T> source, IAsyncDisposable resource) {\n    await using (resource) {\n      await foreach (var item in source) {\n        yield return item;\n      }\n    }\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l2.async-query",
+        "csharp.l3.async-iterator-disposal"
+      ]
+    },
+    {
+      "name": "vendor-code",
+      "kind": "negative",
+      "files": {
+        "vendor/src/StreamAdapter.cs": "using System;\nusing System.Collections.Generic;\nusing System.Threading.Tasks;\nclass StreamAdapter {\n  public async IAsyncEnumerable<T> Read<T>(IAsyncEnumerable<T> source, IAsyncDisposable resource) {\n    await using (resource) {\n      await foreach (var item in source) {\n        yield return item;\n      }\n    }\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l2.async-query",
+        "csharp.l3.async-iterator-disposal"
+      ]
+    },
+    {
+      "name": "test-only",
+      "kind": "negative",
+      "files": {
+        "tests/src/StreamAdapter.cs": "using System;\nusing System.Collections.Generic;\nusing System.Threading.Tasks;\nclass StreamAdapter {\n  public async IAsyncEnumerable<T> Read<T>(IAsyncEnumerable<T> source, IAsyncDisposable resource) {\n    await using (resource) {\n      await foreach (var item in source) {\n        yield return item;\n      }\n    }\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "csharp.l2.async-query",
+        "csharp.l3.async-iterator-disposal"
+      ]
+    }
+  ]
+}

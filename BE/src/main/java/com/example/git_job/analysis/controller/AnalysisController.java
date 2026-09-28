@@ -1,0 +1,77 @@
+package com.example.git_job.analysis.controller;
+
+import com.example.git_job.analysis.controller.dto.AnalysisBatchAcceptedResponse;
+import com.example.git_job.analysis.controller.dto.AnalysisBatchCreateRequest;
+import com.example.git_job.analysis.controller.dto.AnalysisStatusResponse;
+import com.example.git_job.analysis.service.AnalysisStatusService;
+import com.example.git_job.analysis.service.AnalysisSubmissionService;
+import com.example.git_job.global.logging.TraceIdFilter;
+import com.example.git_job.global.response.ApiResponse;
+import com.example.git_job.global.security.AuthenticatedUser;
+import com.example.git_job.global.security.CurrentUser;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.MDC;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 분석 요청 (B-FN-002).
+ *
+ * <p>등록만 하고 결과를 기다리지 않는다. 응답 시점에 Kafka 발행은 아직 일어나지
+ * 않았고, 커밋된 Outbox 행을 Debezium이 옮긴다. 그래서 Kafka가 잠깐 죽어 있어도
+ * 요청은 성공한다.</p>
+ */
+@RestController
+@RequestMapping("/api/v1/analyses")
+@RequiredArgsConstructor
+public class AnalysisController {
+
+    private final AnalysisSubmissionService analysisSubmissionService;
+    private final AnalysisStatusService analysisStatusService;
+
+    @GetMapping("/{analysisId}")
+    public ApiResponse<AnalysisStatusResponse> getStatus(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable String analysisId,
+            @RequestParam(defaultValue = "true") boolean includeRepositories) {
+        return ApiResponse.success("분석 진행 상태를 조회했습니다.",
+                analysisStatusService.get(CurrentUser.idOf(user), analysisId, includeRepositories));
+    }
+
+    /**
+     * 고른 저장소 전부를 한 묶음으로 등록한다.
+     *
+     * <p>하나라도 새로 만들었으면 202, 하나도 만들지 않았으면 200이다. 어느 쪽이든 본문
+     * 형태는 같고 저장소별 결말이 {@code items}에 담긴다 -- 전부 실패했을 때 오류 봉투
+     * 하나로 접으면 사유가 세 개인 경우 그중 둘을 잃는다.</p>
+     *
+     * <p>진행 중인 분석이 있으면 409({@code AN-409-1})다. 본문에 무엇이 돌고 있는지
+     * 싣지 않는다 -- 화면은 이 코드를 보면
+     * {@code GET /api/v1/me/analyses/latest-batch}를 다시 읽는다.</p>
+     */
+    @PostMapping
+    public ResponseEntity<ApiResponse<AnalysisBatchAcceptedResponse>> requestAnalysis(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestBody AnalysisBatchCreateRequest request
+    ) {
+        var submission = analysisSubmissionService.submitBatch(
+                CurrentUser.idOf(user),
+                request.targets(),
+                MDC.get(TraceIdFilter.TRACE_ID));
+
+        var body = ApiResponse.success(
+                submission.created() ? "분석을 등록했습니다." : "새로 등록한 분석이 없습니다.",
+                AnalysisBatchAcceptedResponse.from(submission));
+        return ResponseEntity
+                .status(submission.created() ? HttpStatus.ACCEPTED : HttpStatus.OK)
+                .body(body);
+    }
+}

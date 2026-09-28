@@ -1,0 +1,140 @@
+{
+  "tech_id": "aws",
+  "cases": [
+    {
+      "name": "network-managed-least-privilege",
+      "kind": "positive",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" {}\nresource \"aws_subnet\" \"db\" { vpc_id = aws_vpc.main.id }\nresource \"aws_db_instance\" \"data\" { db_subnet_group_name = aws_subnet.db.id }\nresource \"aws_iam_policy\" \"reader\" { Action = [\"rds-db:connect\"]\nResource = [aws_db_instance.data.arn] }\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "aws.l2.managed-resource",
+        "aws.l3.network-managed-iam"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 requires explicit same-file reference paths connecting managed service, network and narrow IAM structure; applied/effective behavior is not claimed."
+    },
+    {
+      "name": "provider-only",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [
+        "aws.l1.terraform"
+      ],
+      "absent_rule_ids": [
+        "aws.l2.managed-resource",
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "A provider declaration establishes configured identity only and cannot prove provisioned resources."
+    },
+    {
+      "name": "wildcard-policy",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" {}\nresource \"aws_subnet\" \"db\" { vpc_id = aws_vpc.main.id }\nresource \"aws_db_instance\" \"data\" { db_subnet_group_name = aws_subnet.db.id }\nresource \"aws_iam_policy\" \"reader\" { Action = [\"*\"]\nResource = [aws_db_instance.data.arn] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "aws.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "Wildcard action/resource literals fail the conservative least-privilege predicate."
+    },
+    {
+      "name": "unrelated-resource-sum",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" {}\nresource \"aws_subnet\" \"db\" { vpc_id = aws_vpc.main.id }\nresource \"aws_db_instance\" \"data\" { db_subnet_group_name = \"detached\" }\nresource \"aws_iam_policy\" \"reader\" { Action = [\"rds-db:connect\"]\nResource = [\"detached\"] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "aws.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "Network, managed and narrow IAM resources without explicit reference paths must not combine into an L3 architecture claim."
+    },
+    {
+      "name": "comment-and-heredoc-lookalike",
+      "kind": "negative",
+      "files": {
+        "infra/main.tf": "# resource \"aws_vpc\" \"fake\" {}\nlocals {\n sample = <<EOF\nresource \"aws_db_instance\" \"fake\" {}\nEOF\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "aws.l2.managed-resource",
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "Commented and heredoc resource text is not executable Terraform structure."
+    },
+    {
+      "name": "service-wildcard-policy",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" {}\nresource \"aws_db_instance\" \"data\" { vpc_id = aws_vpc.main.id }\nresource \"aws_iam_policy\" \"reader\" { actions = [\"rds:*\"]\nresources = [aws_db_instance.data.arn] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "aws.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "A service-wide action wildcard is not least privilege even when its resource reference is narrow."
+    },
+    {
+      "name": "quoted-reference-lookalikes",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" {}\nresource \"aws_db_instance\" \"data\" { description = \"aws_vpc.main.id\" }\nresource \"aws_iam_policy\" \"reader\" { actions = [\"rds:DescribeDBInstances\"]\nresources = [\"aws_db_instance.data.arn\"] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "aws.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "Plain quoted resource-address text is descriptive data and cannot establish a Terraform dependency edge; explicit interpolation remains supported."
+    },
+    {
+      "name": "literal-count-zero",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" { count = 0 }\nresource \"aws_db_instance\" \"data\" { count = 0 }\nresource \"aws_iam_policy\" \"reader\" { count = 0\nactions = [\"rds:DescribeDBInstances\"]\nresources = [aws_db_instance.data.arn] }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [
+        "aws.l1.terraform"
+      ],
+      "absent_rule_ids": [
+        "aws.l2.managed-resource",
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "Resources disabled by a literal count of zero are inactive declarations and contribute no resource or architecture depth."
+    },
+    {
+      "name": "iam-targets-network-only",
+      "kind": "near_miss",
+      "files": {
+        "infra/main.tf": "provider \"aws\" {}\nresource \"aws_vpc\" \"main\" {}\nresource \"aws_db_instance\" \"data\" { vpc_id = aws_vpc.main.id }\nresource \"aws_iam_policy\" \"network_reader\" { actions = [\"ec2:DescribeVpcs\"]\nresources = [aws_vpc.main.arn] }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "aws.l2.managed-resource"
+      ],
+      "absent_rule_ids": [
+        "aws.l3.network-managed-iam"
+      ],
+      "tradeoff": "An IAM policy targeting only the network cannot borrow a managed-service link through undirected transitive graph traversal."
+    }
+  ]
+}

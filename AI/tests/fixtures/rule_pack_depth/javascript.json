@@ -1,0 +1,109 @@
+{
+  "tech_id": "javascript",
+  "cases": [
+    {
+      "name": "advanced-pattern",
+      "kind": "positive",
+      "files": {
+        "src/stream.js": "export async function* stream(source, transform) {\n  try {\n    for await (const chunk of source) {\n      yield await transform(chunk);\n    }\n  } finally {\n    await source.return();\n  }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "javascript.l3.async-iterator-cleanup"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Named language-specific advanced pattern; no runtime claim."
+    },
+    {
+      "name": "basic-structured-use",
+      "kind": "positive",
+      "files": {
+        "src/stream.js": "export async function read(source) { return await source.read(); }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "javascript.l2.async-module"
+      ],
+      "absent_rule_ids": [
+        "javascript.l3.async-iterator-cleanup"
+      ]
+    },
+    {
+      "name": "missing-advanced-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/stream.js": "export async function* stream(source, transform) {\n  try {\n    for (const chunk of source) {\n      yield await transform(chunk);\n    }\n  } finally {\n    await source.return();\n  }\n}\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "javascript.l3.async-iterator-cleanup"
+      ]
+    },
+    {
+      "name": "missing-structured-use-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/stream.js": "export async function read(source) { return source.read(); }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "javascript.l2.async-module",
+        "javascript.l3.async-iterator-cleanup"
+      ]
+    },
+    {
+      "name": "disconnected-declarations",
+      "kind": "near_miss",
+      "files": {
+        "src/stream.js": "export async function* values(source) {\n  for await (const value of source) { yield value; }\n}\nexport async function unrelated(source) {\n  try { await source.read(); } finally { await source.close(); }\n}\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "javascript.l3.async-iterator-cleanup"
+      ],
+      "tradeoff": "Unrelated classes, functions or type aliases in one file cannot pool their advanced signals."
+    },
+    {
+      "name": "documentation-only",
+      "kind": "negative",
+      "files": {
+        "README.md": "export async function* stream(source, transform) {\n  try {\n    for await (const chunk of source) {\n      yield await transform(chunk);\n    }\n  } finally {\n    await source.return();\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "javascript.l2.async-module",
+        "javascript.l3.async-iterator-cleanup"
+      ]
+    },
+    {
+      "name": "vendor-code",
+      "kind": "negative",
+      "files": {
+        "vendor/src/stream.js": "export async function* stream(source, transform) {\n  try {\n    for await (const chunk of source) {\n      yield await transform(chunk);\n    }\n  } finally {\n    await source.return();\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "javascript.l2.async-module",
+        "javascript.l3.async-iterator-cleanup"
+      ]
+    },
+    {
+      "name": "test-only",
+      "kind": "negative",
+      "files": {
+        "tests/src/stream.js": "export async function* stream(source, transform) {\n  try {\n    for await (const chunk of source) {\n      yield await transform(chunk);\n    }\n  } finally {\n    await source.return();\n  }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "javascript.l2.async-module",
+        "javascript.l3.async-iterator-cleanup"
+      ]
+    }
+  ]
+}

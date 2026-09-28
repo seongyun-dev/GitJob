@@ -1,0 +1,154 @@
+package com.example.git_job.analysis.service;
+
+import com.example.git_job.analysis.domain.AnalysisJob;
+import com.example.git_job.analysis.event.RepositoryAnalysisResultEvent;
+import com.example.git_job.analysis.event.RepositoryAnalysisResultPayload;
+import com.example.git_job.analysis.store.AnalysisEvidenceStore;
+import com.example.git_job.analysis.store.AnalysisLineageStore;
+import com.example.git_job.analysis.store.TechnologyCandidateStore;
+import com.example.git_job.analysis.repository.AnalysisJobRepository;
+import java.time.Instant;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Applies one analysis result: writes the evidence and closes the job.
+ *
+ * <p>The worker cannot do this itself. {@code analysis_job} and
+ * {@code analysis_evidence} are mapped here and every deployment boots with
+ * {@code ddl-auto=validate}, so a second writer in another language would make
+ * each column change a two-repository migration. The result travels as an
+ * event and this is where it lands.</p>
+ *
+ * <h2>Idempotency</h2>
+ *
+ * <p>Delivery is at-least-once, so the same result arrives more than once. The
+ * job's own status is the marker: only an in-progress job is finished, and a
+ * repeat finds it terminal and stops. That needs no extra table and gives the
+ * cancel case the right answer for free — a result that lands after the user
+ * cancelled must not reopen the job.</p>
+ *
+ * <p>Evidence and status move in one transaction. A finished job with no
+ * evidence reads as "this repository uses nothing", which is a normal result
+ * and therefore indistinguishable from the bug.</p>
+ */
+@Service
+@RequiredArgsConstructor
+public class AnalysisResultService {
+
+    private static final Logger log = LoggerFactory.getLogger(AnalysisResultService.class);
+
+    private final AnalysisJobRepository jobs;
+    private final AnalysisEvidenceStore evidence;
+    private final AnalysisLineageStore lineage;
+    private final TechnologyCandidateStore candidates;
+
+    /**
+     * @return what happened, so the caller can log it and tests can assert on it
+     */
+    @Transactional
+    public Applied apply(RepositoryAnalysisResultEvent event) {
+        RepositoryAnalysisResultPayload payload = event.payload();
+        // 진행 컨슈머와 같은 잠금을 잡는다. 한쪽만 잠그면 다른 쪽이 낡은 값으로 덮는다.
+        AnalysisJob job = jobs.findWithLockByAnalysisId(payload.analysisId()).orElse(null);
+        if (job == null) {
+            // The worker analyzed something this service has no record of. Retrying
+            // will not create it, so the message is consumed rather than replayed.
+            log.warn("Result for unknown analysis: analysisId={}, eventId={}",
+                    payload.analysisId(), event.eventId());
+            return Applied.UNKNOWN_JOB;
+        }
+
+        Instant now = Instant.now();
+        boolean moved = payload.failed()
+                ? job.fail(payload.errorCode(), now)
+                : job.succeed(now);
+        if (!moved) {
+            /*
+             * 대부분은 at-least-once 재배달이라 INFO면 충분하다. 단 하나, 우리가 죽인
+             * 분석이 뒤늦게 결과를 들고 온 경우는 다르다 -- 살아 있던 워커를
+             * StaleAnalysisReaper 가 잘랐다는 뜻이고, 그 근거는 아래로 내려가지 못한 채
+             * 여기서 버려진다. activeWindow 가 짧다는 유일한 신호라 따로 올린다.
+             */
+            if (AnalysisJob.ERROR_ANALYSIS_TIMED_OUT.equals(job.getErrorCode())) {
+                log.warn("Result arrived after the analysis was reaped;"
+                                + " evidence discarded. Consider raising"
+                                + " gitjob.analysis.request.active-window."
+                                + " analysisId={}, eventId={}",
+                        payload.analysisId(), event.eventId());
+            } else {
+                log.info("Result ignored, job already {}: analysisId={}, eventId={}",
+                        job.getStatus(), payload.analysisId(), event.eventId());
+            }
+            return Applied.ALREADY_TERMINAL;
+        }
+
+        // 판정 기준을 먼저 남긴다. 근거가 0건이어도 남아야 하는 값이라
+        // 근거 저장과 분리했다 -- 근거 행에만 두면 "분석했지만 아는 기술이 없었다"가
+        // "분석하지 않았다"와 구분되지 않고, 그 사용자는 C 계산에서 통째로 빠진다.
+        int supported = lineage.record(payload.analysisId(), event.schemaVersion(), payload);
+
+        int written = evidence.insertAll(payload.analysisId(), job.getUserId(),
+                payload.registryVersion(), payload.evidence(), now);
+        // The worker can only say what this repository declared. How many people
+        // a candidate would serve is an aggregate across every user, so it is
+        // computed here from the observations rather than sent in the event.
+        int observed = candidates.record(payload.analysisId(), job.getUserId(),
+                job.getRepositoryId(), payload.candidates(), now);
+        jobs.save(job);
+
+        // v3 는 구조 근거 노드 수를 싣는 계약인데 빠져 있다. 거절하지 않는 이유는 이
+        // 값을 읽는 곳이 없기 때문이다 -- 읽지 않는 숫자 하나로 결과 전체를 버린 것이
+        // 이번 장애였다. 대신 워커 쪽 계약 이탈로 남긴다.
+        if (RepositoryAnalysisResultEvent.SCHEMA_VERSION_V3.equals(event.schemaVersion())
+                && payload.stats() != null && !payload.stats().reportedSyntaxNodes()) {
+            log.warn("v3 result without syntax_node_count: analysisId={}, eventId={}",
+                    payload.analysisId(), event.eventId());
+        }
+
+        log.info("Analysis closed: analysisId={}, status={}, schema={}, rulePack={},"
+                        + " technologies={}, evidence={}, candidates={}, support={}, traceId={}",
+                payload.analysisId(), job.getStatus(), event.schemaVersion(),
+                payload.rulePackVersion(), payload.technologies().size(),
+                written, observed, supported, event.traceId());
+        return payload.failed() ? Applied.FAILED : Applied.SUCCEEDED;
+    }
+
+    public enum Applied { SUCCEEDED, FAILED, ALREADY_TERMINAL, UNKNOWN_JOB }
+
+    /**
+     * 기여 판정을 붙일 대상. {@link Applied#SUCCEEDED} 일 때만 값이 있다.
+     *
+     * <p>이 서비스가 직접 붙이지 않는 이유는 트랜잭션 경계 때문이다. 기여 판정은
+     * GitHub 을 호출하는데, 그것이 느리거나 한도에 걸렸다고 이미 판정된 근거를
+     * 되돌릴 이유가 없다.</p>
+     */
+    public AnalysisJob attributionTarget(RepositoryAnalysisResultEvent event, Applied applied) {
+        if (applied != Applied.SUCCEEDED && applied != Applied.ALREADY_TERMINAL) {
+            return null;
+        }
+        AnalysisJob job = jobs.findById(event.payload().analysisId()).orElse(null);
+        if (job == null || !AnalysisJob.STATUS_SUCCEEDED.equals(job.getStatus())
+                || job.getComputeReadyAt() != null) {
+            return null;
+        }
+        return job;
+    }
+
+    /**
+     * 기여 판정 시도가 끝나 C 계산이 읽어도 되는 분석으로 전환한다.
+     *
+     * <p>여기도 잠그고 읽는다. 이것 역시 같은 행의 읽기-고치기-쓰기라, 진행 이벤트와
+     * 겹치면 방금 기록한 {@code compute_ready_at} 이 덮여 사라진다.</p>
+     */
+    @Transactional
+    public void markComputeReady(String analysisId) {
+        AnalysisJob job = jobs.findWithLockByAnalysisId(analysisId).orElse(null);
+        if (job != null && job.markComputeReady(Instant.now())) {
+            jobs.save(job);
+        }
+    }
+}

@@ -1,0 +1,5145 @@
+{
+  "schema_version": "technology-rule-pack/v1",
+  "rule_pack_version": "rule-pack-20260911.2",
+  "registry_version": "registry-20260911.2",
+  "content_sha256": "bea078f6674249c843771e9a67ad9134d77fe89da9ff6141b120c47decb65b4f",
+  "technologies": [
+    {
+      "tech_id": "c",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "c.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "c"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "cpp",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "cpp.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "cpp"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "csharp",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "csharp.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "csharp"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "go",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "go.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "go"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "java",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "java.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "java"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "kotlin",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "kotlin.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "kotlin"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "python",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "python.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "python"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "javascript",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "javascript.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "javascript"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "typescript",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "typescript.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "typescript"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "php",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "php.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "php"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "sql",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "sql.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "sql"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "html",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "html.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "html"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "css",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "SOURCE_FILE"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Comment-only and test-only files are excluded; syntax depth is not evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "css.l1.source",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "source",
+                "role": "REQUIRED",
+                "fact_type": "SOURCE_FILE",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "LANGUAGE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "css"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "spring-framework",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "ANNOTATION"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "spring-framework.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-framework"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "spring-framework.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-framework"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "spring-framework.l1.annotation",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "technology-import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-framework"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "annotation",
+                "role": "REQUIRED",
+                "fact_type": "ANNOTATION",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "NAME",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Component",
+                      "Service",
+                      "Bean",
+                      "Autowired"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "spring-boot",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "ANNOTATION",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "spring-boot.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-boot"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "spring-boot.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-boot"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "spring-boot.l1.annotation",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "technology-import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-boot"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "annotation",
+                "role": "REQUIRED",
+                "fact_type": "ANNOTATION",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "NAME",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "SpringBootApplication"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "spring-boot.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "spring-boot"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "run"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "jpa",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "ANNOTATION"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "jpa.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "jpa"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "jpa.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "jpa"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "jpa.l1.annotation",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "technology-import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "jpa"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "annotation",
+                "role": "REQUIRED",
+                "fact_type": "ANNOTATION",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "NAME",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Entity",
+                      "Table",
+                      "Column"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "mybatis",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "ANNOTATION"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "mybatis.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mybatis"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "mybatis.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mybatis"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "mybatis.l1.annotation",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "technology-import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mybatis"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "annotation",
+                "role": "REQUIRED",
+                "fact_type": "ANNOTATION",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "NAME",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Mapper"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "dotnet",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "dotnet.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "dotnet"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "dotnet.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "dotnet"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "nestjs",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "ANNOTATION",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "nestjs.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nestjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "nestjs.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nestjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "nestjs.l1.annotation",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "technology-import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nestjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "annotation",
+                "role": "REQUIRED",
+                "fact_type": "ANNOTATION",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "NAME",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Module",
+                      "Injectable",
+                      "Controller"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "nestjs.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nestjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "create"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "django",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "django.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "django"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "django.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "django"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "django.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "django"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "get_object_or_404",
+                      "select_related"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "fastapi",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "fastapi.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "fastapi"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "fastapi.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "fastapi"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "fastapi.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "fastapi"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Depends"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "react",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "react.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "react"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "react.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "react"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "react.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "react"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "useState",
+                      "useEffect"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "nextjs",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "nextjs.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nextjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "nextjs.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nextjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "nextjs.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "nextjs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "useRouter",
+                      "getServerSideProps"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "vuejs",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "vuejs.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "vuejs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "vuejs.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "vuejs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "vuejs.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "vuejs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "ref",
+                      "reactive",
+                      "computed"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "unity",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "IMPORT"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "unity.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "unity"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "numpy",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "numpy.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "numpy"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "numpy.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "numpy"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "numpy.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "numpy"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "array",
+                      "reshape",
+                      "einsum"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "pandas",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "pandas.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pandas"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "pandas.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pandas"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "pandas.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pandas"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "read_csv",
+                      "merge",
+                      "groupby"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "scikit-learn",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "scikit-learn.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "scikit-learn"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "scikit-learn.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "scikit-learn"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "scikit-learn.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "scikit-learn"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "train_test_split"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "pytorch",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "pytorch.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pytorch"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "pytorch.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pytorch"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "pytorch.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pytorch"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "tensor",
+                      "no_grad"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "tensorflow",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "tensorflow.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "tensorflow"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "tensorflow.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "tensorflow"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "tensorflow.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "tensorflow"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "constant",
+                      "GradientTape"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "apache-spark",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "apache-spark.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apache-spark"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "apache-spark.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apache-spark"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "hadoop",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "hadoop.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "hadoop"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "hadoop.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "hadoop"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "hadoop.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "hadoop"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "get"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "apache-kafka",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "apache-kafka.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apache-kafka"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "apache-kafka.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apache-kafka"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "apache-kafka.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apache-kafka"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "send",
+                      "poll",
+                      "commitSync"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "mysql",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "SQL dialect parsing is absent, so driver evidence is capped at L1."
+      ],
+      "rules": [
+        {
+          "rule_id": "mysql.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mysql"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "mysql.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mysql"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "postgresql",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "SQL dialect parsing is absent, so driver evidence is capped at L1."
+      ],
+      "rules": [
+        {
+          "rule_id": "postgresql.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "postgresql"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "postgresql.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "postgresql"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "mongodb",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "mongodb.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mongodb"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "mongodb.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mongodb"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "mongodb.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "mongodb"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "connect"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "redis",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "API names require a technology import in the same authored file; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "redis.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "redis"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "redis.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "redis"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "redis.l2.api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "redis"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "from_url"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "nodejs",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "IMPORT",
+        "API_CALL"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "A Node core import and API call must occur in the same authored file."
+      ],
+      "rules": [
+        {
+          "rule_id": "nodejs.l1.core-import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "core-fs",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "MODULE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "fs"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "nodejs.l2.core-api",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "core",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "MODULE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "http",
+                      "https",
+                      "stream",
+                      "buffer"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "call",
+                "role": "REQUIRED",
+                "fact_type": "API_CALL",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "METHOD",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "createServer",
+                      "pipeline"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "docker",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "CONFIG_KEY"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Dockerfile and Compose configuration are static observations. Multi-stage builds are L2. Effective final-stage privilege/health behavior is not proven; L3 is unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "docker.l0.config",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "file",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "DOCKERFILE",
+                      "COMPOSE"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "docker.l1.build",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "from",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "DOCKERFILE"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "FROM"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "step",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "RUN",
+                      "COPY"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "DOCKERFILE"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "docker.l2.multistage",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "from",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 2,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "FROM"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "DOCKERFILE"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "kubernetes",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "CONFIG_KEY"
+      ],
+      "max_supported_level": "L2",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Only explicit manifests in Kubernetes-oriented paths are evaluated."
+      ],
+      "rules": [
+        {
+          "rule_id": "kubernetes.l0.manifest",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "api",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "KUBERNETES"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apiVersion"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "kind",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "kind"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "kubernetes.l1.workload",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "kubernetes-api-version",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "KUBERNETES"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apiVersion"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "kind",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "kind"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "VALUE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Deployment",
+                      "StatefulSet",
+                      "DaemonSet"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "containers",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "CONTAINS",
+                    "expected": [
+                      "containers"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "kubernetes.l2.operations",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "kubernetes-api-version",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "KUBERNETES"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "apiVersion"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "kubernetes-workload",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "KUBERNETES"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "kind"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "VALUE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "Deployment",
+                      "StatefulSet",
+                      "DaemonSet"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "probe",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "CONTAINS",
+                    "expected": [
+                      "readinessProbe"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "limits",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "CONTAINS",
+                    "expected": [
+                      "resources.limits"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "aws",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "CONFIG_KEY"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Dependency, import and declared Terraform provider identify this cloud. Factory-created client/object method attribution is not resolved; L2/L3 remain unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "aws.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "aws"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "aws.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "aws"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "aws.l1.terraform",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "provider",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "TERRAFORM"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "provider"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "VALUE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "aws"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "azure",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "CONFIG_KEY"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Dependency, import and declared Terraform provider identify this cloud. Factory-created client/object method attribution is not resolved; L2/L3 remain unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "azure.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "azure"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "azure.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "azure"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "azure.l1.terraform",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "provider",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "TERRAFORM"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "provider"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "VALUE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "azurerm"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "gcp",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "DEPENDENCY",
+        "IMPORT",
+        "CONFIG_KEY"
+      ],
+      "max_supported_level": "L1",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Dependency, import and declared Terraform provider identify this cloud. Factory-created client/object method attribution is not resolved; L2/L3 remain unsupported."
+      ],
+      "rules": [
+        {
+          "rule_id": "gcp.l0.dependency",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "dependency",
+                "role": "REQUIRED",
+                "fact_type": "DEPENDENCY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "gcp"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "gcp.l1.import",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "import",
+                "role": "REQUIRED",
+                "fact_type": "IMPORT",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "TECH_ID",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "gcp"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "IS_TEST",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "false"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "gcp.l1.terraform",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "provider",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "TERRAFORM"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "provider"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "VALUE",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "google"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "tech_id": "jenkins",
+      "evaluation_scope": "REPOSITORY",
+      "required_fact_types": [
+        "CONFIG_KEY"
+      ],
+      "max_supported_level": "L3",
+      "coverage": "PARTIAL",
+      "limitations": [
+        "Groovy DSL strings/comments are excluded. Parallel pipeline plus shared-library declaration is statically observable; dynamic scripts and actual execution are not verified."
+      ],
+      "rules": [
+        {
+          "rule_id": "jenkins.l0.pipeline",
+          "rule_type": "L0",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [],
+          "groups": [
+            [
+              {
+                "clause_key": "pipeline",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pipeline",
+                      "node"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "jenkins.l1.stage",
+          "rule_type": "L1",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "pipeline",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pipeline",
+                      "node"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "stage",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "stage"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "jenkins.l2.lifecycle",
+          "rule_type": "L2",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "stages",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 2,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "stage"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "agent",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "agent"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "post",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "post"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "rule_id": "jenkins.l3.parallel-library",
+          "rule_type": "L3",
+          "language": null,
+          "priority": 10,
+          "binding_fields": [
+            "FILE_PATH"
+          ],
+          "groups": [
+            [
+              {
+                "clause_key": "pipeline",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "pipeline"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "parallel",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "parallel"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              },
+              {
+                "clause_key": "library",
+                "role": "REQUIRED",
+                "fact_type": "CONFIG_KEY",
+                "min_match_count": 1,
+                "predicates": [
+                  {
+                    "fact_field": "KEY",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "@Library"
+                    ],
+                    "segment_delimiter": null
+                  },
+                  {
+                    "fact_field": "FORMAT",
+                    "match_operator": "EXACT",
+                    "expected": [
+                      "JENKINS"
+                    ],
+                    "segment_delimiter": null
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

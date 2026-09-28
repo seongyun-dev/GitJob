@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "BodyStatus": {
+      "description": "Availability of a posting body at the A-to-C boundary.",
+      "enum": [
+        "TEXT_AVAILABLE",
+        "IMAGE_ONLY",
+        "BLOCKED",
+        "MISSING",
+        "PARSE_FAILED"
+      ],
+      "title": "BodyStatus",
+      "type": "string"
+    },
+    "JobPostingInput": {
+      "additionalProperties": false,
+      "properties": {
+        "source_record_id": {
+          "title": "Source Record Id",
+          "type": "string"
+        },
+        "canonical_job_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Canonical Job Id"
+        },
+        "source_site": {
+          "title": "Source Site",
+          "type": "string"
+        },
+        "source_posting_id": {
+          "title": "Source Posting Id",
+          "type": "string"
+        },
+        "source_url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Source Url",
+          "type": "string"
+        },
+        "company_name": {
+          "title": "Company Name",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "raw_job_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Job Category"
+        },
+        "career_level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Career Level"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "description_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description Text"
+        },
+        "raw_artifact_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Artifact Uri"
+        },
+        "body_status": {
+          "$ref": "#/$defs/BodyStatus"
+        },
+        "posting_status": {
+          "$ref": "#/$defs/PostingStatus",
+          "default": "UNKNOWN"
+        },
+        "posted_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Posted At"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deadline"
+        },
+        "collected_at": {
+          "format": "date-time",
+          "title": "Collected At",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "technology_mentions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TechnologyMentionInput"
+          },
+          "title": "Technology Mentions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "source_record_id",
+        "source_site",
+        "source_posting_id",
+        "source_url",
+        "company_name",
+        "title",
+        "body_status",
+        "collected_at",
+        "content_hash"
+      ],
+      "title": "JobPostingInput",
+      "type": "object"
+    },
+    "PostingStatus": {
+      "enum": [
+        "ACTIVE",
+        "CLOSED",
+        "UNKNOWN"
+      ],
+      "title": "PostingStatus",
+      "type": "string"
+    },
+    "RequirementType": {
+      "enum": [
+        "REQUIRED",
+        "PREFERRED",
+        "MENTIONED"
+      ],
+      "title": "RequirementType",
+      "type": "string"
+    },
+    "SourceSurface": {
+      "enum": [
+        "TITLE",
+        "BODY"
+      ],
+      "title": "SourceSurface",
+      "type": "string"
+    },
+    "TechnologyMentionInput": {
+      "additionalProperties": false,
+      "description": "A-side mention; no Registry match is inferred at this boundary.",
+      "properties": {
+        "raw_technology": {
+          "title": "Raw Technology",
+          "type": "string"
+        },
+        "technology_id": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "pattern": "^(?:c#|c\\+\\+|\\.net(?:-maui)?|(?:node|next|vue)\\.js|[a-z0-9]+(?:-[a-z0-9]+)*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Technology Id"
+        },
+        "requirement_type": {
+          "$ref": "#/$defs/RequirementType"
+        },
+        "source_surface": {
+          "$ref": "#/$defs/SourceSurface"
+        },
+        "evidence_section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Section"
+        },
+        "evidence_text": {
+          "title": "Evidence Text",
+          "type": "string"
+        },
+        "extraction_method": {
+          "title": "Extraction Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "raw_technology",
+        "technology_id",
+        "requirement_type",
+        "source_surface",
+        "evidence_text",
+        "extraction_method"
+      ],
+      "title": "TechnologyMentionInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "job-analysis-input/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "dataset_snapshot_id": {
+      "title": "Dataset Snapshot Id",
+      "type": "string"
+    },
+    "pipeline_run_id": {
+      "title": "Pipeline Run Id",
+      "type": "string"
+    },
+    "collector_version": {
+      "title": "Collector Version",
+      "type": "string"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/JobPostingInput"
+      },
+      "title": "Records",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "dataset_snapshot_id",
+    "pipeline_run_id",
+    "collector_version",
+    "records"
+  ],
+  "title": "JobAnalysisInputBatch",
+  "type": "object"
+}

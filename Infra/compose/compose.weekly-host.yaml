@@ -1,0 +1,28 @@
+# Optional Service-node override for the weekly consumer.
+#
+# DN4 runs with host networking on the Service EC2, so a bridge-network
+# consumer cannot follow its WebHDFS redirect.  This override is deliberately
+# limited to weekly-trend-consumer; it does not recreate the shared stack.
+# Pass the endpoint variables explicitly when using this file.
+
+services:
+  weekly-trend-consumer:
+    # Keep this service out of the base data profile even when this override is
+    # combined with compose.yaml for a Service-host deployment.
+    profiles: !override [weekly]
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${WEEKLY_CONSUMER_KAFKA_BOOTSTRAP:?WEEKLY_CONSUMER_KAFKA_BOOTSTRAP must be set}
+      # `earliest` only decides where a group with no committed offset
+      # starts. `gitjob-weekly-trend-prod-v1` was such a group, and
+      # `latest` made it seek past the completion event that was already
+      # sitting at offset 0 — the consumer then idled forever with
+      # nothing to read. Once this group commits, this value is ignored
+      # and a restart resumes from the commit, so no week is replayed.
+      KAFKA_AUTO_OFFSET_RESET: ${WEEKLY_CONSUMER_KAFKA_AUTO_OFFSET_RESET:-earliest}
+      WEEKLY_ACTIVITY_CONSUMER_GROUP: ${WEEKLY_CONSUMER_GROUP:?WEEKLY_CONSUMER_GROUP must be set}
+      WEBHDFS_URL: ${WEEKLY_CONSUMER_WEBHDFS_URL:?WEEKLY_CONSUMER_WEBHDFS_URL must be set}
+      WEBHDFS_USER: ${WEEKLY_CONSUMER_WEBHDFS_USER:-hadoop}
+      WEBHDFS_DATANODE_HOSTS: ${WEEKLY_CONSUMER_DATANODE_HOSTS:?WEEKLY_CONSUMER_DATANODE_HOSTS must be set}
+      POSTGRES_HOST: ${WEEKLY_CONSUMER_POSTGRES_HOST:?WEEKLY_CONSUMER_POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${WEEKLY_CONSUMER_POSTGRES_PORT:-5432}

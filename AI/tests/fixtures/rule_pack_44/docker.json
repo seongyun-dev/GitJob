@@ -1,0 +1,96 @@
+{
+  "tech_id": "docker",
+  "positive": {
+    "files": {
+      "Dockerfile": "FROM python:3.12\nRUN pip install .\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning docker only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      ".github/workflows/ci.yml": "steps:\n  - run: docker build .\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "multistage-nonroot-healthcheck",
+      "files": {
+        "Dockerfile": "FROM python:3.12-slim AS build\nRUN python -V\nFROM python:3.12-slim\nCOPY --from=build /usr/local/bin/python /usr/local/bin/python\nUSER app\nHEALTHCHECK CMD python -V\n"
+      },
+      "expected_rule_ids": [
+        "docker.l0.config",
+        "docker.l1.build",
+        "docker.l2.multistage"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "compose-only",
+      "files": {
+        "compose.yml": "services:\n  web:\n    image: nginx:alpine\n"
+      },
+      "expected_rule_ids": [
+        "docker.l0.config"
+      ],
+      "absent_rule_ids": [
+        "docker.l1.build",
+        "docker.l2.multistage",
+        "docker.l3.hardened"
+      ]
+    },
+    {
+      "name": "single-stage",
+      "files": {
+        "Dockerfile": "FROM python:3.12-slim\nRUN python -V\n"
+      },
+      "expected_rule_ids": [
+        "docker.l1.build"
+      ],
+      "absent_rule_ids": [
+        "docker.l2.multistage",
+        "docker.l3.hardened"
+      ]
+    },
+    {
+      "name": "base-image-only",
+      "files": {
+        "Dockerfile": "FROM python:3.12-slim\n"
+      },
+      "expected_rule_ids": [
+        "docker.l0.config"
+      ],
+      "absent_rule_ids": [
+        "docker.l1.build"
+      ]
+    },
+    {
+      "name": "root-and-disabled-healthcheck",
+      "files": {
+        "Dockerfile": "FROM python:3.12-slim AS build\nRUN python -V\nFROM python:3.12-slim\nCOPY --from=build /usr/local/bin/python /usr/local/bin/python\nUSER root\nHEALTHCHECK NONE\n"
+      },
+      "expected_rule_ids": [
+        "docker.l2.multistage"
+      ],
+      "absent_rule_ids": [
+        "docker.l3.hardened"
+      ]
+    },
+    {
+      "name": "yaml-keywords-are-not-docker",
+      "files": {
+        "settings.yaml": "FROM: first\nFROM: second\nUSER: app\nHEALTHCHECK: check\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "docker.l0.config",
+        "docker.l1.build",
+        "docker.l2.multistage",
+        "docker.l3.hardened"
+      ]
+    }
+  ]
+}

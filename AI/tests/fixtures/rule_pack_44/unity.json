@@ -1,0 +1,42 @@
+{
+  "tech_id": "unity",
+  "positive": {
+    "files": {
+      "Assets/App.cs": "using UnityEngine;\nclass App : MonoBehaviour {}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning unity only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/App.cs": "using UnityEngine;\nclass App : MonoBehaviour {}\n",
+      "src/Unrelated.cs": "using System;\nclass Unrelated {}\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "Assets/App.cs": "using UnityEngine;\nclass App : MonoBehaviour {}\n"
+      },
+      "expected_rule_ids": [
+        "unity.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/App.cs": "using UnityEngine;\nclass App : MonoBehaviour {}\n",
+        "src/Unrelated.cs": "using System;\nclass Unrelated {}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "unity.l1.import"
+      ]
+    }
+  ]
+}

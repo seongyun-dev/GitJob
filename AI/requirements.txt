@@ -1,0 +1,17 @@
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn==0.52.4
+psycopg[binary]==3.3.3
+tzdata>=2024.1
+kafka-python==3.0.11
+redis==8.1.0
+
+# Repository analysis parsing (S15P21E102-121). C extensions, but every one of
+# these publishes manylinux cp312 wheels, so the compiler-less
+# python:3.12-slim-bookworm image installs them without building.
+tree-sitter==0.26.0
+tree-sitter-python==0.25.0
+tree-sitter-java==0.23.5
+tree-sitter-javascript==0.25.0
+tree-sitter-typescript==0.23.2
+tree-sitter-c-sharp==0.23.5

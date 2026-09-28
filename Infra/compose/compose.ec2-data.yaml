@@ -1,0 +1,72 @@
+# EC2 data-node override.
+#
+# Run this file with the shared Compose definition and PROFILES=data only.
+# Unlike compose.ec2.yaml, this file does not add dependencies on local
+# PostgreSQL, Redis, or Kafka. Collector and Worker use the remote private core
+# endpoints from the data node's environment file, while HDFS and Spark remain
+# on this host and use Compose service names.
+
+services:
+  collector:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+      args:
+        JOBKOREA_OCR_ENABLED: "true"
+
+  worker:
+    restart: unless-stopped
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+      hdfs-bootstrap:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Infra/docker/worker/Dockerfile
+
+  hdfs-namenode:
+    restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_NAMENODE_WEB_PORT:-9870}:9870"
+
+  hdfs-datanode:
+    restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE_WEB_PORT:-9864}:9864"
+
+  # Publish distinct host UI ports so an operator can check port collisions
+  # before the targeted rollout. HDFS replication traffic still stays on the
+  # internal Compose network.
+  hdfs-datanode2:
+    restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE2_WEB_PORT:-9866}:9864"
+
+  hdfs-datanode3:
+    restart: unless-stopped
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${HDFS_DATANODE3_WEB_PORT:-9867}:9864"
+
+  spark-master:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${SPARK_MASTER_WEB_PORT:-8083}:8080"
+
+  spark-worker:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Infra/docker/spark/Dockerfile
+      args:
+        SPARK_BASE_IMAGE: ${SPARK_BASE_IMAGE:-apache/spark:3.5.3-scala2.12-java11-python3-ubuntu}
+    ports:
+      - "${DATA_ADMIN_BIND_ADDRESS:-127.0.0.1}:${SPARK_WORKER_WEB_PORT:-8084}:8081"

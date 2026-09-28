@@ -1,0 +1,31 @@
+{
+  "tech_id": "spring-framework",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/AppConfig.java": "import org.springframework.context.annotation.Configuration;\nimport org.springframework.context.annotation.Bean;\n@Configuration class AppConfig { @Bean Object service() { return new Object(); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "spring-framework.l2.bean-configuration"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 requires @Configuration and @Bean in one authored Java file; XML configuration and constructor-only wiring are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/AppConfig.java": "import org.springframework.context.annotation.Configuration;\n@Configuration class AppConfig {}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "spring-framework.l2.bean-configuration"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

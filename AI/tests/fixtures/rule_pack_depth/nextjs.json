@@ -1,0 +1,31 @@
+{
+  "tech_id": "nextjs",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/middleware.ts": "import { NextResponse } from 'next/server';\nexport function middleware(request) {\n  if (request.nextUrl.pathname.startsWith('/old')) return NextResponse.rewrite(new URL('/new', request.url));\n  return NextResponse.next();\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "nextjs.l3.middleware-routing"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L3 covers one exported middleware function with attributed rewrite and terminal-routing calls; route handlers and helpers split across functions are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/router.ts": "import { NextResponse } from 'next/server';\nexport function route(request) {\n  if (request.nextUrl.pathname.startsWith('/old')) return NextResponse.rewrite(new URL('/new', request.url));\n  return NextResponse.next();\n}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "nextjs.l3.middleware-routing"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

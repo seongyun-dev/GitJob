@@ -1,0 +1,46 @@
+{
+  "tech_id": "mysql",
+  "positive": {
+    "files": {
+      "pom.xml": "<project><dependencies><dependency><groupId>com.mysql</groupId><artifactId>mysql-connector-j</artifactId></dependency></dependencies></project>",
+      "src/App.java": "import com.mysql.cj.jdbc.Driver;\nclass App {}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning mysql only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/App.java": "import com.mysql.cj.jdbc.Driver;\nclass App {}\n",
+      "src/Unrelated.java": "import java.util.List;\nclass Unrelated {}\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "pom.xml": "<project><dependencies><dependency><groupId>com.mysql</groupId><artifactId>mysql-connector-j</artifactId></dependency></dependencies></project>",
+        "src/App.java": "import com.mysql.cj.jdbc.Driver;\nclass App {}\n"
+      },
+      "expected_rule_ids": [
+        "mysql.l0.dependency",
+        "mysql.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/App.java": "import com.mysql.cj.jdbc.Driver;\nclass App {}\n",
+        "src/Unrelated.java": "import java.util.List;\nclass Unrelated {}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "mysql.l0.dependency",
+        "mysql.l1.import"
+      ]
+    }
+  ]
+}

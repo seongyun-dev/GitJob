@@ -1,0 +1,196 @@
+{
+  "$defs": {
+    "ImportEcosystem": {
+      "enum": [
+        "JAVASCRIPT",
+        "PYTHON",
+        "JAVA",
+        "DOTNET"
+      ],
+      "title": "ImportEcosystem",
+      "type": "string"
+    },
+    "JobDomain": {
+      "enum": [
+        "BACKEND",
+        "FRONTEND",
+        "AI_DATA",
+        "INFRASTRUCTURE",
+        "MOBILE"
+      ],
+      "title": "JobDomain",
+      "type": "string"
+    },
+    "MappingType": {
+      "enum": [
+        "ALIAS",
+        "PACKAGE",
+        "IMPORT_PATH",
+        "STACKOVERFLOW_TAG",
+        "GITHUB_LANGUAGE"
+      ],
+      "title": "MappingType",
+      "type": "string"
+    },
+    "MatchMode": {
+      "enum": [
+        "EXACT",
+        "PREFIX"
+      ],
+      "title": "MatchMode",
+      "type": "string"
+    },
+    "PackageEcosystem": {
+      "enum": [
+        "NPM",
+        "PYPI",
+        "MAVEN",
+        "NUGET"
+      ],
+      "title": "PackageEcosystem",
+      "type": "string"
+    },
+    "RegistryStatus": {
+      "enum": [
+        "ACTIVE",
+        "DEPRECATED"
+      ],
+      "title": "RegistryStatus",
+      "type": "string"
+    },
+    "Technology": {
+      "additionalProperties": false,
+      "properties": {
+        "tech_id": {
+          "maxLength": 80,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Tech Id",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "categories": {
+          "items": {
+            "$ref": "#/$defs/JobDomain"
+          },
+          "title": "Categories",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/RegistryStatus"
+        },
+        "provenance_refs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Provenance Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tech_id",
+        "display_name",
+        "categories",
+        "status",
+        "provenance_refs"
+      ],
+      "title": "Technology",
+      "type": "object"
+    },
+    "TechnologyMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "tech_id": {
+          "maxLength": 80,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Tech Id",
+          "type": "string"
+        },
+        "mapping_type": {
+          "$ref": "#/$defs/MappingType"
+        },
+        "ecosystem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PackageEcosystem"
+            },
+            {
+              "$ref": "#/$defs/ImportEcosystem"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ecosystem"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "match_mode": {
+          "$ref": "#/$defs/MatchMode"
+        },
+        "status": {
+          "$ref": "#/$defs/RegistryStatus"
+        },
+        "provenance_refs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Provenance Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tech_id",
+        "mapping_type",
+        "ecosystem",
+        "value",
+        "match_mode",
+        "status",
+        "provenance_refs"
+      ],
+      "title": "TechnologyMapping",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "technology-registry/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "registry_version": {
+      "pattern": "^registry-[0-9]{8}\\.[1-9][0-9]*$",
+      "title": "Registry Version",
+      "type": "string"
+    },
+    "technologies": {
+      "items": {
+        "$ref": "#/$defs/Technology"
+      },
+      "title": "Technologies",
+      "type": "array"
+    },
+    "mappings": {
+      "items": {
+        "$ref": "#/$defs/TechnologyMapping"
+      },
+      "title": "Mappings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "registry_version",
+    "technologies",
+    "mappings"
+  ],
+  "title": "TechnologyRegistry",
+  "type": "object"
+}

@@ -1,0 +1,391 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router'
+import type { AnalysisRequestOutcome, RepositorySummary } from '@/features/analysis/api/types'
+import { AnalysisRequestPanel } from '@/features/analysis/components/AnalysisRequestPanel'
+import {
+  EmptyPanel,
+  ErrorPanel,
+  LoadingPanel,
+} from '@/features/analysis/components/QueryStatePanel'
+import { RepositoryListItem } from '@/features/analysis/components/RepositoryListItem'
+import {
+  useAnalysisRequests,
+  useLatestAnalysisBatch,
+  useRepositoryList,
+} from '@/features/analysis/hooks/useRepositoryAnalysis'
+import {
+  canSelectMore,
+  itemByRepository,
+  outcomesFromBatchResponse,
+  selectionLimitNotice,
+  submitBlockedReason,
+  submitFailureMessage,
+} from '@/features/analysis/model/analysisBatch'
+import {
+  ANALYSIS_SELECTION_HISTORY_KEY,
+  branchesFromDraft,
+  createAnalysisSelectionDraft,
+  dismissedBatchFromDraft,
+  outcomesFromDraft,
+  readAnalysisSelectionDraft,
+  selectedFromDraft,
+} from '@/features/analysis/model/selectionHistory'
+import { queryKeys } from '@/shared/api/queryKeys'
+import { useQueryClient } from '@tanstack/react-query'
+import { DesignMockBadge } from '@/mocks/DesignMockBadge'
+import { DESIGN_FIXTURES_ENABLED } from '@/mocks/designFixtures'
+import { REPOSITORY_LIST } from '@/mocks/fixtures/repositoryList'
+
+/**
+ * S3 분석 대상 저장소 선택 · 티켓 S15P21E102-117.
+ *
+ * 시각 기준은 `GitJob Desktop UI Final.html`의 `section#repos`다. computed style에서
+ * 읽은 값을 그대로 쓴다.
+ *   내부 콘텐츠 1232px · grid 846px + 372px · gap 14px · align start
+ *   eyebrow 11px/800 #2F5EEB ls 1.76px · 제목 34px/750 ls -1.53px · 설명 14px/23.1px
+ *
+ * Final에 있으나 넣지 않은 것과 이유(실제 데이터가 없으면 만들지 않는다):
+ *   - 헤더 네비게이션·`마지막 분석 오늘 10:42`: 라우트와 API가 없다(SiteHeader 주석).
+ *   - `Fork` · `Archived` 배지와 그 안내문: BE 응답에 fork 플래그가 없고 archived·disabled
+ *     구분도 없다. `analyzable` 한 값만 온다.
+ *   - 저장소별 언어 여러 개: 응답의 `language`는 대표 언어 한 개다.
+ *   - `최근 push`: 응답에 `pushed_at`이 없어 `updatedAt`을 "갱신"으로 정확히 표기한다.
+ *
+ * 확정된 분석 구조(2026-09-09): 사용자는 저장소 여러 개를 고르고, 저장소마다
+ * 독립적으로 분석하며 `analysisId`도 저장소마다 따로 생긴다. 그래서 화면은
+ * 다중 선택이지만 요청은 저장소 수만큼의 단건 호출이다.
+ *
+ * 구현된 계약만 쓴다.
+ *   `GET  /me/repositories`                              목록
+ *   `GET  /me/repositories/{owner}/{repo}/branches`       브랜치 (선택된 저장소만)
+ *   `POST /analyses`                                      분석 등록 (저장소당 1회)
+ */
+
+/** 전체 개수를 주지 않는 계약이라 페이지 번호만 보여주고 총 페이지 수는 만들지 않는다. */
+function Pagination({
+  page,
+  hasNext,
+  disabled,
+  onChange,
+}: {
+  page: number
+  hasNext: boolean
+  disabled: boolean
+  onChange: (next: number) => void
+}) {
+  const buttonClass =
+    'rounded-xl border border-brand-line bg-white px-4 py-2 text-[13px] font-medium text-brand-muted shadow-[0_10px_28px_rgba(25,47,81,0.07)] hover:border-brand-line-active hover:text-brand-ink disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-brand-line'
+
+  return (
+    <nav className="mt-3.5 flex items-center justify-between gap-2" aria-label="저장소 목록 페이지">
+      <button
+        type="button"
+        className={buttonClass}
+        disabled={disabled || page <= 1}
+        onClick={() => onChange(page - 1)}
+      >
+        이전
+      </button>
+      <span className="text-[12.5px] text-brand-faint">{page} 페이지</span>
+      <button
+        type="button"
+        className={buttonClass}
+        disabled={disabled || !hasNext}
+        onClick={() => onChange(page + 1)}
+      >
+        다음
+      </button>
+    </nav>
+  )
+}
+
+export function RepositorySelectionPage() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [initialDraft] = useState(() => readAnalysisSelectionDraft(location.state))
+  const historyTarget = useRef(`${location.pathname}${location.search}${location.hash}`)
+  const baseHistoryState = useRef(
+    typeof location.state === 'object' && location.state !== null ? location.state : {},
+  )
+  const [page, setPage] = useState(1)
+  /**
+   * fullName만 담지 않고 항목 전체를 담는다. 페이지를 넘기면 현재 페이지 목록에서
+   * 선택한 저장소가 사라지는데, 선택 요약과 브랜치 선택은 계속 보여야 한다.
+   * Map이라 선택 순서가 보존되고 fullName으로 바로 조회된다.
+   */
+  const [selected, setSelected] = useState<Map<string, RepositorySummary>>(() =>
+    selectedFromDraft(initialDraft),
+  )
+  const [branchByRepo, setBranchByRepo] = useState<Map<string, string>>(() =>
+    branchesFromDraft(initialDraft),
+  )
+  const [outcomes, setOutcomes] = useState<Map<string, AnalysisRequestOutcome>>(() =>
+    outcomesFromDraft(initialDraft),
+  )
+  const [scopeShortcutDismissed, setScopeShortcutDismissed] = useState(false)
+  /**
+   * 완료 안내를 닫은 묶음. boolean이 아니라 ID인 이유는 `model/analysisBatch`의
+   * `showResetPrompt` 주석에 있다 -- 새 묶음이 오면 안내가 저절로 다시 열려야 한다.
+   */
+  const [dismissedBatchId, setDismissedBatchId] = useState<string | null>(() =>
+    dismissedBatchFromDraft(initialDraft),
+  )
+
+  const repositories = useRepositoryList(page)
+  const submission = useAnalysisRequests()
+  const latestBatch = useLatestAnalysisBatch()
+  const queryClient = useQueryClient()
+  const batch = latestBatch.data?.batch ?? null
+  const blockedReason = submitBlockedReason(latestBatch.data)
+  const liveByRepository = itemByRepository(batch)
+  const submitFailure = submitFailureMessage(submission.error)
+
+  /*
+   * 묶음이 끝나면 내 기술 목록을 다시 읽게 한다. 전에는 저장소 카드마다 이 일을 했는데,
+   * 폴링이 묶음 하나로 합쳐지면서 여기로 올라왔다. 카드에 남겨 두면 저장소 수만큼
+   * 무효화가 일어난다.
+   */
+  const batchComplete =
+    batch !== null && batch.totalCount > 0 && batch.completedCount >= batch.totalCount
+  useEffect(() => {
+    if (batchComplete) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.myTechnologies() })
+      void queryClient.invalidateQueries({ queryKey: ['matching'] })
+    }
+  }, [batchComplete, queryClient])
+
+  /*
+   * 디자인 fixture가 켜져 있으면 목록을 서버에서 보지 않는다. 이 화면의 목록은 BE와
+   * GitHub OAuth 연결이 모두 살아 있어야 채워지는데, 레이아웃을 잡는 동안 둘을 띄워
+   * 두는 비용이 크다.
+   *
+   * `withDesignFixture`를 쓰지 않고 직접 분기하는 이유는 대체해야 하는 것이 값 하나가
+   * 아니라 **조회 상태 전체**이기 때문이다. 값만 갈아끼우면 fixture 목록과 오류 패널이
+   * 함께 보여 무엇을 보고 있는지 알 수 없다.
+   */
+  const items = DESIGN_FIXTURES_ENABLED ? REPOSITORY_LIST : repositories.data?.items
+  const showQueryState = !DESIGN_FIXTURES_ENABLED
+  const selectedList = [...selected.values()]
+
+  /*
+   * 진행 화면 링크가 새 history entry를 만들기 전에 현재 선택 화면 entry를 갱신한다.
+   * 브라우저 뒤로 가기로 돌아오면 위 초기화 함수가 선택·브랜치·성공 결과를 복원한다.
+   * 같은 URL을 replace하므로 뒤로 가기 깊이와 스크롤 위치는 바뀌지 않는다.
+   */
+  useEffect(() => {
+    const draft = createAnalysisSelectionDraft(
+      selected.values(),
+      branchByRepo,
+      outcomes,
+      dismissedBatchId,
+    )
+    void navigate(historyTarget.current, {
+      replace: true,
+      preventScrollReset: true,
+      state: {
+        ...baseHistoryState.current,
+        [ANALYSIS_SELECTION_HISTORY_KEY]: draft,
+      },
+    })
+  }, [selected, branchByRepo, outcomes, dismissedBatchId, navigate])
+
+  function showAnalysisScope() {
+    setScopeShortcutDismissed(true)
+    document.getElementById('analysis-request-panel')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  }
+
+  /** 선택 해제 시 그 저장소의 브랜치·결과까지 함께 정리한다. 남겨 두면 재선택 때 되살아난다. */
+  const removeRepository = useCallback((fullName: string) => {
+    setScopeShortcutDismissed(false)
+    setSelected((prev) => {
+      const next = new Map(prev)
+      next.delete(fullName)
+      return next
+    })
+    setBranchByRepo((prev) => {
+      const next = new Map(prev)
+      next.delete(fullName)
+      return next
+    })
+    setOutcomes((prev) => {
+      const next = new Map(prev)
+      next.delete(fullName)
+      return next
+    })
+  }, [])
+
+  function toggleRepository(fullName: string) {
+    setScopeShortcutDismissed(false)
+    if (selected.has(fullName)) {
+      removeRepository(fullName)
+      return
+    }
+    /*
+     * 상한을 넘겨 고르지 못하게 한다. 넘겨서 보내면 서버가 AN-400-1 로 거절하는데,
+     * 그때는 이미 브랜치까지 고른 뒤라 무엇을 되돌려야 하는지 알기 어렵다.
+     */
+    if (!canSelectMore(selected.size, latestBatch.data)) {
+      return
+    }
+    const found = items?.find((repository) => repository.fullName === fullName)
+    if (found === undefined) {
+      return
+    }
+    setSelected((prev) => new Map(prev).set(fullName, found))
+  }
+
+  /**
+   * 카드가 확정한 브랜치를 받는다. 값이 같으면 이전 Map을 그대로 돌려주어
+   * 카드의 동기화 effect가 다시 도는 것을 막는다.
+   */
+  const handleBranchChange = useCallback((fullName: string, branch: string) => {
+    setBranchByRepo((prev) => {
+      if (prev.get(fullName) === branch) {
+        return prev
+      }
+      return new Map(prev).set(fullName, branch)
+    })
+  }, [])
+
+  function startAnalysis() {
+    const targets = selectedList
+      // 이미 접수된 저장소는 다시 보내지 않는다. 재시도 대상은 미시도 + 실패뿐이다.
+      .filter((repository) => outcomes.get(repository.fullName)?.ok !== true)
+      .map((repository) => ({
+        repositoryFullName: repository.fullName,
+        branchName: branchByRepo.get(repository.fullName) ?? '',
+      }))
+      .filter((target) => target.branchName !== '')
+
+    if (targets.length === 0) {
+      return
+    }
+
+    submission.mutate(targets, {
+      onSuccess: (response) => {
+        setOutcomes((prev) => {
+          const next = new Map(prev)
+          for (const [fullName, outcome] of outcomesFromBatchResponse(response, branchByRepo)) {
+            next.set(fullName, outcome)
+          }
+          return next
+        })
+        // 방금 만든 묶음을 곧바로 읽는다. 폴링 간격을 기다리면 화면이 잠깐 빈다.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.latestAnalysisBatch() })
+      },
+      onError: () => {
+        /*
+         * 409면 다른 묶음이 이미 돌고 있다는 뜻이다. 오류 봉투에는 그게 무엇인지 없으므로
+         * 다시 읽어 화면이 진행 중인 묶음을 그리게 한다.
+         */
+        void queryClient.invalidateQueries({ queryKey: queryKeys.latestAnalysisBatch() })
+      },
+    })
+  }
+
+  /**
+   * 고른 저장소를 한 번에 비운다.
+   *
+   * 서버의 묶음을 지우지 않는다 -- 지울 것이 없다. 다음 제출이 새 묶음을 만들고
+   * 그때부터 조회가 그것을 가리킨다. 여기서 기억하는 것은 "이 묶음의 완료 안내는
+   * 이미 봤다" 하나뿐이다.
+   */
+  function resetSelection() {
+    setSelected(new Map())
+    setBranchByRepo(new Map())
+    setOutcomes(new Map())
+    setDismissedBatchId(batch?.batchId ?? null)
+  }
+
+  return (
+    <div>
+      <header className="max-w-[640px]">
+        <DesignMockBadge />
+        <h1 className="text-[26px] leading-[1.16] font-[750] tracking-[-0.045em] text-brand-ink sm:text-[30px] lg:text-[34px]">
+          분석할 GitHub 저장소를 선택하세요
+        </h1>
+        <p className="mt-3 text-[14px] leading-[1.65] text-brand-muted">
+          선택한 저장소에서 기술 사용 근거를 찾습니다.
+        </p>
+      </header>
+
+      <div className="gj-split mt-7">
+        <section aria-labelledby="repository-list-heading">
+          <h2 id="repository-list-heading" className="sr-only">
+            저장소 목록
+          </h2>
+
+          {showQueryState && repositories.isPending && (
+            <LoadingPanel label="저장소 목록을 불러오는 중입니다." />
+          )}
+
+          {showQueryState && repositories.isError && (
+            <ErrorPanel error={repositories.error} onRetry={() => void repositories.refetch()} />
+          )}
+
+          {items !== undefined && items.length === 0 && (
+            <EmptyPanel
+              title="분석할 수 있는 저장소가 없습니다."
+              description="GitHub에 저장소를 만들거나, 연결한 계정의 접근 권한을 확인해 주세요."
+            />
+          )}
+
+          {items !== undefined && items.length > 0 && (
+            <>
+              <ul className="grid gap-2.5">
+                {items.map((repository) => (
+                  <RepositoryListItem
+                    key={repository.githubRepositoryId}
+                    repository={repository}
+                    selected={selected.has(repository.fullName)}
+                    locked={blockedReason !== null || !canSelectMore(selected.size, latestBatch.data)}
+                    onToggle={toggleRepository}
+                  />
+                ))}
+              </ul>
+              {/* fixture 목록에는 다음 페이지가 없다. 누를 수 없는 컨트롤을 두지 않는다. */}
+              {showQueryState && (
+                <Pagination
+                  page={page}
+                  hasNext={repositories.data?.hasNext ?? false}
+                  disabled={repositories.isFetching}
+                  onChange={setPage}
+                />
+              )}
+            </>
+          )}
+        </section>
+
+        <AnalysisRequestPanel
+          repositories={selectedList}
+          branchByRepo={branchByRepo}
+          outcomes={outcomes}
+          isSubmitting={submission.isPending}
+          batch={batch}
+          itemByRepository={liveByRepository}
+          blockedReason={blockedReason}
+          selectionNotice={selectionLimitNotice(selectedList.length, latestBatch.data)}
+          submitFailure={submitFailure}
+          dismissedBatchId={dismissedBatchId}
+          onBranchChange={handleBranchChange}
+          onRemove={removeRepository}
+          onSubmit={startAnalysis}
+          onReset={resetSelection}
+        />
+      </div>
+
+      {selectedList.length > 0 && !scopeShortcutDismissed && (
+        <button
+          type="button"
+          onClick={showAnalysisScope}
+          className="fixed right-4 bottom-4 left-4 z-30 rounded-xl bg-[linear-gradient(135deg,var(--color-brand-600),var(--color-brand-400))] px-5 py-3.5 text-[14px] font-[750] text-white shadow-[0_14px_32px_rgba(31,60,140,0.34)] lg:hidden"
+        >
+          선택한 저장소 {selectedList.length}개 · 분석 시작
+        </button>
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,9 @@
+configuration-as-code
+credentials-binding
+docker-workflow
+git
+gitlab-plugin
+job-dsl
+workflow-aggregator
+timestamper
+pipeline-stage-view

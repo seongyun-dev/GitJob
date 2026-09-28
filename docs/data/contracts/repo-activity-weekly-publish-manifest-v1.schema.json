@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitjob.ssafy/contracts/repo-activity-weekly-publish-manifest-v1.schema.json",
+  "title": "Weekly Repo Activity publish manifest",
+  "description": "The `_SUCCESS.json` A writes into one week directory of a Weekly Repo Activity snapshot (S15P21E102-225). Its presence means the week is final: every row it names was written and read back before this file existed. C verifies `row_digest` against the data at `data_uri` before consuming. A week whose rows change under the same `dataset_snapshot_id` is not an update — it is a new snapshot id, a new manifest and a new completion event.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dataset_snapshot_id",
+    "week_start",
+    "data_uri",
+    "row_count",
+    "row_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "repo-activity-weekly-publish-manifest/v1"
+    },
+    "dataset_snapshot_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "The snapshot this week belongs to. Stable across a re-run that produces identical rows; a different id is the only way to publish different rows for the same week."
+    },
+    "week_start": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The Monday, in UTC, of the week these rows belong to. `AI/trend/archive.py` refuses a WEEK period that does not start on a Monday."
+    },
+    "data_uri": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The week directory holding the Parquet rows. The manifest sits inside it, so `data_uri` is this file's own parent."
+    },
+    "row_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Rows in the week directory, counted during the read-back that preceded this manifest."
+    },
+    "row_digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "value"],
+      "description": "Content digest of the rows. Not a byte checksum: Parquet part files carry a random UUID and a `created_by` build string, so two runs of the same job over the same data differ byte-for-byte. `Infra/spark/dataset_digest.py` hashes the ordered schema and the canonical-JSON rows instead, which is what this records.",
+      "properties": {
+        "format": {
+          "const": "typed-json-v2"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase SHA-256 hex digest."
+        }
+      }
+    }
+  }
+}

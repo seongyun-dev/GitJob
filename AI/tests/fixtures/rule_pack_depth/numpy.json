@@ -1,0 +1,31 @@
+{
+  "tech_id": "numpy",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/math.py": "import numpy as np\nresult = np.einsum('ij,jk->ik', a, b)\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "numpy.l2.api"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 requires a NumPy import and attributed array operation in one authored Python file; wrappers are missed."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/math.py": "import numpy as np\nresult = list(values)\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "numpy.l2.api"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

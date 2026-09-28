@@ -1,0 +1,15 @@
+# Two-EC2 application-node override.
+#
+# Run this file independently on EC2-A and EC2-B. Docker Compose remains a
+# single-host runtime; AWS ALB is the cross-host entry point. The app nodes
+# must use the same immutable images and the same external state endpoints
+# (RDS/ElastiCache/MSK or an equivalent HA service).
+#
+# Start this overlay with PROFILES=app. Do not start the local core profile on
+# both nodes: named volumes are host-local and would create two unrelated
+# PostgreSQL/Redis/Kafka instances.
+
+services:
+  nginx:
+    ports:
+      - "${NGINX_EC2_BIND:-0.0.0.0}:${NGINX_EC2_HTTP_PORT:-80}:80"

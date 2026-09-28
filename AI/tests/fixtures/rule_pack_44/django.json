@@ -1,0 +1,48 @@
+{
+  "tech_id": "django",
+  "positive": {
+    "files": {
+      "requirements.txt": "Django==5.1\n",
+      "src/app.py": "from django.shortcuts import get_object_or_404\nget_object_or_404(object)\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning django only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/app.py": "import django\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "requirements.txt": "Django==5.1\n",
+        "src/app.py": "from django.shortcuts import get_object_or_404\nget_object_or_404(object)\n"
+      },
+      "expected_rule_ids": [
+        "django.l0.dependency",
+        "django.l1.import",
+        "django.l2.api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/app.py": "import django\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "django.l0.dependency",
+        "django.l1.import",
+        "django.l2.api"
+      ]
+    }
+  ]
+}

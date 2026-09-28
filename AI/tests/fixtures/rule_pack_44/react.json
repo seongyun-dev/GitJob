@@ -1,0 +1,48 @@
+{
+  "tech_id": "react",
+  "positive": {
+    "files": {
+      "package.json": "{\"dependencies\":{\"react\":\"18.3.1\"}}",
+      "src/App.tsx": "import React from 'react';\nexport function App() { React.useState(0); return <div/>; }\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning react only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "tests/App.tsx": "import React from 'react';\nexport const App = () => <div/>;\n",
+      "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "all-retained-rules-positive",
+      "files": {
+        "package.json": "{\"dependencies\":{\"react\":\"18.3.1\"}}",
+        "src/App.tsx": "import React from 'react';\nexport function App() { React.useState(0); return <div/>; }\n"
+      },
+      "expected_rule_ids": [
+        "react.l0.dependency",
+        "react.l1.import",
+        "react.l2.api"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "required-evidence-missing",
+      "files": {
+        "tests/App.tsx": "import React from 'react';\nexport const App = () => <div/>;\n",
+        "src/unrelated.py": "import turtle\nturtle.forward(1)\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "react.l0.dependency",
+        "react.l1.import",
+        "react.l2.api"
+      ]
+    }
+  ]
+}

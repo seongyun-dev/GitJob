@@ -1,0 +1,109 @@
+{
+  "tech_id": "typescript",
+  "cases": [
+    {
+      "name": "advanced-pattern",
+      "kind": "positive",
+      "files": {
+        "src/types.ts": "export type AwaitedFields<T> = {\n  [K in keyof T]: T[K] extends Promise<infer U> ? U : T[K]\n};\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "typescript.l3.conditional-mapped-inference"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Named language-specific advanced pattern; no runtime claim."
+    },
+    {
+      "name": "basic-structured-use",
+      "kind": "positive",
+      "files": {
+        "src/types.ts": "export interface Box<T> { value: T; }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "typescript.l2.generic-type-contract"
+      ],
+      "absent_rule_ids": [
+        "typescript.l3.conditional-mapped-inference"
+      ]
+    },
+    {
+      "name": "missing-advanced-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/types.ts": "export type AwaitedFields<T> = { [K in keyof T]: T[K] };\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "typescript.l3.conditional-mapped-inference"
+      ]
+    },
+    {
+      "name": "missing-structured-use-condition",
+      "kind": "near_miss",
+      "files": {
+        "src/types.ts": "export interface Box { value: string; }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "typescript.l2.generic-type-contract",
+        "typescript.l3.conditional-mapped-inference"
+      ]
+    },
+    {
+      "name": "disconnected-declarations",
+      "kind": "near_miss",
+      "files": {
+        "src/types.ts": "export type Value<T> = T extends Promise<infer U> ? U : T;\nexport type Fields<T> = { [K in keyof T]: T[K] };\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "typescript.l3.conditional-mapped-inference"
+      ],
+      "tradeoff": "Unrelated classes, functions or type aliases in one file cannot pool their advanced signals."
+    },
+    {
+      "name": "documentation-only",
+      "kind": "negative",
+      "files": {
+        "README.md": "export type AwaitedFields<T> = {\n  [K in keyof T]: T[K] extends Promise<infer U> ? U : T[K]\n};\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "typescript.l2.generic-type-contract",
+        "typescript.l3.conditional-mapped-inference"
+      ]
+    },
+    {
+      "name": "vendor-code",
+      "kind": "negative",
+      "files": {
+        "vendor/src/types.ts": "export type AwaitedFields<T> = {\n  [K in keyof T]: T[K] extends Promise<infer U> ? U : T[K]\n};\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "typescript.l2.generic-type-contract",
+        "typescript.l3.conditional-mapped-inference"
+      ]
+    },
+    {
+      "name": "test-only",
+      "kind": "negative",
+      "files": {
+        "tests/src/types.ts": "export type AwaitedFields<T> = {\n  [K in keyof T]: T[K] extends Promise<infer U> ? U : T[K]\n};\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "typescript.l2.generic-type-contract",
+        "typescript.l3.conditional-mapped-inference"
+      ]
+    }
+  ]
+}

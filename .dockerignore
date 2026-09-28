@@ -1,0 +1,34 @@
+.git
+.gitignore
+.dockerignore
+
+# Never send runtime credentials or environment files to the Docker daemon.
+.env*
+**/.env*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+.git-credentials
+
+# Local runtime state, build output, and tooling caches.
+.local
+**/.local
+.venv
+**/.venv
+**/.pytest_cache
+**/.ruff_cache
+node_modules
+**/node_modules
+build
+**/build
+dist
+**/dist
+__pycache__
+**/__pycache__
+.gradle
+**/.gradle
+coverage
+**/coverage

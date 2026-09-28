@@ -1,0 +1,170 @@
+{
+  "source": {
+    "job_id": "job-1",
+    "source_record_id": "job-1",
+    "source_site": "SARAMIN",
+    "source_posting_id": "job-1",
+    "source_url": "https://example.com/job-1",
+    "company_name": "Example",
+    "title": "Backend Engineer",
+    "region": "Seoul",
+    "career_level": "Experienced",
+    "deadline": "2026-10-01T00:00:00Z",
+    "collected_at": "2026-09-07T00:00:00Z",
+    "content_hash": "e55f4816fc01883a3be2f24f0a1d29953e5f2cd7067f81a8ea22ba25c4d84a9f",
+    "eligibility": "ELIGIBLE",
+    "eligibility_reasons": [],
+    "strict_match_eligible": true,
+    "strict_review_reasons": [],
+    "requirements": {
+      "schema_version": "job-requirements/v1",
+      "source_record_id": "job-1",
+      "content_hash": "e55f4816fc01883a3be2f24f0a1d29953e5f2cd7067f81a8ea22ba25c4d84a9f",
+      "parser_version": "job-requirement-rules/v6",
+      "required": [
+        {
+          "operator": "ANY_OF",
+          "tech_ids": ["java"],
+          "evidence_refs": [
+            {
+              "source_surface": "BODY",
+              "char_start": 5,
+              "char_end": 9,
+              "text": "Java",
+              "mention_indices": [0]
+            }
+          ]
+        }
+      ],
+      "preferred": [],
+      "unresolved": []
+    }
+  },
+  "assessment": {
+    "required": {
+      "clauses": [
+        {
+          "status": "SATISFIED",
+          "held_tech_ids": ["java"],
+          "missing_tech_ids": [],
+          "unknown_tech_ids": []
+        }
+      ],
+      "satisfied_count": 1,
+      "unsatisfied_count": 0,
+      "unknown_count": 0
+    },
+    "preferred": {
+      "clauses": [],
+      "satisfied_count": 0,
+      "unsatisfied_count": 0,
+      "unknown_count": 0
+    },
+    "required_status": "FULL"
+  },
+  "embedded_v1": {
+    "schema_version": "job-matching/v1",
+    "calculation_snapshot_id": "matching-4b5d0e14b636479939959b9513409dcb57784142171fe02888c5eac1c6bc46ac",
+    "user_id": "user-1",
+    "analysis_id": "analysis-1",
+    "cohort_id": "cohort-a95481f5bc8f024cd2440ffa8d96c8094628db02150698dcbfa37c11f53648a7",
+    "registry_version": "registry-20260901.1",
+    "held_policy_version": "c-confirmed/eligible-observation/v1",
+    "level_policy_version": "level-policy/v2",
+    "evidence_rule_version": "evidence-rules/v2",
+    "criteria": {
+      "target_role": "BACKEND",
+      "as_of": "2026-09-08T00:00:00Z",
+      "posted_from": null,
+      "posted_to": null,
+      "sources": [],
+      "regions": [],
+      "career_levels": [],
+      "min_jobs": 1
+    },
+    "strict_cohort_status": "READY",
+    "data_gaps": [],
+    "jobs": [
+      {
+        "job": {
+          "job_id": "job-1",
+          "source_record_id": "job-1",
+          "source_site": "SARAMIN",
+          "source_posting_id": "job-1",
+          "source_url": "https://example.com/job-1",
+          "company_name": "Example",
+          "title": "Backend Engineer",
+          "region": "Seoul",
+          "career_level": "Experienced",
+          "deadline": "2026-10-01T00:00:00Z",
+          "collected_at": "2026-09-07T00:00:00Z",
+          "content_hash": "e55f4816fc01883a3be2f24f0a1d29953e5f2cd7067f81a8ea22ba25c4d84a9f",
+          "eligibility": "ELIGIBLE",
+          "eligibility_reasons": [],
+          "strict_match_eligible": true,
+          "strict_review_reasons": [],
+          "requirements": {
+            "schema_version": "job-requirements/v1",
+            "source_record_id": "job-1",
+            "content_hash": "e55f4816fc01883a3be2f24f0a1d29953e5f2cd7067f81a8ea22ba25c4d84a9f",
+            "parser_version": "job-requirement-rules/v6",
+            "required": [
+              {
+                "operator": "ANY_OF",
+                "tech_ids": ["java"],
+                "evidence_refs": [
+                  {
+                    "source_surface": "BODY",
+                    "char_start": 5,
+                    "char_end": 9,
+                    "text": "Java",
+                    "mention_indices": [0]
+                  }
+                ]
+              }
+            ],
+            "preferred": [],
+            "unresolved": []
+          }
+        },
+        "required": {
+          "clauses": [
+            {
+              "clause": {
+                "operator": "ANY_OF",
+                "tech_ids": ["java"],
+                "evidence_refs": [
+                  {
+                    "source_surface": "BODY",
+                    "char_start": 5,
+                    "char_end": 9,
+                    "text": "Java",
+                    "mention_indices": [0]
+                  }
+                ]
+              },
+              "status": "SATISFIED",
+              "held_tech_ids": ["java"],
+              "missing_tech_ids": [],
+              "unknown_tech_ids": []
+            }
+          ],
+          "unresolved": [],
+          "satisfied_count": 1,
+          "unsatisfied_count": 0,
+          "unknown_count": 0,
+          "fulfillment_ratio": 1.0
+        },
+        "preferred": {
+          "clauses": [],
+          "unresolved": [],
+          "satisfied_count": 0,
+          "unsatisfied_count": 0,
+          "unknown_count": 0,
+          "fulfillment_ratio": null
+        },
+        "required_status": "FULL"
+      }
+    ]
+  }
+}

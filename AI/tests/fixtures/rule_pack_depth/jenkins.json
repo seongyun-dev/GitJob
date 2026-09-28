@@ -1,0 +1,75 @@
+{
+  "tech_id": "jenkins",
+  "cases": [
+    {
+      "name": "credentials-lifecycle",
+      "kind": "positive",
+      "files": {
+        "Jenkinsfile": "pipeline {\n  agent any\n  stages {\n    stage('Build') { steps { echo 'build' } }\n    stage('Deploy') { steps { withCredentials([]) { echo 'deploy' } } }\n  }\n  post { always { echo 'done' } }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "jenkins.l3.credentials-lifecycle"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Credentials syntax counts only inside a real multi-stage pipeline summary with post lifecycle; validity and execution remain unverified."
+    },
+    {
+      "name": "parallel-shared-library",
+      "kind": "positive",
+      "files": {
+        "Jenkinsfile": "@Library('shared') _\npipeline {\n agent any\n stages {\n  stage('Build') { steps { echo 'build' } }\n  stage('Test') { parallel { stage('Unit') { steps { echo 'unit' } } } }\n }\n post { always { echo 'done' } }\n}\n"
+      },
+      "expected_level": "L3",
+      "expected_rule_ids": [
+        "jenkins.l3.parallel-library"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "Existing static L3 alternative preserves a real declarative pipeline with parallel orchestration and shared library."
+    },
+    {
+      "name": "credential-keywords-in-string",
+      "kind": "negative",
+      "files": {
+        "Jenkinsfile": "println \"pipeline stage post withCredentials credentials\"\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "jenkins.l3.credentials-lifecycle",
+        "jenkins.l3.parallel-library"
+      ],
+      "tradeoff": "Quoted keywords do not form a pipeline or credentials binding."
+    },
+    {
+      "name": "one-stage-credentials",
+      "kind": "near_miss",
+      "files": {
+        "Jenkinsfile": "pipeline {\n agent any\n stages { stage('Build') { steps { withCredentials([]) { echo 'x' } } } }\n}\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [
+        "jenkins.l1.stage"
+      ],
+      "absent_rule_ids": [
+        "jenkins.l2.lifecycle",
+        "jenkins.l3.credentials-lifecycle"
+      ],
+      "tradeoff": "Credentials in a one-stage pipeline without post lifecycle remain below L3."
+    },
+    {
+      "name": "test-only-pipeline",
+      "kind": "near_miss",
+      "files": {
+        "tests/Jenkinsfile": "@Library('shared') _\npipeline {\n agent any\n stages {\n  stage('Build') { steps { echo 'build' } }\n  stage('Test') { parallel { stage('Unit') { steps { echo 'unit' } } } }\n }\n post { always { echo 'done' } }\n}\n"
+      },
+      "expected_level": null,
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "jenkins.l3.parallel-library",
+        "jenkins.l3.credentials-lifecycle"
+      ],
+      "tradeoff": "A structurally deep pipeline under a test fixture path is retained as lower evidence but cannot support an L3 production-pipeline claim."
+    }
+  ]
+}

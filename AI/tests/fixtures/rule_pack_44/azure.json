@@ -1,0 +1,80 @@
+{
+  "tech_id": "azure",
+  "positive": {
+    "files": {
+      "infra/main.tf": "provider \"azurerm\" {\n}\n"
+    }
+  },
+  "negative": {
+    "files": {
+      "README.md": "Documentation mentioning azure only.\n"
+    }
+  },
+  "near_miss": {
+    "files": {
+      "README.md": "AZURE_REGION=example\n"
+    }
+  },
+  "rule_cases": [
+    {
+      "name": "runtime-dependency",
+      "files": {
+        "requirements.txt": "azure-storage-blob==1.0\n"
+      },
+      "expected_rule_ids": [
+        "azure.l0.dependency"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "project-import",
+      "files": {
+        "src/app.py": "import azure.storage.blob\n"
+      },
+      "expected_rule_ids": [
+        "azure.l1.import"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "terraform-provider",
+      "files": {
+        "main.tf": "provider \"azurerm\" {\n}\n"
+      },
+      "expected_rule_ids": [
+        "azure.l1.terraform"
+      ],
+      "absent_rule_ids": []
+    },
+    {
+      "name": "other-cloud-provider",
+      "files": {
+        "main.tf": "provider \"google\" {\n}\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "azure.l1.terraform"
+      ]
+    },
+    {
+      "name": "test-only-dependency",
+      "files": {
+        "requirements-dev.txt": "azure-storage-blob==1.0\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "azure.l0.dependency"
+      ]
+    },
+    {
+      "name": "unrelated-source-import",
+      "files": {
+        "src/app.py": "import json\njson.loads(\"{}\")\n"
+      },
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "azure.l1.import"
+      ]
+    }
+  ]
+}

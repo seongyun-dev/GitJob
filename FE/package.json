@@ -1,0 +1,33 @@
+{
+  "name": "gitjob-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run check:fixtures && tsc --noEmit && vite build",
+    "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
+    "test:session": "node --experimental-strip-types --test tests/sessionSync.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "check:fixtures": "node scripts/check-fixture-boundary.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^7.18.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.5.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "tech_id": "mybatis",
+  "cases": [
+    {
+      "name": "depth-positive",
+      "kind": "positive",
+      "files": {
+        "src/AccountStore.java": "import org.apache.ibatis.session.SqlSession;\nclass AccountStore { SqlSession session; Object load() { return session.selectList(\"accounts\"); } }\n"
+      },
+      "expected_level": "L2",
+      "expected_rule_ids": [
+        "mybatis.l2.session-dynamic"
+      ],
+      "absent_rule_ids": [],
+      "tradeoff": "L2 covers attributed SqlSession operations; dynamic Mapper XML is not parsed, so XML-only MyBatis use remains below L2."
+    },
+    {
+      "name": "one-required-signal-missing",
+      "kind": "near_miss",
+      "files": {
+        "src/AccountStore.java": "import org.apache.ibatis.session.SqlSession;\nclass AccountStore { SqlSession session; }\n"
+      },
+      "expected_level": "L1",
+      "expected_rule_ids": [],
+      "absent_rule_ids": [
+        "mybatis.l2.session-dynamic"
+      ],
+      "tradeoff": "One required high-precision signal is absent; the depth rule must fail closed."
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# The service host runs this Prometheus instance. Node-exporter endpoints are
+# registered through file-based discovery so adding a server only changes the
+# target registry and labels, not dashboard queries. Keep both endpoints
+# private to the administrator network; do not expose node-exporter publicly.
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: monitoring
+
+  - job_name: node-exporter
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/node-exporter.yml
+        refresh_interval: 30s
+
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: core
+
+  # HDFS NameNode /jmx → json-exporter 변환 (S15P21E102-261 Phase 2). multi-target 패턴:
+  # target(=NameNode /jmx URL)을 __param_target으로 옮기고 실제 scrape 주소는 json-exporter로
+  # 바꾼다. 지표에 cluster 라벨을 붙여 BE PromQL(cluster="gitjob")과 맞춘다.
+  #
+  # NameNode는 data server에 있고 json-exporter는 service server에 있다. Compose 이름
+  # `hdfs-namenode`는 다른 호스트의 네트워크라 여기서 해석되지 않아 이 job이 한 번도 붙은
+  # 적이 없다 (S15P21E102-292). 관리자망 주소는 targets/node-exporter.yml의 data server
+  # 항목과 같은 값이며, 호스트 주소를 적는 곳을 그 파일과 여기 두 군데로 유지한다.
+  - job_name: hdfs
+    metrics_path: /probe
+    params:
+      module: [hdfs_fsnamesystem]
+    static_configs:
+      - targets:
+          - "http://100.70.66.38:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState"
+        labels:
+          cluster: gitjob
+          host: data-server
+          role: data
+          instance: hdfs-namenode
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: json-exporter:7979
+
+  # Spark Master /json/ → json-exporter 변환 (S15P21E102-261 Phase 3). HDFS와 같은
+  # multi-target 패턴. spark-master 컨테이너는 건드리지 않는다.
+  #
+  # HDFS와 같은 이유로 주소를 data server로 바꾸고, 포트도 고친다. Master UI는 8080이
+  # 아니라 8083에서 응답한다 — 8080은 404다 (S15P21E102-292).
+  - job_name: spark
+    metrics_path: /probe
+    params:
+      module: [spark_master]
+    static_configs:
+      - targets:
+          - "http://100.70.66.38:8083/json/"
+        labels:
+          cluster: gitjob
+          host: data-server
+          role: data
+          instance: spark-master
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: json-exporter:7979
+
+  # Grafana 도달 여부 (S15P21E102-321). Infrastructure Map의 Grafana 칩이 근거 없이 회색으로
+  # 남아 있던 것을 메운다. 호스트가 살아 있다는 사실(node-exporter)을 그 안의 컨테이너
+  # 상태로 물려주지 않기 위해, Grafana 자신이 답하는 곳을 scrape 한다.
+  #
+  # Grafana는 자기 상태를 Prometheus 포맷으로 직접 낸다(2026-09-18 확인 · 200 OK, 인증
+  # 불필요). 새 exporter 컨테이너가 필요 없고, 여기 job 하나가 곧 "Grafana가 응답하는가"다.
+  #
+  # 응답이 200KB쯤 되고 그 안의 Grafana 내부 지표는 이 화면이 쓰지 않는다. 전부 버리고
+  # `up`만 남긴다 — `up`은 Prometheus가 직접 붙이는 값이라 drop의 영향을 받지 않는다.
+  # 점 하나 때문에 1500여 개 시계열을 30일치 쌓지 않으려는 것이다.
+  #
+  # `/api/health`도 무인증 200이고 `{"database":"ok",...}`로 더 많은 것을 말한다. 그쪽이
+  # semantic 하지만 JSON이라 json-exporter를 거쳐야 하고, 그 경로는 아직 실행 검증되지
+  # 않았다. 검증되면 이 job을 그쪽으로 옮긴다.
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          cluster: gitjob
+          host: service-server
+          role: monitoring
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: ".*"
+        action: drop
